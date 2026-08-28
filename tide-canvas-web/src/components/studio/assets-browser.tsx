@@ -11,6 +11,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Check } from "lucide-react";
 import { aiApi, fileApi, uploadFileSmart } from "@/lib/api";
 import { fetchWithAuth } from "@/lib/http";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -1314,10 +1315,8 @@ const TaskCard = memo(function TaskCard({
   return (
     <button
       type="button"
-      className="as-card"
+      className={`as-card${visuallySelected ? " is-selected" : ""}`}
       style={{
-        outline: visuallySelected ? "3px solid var(--accent, #7c8cff)" : undefined,
-        outlineOffset: -3,
         opacity: pickDisabled ? 0.5 : undefined,
       }}
       title={accessibleName}
@@ -1391,29 +1390,11 @@ function LazyVideoCover({ src, fallback }: { src: string; fallback?: string }) {
   );
 }
 
-/** 多选模式下的勾选角标(内联样式,免额外 CSS)。 */
+/** 多选模式下的勾选角标，统一由 studio.css 控制视觉状态。 */
 function SelectBadge({ selected }: { selected: boolean }) {
   return (
-    <span
-      aria-hidden
-      style={{
-        position: "absolute",
-        top: 8,
-        left: 8,
-        width: 22,
-        height: 22,
-        borderRadius: "50%",
-        display: "grid",
-        placeItems: "center",
-        fontSize: 13,
-        fontWeight: 800,
-        color: selected ? "#fff" : "transparent",
-        background: selected ? "var(--accent, #7c8cff)" : "rgba(0,0,0,0.35)",
-        border: "2px solid #fff",
-        zIndex: 3,
-      }}
-    >
-      ✓
+    <span className={`as-select-badge${selected ? " is-selected" : ""}`} aria-hidden>
+      {selected ? <Check size={15} strokeWidth={3} /> : null}
     </span>
   );
 }
@@ -1526,10 +1507,8 @@ const UploadCard = memo(function UploadCard({
   return (
     <button
       type="button"
-      className="as-card as-up"
+      className={`as-card as-up${visuallySelected ? " is-selected" : ""}`}
       style={{
-        outline: visuallySelected ? "3px solid var(--accent, #7c8cff)" : undefined,
-        outlineOffset: -3,
         opacity: pickDisabled ? 0.5 : undefined,
       }}
       title={file.originalName}

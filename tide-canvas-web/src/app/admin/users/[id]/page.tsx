@@ -6,8 +6,8 @@
    数据一次性来自 GET /api/admin/users/:id/portrait（g1_user_portrait.go），
    页面只做展示、中文标签映射与「画像」推导，不发瀑布请求。
 
-   形态是一份档案，不是仪表盘：整页共用一个白面，内部靠标题与细分隔线分段，
-   没有层层嵌套的卡片。顺序是「结论 → 证据」——先一句人话说清这是谁
+   形态是一份档案，不是仪表盘：深色身份主视觉承接结论，下面用关键指标、
+   行为分析与状态侧栏建立阅读顺序。顺序是「结论 → 证据」——先一句人话说清这是谁
    （buildSummary，措辞只用数据支撑得起的说法），再给数字、活跃、创作、
    积分、消费、沉淀。数据为空的分区只留一行灰字，不摆空盒子。
 
@@ -19,7 +19,18 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import {
+  Activity,
+  ArrowLeft,
+  BadgeDollarSign,
+  Clock3,
+  Coins,
+  Database,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import {
   AdminAlert,
   AdminTable,
@@ -217,15 +228,17 @@ function Section({
   title,
   note,
   link,
+  className,
   children,
 }: {
   title: string;
   note?: string;
   link?: { href: string; text: string };
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className="uport-sec">
+    <section className={`uport-sec${className ? ` ${className}` : ""}`}>
       <div className="uport-sec-head">
         <h2>{title}</h2>
         {note ? <span className="uport-sec-note">{note}</span> : null}
@@ -244,9 +257,9 @@ const Caption = ({ children }: { children: React.ReactNode }) => (
 );
 
 /** 数字条：无边框，靠细竖线分隔——数值本身就是层级，不需要再套盒子 */
-function Figures({ items }: { items: { k: string; v: string; d?: string }[] }) {
+function Figures({ items, className }: { items: { k: string; v: string; d?: string }[]; className?: string }) {
   return (
-    <dl className="uport-figures">
+    <dl className={`uport-figures${className ? ` ${className}` : ""}`}>
       {items.map((i) => (
         <div key={i.k}>
           <dt>{i.k}</dt>
@@ -255,6 +268,31 @@ function Figures({ items }: { items: { k: string; v: string; d?: string }[] }) {
         </div>
       ))}
     </dl>
+  );
+}
+
+function MetricCard({
+  icon: Icon,
+  label,
+  value,
+  detail,
+  tone,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+  detail: string;
+  tone: "violet" | "cyan" | "amber" | "green";
+}) {
+  return (
+    <div className={`uport-metric ${tone}`}>
+      <div className="uport-metric-top">
+        <span>{label}</span>
+        <span className="uport-metric-icon"><Icon aria-hidden size={16} /></span>
+      </div>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </div>
   );
 }
 
@@ -507,120 +545,106 @@ export default function AdminUserPortraitPage() {
   const hasCommerce =
     commerce.recentOrders.length > 0 || commerce.recentClaims.length > 0 ||
     commerce.checkinCount > 0 || commerce.paidOrderCount > 0;
+  const storagePercent = assets.storageQuota > 0
+    ? Math.min(100, Math.round((assets.storageUsed / assets.storageQuota) * 100))
+    : 0;
 
   return (
-    <div className="adm-page">
+    <div className="adm-page uport-page">
       <div className="uport">
-        {/* ── 身份 ── */}
-        <header className="uport-head">
-          <span
-            className="uport-av"
-            style={{ background: `center / cover no-repeat url("${user.avatar || defaultAvatar(user.id)}")` }}
-          />
-          <div className="uport-head-main">
-            <div className="uport-name">
-              <h1>{user.username || user.nickname || "—"}</h1>
-              {user.nickname && user.nickname !== user.username ? <span>{user.nickname}</span> : null}
-              <StatusPill tone={user.status === 1 ? "green" : "red"}>{user.status === 1 ? "正常" : "已封禁"}</StatusPill>
-              {user.role === 9 ? <StatusPill tone="blue">管理员</StatusPill> : null}
-              {user.vipLevel >= 1 ? <StatusPill tone="blue">{user.planName || "付费"}</StatusPill> : null}
-            </div>
-            <div className="uport-meta">
-              <button type="button" className="uport-copy mono" onClick={() => void copyUserId()} title="点击复制用户 ID">
-                {user.id}
+        <div className="uport-hero">
+          <div className="uport-hero-nav">
+            <span className="uport-kicker"><Sparkles aria-hidden size={14} /> USER PORTRAIT</span>
+            <div className="uport-acts">
+              <button type="button" className="uport-hero-btn" onClick={() => void load()}>
+                <RefreshCw aria-hidden size={14} /> 刷新
               </button>
-              <span>{email}</span>
-              {user.phone ? <span className="mono">{user.phone}</span> : null}
-              <span>注册于 {fmtDateTime(user.createTime)}</span>
-              <span>最近登录 {fmtDateTime(user.lastLoginTime)}</span>
+              <Link href="/admin/users" className="uport-hero-btn">
+                <ArrowLeft aria-hidden size={14} /> 返回列表
+              </Link>
             </div>
-            {user.remark?.trim() ? <div className="uport-remark">备注：{user.remark.trim()}</div> : null}
           </div>
-          <div className="uport-acts">
-            <button type="button" className="adm-btn ghost" onClick={() => void load()}>
-              <RefreshCw aria-hidden size={15} /> 刷新
-            </button>
-            <Link href="/admin/users" className="adm-btn ghost">
-              <ArrowLeft aria-hidden size={15} /> 返回列表
-            </Link>
-          </div>
-        </header>
-
-        {/* ── 结论：先说这是谁，再给证据 ── */}
-        <div className="uport-lede">
-          {summary.map((s) => <p key={s}>{s}</p>)}
-          {traits.length > 0 ? (
-            <div className="uport-traits" aria-label="画像特征">
-              {traits.map((t) => (
-                <span key={t.text} className={`uport-trait${t.warn ? " warn" : ""}`}>{t.text}</span>
-              ))}
+          <header className="uport-head">
+            <span
+              className="uport-av"
+              style={{ background: `center / cover no-repeat url("${user.avatar || defaultAvatar(user.id)}")` }}
+            />
+            <div className="uport-head-main">
+              <div className="uport-name">
+                <h1>{user.username || user.nickname || "—"}</h1>
+                {user.nickname && user.nickname !== user.username ? <span>{user.nickname}</span> : null}
+                <StatusPill tone={user.status === 1 ? "green" : "red"}>{user.status === 1 ? "正常" : "已封禁"}</StatusPill>
+                {user.role === 9 ? <StatusPill tone="blue">管理员</StatusPill> : null}
+                {user.vipLevel >= 1 ? <StatusPill tone="blue">{user.planName || "付费"}</StatusPill> : null}
+              </div>
+              <div className="uport-meta">
+                <button type="button" className="uport-copy mono" onClick={() => void copyUserId()} title="点击复制用户 ID">
+                  ID {user.id}
+                </button>
+                <span>{email}</span>
+                {user.phone ? <span className="mono">{user.phone}</span> : null}
+              </div>
+              {user.remark?.trim() ? <div className="uport-remark">备注：{user.remark.trim()}</div> : null}
             </div>
-          ) : null}
+          </header>
+          <div className="uport-lede">
+            <span className="uport-lede-label">PROFILE READ</span>
+            {summary.map((s) => <p key={s}>{s}</p>)}
+            {traits.length > 0 ? (
+              <div className="uport-traits" aria-label="画像特征">
+                {traits.map((t) => (
+                  <span key={t.text} className={`uport-trait${t.warn ? " warn" : ""}`}>{t.text}</span>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
 
-        <Figures
-          items={[
-            { k: "积分余额", v: fmtNum(points.balance), d: `累计获得 ${fmtNum(points.totalEarned)}` },
-            { k: "累计消耗", v: fmtNum(points.totalSpent), d: `近 30 天 ${fmtNum(points.spent30)}` },
-            { k: "生成总数", v: fmtNum(generation.total), d: `近 30 天 ${fmtNum(generation.total30)}` },
-            { k: "成功率", v: successRate, d: `失败 ${fmtNum(generation.failed)} 次` },
-            { k: "近 30 天活跃", v: `${activity.activeDays30} 天`, d: `登录 ${activity.loginDays30} 天` },
-            { k: "累计付费", v: `¥${commerce.paidAmount}`, d: `${fmtNum(commerce.paidOrderCount)} 笔订单` },
-          ]}
-        />
+        <section className="uport-metrics" aria-label="关键指标">
+          <MetricCard icon={Coins} tone="violet" label="积分余额" value={fmtNum(points.balance)} detail={`累计获得 ${fmtNum(points.totalEarned)}`} />
+          <MetricCard icon={Sparkles} tone="cyan" label="生成总数" value={fmtNum(generation.total)} detail={`近 30 天 ${fmtNum(generation.total30)}`} />
+          <MetricCard icon={Activity} tone="green" label="创作成功率" value={successRate} detail={`失败 ${fmtNum(generation.failed)} 次`} />
+          <MetricCard icon={BadgeDollarSign} tone="amber" label="累计付费" value={`¥${commerce.paidAmount}`} detail={`${fmtNum(commerce.paidOrderCount)} 笔订单`} />
+        </section>
+
+        <div className="uport-layout">
+          <main className="uport-main">
 
         {/* ── 活跃度 ── */}
-        <Section title="活跃度" note="创作节奏与登录记录">
+        <Section title="活跃度" note="最近 90 天的创作节奏" className="uport-card uport-activity-sec">
           {hasActivity || hasHours ? (
             <div className="uport-activity">
-              <div>
+              <div className="uport-chart-panel">
                 <Caption>每日生成 · 近 90 天</Caption>
                 {hasActivity ? <ActivityHeatmap daily={activity.daily} /> : <None text="近 90 天没有生成行为" />}
               </div>
-              <div>
+              <div className="uport-chart-panel">
                 <Caption>常用时段</Caption>
                 {hasHours ? <HourBars hourly={activity.hourly} /> : <None text="暂无时段数据" />}
               </div>
             </div>
           ) : (
-            <None text="近 90 天没有生成行为" />
+            <div className="uport-empty-state"><Activity aria-hidden size={20} /><span>近 90 天没有生成行为</span></div>
           )}
-
-          <Caption>
-            最近登录
-            {failedLogins > 0 ? <span className="uport-cap-warn">{failedLogins} 次失败</span> : null}
-          </Caption>
-          {activity.recentLogins.length === 0 ? (
-            <None text="暂无登录记录（生成账号首次登录后出现）" />
-          ) : (
-            <ul className="uport-logs">
-              {activity.recentLogins.slice(0, 6).map((l, i) => (
-                <li key={`${l.time}-${i}`}>
-                  <span className="mono">{fmtDateTime(l.time)}</span>
-                  <span>
-                    {l.action === "register" ? "注册" : l.action === "logout" ? "登出" : "登录"}
-                    {" · "}
-                    {l.channel === "code" ? "验证码" : l.channel === "password" ? "密码" : l.channel || "—"}
-                  </span>
-                  <span className="mono">{l.ip || "—"}</span>
-                  {l.success !== 1 ? <span className="uport-log-fail">失败</span> : null}
-                </li>
-              ))}
-            </ul>
-          )}
+          <div className="uport-activity-foot">
+            <span><strong>{activity.activeDays30}</strong> 天创作</span>
+            <span><strong>{activity.loginDays30}</strong> 天登录</span>
+            {failedLogins > 0 ? <span className="uport-cap-warn"><strong>{failedLogins}</strong> 次登录失败</span> : null}
+          </div>
         </Section>
 
         {/* ── 创作 ── */}
         <Section
-          title="创作"
+          title="创作偏好"
           note={
             generation.total > 0
               ? `成功 ${fmtNum(generation.success)} · 失败 ${fmtNum(generation.failed)} · 取消 ${fmtNum(generation.cancelled)}${generation.processing > 0 ? ` · 进行中 ${fmtNum(generation.processing)}` : ""}`
               : undefined
           }
+          className="uport-card"
         >
           {generation.total === 0 ? (
-            <None text="还没有任何生成记录" />
+            <div className="uport-empty-state"><Sparkles aria-hidden size={20} /><span>还没有任何生成记录</span></div>
           ) : (
             <div className="uport-two">
               <div>
@@ -655,12 +679,13 @@ export default function AdminUserPortraitPage() {
 
         {/* ── 积分 ── */}
         <Section
-          title="积分"
+          title="积分流水"
           note={`累计获得 ${fmtNum(points.totalEarned)} · 消耗 ${fmtNum(points.totalSpent)}${points.refundCount > 0 ? ` · 退款 ${fmtNum(points.refundCount)} 笔` : ""}`}
           link={{ href: `/admin/points?userId=${user.id}`, text: "完整流水" }}
+          className="uport-card"
         >
           {points.byType.length === 0 && points.transactions.length === 0 ? (
-            <None text="暂无积分流水" />
+            <div className="uport-empty-state"><Coins aria-hidden size={20} /><span>暂无积分流水</span></div>
           ) : (
             <>
               {points.byType.length > 0 ? (
@@ -699,9 +724,10 @@ export default function AdminUserPortraitPage() {
               ? `兑换码 ${fmtNum(commerce.claimCount)} 次 / +${fmtNum(commerce.claimPoints)} 分 · 签到 ${fmtNum(commerce.checkinCount)} 次 / +${fmtNum(commerce.checkinPoints)} 分${commerce.lastCheckin ? ` · 最近签到 ${commerce.lastCheckin}` : ""}`
               : undefined
           }
+          className="uport-card uport-commerce-sec"
         >
           {!hasCommerce ? (
-            <None text="没有订单、兑换与签到记录" />
+            <div className="uport-empty-state"><BadgeDollarSign aria-hidden size={20} /><span>没有订单、兑换与签到记录</span></div>
           ) : (
             <>
               {commerce.recentOrders.length > 0 ? (
@@ -730,19 +756,68 @@ export default function AdminUserPortraitPage() {
           )}
         </Section>
 
-        {/* ── 沉淀 ── */}
-        <Section title="沉淀" note="产出资产与社区参与">
-          <Figures
-            items={[
-              { k: "作品", v: fmtNum(assets.workCount) },
-              { k: "项目", v: fmtNum(assets.projectCount) },
-              { k: "上传素材", v: fmtNum(assets.fileCount), d: `占用 ${fmtBytes(assets.storageUsed)}` },
-              { k: "技能运行", v: fmtNum(assets.skillRunCount) },
-              { k: "评论 / 点赞", v: `${fmtNum(community.commentCount)} / ${fmtNum(community.likeCount)}` },
-              { k: "粉丝 / 关注", v: `${fmtNum(community.followers)} / ${fmtNum(community.following)}` },
-            ]}
-          />
-        </Section>
+          </main>
+
+          <aside className="uport-aside">
+            <section className="uport-side-card uport-side-signals">
+              <div className="uport-side-title"><ShieldCheck aria-hidden size={17} /><span>用户信号</span></div>
+              <p className="uport-side-intro">从行为数据提炼的状态标签</p>
+              <div className="uport-signal-list">
+                {traits.length > 0 ? traits.map((t) => (
+                  <div className={`uport-signal${t.warn ? " warn" : ""}`} key={t.text}>
+                    <span className="uport-signal-dot" />{t.text}
+                  </div>
+                )) : <None text="暂时没有足够的行为信号" />}
+              </div>
+            </section>
+
+            <section className="uport-side-card">
+              <div className="uport-side-title"><Clock3 aria-hidden size={17} /><span>账户时间线</span></div>
+              <div className="uport-facts">
+                <div><span>注册时间</span><strong>{fmtDateTime(user.createTime)}</strong></div>
+                <div><span>最近登录</span><strong>{fmtDateTime(user.lastLoginTime)}</strong></div>
+                <div><span>近 30 天活跃</span><strong>{activity.activeDays30} 天 / 登录 {activity.loginDays30} 天</strong></div>
+              </div>
+            </section>
+
+            <section className="uport-side-card uport-login-card">
+              <div className="uport-side-title">
+                <span>最近登录</span>
+                {failedLogins > 0 ? <em>{failedLogins} 次失败</em> : <small>最近 6 次</small>}
+              </div>
+              {activity.recentLogins.length === 0 ? <None text="暂无登录记录" /> : (
+                <ul className="uport-logs">
+                  {activity.recentLogins.slice(0, 6).map((l, i) => (
+                    <li key={`${l.time}-${i}`}>
+                      <span className={`uport-login-dot${l.success !== 1 ? " fail" : ""}`} />
+                      <span className="uport-login-detail">
+                        <b>{l.action === "register" ? "注册" : l.action === "logout" ? "登出" : "登录"} · {l.channel === "code" ? "验证码" : l.channel === "password" ? "密码" : l.channel || "—"}</b>
+                        <small className="mono">{fmtDateTime(l.time)}</small>
+                      </span>
+                      <span className="mono uport-login-ip">{l.ip || "—"}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section className="uport-side-card uport-assets-card">
+              <div className="uport-side-title"><Database aria-hidden size={17} /><span>资产沉淀</span></div>
+              <Figures className="uport-figures-side" items={[
+                { k: "作品", v: fmtNum(assets.workCount) },
+                { k: "项目", v: fmtNum(assets.projectCount) },
+                { k: "上传素材", v: fmtNum(assets.fileCount) },
+                { k: "技能运行", v: fmtNum(assets.skillRunCount) },
+                { k: "评论 / 点赞", v: `${fmtNum(community.commentCount)} / ${fmtNum(community.likeCount)}` },
+                { k: "粉丝 / 关注", v: `${fmtNum(community.followers)} / ${fmtNum(community.following)}` },
+              ]} />
+              <div className="uport-storage">
+                <div><span>存储空间</span><b>{fmtBytes(assets.storageUsed)}{assets.storageQuota > 0 ? ` / ${fmtBytes(assets.storageQuota)}` : ""}</b></div>
+                <div className="uport-storage-track"><i style={{ width: `${storagePercent}%` }} /></div>
+              </div>
+            </section>
+          </aside>
+        </div>
       </div>
     </div>
   );

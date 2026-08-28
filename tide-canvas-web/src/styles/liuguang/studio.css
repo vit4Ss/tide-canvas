@@ -1136,6 +1136,51 @@
   background:rgba(0,0,0,.3); opacity:0; transition:opacity .15s;}
 .as-card:hover .pick{opacity:1;}
 
+/* 多选状态：选中不是一个几乎看不见的小勾，而是卡片、遮罩、徽章三层反馈。 */
+.as-card.is-selected{
+  transform:translateY(-2px);
+  box-shadow:0 0 0 2px #fff, 0 0 0 5px #7568ff, 0 12px 28px rgba(63,54,181,.3);
+}
+.as-card.is-selected:hover{
+  transform:translateY(-4px);
+  box-shadow:0 0 0 2px #fff, 0 0 0 5px #7568ff, 0 17px 32px rgba(63,54,181,.35);
+}
+.as-card.is-selected::after{
+  position:absolute;
+  inset:0;
+  z-index:1;
+  border-radius:inherit;
+  background:linear-gradient(145deg,rgba(117,104,255,.22),rgba(117,104,255,.04) 55%,rgba(20,18,58,.14));
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.38);
+  content:"";
+  pointer-events:none;
+}
+.as-select-badge{
+  position:absolute;
+  top:9px;
+  left:9px;
+  z-index:5;
+  display:grid;
+  width:28px;
+  height:28px;
+  place-items:center;
+  border:2px solid rgba(255,255,255,.94);
+  border-radius:50%;
+  color:transparent;
+  background:rgba(12,13,22,.58);
+  box-shadow:0 2px 8px rgba(0,0,0,.34), inset 0 0 0 1px rgba(255,255,255,.18);
+  backdrop-filter:blur(4px);
+  transition:transform .16s var(--ease), background .16s var(--ease), box-shadow .16s var(--ease);
+}
+.as-card:hover .as-select-badge{transform:scale(1.06);}
+.as-select-badge.is-selected{
+  border-color:#fff;
+  color:#fff;
+  background:linear-gradient(145deg,#8175ff,#5d50e8);
+  box-shadow:0 0 0 3px rgba(117,104,255,.36), 0 4px 12px rgba(35,28,142,.42);
+}
+.as-select-badge.is-selected svg{filter:drop-shadow(0 1px 1px rgba(25,20,90,.28));}
+
 /* upload-history cards (ported from updated design studio.css) */
 .as-card.as-up .as-up-badge{position:absolute; top:8px; right:8px; z-index:3; font-family:var(--mono); font-size:9.5px; font-weight:600;
   color:#fff; background:rgba(0,0,0,.5); backdrop-filter:blur(4px); padding:2px 7px; border-radius:99px; letter-spacing:.02em;}
