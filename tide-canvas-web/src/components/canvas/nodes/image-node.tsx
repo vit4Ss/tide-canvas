@@ -193,8 +193,12 @@ function EditableImageNodeTitle({ node }: { node: CanvasNode }) {
     </Group>
   );
 }
+// 地平线必须钉在画面垂直正中：等距柱状投影的地平线对应球面赤道，导演台把
+// 赤道对齐到相机视线高度（scene-3d-editor 的 syncPanoToCamera）——全景图把
+// 地平线画偏，导演台的地面网格就会和画面地面分家（2026-08 用户反馈）。
+// 垂直方向的拉伸对称于中线，所以即使画幅不是标准 2:1，地平线居中也不会跑位。
 const panoramaPrompt = (ratio: string) =>
-  `将这张图扩展生成 360° 环绕全景图（equirectangular panorama，宽高比 ${ratio}）。必须让画面最左边缘与最右边缘无缝闭合，纹理、光照、颜色和透视连续，不能出现垂直拼接线、色块断层或重复硬边。向四周自然延展场景，保持主体、风格与光照一致，适合球面环绕观看。`;
+  `将这张图扩展生成 360° 环绕全景图（equirectangular panorama，宽高比 ${ratio}）。地平线（视平线）必须严格位于画面垂直正中：上半部分是天空与远景，下半部分是地面；相机视点为站立人眼高度，镜头完全水平，无俯仰、无倾斜。必须让画面最左边缘与最右边缘无缝闭合，纹理、光照、颜色和透视连续，不能出现垂直拼接线、色块断层或重复硬边。向四周自然延展场景，保持主体、风格与光照一致，适合球面环绕观看。`;
 
 const MULTI_ANGLE_DEFAULT = { yaw: -28, pitch: -8, zoom: 0, wideLens: false };
 const ANGLE_CUBE = { w: 164, h: 92, d: 92 };

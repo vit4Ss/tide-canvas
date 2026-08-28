@@ -565,6 +565,16 @@ export function Scene3DEditor({ node, onClose }: Props) {
           }
         };
         void setPanoramaInternal(envRef.current.panoUrl ?? null);
+        // 全景球心跟随当前相机的高度（仅 y）：等距全景的地平线画在球的赤道上，
+        // 球心固定在地面高度(0,0,0)时，相机一升高，画面地平线就沉到地面网格的
+        // 消失线之下——「水平面和画面不在一个水平面上」（2026-08 用户反馈）。
+        // 球心与相机同高后，任意机位的水平视线都落在赤道上，画面地平线恒等于
+        // 视线高度，与网格消失线重合。刻意不跟 x/z：保留水平视差，「球形半径」
+        // 滑杆才仍有意义。每次渲染前都要同步（主循环 + 截图），截图可能发生在
+        // 切换机位后的同一帧内。
+        const syncPanoToCamera = () => {
+          if (panoMesh) panoMesh.position.y = activeCam.position.y;
+        };
 
         // ===== 连接的 3D 场景：普通 GLB 或 World Labs Marble SPZ =====
         let sceneAssetModel: THREE_NS.Object3D | null = null;
@@ -1570,6 +1580,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
               }
               for (const r of rigsM.values()) hide(r.viz);
               hide(motionGroup);
+              syncPanoToCamera();
               renderer.render(scene, activeCam);
               const source = renderer.domElement;
               const sourceAspect = source.width / source.height;
@@ -1691,6 +1702,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
             const activeRig = activeRigId ? rigsM.get(activeRigId) : null;
             if (activeRig) orientRigCamera(activeRig.cam, orbit.target, activeRig.roll);
           }
+          syncPanoToCamera();
           renderer.render(scene, activeCam);
         };
         animate();
@@ -1888,7 +1900,9 @@ export function Scene3DEditor({ node, onClose }: Props) {
         handler: "text_to_image",
         modelId: selectedImageModelId,
         input: {
-          prompt: `生成一张可用于3D环境背景的360度等距柱状全景图，左右边缘无缝衔接，完整空间环境，不要文字、边框和水印。场景要求：${prompt}`,
+          // 地平线钉在垂直正中：赤道即导演台的视线高度（syncPanoToCamera），
+          // 画偏了地面网格就会和画面地面分家。与 image-node 的全景扩图提示词同口径。
+          prompt: `生成一张可用于3D环境背景的360度等距柱状全景图（equirectangular）。地平线（视平线）必须严格位于画面垂直正中：上半部分是天空与远景，下半部分是地面；相机视点为站立人眼高度，镜头完全水平，无俯仰、无倾斜。左右边缘无缝衔接，完整空间环境，不要文字、边框和水印。场景要求：${prompt}`,
           aspectRatio: "2:1",
           aspect_ratio: "2:1",
           ratio: "2:1",

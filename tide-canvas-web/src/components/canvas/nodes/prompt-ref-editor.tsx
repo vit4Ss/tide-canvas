@@ -95,7 +95,7 @@ export function PromptRefEditor({
     [refs, promptHasRef, mentionQuery]
   );
 
-  // ↑/↓ 高亮行保持可见：菜单 max-h-48 只容 ~5 行，候选更多时会滚动，
+  // ↑/↓ 高亮行保持可见：菜单 max-h-[216px] 容 4 行整 + 半行，候选更多时会滚动，
   // 否则 Enter 插入的是用户看不见的那一条。
   //
   // 只滚菜单自身，不用 scrollIntoView——后者会一路上滚**每一个**可滚动祖先，
@@ -362,7 +362,9 @@ export function PromptRefEditor({
           再来一行缩略图是重复信息。 */}
       {showThumbs && (
         <div className="flex items-start justify-between gap-3">
-          <div className="flex min-w-0 items-start gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {/* 滚动条必须可见（细条即可）：素材超出面板宽度时，第 5 张起的缩略图
+              在隐藏滚动条下无声消失，用户会确信「最多只能放 4 个参考图」。 */}
+          <div className="flex min-w-0 items-start gap-2 overflow-x-auto pb-1 [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-neutral-300 dark:[&::-webkit-scrollbar-thumb]:bg-neutral-600">
             {leading}
             {refs.map((ref) => (
               <ReferenceThumb
@@ -454,7 +456,7 @@ export function PromptRefEditor({
             setMentionOpen(false);
           }}
           spellCheck={false}
-          className={editorClassName ?? "prompt-scroll relative block w-full overflow-y-auto whitespace-pre-wrap break-words border-0 bg-transparent pr-2 text-sm leading-6 text-neutral-900 caret-neutral-900 selection:bg-blue-200/60 focus:outline-none focus-visible:outline-none focus:ring-0 dark:text-neutral-100 dark:caret-neutral-100 dark:selection:bg-blue-500/40"}
+          className={editorClassName ?? "relative block w-full overflow-y-auto whitespace-pre-wrap break-words border-0 bg-transparent pr-2 text-sm leading-6 text-neutral-900 caret-neutral-900 selection:bg-blue-200/60 focus:outline-none focus-visible:outline-none focus:ring-0 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-neutral-300 dark:text-neutral-100 dark:caret-neutral-100 dark:selection:bg-blue-500/40 dark:[&::-webkit-scrollbar-thumb]:bg-neutral-600"}
           style={{
             ...(fill
               ? { ...editorStyleBase, minHeight: 0, flex: 1 }
@@ -467,7 +469,11 @@ export function PromptRefEditor({
         {mentionOpen && mentionList.length > 0 && mentionPos && (
           <div
             ref={mentionMenuRef}
-            className="prompt-scroll absolute z-30 max-h-48 animate-in overflow-auto rounded-2xl border border-neutral-200/80 bg-white/95 p-1.5 shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl duration-100 fade-in-0 zoom-in-95 motion-reduce:animate-none dark:border-white/10 dark:bg-neutral-900/95 dark:shadow-black/55"
+            // max-h 必须与 prompt-ref-utils 的 MENTION_MENU_MAX_H 一致（翻转判断按它算），
+            // 且错开 44px 行高的整数倍：第 5 行露出半截才看得出「还能往下滚」。
+            // 滚动条走 Tailwind 内联（画布路由不加载 studio.css，无处放 CSS 类；
+            // 此前的 prompt-scroll 是个没有任何定义的死类名，等于没有滚动条样式）。
+            className="absolute z-30 max-h-[216px] animate-in overflow-auto rounded-2xl border border-neutral-200/80 bg-white/95 p-1.5 shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl duration-100 fade-in-0 zoom-in-95 motion-reduce:animate-none [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-neutral-300 dark:border-white/10 dark:bg-neutral-900/95 dark:shadow-black/55 dark:[&::-webkit-scrollbar-thumb]:bg-neutral-600"
             style={{
               left: mentionPos.left,
               width: MENTION_MENU_W,

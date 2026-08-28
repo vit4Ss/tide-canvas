@@ -118,8 +118,10 @@ export const VideoComposeNode = memo(function VideoComposeNode({ node, isSelecte
                   </div>
                 ))}
                 {clips.length === 0 && (
+                  // 只承诺当前真实可用的操作：本节点尚未接入入边消费（连线层已按
+                  // canvas-connection-rules 拒绝入边），旧文案「连接视频节点」是空头支票。
                   <div className="flex flex-1 items-center justify-center text-xs text-neutral-400">
-                    拖入视频片段或连接视频节点
+                    点击上方「添加片段」开始编排
                   </div>
                 )}
               </div>

@@ -231,9 +231,13 @@ export const AT_QUERY_RE = new RegExp(
   "(^|[^A-Za-z0-9._%+\\-])[@＠]([^\\s@＠\\u200b]{0,20})$",
 );
 
-/** @ 候选菜单尺寸（Tailwind w-56 / max-h-48），用于溢出钳制与上下翻转判断。 */
+/** @ 候选菜单尺寸（Tailwind w-56 / max-h-[216px]），用于溢出钳制与上下翻转判断。
+ *  高度必须错开行高（44px/行）的整数倍：216px 减内边距 12px 剩 204px，正好
+ *  4 行整 + 第 5 行露出六成——露出的半行是「往下还有、可以滚动」的唯一暗示。
+ *  之前的 192px 恰好只容 4 行整，第 5 个素材只剩 4px 边缘，肉眼等于不存在，
+ *  连 5 个以上图片节点的用户会确信「最多只能 @ 4 个」（2026-08 线上反馈）。 */
 export const MENTION_MENU_W = 224;
-export const MENTION_MENU_MAX_H = 192;
+export const MENTION_MENU_MAX_H = 216;
 
 export function createPromptRefElement(ref: RefItem) {
   const token = document.createElement("span");
