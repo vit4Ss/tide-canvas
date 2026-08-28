@@ -242,7 +242,7 @@ function Section({
   return (
     <section className={`uport-sec${className ? ` ${className}` : ""}`}>
       <div className="uport-sec-head">
-        {Icon ? <span className="uport-section-icon"><Icon aria-hidden size={16} /></span> : null}
+        {Icon ? <span className="uport-section-icon"><Icon aria-hidden size={16} strokeWidth={2.4} /></span> : null}
         <h2>{title}</h2>
         {note ? <span className="uport-sec-note">{note}</span> : null}
         {link ? <Link className="uport-sec-link" href={link.href}>{link.text} →</Link> : null}
@@ -291,7 +291,7 @@ function MetricCard({
     <div className={`uport-metric ${tone}`}>
       <div className="uport-metric-top">
         <span>{label}</span>
-        <span className="uport-metric-icon"><Icon aria-hidden size={16} /></span>
+        <span className="uport-metric-icon"><Icon aria-hidden size={16} strokeWidth={2.4} /></span>
       </div>
       <strong>{value}</strong>
       <small>{detail}</small>
