@@ -96,6 +96,13 @@ func normalizedStudioConfig(raw string) json.RawMessage {
 		return json.RawMessage(c)
 	}
 	changed := false
+	// errorHints 是管理员配置的错误提示映射,匹配片段常从原始错误复制(可能含
+	// 供应商后缀的模型名),属于不出站的内部信息(与 ai.publicModelConfigJSON
+	// 同口径,创作台目录同样不得透出)。
+	if _, exists := obj["errorHints"]; exists {
+		delete(obj, "errorHints")
+		changed = true
+	}
 	if _, exists := obj["priceMatrix"]; !exists {
 		if legacy, ok := obj["pricing"]; ok {
 			obj["priceMatrix"] = legacy

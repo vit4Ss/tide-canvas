@@ -291,6 +291,29 @@ func (e *UpstreamError) Error() string {
 	return fmt.Sprintf("relaymedia: HTTP %d", e.HTTPStatus)
 }
 
+// ParseUpstreamErrorText reconstructs an UpstreamError from the flattened
+// Error() text ("relaymedia: code NNNN: message"). Persisted logs keep only
+// the string, so read-time reclassification (admin detail, user history,
+// redactForUser) recovers the business code that errors.As can no longer see.
+// The marker may sit mid-string when the original error was wrapped. Must stay
+// in sync with Error() above.
+func ParseUpstreamErrorText(s string) (*UpstreamError, bool) {
+	const marker = "relaymedia: code "
+	idx := strings.Index(s, marker)
+	if idx < 0 {
+		return nil, false
+	}
+	code, message := s[idx+len(marker):], ""
+	if sep := strings.Index(code, ": "); sep >= 0 {
+		code, message = code[:sep], code[sep+2:]
+	}
+	code = strings.TrimSpace(code)
+	if code == "" || strings.ContainsAny(code, " \t\r\n") {
+		return nil, false
+	}
+	return &UpstreamError{Code: code, Message: strings.TrimSpace(message)}, true
+}
+
 func (e *mediaError) UnmarshalJSON(data []byte) error {
 	var s string
 	if json.Unmarshal(data, &s) == nil {

@@ -104,6 +104,24 @@ func TestPublicHistoryFailureReasonIsUsefulButNeverRaw(t *testing.T) {
 		{name: "Gemini image safety", raw: "relaymedia: code 5001: Gemini returned text only: unknown finish reason: [IMAGE_SAFETY]", want: userFacingSafetyErr},
 		{name: "internal provider detail", raw: "relay HTTP 502 https://internal.example key=sk-secret", want: userFacingGenErr},
 		{name: "empty", raw: "", want: userFacingGenErr},
+		// 2026-08-28 线上实例:任务发生时 5002 走业务码映射,用户看到安全审核文案,
+		// 但管理端回看从字符串重分类丢了业务码、关键词又没收录 image_unsafe,退化成
+		// 系统异常。字符串重分类必须还原 relaymedia 业务码,口径才真正不分叉。
+		{
+			name: "relay 5002 flattened text recovers safety copy",
+			raw:  `relaymedia: code 5002: 400 BAD_REQUEST {"error":{"message":"image_unsafe: The generated image was rejected by the safety policy. Please adjust the prompt and retry.","type":"api_error"}}`,
+			want: userFacingSafetyErr,
+		},
+		{name: "wrapped relay code still recovered", raw: "generation failed: relaymedia: code 5009: blocked for intellectual property", want: userFacingCopyrightErr},
+		{name: "relay 5003 flattened text shows inner reason", raw: `relaymedia: code 5003: 400 {"error":{"message":"图片尺寸不符合要求"}}`, want: "图片尺寸不符合要求"},
+		{name: "codeless safety policy wording", raw: "upstream: image_unsafe, rejected by the safety policy", want: userFacingSafetyErr},
+		{name: "unknown relay code stays fail-closed", raw: "relaymedia: code 5004: relay account balance: secret detail", want: userFacingGenErr},
+		// 无业务码的 relay 校验原文带供应商后缀的模型名,必须换成自研文案。
+		{
+			name: "codeless multi_ref cap hides supplier model name",
+			raw:  "relaymedia: model 'jimeng-video-seedance-2.0-fast-vip-Dimensio' accepts at most 9 reference images for multi_ref, got 15",
+			want: "参考素材数量超过当前模型上限，请减少后重试",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

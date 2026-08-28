@@ -854,6 +854,7 @@ function ModelModal({
     aiOptimizePrimary: c0.aiOptimizePrimary ?? false,
     imagePrimary: c0.imagePrimary ?? false,
     refLimits: c0.refLimits ?? {},
+    errorHints: c0.errorHints ?? [],
     modes: c0.modes ?? [],
     ratios: c0.ratios ?? [],
     resolutions: c0.resolutions ?? [],
@@ -989,6 +990,18 @@ function ModelModal({
   const removeIdea = (i: number) =>
     setCfg((p) => ({ ...p, ideas: (p.ideas ?? []).filter((_, j) => j !== i) }));
 
+  // 错误提示映射 list editor（原始错误片段 → 用户看到的自研文案）
+  const addErrorHint = () =>
+    setCfg((p) => ({ ...p, errorHints: [...(p.errorHints ?? []), { contains: "", message: "" }] }));
+  const setErrorHint = (i: number, patch: Partial<{ contains: string; message: string }>) =>
+    setCfg((p) => {
+      const arr = [...(p.errorHints ?? [])];
+      arr[i] = { ...arr[i], ...patch };
+      return { ...p, errorHints: arr };
+    });
+  const removeErrorHint = (i: number) =>
+    setCfg((p) => ({ ...p, errorHints: (p.errorHints ?? []).filter((_, j) => j !== i) }));
+
   const save = async () => {
     if (!name.trim()) {
       setErr("请填写模型名称");
@@ -1073,6 +1086,10 @@ function ModelModal({
           badges: (cfg.badges ?? [])
             .map((b) => ({ text: (b.text ?? "").trim(), tone: b.tone ?? ("hot" as const) }))
             .filter((b) => b.text),
+          // 错误提示映射：两个字段都非空的行才落库（服务端解析时同样会丢弃残缺行）
+          errorHints: (cfg.errorHints ?? [])
+            .map((h) => ({ contains: (h.contains ?? "").trim(), message: (h.message ?? "").trim() }))
+            .filter((h) => h.contains && h.message),
           // 固定/兜底积分写回 creditCost。普通模型以它为权威固定价，视频
           // 按时长时用于矩阵 miss 回退；视频按次模式明确跳过该字段，只读
           // pricePerRequestByResolution，避免旧值干扰当前扣费。
@@ -1847,6 +1864,51 @@ function ModelModal({
           )}
         </FormCard>
       )}
+
+      <FormCard title="错误提示映射">
+        <FormSection
+          label="按原始错误片段自定义用户提示"
+          hint="生成失败时，原始错误包含「匹配片段」（不区分大小写）即改为向用户展示右侧文案；不填则走系统内置分类。写入与历史回看同一口径，保存后一分钟内生效。全局规则在配置管理 ai.errorHints 配置，本处优先"
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {(cfg.errorHints ?? []).map((h, i) => (
+              <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div className="fld" style={{ flex: 2 }}>
+                  <input
+                    value={h.contains}
+                    onChange={(e) => setErrorHint(i, { contains: e.target.value })}
+                    placeholder="原始错误里的片段，如 reference images for multi_ref"
+                    aria-label={`错误匹配片段 ${i + 1}`}
+                  />
+                </div>
+                <div className="fld" style={{ flex: 3 }}>
+                  <input
+                    value={h.message}
+                    onChange={(e) => setErrorHint(i, { message: e.target.value })}
+                    placeholder="用户看到的提示，如 该模型最多支持 9 张参考图，请减少后重试"
+                    aria-label={`用户提示文案 ${i + 1}`}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="adm-btn ghost"
+                  onClick={() => removeErrorHint(i)}
+                  aria-label={`移除错误提示映射 ${i + 1}`}
+                >
+                  <Trash2 aria-hidden size={14} />
+                  移除
+                </button>
+              </div>
+            ))}
+            <div>
+              <button type="button" className="adm-btn ghost" onClick={addErrorHint}>
+                <Plus aria-hidden size={14} />
+                添加映射
+              </button>
+            </div>
+          </div>
+        </FormSection>
+      </FormCard>
 
       <FormCard title="状态">
         <FormGrid>

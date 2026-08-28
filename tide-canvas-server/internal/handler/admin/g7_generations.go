@@ -821,7 +821,8 @@ func generationDetail(c *gin.Context, d *app.Deps) {
 		Reply:     resp.Reply,
 	}
 	if r.Success != 1 {
-		vo.UserErrorMsg = ai.PublicGenerationFailureReason(r.ErrorMsg)
+		// r.Model 是上游 model key,错误提示映射按它命中该模型的自定义规则。
+		vo.UserErrorMsg = ai.PublicGenerationFailureReasonForModel(db, r.Model, r.ErrorMsg)
 	}
 	if authz.IsActiveAdministrator(c, db) {
 		vo.RequestBody = r.RequestBody

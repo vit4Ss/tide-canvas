@@ -2,7 +2,6 @@ package ai
 
 import (
 	"encoding/json"
-	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -81,7 +80,7 @@ func toTaskVO(t *model.AiTask) AiTaskVO {
 		// ai_tasks normally stores product-authored copy, but legacy/reconciled
 		// rows can contain provider or internal lifecycle text. Every user task
 		// endpoint goes through this allowlisted mapper before returning it.
-		errorMsg = PublicGenerationFailureReason(t.ErrorMsg)
+		errorMsg = publicGenerationFailureReasonScoped(cachedErrorHintSnapshot(), t.ErrorMsg, t.ModelID.String(), t.ModelName)
 	case statusCancelled:
 		errorMsg = userFacingCancelledErr
 	}
@@ -152,9 +151,32 @@ func toModelVO(m *model.AiModel) AiModelVO {
 		ModelID:           m.ModelID,
 		Type:              m.Type,
 		SupportedHandlers: parseHandlers(m.SupportedHandlers),
-		Config:            m.Config,
+		Config:            publicModelConfigJSON(m.Config),
 		PointCost:         m.PointCost,
 	}
+}
+
+// publicModelConfigJSON strips admin-only keys before the config blob reaches
+// the public model catalog. errorHints 的匹配片段通常是从原始错误里复制的
+// (常含供应商后缀的模型名),属于不出站的内部信息;管理端编辑表单走
+// admin/g3_models 的原始行,不经过这里。
+func publicModelConfigJSON(configJSON string) string {
+	if !strings.Contains(configJSON, "errorHints") {
+		return configJSON
+	}
+	var cfg map[string]json.RawMessage
+	if json.Unmarshal([]byte(configJSON), &cfg) != nil {
+		return configJSON
+	}
+	if _, ok := cfg["errorHints"]; !ok {
+		return configJSON
+	}
+	delete(cfg, "errorHints")
+	out, err := json.Marshal(cfg)
+	if err != nil {
+		return configJSON
+	}
+	return string(out)
 }
 
 // AiToolVO mirrors AiToolVO in types/ai.ts — the public shape of a 智能工具
@@ -382,7 +404,7 @@ func truncateRunes(value string, limit int) string {
 // 管理员不走这里(后台「模型调用日志」仍是全量原文,排查能力不变)。
 func (vo *AiGenerationLogVO) redactForUser() {
 	if vo.ErrorMsg != "" {
-		vo.ErrorMsg = userFacingGenError(errors.New(vo.ErrorMsg))
+		vo.ErrorMsg = publicGenerationFailureReasonScoped(cachedErrorHintSnapshot(), vo.ErrorMsg, vo.Model)
 	}
 	vo.RequestURL = ""
 	vo.RequestBody = ""

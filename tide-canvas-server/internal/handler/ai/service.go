@@ -91,6 +91,9 @@ func newService(d *app.Deps) *service {
 		s.docHosts = d.Storage.FetchHosts()
 	}
 	s.confirmVideoDuration = s.confirmOwnedVideoDuration
+	// 注册 db 句柄并预热错误提示映射缓存:vo 映射层这类拿不到 db 的读取路径
+	// 之后靠它按 TTL 惰性刷新(见 error_hints.go)。
+	errorHintsSnapshot(d.DB)
 	return s
 }
 
@@ -727,7 +730,8 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 		// 用户可见错误分两类:能自行修正的「输入类」给出具体可操作提示;其余
 		// 系统/供应商故障统一「系统异常，请联系客服」。两类的原始错误都进 zap
 		// 日志,admin 侧另有 ai_generation_logs 全量留档(见 writeGenLog 的 errMsg)。
-		task.ErrorMsg = userFacingGenError(genErr)
+		// 管理员按模型配置的错误提示映射优先于内置分类(error_hints.go)。
+		task.ErrorMsg = userFacingGenErrorForModel(s.repo.db, m, genErr)
 		logger.L().Warn("ai: generation failed",
 			zap.String("taskId", taskID.String()), zap.String("detail", errMessage(genErr)))
 	} else {
@@ -1140,7 +1144,7 @@ func applyTaskLogState(vo *AiGenerationLogVO, state taskLogState, isAdmin bool) 
 	// public allowlist: tasks created before error redaction (and lifecycle
 	// reconciliation rows) may still contain provider or internal text.
 	if !isAdmin && state.ErrorMsg != "" {
-		vo.ErrorMsg = PublicGenerationFailureReason(state.ErrorMsg)
+		vo.ErrorMsg = publicGenerationFailureReasonScoped(cachedErrorHintSnapshot(), state.ErrorMsg, vo.Model)
 	}
 }
 
@@ -1372,8 +1376,8 @@ var inputErrorRules = []struct {
 	// —— 安全审核 ——
 	{[]string{
 		"content policy", "content_policy", "sensitive content", "safety system",
-		"prohibited content", "moderation", "nsfw", "flagged", "image_safety",
-		"内容违规", "内容审核", "违规内容", "敏感词",
+		"safety policy", "prohibited content", "moderation", "nsfw", "flagged",
+		"image_safety", "image_unsafe", "内容违规", "内容审核", "违规内容", "敏感词",
 	}, userFacingSafetyErr},
 	{[]string{
 		"inputimagerisk", "input image risk",
@@ -1401,6 +1405,14 @@ var inputErrorRules = []struct {
 		"至少一张", "at least one reference", "reference required",
 		"reference image is required", "at least one image", "image_urls is required",
 	}, "请先上传所需的参考素材后重试"},
+	// "for multi_ref, got" 是 relay 参考素材超限校验的固定句式
+	// ("model 'X' accepts at most N reference images for multi_ref, got M"),
+	// 原文带供应商后缀的模型名,绝不能直显。模型管理配好 refLimits 后本地预检
+	// 会先拦下并给出精确数量;这条兜的是未配置上限的模型。
+	{[]string{
+		"for multi_ref, got", "too many reference images", "too many reference videos",
+		"参考图数量超过", "参考素材数量超过",
+	}, "参考素材数量超过当前模型上限，请减少后重试"},
 	{[]string{
 		"failed to download image", "download image failed", "cannot fetch image",
 		"fetch image failed", "invalid image url", "unable to access image",

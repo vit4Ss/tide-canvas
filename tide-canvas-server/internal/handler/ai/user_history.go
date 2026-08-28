@@ -14,8 +14,11 @@ import (
 	"sort"
 	"strings"
 
+	"gorm.io/gorm"
+
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
+	"tidecanvas/internal/pkg/relaymedia"
 )
 
 type UserHistoryAssetVO struct {
@@ -153,7 +156,8 @@ func (s *service) getUserHistory(ctx context.Context, userID, recordID idgen.ID)
 
 func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGenerationHistoryDetailVO {
 	mediaType := userHistoryMediaType(log.HandlerName, log.OperationType)
-	logFailureReason := PublicGenerationFailureReason(log.ErrorMsg)
+	hints := cachedErrorHintSnapshot()
+	logFailureReason := publicGenerationFailureReasonScoped(hints, log.ErrorMsg, log.Model)
 	detail := UserGenerationHistoryDetailVO{
 		MediaType:    mediaType,
 		Model:        log.Model,
@@ -186,7 +190,7 @@ func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGen
 		detail.FailureReason = ""
 	} else if task.Status == statusFailed {
 		detail.Success = 0
-		taskFailureReason := PublicGenerationFailureReason(task.ErrorMsg)
+		taskFailureReason := publicGenerationFailureReasonScoped(hints, task.ErrorMsg, task.ModelID.String(), task.ModelName)
 		// Older tasks may have persisted the generic system fallback before a new
 		// provider safety signature was classified. The linked audit row retains
 		// the raw cause; use it only after the same public allowlist has converted
@@ -217,6 +221,17 @@ func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGen
 // Exported for admin/g7_generations: 详情页展示「这条失败记录用户看到的提示」,
 // 必须与用户侧同一口径,不允许另写一份映射。
 func PublicGenerationFailureReason(raw string) string {
+	return publicGenerationFailureReasonScoped(cachedErrorHintSnapshot(), raw)
+}
+
+// PublicGenerationFailureReasonForModel additionally applies the admin-authored
+// error-hint rules scoped to the given model; modelRef 接受数字 id、上游 model
+// key 或显示名(调用日志/生成日志/任务行各自只带其中一种)。
+func PublicGenerationFailureReasonForModel(db *gorm.DB, modelRef, raw string) string {
+	return publicGenerationFailureReasonScoped(errorHintsSnapshot(db), raw, modelRef)
+}
+
+func publicGenerationFailureReasonScoped(snap *errorHintSnapshot, raw string, refs ...string) string {
 	message := strings.TrimSpace(raw)
 	if message == "" {
 		return userFacingGenErr
@@ -224,10 +239,30 @@ func PublicGenerationFailureReason(raw string) string {
 	if isKnownUserFacingGenMessage(message) {
 		return message
 	}
-	if classified := userFacingGenError(errors.New(message)); classified != userFacingGenErr {
+	// 存量行保存的管理员自定义文案:凡仍在配置中的文案原样放行,否则会被下面的
+	// fail-closed 兜底打回系统异常,规则等于只在新任务上生效了一半。
+	if snap.isConfiguredMessage(message) {
+		return message
+	}
+	if custom, ok := snap.match(message, refs...); ok {
+		return custom
+	}
+	if classified := userFacingGenError(reclassifiableGenError(message)); classified != userFacingGenErr {
 		return classified
 	}
 	return userFacingGenErr
+}
+
+// reclassifiableGenError rebuilds the structured relay error from persisted
+// text so read-time reclassification reuses the same business-code mapping as
+// the moment of failure (5002 安全审核、5009 版权、5003 直显). Without this,
+// errors.New would hide the code from errors.As and every code-classified
+// failure would degrade to the generic 系统异常 when re-displayed.
+func reclassifiableGenError(message string) error {
+	if upstream, ok := relaymedia.ParseUpstreamErrorText(message); ok {
+		return upstream
+	}
+	return errors.New(message)
 }
 
 func isKnownUserFacingGenMessage(message string) bool {

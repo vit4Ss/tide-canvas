@@ -67,6 +67,12 @@ export interface ModelConfig {
    * "omniRef.imageCount" / "omniRef.videoSizeMB" 等；0 或未设 = 不限制。
    */
   refLimits?: Record<string, number>;
+  /**
+   * 错误提示映射：该模型的原始错误包含 contains 片段（不区分大小写）时，
+   * 改为向用户展示 message 自研文案。写入与历史回看同一口径，保存后
+   * 一分钟内生效；全局规则在配置管理 ai.errorHints 里配，本处优先。
+   */
+  errorHints?: { contains: string; message: string }[];
   /** Omni reference image support. Unset means supported for legacy configs. */
   omniRefImageEnabled?: boolean;
   /** Omni reference video support. Unset means supported for legacy configs. */

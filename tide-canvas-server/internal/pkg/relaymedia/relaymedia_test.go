@@ -392,3 +392,33 @@ func TestNewDefaultsToTestRelay(t *testing.T) {
 		t.Errorf("baseURL = %q, want test relay", c.baseURL)
 	}
 }
+
+// ParseUpstreamErrorText 必须能从落库后的扁平字符串还原业务码——管理端与用户侧
+// 历史都靠它做读取时重分类;它与 Error() 互为逆运算,任何格式改动都要同步。
+func TestParseUpstreamErrorTextRoundTripsErrorFormat(t *testing.T) {
+	src := &UpstreamError{Code: "5002", Message: `400 BAD_REQUEST {"error":{"message":"image_unsafe: rejected"}}`}
+	got, ok := ParseUpstreamErrorText(src.Error())
+	if !ok || got.Code != src.Code || got.Message != src.Message {
+		t.Fatalf("round trip = %#v, %v; want %#v", got, ok, src)
+	}
+
+	if got, ok = ParseUpstreamErrorText("generation failed: relaymedia: code 5009: blocked"); !ok || got.Code != "5009" || got.Message != "blocked" {
+		t.Fatalf("wrapped text = %#v, %v", got, ok)
+	}
+	if got, ok = ParseUpstreamErrorText("relaymedia: code 5001"); !ok || got.Code != "5001" || got.Message != "" {
+		t.Fatalf("code-only text = %#v, %v", got, ok)
+	}
+	for _, raw := range []string{
+		"relaymedia: upstream error",
+		"relaymedia: plain message without code",
+		"relaymedia: HTTP 502",
+		"relaymedia: code ",
+		"relaymedia: code not a code: because of spaces",
+		"unrelated provider failure",
+		"",
+	} {
+		if parsed, ok := ParseUpstreamErrorText(raw); ok {
+			t.Fatalf("ParseUpstreamErrorText(%q) unexpectedly parsed %#v", raw, parsed)
+		}
+	}
+}

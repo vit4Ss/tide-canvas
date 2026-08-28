@@ -301,6 +301,12 @@ func ensureBaselineConfig(db *gorm.DB) error {
 			Group:       "canvas",
 			Description: canvasNodeFeaturesDescription,
 		},
+		{
+			ConfigKey:   ConfigKeyAIErrorHints,
+			ConfigValue: "[]",
+			Group:       "ai",
+			Description: "全局错误提示映射（JSON 数组：[{contains, message, modelType?}]）：原始错误包含 contains 片段时改为展示 message 文案；modelType 可选（image|video|text|audio，空=所有模型）。单个模型的规则在模型管理该模型的「错误提示映射」里配，优先级更高。保存后一分钟内生效",
+		},
 	}
 	baseline = append(baseline, SupplierBalanceBaselineConfigs()...)
 	for i := range baseline {

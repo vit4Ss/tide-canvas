@@ -120,6 +120,14 @@ const ConfigKeyServerErrorMessage = "server.errorMessage"
 // it becomes terminal, or after five minutes even if the provider is still stuck.
 const ConfigKeyAIUserConcurrentLimit = "ai.userConcurrentLimit"
 
+// ConfigKeyAIErrorHints holds the GLOBAL admin-authored error-copy rules as a
+// JSON array: [{"contains":"...","message":"...","modelType":"video"}].
+// contains 是原始错误里的小写包含片段,message 是替代展示的自研文案,
+// modelType 可选(image|video|text|audio,空=所有模型)。按模型配置的规则
+// 放在模型管理该模型 Config 的 errorHints 里,优先于这里的全局规则。
+// 生成失败与历史回看的分类都会先套用这些规则,保存后一分钟内生效,无需发版。
+const ConfigKeyAIErrorHints = "ai.errorHints"
+
 const (
 	DefaultAIUserConcurrentLimit = 5
 	MinAIUserConcurrentLimit     = 1

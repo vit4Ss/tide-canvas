@@ -82,3 +82,19 @@ func TestNormalizedStudioConfigLeavesUnrelatedLegacyPayloadUntouched(t *testing.
 		t.Fatalf("unrelated config changed: got %s, want %s", got, raw)
 	}
 }
+
+// errorHints 是管理员的错误提示映射,匹配片段可能含供应商后缀的模型名,
+// 创作台公开目录必须剥离(与 ai 包 publicModelConfigJSON 同口径)。
+func TestNormalizedStudioConfigStripsErrorHints(t *testing.T) {
+	got := normalizedStudioConfig(`{"resolutions":["1080p"],"errorHints":[{"contains":"vip-Dimensio","message":"文案"}]}`)
+	var cfg map[string]json.RawMessage
+	if err := json.Unmarshal(got, &cfg); err != nil {
+		t.Fatalf("unmarshal normalized config: %v", err)
+	}
+	if _, exists := cfg["errorHints"]; exists {
+		t.Fatalf("studio config leaked errorHints: %s", got)
+	}
+	if _, exists := cfg["resolutions"]; !exists {
+		t.Fatalf("unrelated key lost: %s", got)
+	}
+}
