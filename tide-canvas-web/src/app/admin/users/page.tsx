@@ -20,8 +20,7 @@
    ============================================================================ */
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Copy, Plus, RefreshCw, Search, UserPlus } from "lucide-react";
 import {
   AdminAlert,
@@ -171,6 +170,7 @@ function AdminUsersPageInner() {
   // 角色 CRUD 与账号角色变更为超管专属(服务端 requireSuper 同口径),
   // 运营视角直接收掉入口,避免点了必 403 的假按钮
   const isSuper = useAuthStore((s) => s.user?.role === 9);
+  const router = useRouter();
   const searchParams = useSearchParams();
   const urlKeyword = searchParams.get("keyword") ?? "";
 
@@ -528,7 +528,7 @@ function AdminUsersPageInner() {
   const userColumns: Column<AdminUserVO>[] = [
     {
       header: <span className="adm-user-column-title">用户</span>,
-      width: "18%",
+      width: "16%",
       cell: (u) => {
         const username = u.username || "—";
         const email = !u.email || isPlaceholderEmail(u.email) ? "未绑定邮箱" : u.email;
@@ -542,15 +542,9 @@ function AdminUsersPageInner() {
               }}
             />
             <div>
-              {/* 用户名即画像入口：运营看名单时最自然的下钻动作就是点名字 */}
-              <Link
-                href={`/admin/users/${u.id}`}
-                className="adm-user-name"
-                title={`查看 ${username} 的用户画像`}
-                style={{ display: "inline-block", color: "inherit" }}
-              >
-                {username}
-              </Link>
+              {/* 画像入口是行操作里的「画像」按钮：与编辑/积分等动作同处一列，
+                  运营不必猜哪些文字可点 */}
+              <div className="adm-user-name" title={username}>{username}</div>
               <div className="muted mono" style={{ fontSize: 11.5 }} title={email}>{email}</div>
               <div className="muted" style={{ fontSize: 11.5 }} title={remark}>{remark}</div>
             </div>
@@ -596,7 +590,7 @@ function AdminUsersPageInner() {
     {
       // 最近登录单行呈现，保持整行节奏一致；注册时间收进 hover 提示，需要再看
       header: "最近登录",
-      width: "16%",
+      width: "13%",
       className: "muted",
       cell: (u) => <span title={`注册于 ${fmtTime(u.createTime)}`}>{fmtTime(u.lastLoginTime)}</span>,
     },
@@ -611,11 +605,14 @@ function AdminUsersPageInner() {
     },
     {
       header: "操作",
-      width: "19%",
+      /* 24%：画像/编辑/积分/封禁/删除 五个按钮实测约 220px，19% 只够四个，
+         多出的 5% 从最近登录（定长时间串有富余）与用户列匀出 */
+      width: "24%",
       align: "right",
       cell: (u) => (
         <RowActions
           actions={[
+            { label: "画像", onClick: () => router.push(`/admin/users/${u.id}`) },
             { label: "编辑", onClick: () => openEdit(u) },
             { label: "积分", onClick: () => openPoints(u) },
             { label: u.status === 1 ? "封禁" : "解封", danger: u.status === 1, onClick: () => toggleBan(u) },

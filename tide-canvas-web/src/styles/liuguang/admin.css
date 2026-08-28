@@ -3855,54 +3855,101 @@ tr:hover .rowacts,
 }
 
 /* ── 用户画像（/admin/users/[id]）──────────────────────────────────────────
-   档案页专属词汇：身份区、画像标签、活跃热力（GitHub 风格周列网格）、
-   时段分布、占比条。全部走既有 token，仅浅色工作台（后台无暗色主题）。 */
-.uport-id {
+   档案页专属词汇。这一页是「一份档案」而不是仪表盘：整页共用一个白面，
+   内部靠标题与细分隔线分段，没有层层卡片；数值不套盒子，靠字号与字重
+   建立层级。自绘图形（活跃热力、时段柱、排行条）全部走既有 token。 */
+.uport {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 24px 28px 28px;
+  min-width: 0;
+}
+/* 身份区 */
+.uport-head {
   display: flex;
   align-items: flex-start;
   gap: 16px;
   min-width: 0;
-  margin-bottom: 16px;
 }
-.uport-id .av {
-  width: 64px;
-  height: 64px;
+.uport-av {
+  width: 56px;
+  height: 56px;
   border-radius: var(--r-lg);
   border: 1px solid var(--border);
   flex: none;
 }
-.uport-id-main {
-  min-width: 0;
+.uport-head-main {
   flex: 1;
+  min-width: 0;
 }
-.uport-id-name {
+.uport-name {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
-.uport-id-name strong {
-  font-size: 16px;
+.uport-name h1 {
+  margin: 0;
+  font-size: 20px;
   font-weight: 600;
+  line-height: 1.3;
   color: var(--text-title);
-  letter-spacing: 0;
 }
-.uport-id-meta {
+.uport-name > span {
+  font-size: 13px;
+  color: var(--text-faint);
+}
+.uport-meta {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 14px;
+  row-gap: 2px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.uport-remark {
   margin-top: 6px;
   font-size: 12.5px;
   color: var(--text-dim);
-  display: flex;
-  flex-wrap: wrap;
-  column-gap: 12px;
-  row-gap: 2px;
 }
-/* 画像标签：从行为数据推导的特征词。非「状态」，故无 tag2 的圆点；
-   风险类特征用 warn 色，其余保持中性——克制的强调只留给真正要盯的信号。 */
+.uport-acts {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+/* 可复制 ID：文字按钮，悬停显下划线，不抢层级 */
+.uport-copy {
+  font-size: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.uport-copy:hover {
+  text-decoration: underline;
+}
+/* 结论：整页唯一的「正文」，字号比数据大一档，行距放宽到可读节奏 */
+.uport-lede {
+  margin-top: 20px;
+  max-width: 76ch;
+}
+.uport-lede p {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.75;
+  color: var(--text);
+}
+.uport-lede p + p {
+  color: var(--text-dim);
+}
 .uport-traits {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: 16px;
+  margin-top: 12px;
 }
 .uport-trait {
   display: inline-flex;
@@ -3916,32 +3963,187 @@ tr:hover .rowacts,
   background: var(--panel);
 }
 .uport-trait.warn {
-  color: #b45309;
+  color: var(--warn-strong);
   background: var(--warn-soft);
 }
-/* 双栏内容区：窄容器自动落单栏 */
-.uport-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-  gap: 20px 24px;
-  align-items: start;
+/* 数字条：无边框，靠细竖线分隔 */
+.uport-figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 32px;
+  margin: 20px 0 0;
 }
-.uport-subhead {
-  font-size: 12.5px;
+.uport-figures > div {
+  min-width: 96px;
+  padding-left: 16px;
+  border-left: 1px solid var(--border-weak);
+}
+.uport-figures > div:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+.uport-figures dt {
+  font-size: 12px;
   color: var(--text-faint);
-  margin-bottom: 8px;
+}
+.uport-figures dd {
+  margin: 2px 0 0;
+  font-family: var(--mono);
+  font-size: 19px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--text-title);
+}
+.uport-figures span {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+/* 分区：细线起头，标题克制 */
+.uport-sec {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-weak);
+}
+.uport-sec-head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 12px;
+  margin-bottom: 14px;
 }
-.uport-subhead a {
-  font-size: 12px;
+.uport-sec-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-title);
+}
+.uport-sec-note {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.uport-sec-link {
+  font-size: 12.5px;
   color: var(--accent);
   text-decoration: none;
+  flex: none;
 }
-.uport-subhead a:hover {
+.uport-sec-link:hover {
   text-decoration: underline;
+}
+/* 分区内的小标题与空态 */
+.uport-cap {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  margin: 18px 0 8px;
+}
+.uport-sec > .uport-cap:first-of-type,
+.uport-two .uport-cap:first-child {
+  margin-top: 0;
+}
+.uport-cap-warn {
+  color: var(--warn-strong);
+}
+.uport-none {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.uport-two {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px 32px;
+  align-items: start;
+}
+.uport-activity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px 40px;
+}
+.uport-activity > div:last-child {
+  flex: 1;
+  min-width: 260px;
+}
+/* 排行：标签 + 占比条 + 数值 + 备注，一行一项，不用表格 */
+.uport-rank {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.uport-rank li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 30px;
+  font-size: 13px;
+  color: var(--text);
+}
+.uport-rank-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.uport-rank-bar {
+  flex: none;
+  width: 88px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-weak);
+  overflow: hidden;
+}
+.uport-rank-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.5;
+}
+.uport-rank b {
+  flex: none;
+  min-width: 44px;
+  text-align: right;
+  font-family: var(--mono);
+  font-weight: 500;
+  font-size: 12.5px;
+}
+.uport-rank em {
+  flex: none;
+  min-width: 68px;
+  text-align: right;
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+/* 登录记录：低造型列表，重复度高的审计流水不该用整张表 */
+.uport-logs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.uport-logs li {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 28px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.uport-logs li > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+.uport-logs li > span:last-child {
+  color: var(--text-faint);
+}
+.uport-log-fail {
+  color: var(--danger);
 }
 /* 活跃热力：周为列、7 行（一~日），5 档强度取自 accent 色阶。
    月份标签行与格网共用列轨道，保证对齐。 */
@@ -3958,6 +4160,7 @@ tr:hover .rowacts,
   color: var(--text-faint);
   text-align: right;
   padding-right: 2px;
+  margin-top: 15px;
 }
 .uport-heat-body {
   min-width: 0;
@@ -4000,9 +4203,11 @@ tr:hover .rowacts,
   background: transparent;
 }
 .uport-heat-legend {
-  display: inline-flex;
+  display: flex;
+  justify-content: flex-end;
   align-items: center;
   gap: 3px;
+  margin-top: 6px;
   font-size: 10.5px;
   color: var(--text-faint);
 }
@@ -4017,7 +4222,7 @@ tr:hover .rowacts,
   display: flex;
   align-items: flex-end;
   gap: 2px;
-  height: 64px;
+  height: 72px;
 }
 .uport-hours i {
   flex: 1;
@@ -4040,44 +4245,14 @@ tr:hover .rowacts,
   color: var(--text-faint);
   margin-top: 4px;
 }
-/* 排行占比条：数值右对齐等宽，条只做相对长度提示 */
-.uport-ratio {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.uport-ratio-track {
-  flex: 1;
-  min-width: 40px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--border-weak);
-  overflow: hidden;
-}
-.uport-ratio-fill {
-  height: 100%;
-  border-radius: 2px;
-  background: var(--accent);
-  opacity: 0.5;
-}
-.uport-ratio b {
-  font-family: var(--mono);
-  font-weight: 500;
-  font-size: 12.5px;
-  min-width: 52px;
-  text-align: right;
-}
-/* 可复制 ID：文字按钮，悬停显下划线，不抢层级 */
-.uport-copy {
-  font-family: var(--mono);
-  font-size: inherit;
-  color: inherit;
-  background: none;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-}
-.uport-copy:hover {
-  text-decoration: underline;
+@media (max-width: 720px) {
+  .uport {
+    padding: 20px 16px 24px;
+  }
+  .uport-head {
+    flex-wrap: wrap;
+  }
+  .uport-acts {
+    width: 100%;
+  }
 }
