@@ -649,7 +649,7 @@ export default function AdminUserPortraitPage() {
               ? `成功 ${fmtNum(generation.success)} · 失败 ${fmtNum(generation.failed)} · 取消 ${fmtNum(generation.cancelled)}${generation.processing > 0 ? ` · 进行中 ${fmtNum(generation.processing)}` : ""}`
               : undefined
           }
-          className="uport-card"
+          className="uport-card uport-create-sec"
         >
           {generation.total === 0 ? (
             <div className="uport-empty-state"><Sparkles aria-hidden size={20} /><span>还没有任何生成记录</span></div>

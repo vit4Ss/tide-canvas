@@ -4883,6 +4883,25 @@ tr:hover .rowacts,
   max-width: 520px;
 }
 
+/* 桌面端：主栏和侧栏只负责上半部；账务详情作为一个完整网格行，
+   放到两列内容之后，避免主栏继续变长而右侧提前结束。 */
+@media (min-width: 821px) {
+  .uport-main {
+    display: contents;
+  }
+  .uport-main > .uport-activity-sec,
+  .uport-main > .uport-create-sec {
+    grid-column: 1;
+  }
+  .uport-main > .uport-detail-grid {
+    grid-column: 1 / -1;
+  }
+  .uport-layout > .uport-aside {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+}
+
 @media (max-width: 1040px) {
   .uport-layout {
     grid-template-columns: minmax(0, 1.35fr) minmax(270px, 0.8fr);
