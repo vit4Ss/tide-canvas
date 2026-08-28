@@ -127,6 +127,7 @@ type supplierTokenEntry struct {
 	mu          sync.Mutex
 	identity    [sha256.Size]byte
 	token       string
+	refresh     string
 	expiresAt   time.Time
 	failedUntil time.Time
 	failMessage string
@@ -149,10 +150,15 @@ func (c *supplierTokenCache) entry(key string) *supplierTokenEntry {
 
 // supplierLoginResult is what a provider-specific login call returns on
 // success. CredentialRejected marks failures that will not heal on their own
-// (wrong password, 2FA enabled) and therefore back off longer.
+// (wrong password, 2FA enabled) and therefore back off longer. Refresh is an
+// optional renewal credential (e.g. the New API refresh cookie): with it the
+// next expiry renews the SAME panel session instead of logging in again —
+// re-login creates a new session each time, and panels with a per-account
+// session cap eventually answer 409 Conflict.
 type supplierLoginResult struct {
 	Token     string
 	ExpiresAt time.Time
+	Refresh   string
 }
 
 type supplierLoginError struct {
@@ -171,11 +177,14 @@ const (
 )
 
 // acquireSupplierLoginToken returns a cached session token or performs one
-// login. rejectedToken names a cached token the profile endpoint just refused
-// with 401/403 despite not being expired yet: it is discarded only when still
-// cached, so a concurrent snapshot that already renewed the session is reused
-// instead of triggering a second login.
-func acquireSupplierLoginToken(ctx context.Context, entry *supplierTokenEntry, identity [sha256.Size]byte, rejectedToken string, login func(context.Context) (supplierLoginResult, error)) (string, error) {
+// login/renewal. rejectedToken names a cached token the profile endpoint just
+// refused with 401/403 despite not being expired yet: it is discarded only
+// when still cached, so a concurrent snapshot that already renewed the session
+// is reused instead of triggering a second login. The login closure receives
+// the stored renewal credential ("" when none) and owns the renew-or-login
+// decision; a rejected token keeps the renewal credential, because the panel
+// session behind it is usually still alive.
+func acquireSupplierLoginToken(ctx context.Context, entry *supplierTokenEntry, identity [sha256.Size]byte, rejectedToken string, login func(ctx context.Context, refresh string) (supplierLoginResult, error)) (string, error) {
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 
@@ -185,6 +194,7 @@ func acquireSupplierLoginToken(ctx context.Context, entry *supplierTokenEntry, i
 		// mutex this goroutine is holding.
 		entry.identity = identity
 		entry.token = ""
+		entry.refresh = ""
 		entry.expiresAt = time.Time{}
 		entry.failedUntil = time.Time{}
 		entry.failMessage = ""
@@ -199,9 +209,10 @@ func acquireSupplierLoginToken(ctx context.Context, entry *supplierTokenEntry, i
 		return "", errors.New(entry.failMessage)
 	}
 
-	result, err := login(ctx)
+	result, err := login(ctx, entry.refresh)
 	if err != nil {
 		entry.token = ""
+		entry.refresh = ""
 		entry.failMessage = err.Error()
 		backoff := supplierLoginRetryBackoff
 		var loginErr *supplierLoginError
@@ -217,6 +228,7 @@ func acquireSupplierLoginToken(ctx context.Context, entry *supplierTokenEntry, i
 		return "", err
 	}
 	entry.token = result.Token
+	entry.refresh = result.Refresh
 	entry.expiresAt = result.ExpiresAt
 	entry.failMessage = ""
 	entry.failedUntil = time.Time{}
@@ -287,6 +299,15 @@ func decodeSupplierLoginFailure(resp *http.Response) error {
 		// 登录接口被限流：必须走长退避等窗口重置——1 分钟一次的常规重试
 		// 会把限流窗口不断续期，永远恢复不了。
 		return &supplierLoginError{message: "登录失败：登录接口被限流，20 分钟后自动重试（" + message + "）", rateLimited: true}
+	case resp.StatusCode == http.StatusConflict:
+		// 409 是会话层冲突（单账号并发会话上限/会话数达到上限，监控每次
+		// JWT 到期都新建会话，累计后面板开始拒绝）。1 分钟一次的重试只会
+		// 持续制造冲突并刷告警——走长退避等旧会话过期，并提示改用长效
+		// 系统访问令牌（清空账号密码即走令牌模式，彻底不再产生会话）。
+		return &supplierLoginError{
+			message:     "登录失败：会话冲突（" + message + "）；面板可能限制了账号会话数，20 分钟后自动重试，建议改用系统访问令牌（清空登录用户名/密码后粘贴令牌）",
+			rateLimited: true,
+		}
 	}
 	return &supplierLoginError{message: "登录失败：" + message}
 }
@@ -796,6 +817,8 @@ func (c *newAPIBalanceChecker) login(ctx context.Context, client *http.Client) (
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
+	// 同源 Origin：/api/user/auth/refresh 有 Origin 守卫，登录带上保持一致。
+	req.Header.Set("Origin", base.Scheme+"://"+base.Host)
 	req.Header.Set("User-Agent", "TideCanvas-BalanceMonitor/1.0")
 
 	resp, err := client.Do(req)
@@ -846,13 +869,19 @@ func (c *newAPIBalanceChecker) login(ctx context.Context, client *http.Client) (
 	now := time.Now()
 
 	// Current new-api: console auth is the short-lived JWT from the login
-	// body; the only cookie is a refresh token scoped to /api/user/auth that
-	// /api/user/self rejects. Prefer the JWT whenever present.
+	// body; the only cookie is a refresh token scoped to /api/user/auth. Keep
+	// that cookie as the renewal credential so the next expiry renews this
+	// session via /api/user/auth/refresh instead of opening a new one.
 	if token := strings.TrimSpace(payload.Data.AccessToken); token != "" {
+		refresh := ""
+		if pairs := mergeCookiePairs("", resp.Cookies()); pairs != "" {
+			refresh = newAPISessionCredential(userID, newAPICredentialCookie, pairs)
+		}
 		expiresIn := payload.Data.AccessExpiresAt - float64(now.Unix())
 		return supplierLoginResult{
 			Token:     newAPISessionCredential(userID, newAPICredentialBearer, token),
 			ExpiresAt: supplierSessionExpiry(now, expiresIn, token),
+			Refresh:   refresh,
 		}, nil
 	}
 
@@ -891,9 +920,122 @@ func (c *newAPIBalanceChecker) login(ctx context.Context, client *http.Client) (
 	}, nil
 }
 
+// mergeCookiePairs merges Set-Cookie values into an existing "name=value;
+// name=value" pair list: existing order is kept, fresh cookies override by
+// name or append. It powers both the initial refresh-credential capture
+// (existing = "") and refresh-token rotation on renewal.
+func mergeCookiePairs(existing string, fresh []*http.Cookie) string {
+	order := make([]string, 0, 4)
+	values := make(map[string]string, 4)
+	for _, pair := range strings.Split(existing, ";") {
+		name, value, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		if !ok || name == "" {
+			continue
+		}
+		if _, seen := values[name]; !seen {
+			order = append(order, name)
+		}
+		values[name] = value
+	}
+	for _, ck := range fresh {
+		if ck == nil || ck.Name == "" {
+			continue
+		}
+		if _, seen := values[ck.Name]; !seen {
+			order = append(order, ck.Name)
+		}
+		values[ck.Name] = ck.Value
+	}
+	pairs := make([]string, 0, len(order))
+	for _, name := range order {
+		pairs = append(pairs, name+"="+values[name])
+	}
+	return strings.Join(pairs, "; ")
+}
+
+// renewSession exchanges the stored refresh cookie for a fresh console JWT via
+// POST /api/user/auth/refresh — the SAME panel session is renewed, so the
+// per-account session count stays at one no matter how short-lived the JWTs
+// are. Any failure falls back to a full login in the caller.
+func (c *newAPIBalanceChecker) renewSession(ctx context.Context, client *http.Client, refresh string) (supplierLoginResult, error) {
+	userID, _, cookiePairs := splitNewAPISessionCredential(refresh)
+	if strings.TrimSpace(cookiePairs) == "" {
+		return supplierLoginResult{}, errors.New("无续期凭证")
+	}
+	base, err := url.Parse(strings.TrimRight(strings.TrimSpace(c.cfg.BaseURL), "/"))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return supplierLoginResult{}, errors.New("供应商请求地址无效")
+	}
+	base.Path = strings.TrimRight(base.Path, "/") + "/api/user/auth/refresh"
+	base.RawQuery = ""
+	base.Fragment = ""
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base.String(), nil)
+	if err != nil {
+		return supplierLoginResult{}, errors.New("无法创建续期请求")
+	}
+	req.Header.Set("Accept", "application/json")
+	// 该端点有 SessionCookieOriginGuard：必须携带同源 Origin，否则 403
+	// AUTH_ORIGIN_FORBIDDEN（实测 uniart.fun）。
+	req.Header.Set("Origin", base.Scheme+"://"+base.Host)
+	req.Header.Set("Cookie", cookiePairs)
+	req.Header.Set("User-Agent", "TideCanvas-BalanceMonitor/1.0")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return supplierLoginResult{}, errors.New("续期请求失败")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		return supplierLoginResult{}, fmt.Errorf("续期返回 HTTP %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			ID              int64   `json:"id"`
+			AccessToken     string  `json:"access_token"`
+			AccessExpiresAt float64 `json:"access_expires_at"`
+			User            struct {
+				ID int64 `json:"id"`
+			} `json:"user"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+		return supplierLoginResult{}, errors.New("续期响应格式无效")
+	}
+	token := strings.TrimSpace(payload.Data.AccessToken)
+	if !payload.Success || token == "" {
+		return supplierLoginResult{}, errors.New("续期被拒绝")
+	}
+	if payload.Data.ID > 0 {
+		userID = strconv.FormatInt(payload.Data.ID, 10)
+	} else if payload.Data.User.ID > 0 {
+		userID = strconv.FormatInt(payload.Data.User.ID, 10)
+	}
+	now := time.Now()
+	return supplierLoginResult{
+		Token:     newAPISessionCredential(userID, newAPICredentialBearer, token),
+		ExpiresAt: supplierSessionExpiry(now, payload.Data.AccessExpiresAt-float64(now.Unix()), token),
+		// 面板可能轮换 refresh cookie：合并 Set-Cookie，保住续期链。
+		Refresh: newAPISessionCredential(userID, newAPICredentialCookie, mergeCookiePairs(cookiePairs, resp.Cookies())),
+	}, nil
+}
+
 func (c *newAPIBalanceChecker) sessionCredential(ctx context.Context, client *http.Client, rejected string) (string, error) {
 	return acquireSupplierLoginToken(ctx, c.tokens.entry(c.providerKey), c.cacheIdentity(), rejected,
-		func(ctx context.Context) (supplierLoginResult, error) { return c.login(ctx, client) })
+		func(ctx context.Context, refresh string) (supplierLoginResult, error) {
+			// 优先续期同一个会话：New API 每次登录都在面板侧新建会话，短命
+			// JWT（~15 分钟）叠加会话数上限最终换来 409 Conflict。续期失败
+			// （面板重启、refresh 过期）才退回完整登录。
+			if refresh != "" {
+				if result, err := c.renewSession(ctx, client, refresh); err == nil {
+					return result, nil
+				}
+			}
+			return c.login(ctx, client)
+		})
 }
 
 func (c *newAPIBalanceChecker) read(ctx context.Context, client *http.Client) (supplierBalanceReading, error) {
@@ -906,11 +1048,24 @@ func (c *newAPIBalanceChecker) read(ctx context.Context, client *http.Client) (s
 		if err != nil && rejected {
 			// New API reports a dead session as HTTP 200 {success:false} (and
 			// some forks as 401), so any auth rejection discards the cached
-			// session and retries exactly once with a fresh login.
+			// session and retries exactly once with a fresh credential.
 			if credential, err = c.sessionCredential(ctx, client, credential); err != nil {
 				return supplierBalanceReading{}, err
 			}
-			reading, _, err = c.fetchSelf(ctx, client, c.sessionAuth(credential))
+			var rejectedAgain bool
+			reading, rejectedAgain, err = c.fetchSelf(ctx, client, c.sessionAuth(credential))
+			if err != nil && rejectedAgain {
+				// 连续两次被拒说明续期端点还在续发失效会话的 JWT（面板迁移
+				// /重启后的病态窗口）：丢弃续期凭证，下一轮走完整登录，
+				// 避免每轮「续期成功→随即被拒」的死循环。
+				entry := c.tokens.entry(c.providerKey)
+				entry.mu.Lock()
+				if entry.token == credential {
+					entry.token = ""
+				}
+				entry.refresh = ""
+				entry.mu.Unlock()
+			}
 		}
 		return reading, err
 	}
@@ -1172,7 +1327,7 @@ func (c *balanceProfileChecker) login(ctx context.Context, client *http.Client) 
 
 func (c *balanceProfileChecker) sessionToken(ctx context.Context, client *http.Client, rejectedToken string) (string, error) {
 	return acquireSupplierLoginToken(ctx, c.tokens.entry(c.providerKey), c.cacheIdentity(), rejectedToken,
-		func(ctx context.Context) (supplierLoginResult, error) { return c.login(ctx, client) })
+		func(ctx context.Context, _ string) (supplierLoginResult, error) { return c.login(ctx, client) })
 }
 
 func (c *balanceProfileChecker) read(ctx context.Context, client *http.Client) (supplierBalanceReading, error) {
@@ -1379,7 +1534,7 @@ func (c *dimensioBalanceChecker) login(ctx context.Context, client *http.Client)
 
 func (c *dimensioBalanceChecker) sessionToken(ctx context.Context, client *http.Client, rejectedToken string) (string, error) {
 	return acquireSupplierLoginToken(ctx, c.tokens.entry(c.providerKey), c.cacheIdentity(), rejectedToken,
-		func(ctx context.Context) (supplierLoginResult, error) { return c.login(ctx, client) })
+		func(ctx context.Context, _ string) (supplierLoginResult, error) { return c.login(ctx, client) })
 }
 
 func (c *dimensioBalanceChecker) read(ctx context.Context, client *http.Client) (supplierBalanceReading, error) {

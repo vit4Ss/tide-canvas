@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -901,6 +902,147 @@ func TestNewAPIBalanceCheckerUsesLoginAccessTokenWhenPanelIssuesJWT(t *testing.T
 	}
 }
 
+func TestNewAPISessionRefreshRenewsSameSessionInsteadOfRelogin(t *testing.T) {
+	// 生产事故（Uniart 409 Conflict）的根治路径：JWT 到期后必须走
+	// POST /api/user/auth/refresh 续期同一个会话，而不是重新登录新建会话——
+	// 每次登录都会在面板侧新增会话，短命 JWT 叠加单账号会话上限最终把登录
+	// 打成 409。续期需携带同源 Origin（守卫）与登录下发的 refresh Cookie，
+	// 并接受 refresh Cookie 轮换；续期失败才允许回退完整登录。
+	var loginCount, refreshCount atomic.Int64
+	var refreshDead atomic.Bool
+	expires := func() string { return strconv.FormatInt(time.Now().Add(15*time.Minute).Unix(), 10) }
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/user/login":
+			n := loginCount.Add(1)
+			http.SetCookie(w, &http.Cookie{Name: "new_api_refresh", Value: "r-login-" + strconv.FormatInt(n, 10), Path: "/api/user/auth"})
+			_, _ = w.Write([]byte(`{"success":true,"data":{"access_token":"jwt-login-` + strconv.FormatInt(n, 10) +
+				`","access_expires_at":` + expires() + `,"user":{"id":7}}}`))
+		case "/api/user/auth/refresh":
+			if got := r.Header.Get("Origin"); got != server.URL {
+				t.Errorf("refresh Origin = %q, want same-origin %q", got, server.URL)
+			}
+			if refreshDead.Load() {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"success":false,"message":"Unauthorized"}`))
+				return
+			}
+			n := refreshCount.Add(1)
+			wantCookie := "r-login-1"
+			if n > 1 {
+				wantCookie = "r-rotated-" + strconv.FormatInt(n-1, 10)
+			}
+			if cookie, err := r.Cookie("new_api_refresh"); err != nil || cookie.Value != wantCookie {
+				t.Errorf("refresh cookie = %v (err %v), want %s — rotation must be preserved", cookie, err, wantCookie)
+			}
+			http.SetCookie(w, &http.Cookie{Name: "new_api_refresh", Value: "r-rotated-" + strconv.FormatInt(n, 10), Path: "/api/user/auth"})
+			_, _ = w.Write([]byte(`{"success":true,"data":{"access_token":"jwt-refresh-` + strconv.FormatInt(n, 10) +
+				`","access_expires_at":` + expires() + `,"user":{"id":7}}}`))
+		case "/api/user/self":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota":500000}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	checker := &newAPIBalanceChecker{providerKey: "uniart", cfg: config.NewAPIBalanceConfig{
+		Enabled: true, BaseURL: server.URL, Username: "ops", Password: "pw", QuotaPerUnit: 500000,
+	}, tokens: newSupplierTokenCache()}
+	expireNow := func() {
+		entry := checker.tokens.entry("uniart")
+		entry.mu.Lock()
+		entry.expiresAt = time.Now().Add(-time.Minute)
+		entry.mu.Unlock()
+	}
+
+	// 第一次：登录建立会话。
+	if _, err := checker.read(context.Background(), server.Client()); err != nil {
+		t.Fatalf("initial read: %v", err)
+	}
+	// JWT 到期两次：都必须走续期（含 Cookie 轮换），绝不新建会话。
+	for i := 0; i < 2; i++ {
+		expireNow()
+		if _, err := checker.read(context.Background(), server.Client()); err != nil {
+			t.Fatalf("read after expiry %d: %v", i+1, err)
+		}
+	}
+	if loginCount.Load() != 1 || refreshCount.Load() != 2 {
+		t.Fatalf("login=%d refresh=%d, want exactly 1 login and 2 renewals", loginCount.Load(), refreshCount.Load())
+	}
+
+	// 续期通道失效（面板重启/refresh 过期）→ 回退完整登录。
+	refreshDead.Store(true)
+	expireNow()
+	if _, err := checker.read(context.Background(), server.Client()); err != nil {
+		t.Fatalf("read after refresh death: %v", err)
+	}
+	if loginCount.Load() != 2 {
+		t.Fatalf("login count = %d, want fallback login after refresh failure", loginCount.Load())
+	}
+}
+
+func TestNewAPISessionRefreshDropsDeadRenewalChainAfterDoubleRejection(t *testing.T) {
+	// 病态窗口（面板迁移/重启）：续期端点仍在为已失效的会话续发 JWT，而
+	// /api/user/self 全部拒绝。若不丢弃续期凭证，监控会每轮「续期成功→
+	// 随即被拒」死循环，永远不回到完整登录。
+	var loginCount, refreshCount atomic.Int64
+	var sessionDead atomic.Bool
+	expires := func() string { return strconv.FormatInt(time.Now().Add(15*time.Minute).Unix(), 10) }
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/user/login":
+			n := loginCount.Add(1)
+			sessionDead.Store(false) // 重新登录后会话恢复
+			http.SetCookie(w, &http.Cookie{Name: "new_api_refresh", Value: "r-" + strconv.FormatInt(n, 10), Path: "/api/user/auth"})
+			_, _ = w.Write([]byte(`{"success":true,"data":{"access_token":"jwt-login-` + strconv.FormatInt(n, 10) +
+				`","access_expires_at":` + expires() + `,"user":{"id":7}}}`))
+		case "/api/user/auth/refresh":
+			refreshCount.Add(1)
+			_, _ = w.Write([]byte(`{"success":true,"data":{"access_token":"jwt-refresh-stale","access_expires_at":` +
+				expires() + `,"user":{"id":7}}}`))
+		case "/api/user/self":
+			if sessionDead.Load() {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"success":false,"message":"unauthorized"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota":500000}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	checker := &newAPIBalanceChecker{providerKey: "uniart", cfg: config.NewAPIBalanceConfig{
+		Enabled: true, BaseURL: server.URL, Username: "ops", Password: "pw", QuotaPerUnit: 500000,
+	}, tokens: newSupplierTokenCache()}
+
+	if _, err := checker.read(context.Background(), server.Client()); err != nil {
+		t.Fatalf("initial read: %v", err)
+	}
+	// 会话在面板侧失效：本轮「被拒→续期→再次被拒」以失败结束，但必须丢弃
+	// 续期凭证。
+	sessionDead.Store(true)
+	if _, err := checker.read(context.Background(), server.Client()); err == nil {
+		t.Fatal("read during dead session must fail")
+	}
+	if refreshCount.Load() != 1 {
+		t.Fatalf("refresh count = %d, want 1 renewal attempt", refreshCount.Load())
+	}
+	// 下一轮：没有续期凭证 → 完整登录 → 恢复。
+	if _, err := checker.read(context.Background(), server.Client()); err != nil {
+		t.Fatalf("recovery read: %v", err)
+	}
+	if loginCount.Load() != 2 {
+		t.Fatalf("login count = %d, want full re-login after the renewal chain was dropped", loginCount.Load())
+	}
+}
+
 func TestDecodeSupplierLoginFailureBacksOffLongOnRateLimit(t *testing.T) {
 	resp := &http.Response{StatusCode: http.StatusTooManyRequests, Body: http.NoBody}
 	err := decodeSupplierLoginFailure(resp)
@@ -913,5 +1055,27 @@ func TestDecodeSupplierLoginFailureBacksOffLongOnRateLimit(t *testing.T) {
 	}
 	if !strings.Contains(loginErr.message, "限流") {
 		t.Errorf("message = %q, want rate-limit wording", loginErr.message)
+	}
+}
+
+func TestDecodeSupplierLoginFailureBacksOffLongOnSessionConflict(t *testing.T) {
+	// Observed in production (Uniart): HTTP 409 {"message":"Conflict"} once the
+	// panel's per-account session cap is hit — every login creates a session,
+	// and the monitor logs in on each short-lived JWT expiry. Minute-interval
+	// retries only sustain the conflict and fire hundreds of alerts.
+	resp := &http.Response{
+		StatusCode: http.StatusConflict,
+		Body:       io.NopCloser(strings.NewReader(`{"message":"Conflict"}`)),
+	}
+	err := decodeSupplierLoginFailure(resp)
+	loginErr, ok := err.(*supplierLoginError)
+	if !ok {
+		t.Fatalf("error type = %T, want *supplierLoginError", err)
+	}
+	if !loginErr.rateLimited {
+		t.Error("409 must take the long backoff instead of minute-interval retries")
+	}
+	if !strings.Contains(loginErr.message, "会话冲突") || !strings.Contains(loginErr.message, "系统访问令牌") {
+		t.Errorf("message = %q, want conflict wording with the access-token suggestion", loginErr.message)
 	}
 }
