@@ -66,6 +66,9 @@ type BalanceMonitorConfig struct {
 	Wxart NewAPIBalanceConfig `mapstructure:"wxart"`
 	// SecureSkill runs the same platform software as Mikoto/CCGO.
 	SecureSkill BearerProfileBalanceConfig `mapstructure:"secureskill"`
+	// APIYI is a standard New API panel with an officially documented balance
+	// endpoint. Credentials are database-owned like Uniart's.
+	APIYI NewAPIBalanceConfig `mapstructure:"apiyi"`
 }
 
 // NewAPIBalanceConfig configures a New API compatible GET /api/user/self
@@ -457,6 +460,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("balanceMonitor.wxart.baseUrl", "https://wxart.space")
 	v.SetDefault("balanceMonitor.wxart.quotaPerUnit", 100)
 	v.SetDefault("balanceMonitor.wxart.currency", "R")
+	v.SetDefault("balanceMonitor.apiyi.name", "APIYI")
+	v.SetDefault("balanceMonitor.apiyi.baseUrl", "https://api.apiyi.com")
+	v.SetDefault("balanceMonitor.apiyi.quotaPerUnit", 500000)
+	v.SetDefault("balanceMonitor.apiyi.currency", "USD")
 	v.SetDefault("balanceMonitor.mikoto.name", "Mikoto")
 	v.SetDefault("balanceMonitor.mikoto.baseUrl", "https://api.mikoto.vip")
 	v.SetDefault("balanceMonitor.mikoto.timezone", "Asia/Shanghai")
@@ -550,6 +557,9 @@ func normalize(cfg *Config) {
 	cfg.BalanceMonitor.Wxart.Username, cfg.BalanceMonitor.Wxart.Password = "", ""
 	cfg.BalanceMonitor.SecureSkill.Enabled, cfg.BalanceMonitor.SecureSkill.AccessToken, cfg.BalanceMonitor.SecureSkill.LowBalance = false, "", 0
 	cfg.BalanceMonitor.SecureSkill.Email, cfg.BalanceMonitor.SecureSkill.Password = "", ""
+	cfg.BalanceMonitor.APIYI.Enabled, cfg.BalanceMonitor.APIYI.AccessToken, cfg.BalanceMonitor.APIYI.LowBalance = false, "", 0
+	cfg.BalanceMonitor.APIYI.UserID = ""
+	cfg.BalanceMonitor.APIYI.Username, cfg.BalanceMonitor.APIYI.Password = "", ""
 	if strings.TrimSpace(cfg.BalanceMonitor.DLAPI.Name) == "" {
 		cfg.BalanceMonitor.DLAPI.Name = "DLAPI"
 	}
@@ -576,6 +586,15 @@ func normalize(cfg *Config) {
 	}
 	if strings.TrimSpace(cfg.BalanceMonitor.Wxart.Currency) == "" {
 		cfg.BalanceMonitor.Wxart.Currency = "R"
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.APIYI.Name) == "" {
+		cfg.BalanceMonitor.APIYI.Name = "APIYI"
+	}
+	if cfg.BalanceMonitor.APIYI.QuotaPerUnit <= 0 {
+		cfg.BalanceMonitor.APIYI.QuotaPerUnit = 500000
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.APIYI.Currency) == "" {
+		cfg.BalanceMonitor.APIYI.Currency = "USD"
 	}
 	if strings.TrimSpace(cfg.BalanceMonitor.Mikoto.Name) == "" {
 		cfg.BalanceMonitor.Mikoto.Name = "Mikoto"

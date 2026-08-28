@@ -147,6 +147,13 @@ balanceMonitor:
     baseUrl: https://token.secure-skill.com
     timezone: Asia/Shanghai
     currency: USD
+  # APIYI 是标准 New API 面板（官方文档化的余额接口）：系统令牌长期有效，
+  # 令牌与预警线在管理后台「余额监控 → APIYI 配置」维护。
+  apiyi:
+    name: APIYI
+    baseUrl: https://api.apiyi.com
+    quotaPerUnit: 500000
+    currency: USD
 
 # 易联达Pay (eliandapay / api.ndow.cn) 聚合收银台 —— 一个接口同时支持支付宝 + 微信，
 # MD5 签名。下单在 /api/orders 生成 submit.php 跳转 URL；网关异步回调打到

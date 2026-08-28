@@ -385,6 +385,7 @@ func (m *supplierBalanceMonitor) currentCheckers() ([]supplierBalanceChecker, er
 		&newAPIBalanceChecker{providerKey: "uniart", cfg: cfg.Uniart, tokens: m.tokens},
 		&newAPIBalanceChecker{providerKey: "wxart", cfg: cfg.Wxart, tokens: m.tokens},
 		&balanceProfileChecker{providerKey: "secureskill", cfg: cfg.SecureSkill, tokens: m.tokens},
+		&newAPIBalanceChecker{providerKey: "apiyi", cfg: cfg.APIYI, tokens: m.tokens},
 	}, err
 }
 
@@ -414,6 +415,9 @@ func loadLiveSupplierBalanceConfig(db *gorm.DB, cfg config.BalanceMonitorConfig)
 	cfg.Wxart.Enabled, cfg.Wxart.AccessToken, cfg.Wxart.LowBalance = false, "", 0
 	cfg.Wxart.UserID = ""
 	cfg.Wxart.Username, cfg.Wxart.Password = "", ""
+	cfg.APIYI.Enabled, cfg.APIYI.AccessToken, cfg.APIYI.LowBalance = false, "", 0
+	cfg.APIYI.UserID = ""
+	cfg.APIYI.Username, cfg.APIYI.Password = "", ""
 	cfg.SecureSkill.Enabled, cfg.SecureSkill.AccessToken, cfg.SecureSkill.LowBalance = false, "", 0
 	cfg.SecureSkill.Email, cfg.SecureSkill.Password = "", ""
 
@@ -510,6 +514,24 @@ func loadLiveSupplierBalanceConfig(db *gorm.DB, cfg config.BalanceMonitorConfig)
 	}
 	if value, ok := parseSupplierBalanceThreshold(values, model.ConfigKeyBalanceWxartLowBalance); ok {
 		cfg.Wxart.LowBalance = value
+	}
+	if value, ok := values[model.ConfigKeyBalanceAPIYIEnabled]; ok {
+		cfg.APIYI.Enabled = parseSupplierBalanceEnabled(value)
+	}
+	if value, ok := values[model.ConfigKeyBalanceAPIYIUserID]; ok {
+		cfg.APIYI.UserID = strings.TrimSpace(value)
+	}
+	if value, ok := values[model.ConfigKeyBalanceAPIYIUsername]; ok {
+		cfg.APIYI.Username = strings.TrimSpace(value)
+	}
+	if value, ok := values[model.ConfigKeyBalanceAPIYIPassword]; ok {
+		cfg.APIYI.Password = strings.TrimSpace(value)
+	}
+	if value, ok := values[model.ConfigKeyBalanceAPIYIAccessToken]; ok {
+		cfg.APIYI.AccessToken = strings.TrimSpace(value)
+	}
+	if value, ok := parseSupplierBalanceThreshold(values, model.ConfigKeyBalanceAPIYILowBalance); ok {
+		cfg.APIYI.LowBalance = value
 	}
 	return cfg, nil
 }

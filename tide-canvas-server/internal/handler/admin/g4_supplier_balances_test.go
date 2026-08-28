@@ -491,6 +491,7 @@ func TestSupplierBalanceMonitorNeverFallsBackToLegacyEnvironmentCredentials(t *t
 		Dimensio:    config.DimensioBalanceConfig{Enabled: true, AccessToken: "legacy-dimensio", Username: "legacy", Password: "legacy", LowBalance: 10},
 		Uniart:      config.NewAPIBalanceConfig{Enabled: true, AccessToken: "legacy-uniart", UserID: "1", LowBalance: 10},
 		Wxart:       config.NewAPIBalanceConfig{Enabled: true, AccessToken: "legacy-wxart", UserID: "1", LowBalance: 10},
+		APIYI:       config.NewAPIBalanceConfig{Enabled: true, AccessToken: "legacy-apiyi", UserID: "1", Username: "legacy", Password: "legacy", LowBalance: 10},
 		SecureSkill: config.BearerProfileBalanceConfig{Enabled: true, AccessToken: "legacy-secureskill", Email: "legacy@a", Password: "legacy", LowBalance: 10},
 	}
 	live, err := loadLiveSupplierBalanceConfig(db, legacy)
@@ -512,7 +513,9 @@ func TestSupplierBalanceMonitorNeverFallsBackToLegacyEnvironmentCredentials(t *t
 		live.Wxart.Enabled || live.Wxart.AccessToken != "" || live.Wxart.LowBalance != 0 ||
 		live.Wxart.UserID != "" ||
 		live.SecureSkill.Enabled || live.SecureSkill.AccessToken != "" || live.SecureSkill.LowBalance != 0 ||
-		live.SecureSkill.Email != "" || live.SecureSkill.Password != "" {
+		live.SecureSkill.Email != "" || live.SecureSkill.Password != "" ||
+		live.APIYI.Enabled || live.APIYI.AccessToken != "" || live.APIYI.LowBalance != 0 ||
+		live.APIYI.UserID != "" || live.APIYI.Username != "" || live.APIYI.Password != "" {
 		t.Fatalf("legacy dynamic values survived database overlay: %+v", live)
 	}
 }
@@ -720,8 +723,8 @@ func TestSupplierBalanceMonitorReportsDatabaseConfigFailureAccurately(t *testing
 
 	monitor := newSupplierBalanceMonitorWithDBAndClient(db, config.BalanceMonitorConfig{}, http.DefaultClient)
 	rows := monitor.snapshot(context.Background()).Suppliers
-	if len(rows) != 8 {
-		t.Fatalf("supplier rows = %d, want 8", len(rows))
+	if len(rows) != 9 {
+		t.Fatalf("supplier rows = %d, want 9", len(rows))
 	}
 	for _, row := range rows {
 		if row.State != "error" || row.Message != "无法读取监控配置" || row.Balance != nil || row.Stale {

@@ -74,6 +74,17 @@ const (
 	ConfigKeyBalanceSecureSkillPassword    = "balance.secureskill.password"
 	ConfigKeyBalanceSecureSkillAccessToken = "balance.secureskill.accessToken"
 	ConfigKeyBalanceSecureSkillLowBalance  = "balance.secureskill.lowBalance"
+
+	// APIYI is a standard New API panel with a documented balance endpoint
+	// (GET /api/user/self, quota/500000 = USD). Its console-generated system
+	// token is long-lived, so the token is the primary integration;
+	// username+password auto-login works as well.
+	ConfigKeyBalanceAPIYIEnabled     = "balance.apiyi.enabled"
+	ConfigKeyBalanceAPIYIUserID      = "balance.apiyi.userId"
+	ConfigKeyBalanceAPIYIUsername    = "balance.apiyi.username"
+	ConfigKeyBalanceAPIYIPassword    = "balance.apiyi.password"
+	ConfigKeyBalanceAPIYIAccessToken = "balance.apiyi.accessToken"
+	ConfigKeyBalanceAPIYILowBalance  = "balance.apiyi.lowBalance"
 )
 
 // SupplierBalanceConfigKeys are protected baseline keys in the generic config
@@ -122,6 +133,12 @@ var SupplierBalanceConfigKeys = []string{
 	ConfigKeyBalanceSecureSkillPassword,
 	ConfigKeyBalanceSecureSkillAccessToken,
 	ConfigKeyBalanceSecureSkillLowBalance,
+	ConfigKeyBalanceAPIYIEnabled,
+	ConfigKeyBalanceAPIYIUserID,
+	ConfigKeyBalanceAPIYIUsername,
+	ConfigKeyBalanceAPIYIPassword,
+	ConfigKeyBalanceAPIYIAccessToken,
+	ConfigKeyBalanceAPIYILowBalance,
 }
 
 var supplierBalanceSecretKeys = map[string]struct{}{
@@ -141,6 +158,8 @@ var supplierBalanceSecretKeys = map[string]struct{}{
 	ConfigKeyBalanceWxartAccessToken:       {},
 	ConfigKeyBalanceSecureSkillPassword:    {},
 	ConfigKeyBalanceSecureSkillAccessToken: {},
+	ConfigKeyBalanceAPIYIPassword:          {},
+	ConfigKeyBalanceAPIYIAccessToken:       {},
 }
 
 // IsSupplierBalanceSecretConfigKey reports whether a sys_config value contains
@@ -205,5 +224,12 @@ func SupplierBalanceBaselineConfigs() []SysConfig {
 		{ConfigKey: ConfigKeyBalanceSecureSkillPassword, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "secure-skill 登录密码；保存后脱敏显示，清空可移除"},
 		{ConfigKey: ConfigKeyBalanceSecureSkillAccessToken, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "secure-skill 访问令牌（JWT，不含 Bearer；已配置账号密码时留空即可，仅作手动兜底）"},
 		{ConfigKey: ConfigKeyBalanceSecureSkillLowBalance, ConfigValue: "20", Group: ConfigGroupSupplierBalances, Description: "secure-skill 低余额预警线（USD）"},
+
+		{ConfigKey: ConfigKeyBalanceAPIYIEnabled, ConfigValue: "1", Group: ConfigGroupSupplierBalances, Description: "APIYI 余额监控开关；保存后即时生效"},
+		{ConfigKey: ConfigKeyBalanceAPIYIUserID, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "APIYI 用户 ID（可留空；官方余额接口仅凭系统令牌即可查询）"},
+		{ConfigKey: ConfigKeyBalanceAPIYIUsername, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "APIYI 登录用户名（可选；推荐直接用系统令牌，无需账号密码）"},
+		{ConfigKey: ConfigKeyBalanceAPIYIPassword, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "APIYI 登录密码（可选；保存后脱敏显示，清空可移除）"},
+		{ConfigKey: ConfigKeyBalanceAPIYIAccessToken, ConfigValue: "", Group: ConfigGroupSupplierBalances, Description: "APIYI 系统令牌（控制台「个人中心 → 系统令牌」生成，长期有效，原样粘贴）——推荐方式"},
+		{ConfigKey: ConfigKeyBalanceAPIYILowBalance, ConfigValue: "20", Group: ConfigGroupSupplierBalances, Description: "APIYI 低余额预警线（USD，面板额度按 500000 quota = 1 折算）"},
 	}
 }
