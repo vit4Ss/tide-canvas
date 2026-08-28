@@ -229,17 +229,20 @@ function Section({
   note,
   link,
   className,
+  icon: Icon,
   children,
 }: {
   title: string;
   note?: string;
   link?: { href: string; text: string };
   className?: string;
+  icon?: LucideIcon;
   children: React.ReactNode;
 }) {
   return (
     <section className={`uport-sec${className ? ` ${className}` : ""}`}>
       <div className="uport-sec-head">
+        {Icon ? <span className="uport-section-icon"><Icon aria-hidden size={16} /></span> : null}
         <h2>{title}</h2>
         {note ? <span className="uport-sec-note">{note}</span> : null}
         {link ? <Link className="uport-sec-link" href={link.href}>{link.text} →</Link> : null}
@@ -619,7 +622,7 @@ export default function AdminUserPortraitPage() {
           <main className="uport-main">
 
         {/* ── 活跃度 ── */}
-        <Section title="活跃度" note="最近 90 天的创作节奏" className="uport-card uport-activity-sec">
+        <Section title="活跃度" note="最近 90 天的创作节奏" icon={Activity} className="uport-card uport-activity-sec">
           {hasActivity || hasHours ? (
             <div className="uport-activity">
               <div className="uport-chart-panel">
@@ -649,6 +652,7 @@ export default function AdminUserPortraitPage() {
               ? `成功 ${fmtNum(generation.success)} · 失败 ${fmtNum(generation.failed)} · 取消 ${fmtNum(generation.cancelled)}${generation.processing > 0 ? ` · 进行中 ${fmtNum(generation.processing)}` : ""}`
               : undefined
           }
+          icon={Sparkles}
           className="uport-card uport-create-sec"
         >
           {generation.total === 0 ? (
@@ -691,7 +695,8 @@ export default function AdminUserPortraitPage() {
           title="积分流水"
           note={`累计获得 ${fmtNum(points.totalEarned)} · 消耗 ${fmtNum(points.totalSpent)}${points.refundCount > 0 ? ` · 退款 ${fmtNum(points.refundCount)} 笔` : ""}`}
           link={{ href: `/admin/points?userId=${user.id}`, text: "完整流水" }}
-          className={`uport-card${detailNeedsFullWidth ? " uport-detail-full" : ""}`}
+          icon={Coins}
+          className={`uport-card uport-points-sec${detailNeedsFullWidth ? " uport-detail-full" : ""}`}
         >
           {points.byType.length === 0 && points.transactions.length === 0 ? (
             <div className="uport-empty-state"><Coins aria-hidden size={20} /><span>暂无积分流水</span></div>
@@ -733,6 +738,7 @@ export default function AdminUserPortraitPage() {
               ? `兑换码 ${fmtNum(commerce.claimCount)} 次 / +${fmtNum(commerce.claimPoints)} 分 · 签到 ${fmtNum(commerce.checkinCount)} 次 / +${fmtNum(commerce.checkinPoints)} 分${commerce.lastCheckin ? ` · 最近签到 ${commerce.lastCheckin}` : ""}`
               : undefined
           }
+          icon={BadgeDollarSign}
           className={`uport-card uport-commerce-sec${detailNeedsFullWidth ? " uport-detail-full" : ""}`}
         >
           {!hasCommerce ? (
