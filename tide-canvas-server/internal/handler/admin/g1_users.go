@@ -48,6 +48,8 @@ func RegisterUsers(g *gin.RouterGroup, d *app.Deps) {
 	// 快速生成用户:静态段先于 :id 注册(gin 拒绝 static/param 兄弟段的歧义)
 	g.POST("/users/generate", h.generateUser)
 	g.GET("/users/:id", h.getUser)
+	// 用户画像：单用户全维度聚合（积分/活跃/生成/模型/资产/消费/社区）
+	g.GET("/users/:id/portrait", h.userPortrait)
 	g.PUT("/users/:id", h.updateUser)
 	g.DELETE("/users/:id", h.deleteUser)
 	g.POST("/users/:id/points", h.adjustPoints)

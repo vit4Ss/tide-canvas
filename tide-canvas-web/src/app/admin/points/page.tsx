@@ -187,6 +187,21 @@ export default function AdminPointsPage() {
     return () => cancelAnimationFrame(frame);
   }, [loadAll]);
 
+  // 从 URL ?userId= 预填用户筛选（用户画像页「完整流水」直达入口）。
+  // 挂载后经 setTimeout 设置并重查：不在渲染期读 window（避免 SSR 水合不一致），
+  // 也不在 effect 内同步 setState；与 loadAll 首查并发时靠 reqId 守卫丢弃旧响应。
+  useEffect(() => {
+    const value = new URLSearchParams(window.location.search).get("userId") ?? "";
+    if (!/^\d+$/.test(value)) return;
+    const timer = window.setTimeout(() => {
+      setUserQuery(value);
+      setUserKeyword(value);
+      userIdRef.current = value;
+      void loadLedger(1);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadLedger]);
+
 
   /* ── KPIs derived from real data ─────────────────────────────────────── */
   const kpis: Kpi[] = useMemo(() => {

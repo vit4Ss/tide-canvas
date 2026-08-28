@@ -20,6 +20,7 @@
    ============================================================================ */
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Copy, Plus, RefreshCw, Search, UserPlus } from "lucide-react";
 import {
@@ -541,7 +542,15 @@ function AdminUsersPageInner() {
               }}
             />
             <div>
-              <div className="adm-user-name" title={username}>{username}</div>
+              {/* 用户名即画像入口：运营看名单时最自然的下钻动作就是点名字 */}
+              <Link
+                href={`/admin/users/${u.id}`}
+                className="adm-user-name"
+                title={`查看 ${username} 的用户画像`}
+                style={{ display: "inline-block", color: "inherit" }}
+              >
+                {username}
+              </Link>
               <div className="muted mono" style={{ fontSize: 11.5 }} title={email}>{email}</div>
               <div className="muted" style={{ fontSize: 11.5 }} title={remark}>{remark}</div>
             </div>

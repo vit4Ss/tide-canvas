@@ -21,6 +21,7 @@ import type {
   PointAdjustResult,
   RoleSaveDTO,
   RoleVO,
+  UserPortraitVO,
 } from "@/types/admin-users";
 
 export const adminUsersApi = {
@@ -41,6 +42,9 @@ export const adminUsersApi = {
 
   /** DELETE /api/admin/users/:id -> void (soft delete; frees email for re-signup). */
   delete: (id: string) => http.delete<null>(`/api/admin/users/${id}`),
+
+  /** GET /api/admin/users/:id/portrait -> UserPortraitVO（画像页全量聚合）. */
+  portrait: (id: string) => http.get<UserPortraitVO>(`/api/admin/users/${id}/portrait`),
 
   /** POST /api/admin/users/:id/points -> {points} (new balance). */
   adjustPoints: (id: string, dto: PointAdjustDTO) =>

@@ -110,3 +110,134 @@ export interface RoleSaveDTO {
   description?: string;
   status?: number;
 }
+
+/* ── 用户画像（g1_user_portrait.go GET /api/admin/users/:id/portrait）────────── */
+
+/** 通用「类型-次数-积分」聚合行；key 为后端原始键，前端负责中文标签。 */
+export interface PortraitTypeStat {
+  key: string;
+  count: number;
+  points: number;
+}
+
+export interface PortraitTxVO {
+  time: string;
+  changeType: string;
+  amount: number;
+  balance: number;
+  remark: string;
+}
+
+export interface PortraitPointsVO {
+  balance: number;
+  totalEarned: number;
+  /** 正数（消耗的绝对值）。 */
+  totalSpent: number;
+  earned30: number;
+  spent30: number;
+  refundCount: number;
+  byType: PortraitTypeStat[];
+  transactions: PortraitTxVO[];
+}
+
+export interface PortraitDayVO {
+  date: string;
+  count: number;
+}
+
+export interface PortraitLoginVO {
+  time: string;
+  action: string;
+  channel: string;
+  success: number;
+  ip: string;
+}
+
+export interface PortraitActivityVO {
+  /** 近 90 天，含 0 值日，升序。 */
+  daily: PortraitDayVO[];
+  activeDays30: number;
+  loginDays30: number;
+  /** 近 90 天生成时段分布（0-23 时）。 */
+  hourly: number[];
+  recentLogins: PortraitLoginVO[];
+}
+
+export interface PortraitGenerationVO {
+  total: number;
+  success: number;
+  failed: number;
+  cancelled: number;
+  processing: number;
+  total30: number;
+  failed30: number;
+  /** points 仅计成功任务（失败已退款）。 */
+  byHandler: PortraitTypeStat[];
+}
+
+export interface PortraitModelVO {
+  model: string;
+  count: number;
+  success: number;
+  points: number;
+  lastUsed: string;
+}
+
+export interface PortraitAssetsVO {
+  projectCount: number;
+  workCount: number;
+  fileCount: number;
+  storageUsed: number;
+  storageQuota: number;
+  skillRunCount: number;
+  collectionCount: number;
+}
+
+export interface PortraitOrderVO {
+  orderNo: string;
+  orderType: string;
+  cycle: string;
+  amount: string;
+  /** 0 待支付 / 1 已支付 / 2 已取消 / 3 已退款。 */
+  status: number;
+  time: string;
+}
+
+export interface PortraitClaimVO {
+  time: string;
+  batchName: string;
+  codeHint: string;
+  points: number;
+}
+
+export interface PortraitCommerceVO {
+  paidOrderCount: number;
+  paidAmount: string;
+  recentOrders: PortraitOrderVO[];
+  claimCount: number;
+  claimPoints: number;
+  recentClaims: PortraitClaimVO[];
+  checkinCount: number;
+  checkinPoints: number;
+  checkinStreak: number;
+  lastCheckin: string;
+}
+
+export interface PortraitCommunityVO {
+  commentCount: number;
+  likeCount: number;
+  followers: number;
+  following: number;
+}
+
+/** 画像页完整载荷：一次请求拿全，避免详情页十几个瀑布请求。 */
+export interface UserPortraitVO {
+  user: AdminUserVO;
+  points: PortraitPointsVO;
+  activity: PortraitActivityVO;
+  generation: PortraitGenerationVO;
+  models: PortraitModelVO[];
+  assets: PortraitAssetsVO;
+  commerce: PortraitCommerceVO;
+  community: PortraitCommunityVO;
+}
