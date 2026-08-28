@@ -120,6 +120,13 @@ type OwnedURLReader interface {
 	OpenURL(ctx context.Context, rawURL string) (io.ReadCloser, error)
 }
 
+// OwnedURLStatter reports an owned object's metadata from its public URL.
+// Generation results live in storage with no database row, so this is the only
+// authoritative source for their byte size (the browser is blocked by CORS).
+type OwnedURLStatter interface {
+	StatURL(ctx context.Context, rawURL string) (ObjectMeta, error)
+}
+
 // ErrUnsupported is returned by operations a backend cannot perform.
 var ErrUnsupported = errors.New("storage: operation not supported")
 
@@ -254,6 +261,15 @@ func (l *LocalStorage) Stat(ctx context.Context, key string) (ObjectMeta, error)
 		return ObjectMeta{}, err
 	}
 	return ObjectMeta{Size: info.Size()}, nil
+}
+
+// StatURL reports an owned local object's size without an HTTP round trip.
+func (l *LocalStorage) StatURL(ctx context.Context, rawURL string) (ObjectMeta, error) {
+	key, ok := ownedObjectKey(rawURL, []string{l.publicURL}, "")
+	if !ok {
+		return ObjectMeta{}, ErrUnsupported
+	}
+	return l.Stat(ctx, key)
 }
 
 // UpstreamURL returns the URL unchanged: local assets need no host rewrite (and

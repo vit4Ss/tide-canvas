@@ -146,6 +146,9 @@ export const fileApi = {
     http.get<PageResult<FileVO>["data"]>("/api/files", toParams(query)),
   saveFromUrl: (data: { url: string; fileType?: string; category?: FileCategory; originalName?: string }) =>
     http.post<FileVO>("/api/files/save-from-url", data),
+  /** 已存资产的字节大小：生成结果没有 files 行，大小只能问存储（浏览器跨域读不到）。 */
+  assetSize: (url: string) =>
+    http.get<{ sizeBytes: number }>("/api/files/asset-size", { url }),
   get: (id: string) =>
     http.get<FileVO>(`/api/files/detail/${id}`),
   delete: (id: string | number) =>

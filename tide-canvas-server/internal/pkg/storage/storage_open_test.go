@@ -57,3 +57,32 @@ func TestLocalStorageOpenURLValidatesNamespace(t *testing.T) {
 		}
 	}
 }
+
+// StatURL 补齐「生成结果没有 files 行、大小只能问存储」这条链路：归属判定必须
+// 与 OpenURL 同口径，外站 URL 与越权路径一律 ErrUnsupported。
+func TestLocalStorageStatURLReportsSizeForOwnedObjectsOnly(t *testing.T) {
+	store, err := NewLocalStorage(config.StorageConfig{LocalDir: t.TempDir(), PublicURL: "https://cdn.invalid/static"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := "generated-image-bytes"
+	url, err := store.Save(context.Background(), "gen/abc123.png", bytes.NewBufferString(body), "image/png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := store.StatURL(context.Background(), url)
+	if err != nil {
+		t.Fatalf("StatURL(%q): %v", url, err)
+	}
+	if meta.Size != int64(len(body)) {
+		t.Fatalf("size = %d, want %d", meta.Size, len(body))
+	}
+	for _, raw := range []string{
+		"https://foreign.invalid/static/gen/abc123.png",
+		"https://cdn.invalid/static/../gen/abc123.png",
+	} {
+		if _, err := store.StatURL(context.Background(), raw); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("unsafe URL %q error=%v, want ErrUnsupported", raw, err)
+		}
+	}
+}

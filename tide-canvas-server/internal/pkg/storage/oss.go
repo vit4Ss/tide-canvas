@@ -153,6 +153,21 @@ func (o *OSSStorage) OpenURL(ctx context.Context, rawURL string) (io.ReadCloser,
 	return o.Open(ctx, key)
 }
 
+// StatURL reads an owned object's metadata straight from OSS. Generated
+// results are stored under gen/ with no database row, so a byte size can only
+// come from the object itself; the browser cannot read it cross-origin.
+func (o *OSSStorage) StatURL(ctx context.Context, rawURL string) (ObjectMeta, error) {
+	bases := append([]string{o.publicBase, o.regionalBase, o.accelerateBase}, o.legacyBases...)
+	key, ok := ownedObjectKey(rawURL, bases, o.prefix)
+	if !ok {
+		return ObjectMeta{}, ErrUnsupported
+	}
+	if o.prefix != "" {
+		key = strings.TrimPrefix(key, o.prefix+"/")
+	}
+	return o.Stat(ctx, key)
+}
+
 // Delete removes the object; a missing object is treated as success.
 func (o *OSSStorage) Delete(ctx context.Context, key string) error {
 	rel := cleanKey(key)

@@ -7,6 +7,8 @@
 package file
 
 import (
+	"time"
+
 	"github.com/gin-gonic/gin"
 
 	"tidecanvas/internal/app"
@@ -22,6 +24,7 @@ import (
 //	POST   /api/files/presign        {filename,contentType,size,fileType?} -> FilePresignVO (auth)
 //	POST   /api/files/register       {key,originalName,contentType,fileType?} -> FileVO (auth)
 //	GET    /api/files                FileQuery -> PageData<FileVO>            (auth)
+//	GET    /api/files/asset-size     ?url= -> AssetSizeVO                     (auth)
 //	POST   /api/files/save-from-url  {url,fileType?,originalName?} -> FileVO   (auth)
 //	GET    /api/files/detail/:id     -> FileVO                                (auth)
 //	DELETE /api/files/detail/:id     -> void                                  (auth)
@@ -37,6 +40,9 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	g.POST("/presign", h.presign)
 	g.POST("/register", h.register)
 	g.POST("/save-from-url", h.saveFromURL)
+	// 每次查询都会打一次存储的 HEAD：限流挡住脚本式轮询（正常用法是多选确认
+	// 时一批几个，60/分钟绰绰有余）。
+	g.GET("/asset-size", middleware.RateLimit(d, 60, time.Minute), h.assetSize)
 	g.GET("", h.list)
 	// Item routes live under the static /detail parent so the :id param is never
 	// a sibling of the static action routes above (gin panics on static/param
