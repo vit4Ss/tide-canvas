@@ -1,0 +1,431 @@
+[
+ {
+  "tag": "textarea",
+  "text": "",
+  "aria": null,
+  "title": null,
+  "svgCls": null,
+  "rect": [
+   59,
+   718
+  ]
+ },
+ {
+  "tag": "textarea",
+  "text": "",
+  "aria": null,
+  "title": null,
+  "svgCls": null,
+  "rect": [
+   1297,
+   120
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "首尾帧生成视频",
+  "aria": null,
+  "title": null,
+  "svgCls": "lucide lucide-layers h-3.5",
+  "rect": [
+   1234,
+   359
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "首帧生成视频",
+  "aria": null,
+  "title": null,
+  "svgCls": "lucide lucide-sparkles h-3.5",
+  "rect": [
+   1234,
+   381
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "首尾帧生成视频",
+  "aria": null,
+  "title": null,
+  "svgCls": "lucide lucide-layers h-3.5",
+  "rect": [
+   1234,
+   566
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "首帧生成视频",
+  "aria": null,
+  "title": null,
+  "svgCls": "lucide lucide-sparkles h-3.5",
+  "rect": [
+   1234,
+   588
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "图生图",
+  "aria": null,
+  "title": null,
+  "svgCls": "lucide lucide-upload h-3.5",
+  "rect": [
+   651,
+   460
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "HD图片高清",
+  "aria": null,
+  "title": null,
+  "svgCls": null,
+  "rect": [
+   651,
+   486
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "图生图",
+  "aria": null,
+  "title": null,
+  "svgCls": "lucide lucide-upload h-3.5",
+  "rect": [
+   651,
+   460
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "HD图片高清",
+  "aria": null,
+  "title": null,
+  "svgCls": null,
+  "rect": [
+   651,
+   486
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "图生图",
+  "aria": null,
+  "title": null,
+  "svgCls": "lucide lucide-upload h-3.5",
+  "rect": [
+   651,
+   460
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "HD图片高清",
+  "aria": null,
+  "title": null,
+  "svgCls": null,
+  "rect": [
+   651,
+   486
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "图片节点 7",
+  "aria": null,
+  "title": "双击重命名图片节点",
+  "svgCls": null,
+  "rect": [
+   657,
+   331
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "上传",
+  "aria": null,
+  "title": "上传图片",
+  "svgCls": "lucide lucide-upload h-3.5",
+  "rect": [
+   769,
+   310
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "图生图",
+  "aria": null,
+  "title": null,
+  "svgCls": "lucide lucide-upload h-3.5",
+  "rect": [
+   651,
+   460
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "HD图片高清",
+  "aria": null,
+  "title": null,
+  "svgCls": null,
+  "rect": [
+   651,
+   486
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": null,
+  "title": "输入端口（从其他节点拖入）",
+  "svgCls": "lucide lucide-plus h-3",
+  "rect": [
+   599,
+   440
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": null,
+  "title": "输出端口（拖到其他节点）",
+  "svgCls": "lucide lucide-plus h-3",
+  "rect": [
+   983,
+   440
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "风格",
+  "aria": null,
+  "title": "选择风格",
+  "svgCls": "lucide lucide-box h-3.5",
+  "rect": [
+   466,
+   577
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": null,
+  "title": "复制提示词",
+  "svgCls": "lucide lucide-copy h-4",
+  "rect": [
+   1090,
+   577
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": null,
+  "title": "展开编辑",
+  "svgCls": "lucide lucide-maximize2 lucide-maximize-2",
+  "rect": [
+   1116,
+   577
+  ]
+ },
+ {
+  "tag": "div",
+  "text": "",
+  "aria": null,
+  "title": null,
+  "svgCls": null,
+  "rect": [
+   466,
+   641
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "16:9 · 标准画质 · 2K",
+  "aria": null,
+  "title": "选择图片参数",
+  "svgCls": "lucide lucide-rectangle-horizontal h-3.5",
+  "rect": [
+   560,
+   735
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "1张",
+  "aria": null,
+  "title": "选择图片张数",
+  "svgCls": "lucide lucide-image h-3.5",
+  "rect": [
+   985,
+   735
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": null,
+  "title": "先输入提示词",
+  "svgCls": "lucide lucide-arrow-up h-3.5",
+  "rect": [
+   1108,
+   733
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": null,
+  "title": "AI 小助手",
+  "svgCls": "lucide lucide-bot h-5",
+  "rect": [
+   1528,
+   828
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "资产管理",
+  "aria": null,
+  "title": "资产管理",
+  "svgCls": "lucide lucide-layout-grid canvas-bottom-toolbar-module__nrkaTW__statusIcon",
+  "rect": [
+   18,
+   850
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": "小地图",
+  "title": "小地图",
+  "svgCls": "lucide lucide-map canvas-bottom-toolbar-module__nrkaTW__statusIcon",
+  "rect": [
+   104,
+   851
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": "网格吸附",
+  "title": "网格吸附",
+  "svgCls": "lucide lucide-magnet canvas-bottom-toolbar-module__nrkaTW__statusIcon",
+  "rect": [
+   142,
+   851
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": null,
+  "title": "缩小画布",
+  "svgCls": "lucide lucide-minus canvas-bottom-toolbar-module__nrkaTW__statusIcon",
+  "rect": [
+   182,
+   851
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "54%",
+  "aria": null,
+  "title": "重置为 100%",
+  "svgCls": null,
+  "rect": [
+   214,
+   852
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": null,
+  "title": "放大画布",
+  "svgCls": "lucide lucide-plus canvas-bottom-toolbar-module__nrkaTW__statusIcon",
+  "rect": [
+   260,
+   851
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": "新增节点",
+  "title": "新增节点",
+  "svgCls": "lucide lucide-plus canvas-bottom-toolbar-module__nrkaTW__dockIcon",
+  "rect": [
+   680,
+   841
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": "自动排布",
+  "title": "自动排布",
+  "svgCls": "lucide lucide-workflow canvas-bottom-toolbar-module__nrkaTW__dockIcon",
+  "rect": [
+   720,
+   841
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": "适应视图",
+  "title": "适应视图",
+  "svgCls": "lucide lucide-frame canvas-bottom-toolbar-module__nrkaTW__dockIcon",
+  "rect": [
+   760,
+   841
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": "历史记录",
+  "title": "历史记录",
+  "svgCls": "lucide lucide-clock canvas-bottom-toolbar-module__nrkaTW__dockIcon",
+  "rect": [
+   800,
+   841
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": "撤销",
+  "title": "撤销",
+  "svgCls": "lucide lucide-undo2 lucide-undo-2",
+  "rect": [
+   849,
+   841
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": "重做",
+  "title": "重做",
+  "svgCls": "lucide lucide-redo2 lucide-redo-2",
+  "rect": [
+   889,
+   841
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "未命名项目",
+  "aria": null,
+  "title": "点击重命名",
+  "svgCls": "lucide lucide-pencil h-3",
+  "rect": [
+   73,
+   25
+  ]
+ }
+]

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+</head>
+<body class="bg-neutral-200 p-8">
+<div id="panel" class="flex h-[482px] w-[448px] flex-col overflow-hidden rounded-[22px] bg-white text-neutral-800">
+  <div class="flex min-h-0 flex-1 flex-col">
+    <div class="shrink-0 border-b border-neutral-200/80 pb-2">
+      <div class="mx-3 mt-2 grid h-9 grid-cols-3 rounded-full bg-neutral-100 p-[3px]">
+        <button class="rounded-full text-xs bg-white font-medium">现代</button>
+        <button class="rounded-full text-xs">古装</button>
+        <button class="rounded-full text-xs">剧情</button>
+      </div>
+    </div>
+    <div id="grid" class="grid min-h-0 flex-1 grid-cols-5 content-start gap-2 overflow-y-auto px-3 py-4">
+      <button class="relative flex aspect-square flex-col items-center justify-center overflow-hidden rounded-[8px] border border-neutral-200 bg-white text-xs">
+        <span class="relative z-[1] flex flex-col items-center text-neutral-500">
+          <svg class="h-4 w-4"></svg>
+          <span class="mt-1 text-[10px] leading-none opacity-70">上传参考</span>
+          <span class="mt-1 text-[11px] font-medium leading-none">自定义妆容</span>
+        </span>
+      </button>
+      <!-- 16 preset tiles injected by script -->
+    </div>
+  </div>
+  <footer class="flex h-[56px] shrink-0 items-center border-t border-neutral-200/80 px-3">footer</footer>
+</div>
+<script>
+const grid = document.getElementById("grid");
+for (let i = 0; i < 16; i++) {
+  const b = document.createElement("button");
+  b.className = "tile relative aspect-square overflow-hidden rounded-[8px] border border-neutral-200 bg-neutral-100 text-left";
+  b.innerHTML = `<span aria-hidden="true" class="absolute inset-0" style="background:#9aa"></span>
+    <span class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent px-1.5 pb-1.5 pt-5 text-[11px] font-medium leading-none text-white">标签${i}</span>`;
+  grid.appendChild(b);
+}
+</script>
+</body>
+</html>

@@ -66,3 +66,9 @@ be-build.log
 
 # cygwin/git-bash crash dumps
 *.stackdump
+
+# local AI-tool config with a live API key — must never be committed
+.kimi-code/
+
+# scratch debug workspace dependencies
+scratch-audit/node_modules/

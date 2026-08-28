@@ -1,0 +1,262 @@
+[
+ {
+  "tag": "textarea",
+  "text": "",
+  "aria": null,
+  "title": null,
+  "cls": "w-full select-text resize-none border-0 bg-transparent text-sm leading-7 text-ne",
+  "rect": [
+   -188,
+   -262,
+   326,
+   198
+  ]
+ },
+ {
+  "tag": "textarea",
+  "text": "",
+  "aria": null,
+  "title": null,
+  "cls": "w-full select-text resize-none border-0 bg-transparent text-sm leading-7 text-ne",
+  "rect": [
+   2096,
+   -1366,
+   326,
+   198
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "首尾帧生成视频",
+  "aria": null,
+  "title": null,
+  "cls": "inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors ",
+  "rect": [
+   1979,
+   -925,
+   160,
+   37
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "首帧生成视频",
+  "aria": null,
+  "title": null,
+  "cls": "inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors ",
+  "rect": [
+   1979,
+   -884,
+   144,
+   37
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "首尾帧生成视频",
+  "aria": null,
+  "title": null,
+  "cls": "inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors ",
+  "rect": [
+   1979,
+   -543,
+   160,
+   37
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "首帧生成视频",
+  "aria": null,
+  "title": null,
+  "cls": "inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors ",
+  "rect": [
+   1979,
+   -502,
+   144,
+   37
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": null,
+  "title": "AI 小助手",
+  "cls": "fixed bottom-6 right-6 z-[70] flex h-12 w-12 items-center justify-center rounded",
+  "rect": [
+   1528,
+   828,
+   48,
+   48
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "资产管理",
+  "aria": null,
+  "title": "资产管理",
+  "cls": "canvas-bottom-toolbar-module__nrkaTW__assetButton ",
+  "rect": [
+   18,
+   850,
+   78,
+   32
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": "小地图",
+  "title": "小地图",
+  "cls": "canvas-bottom-toolbar-module__nrkaTW__statusIconButton ",
+  "rect": [
+   104,
+   851,
+   30,
+   30
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": "网格吸附",
+  "title": "网格吸附",
+  "cls": "canvas-bottom-toolbar-module__nrkaTW__statusIconButton ",
+  "rect": [
+   142,
+   851,
+   30,
+   30
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": null,
+  "title": "缩小画布",
+  "cls": "canvas-bottom-toolbar-module__nrkaTW__zoomStepButton",
+  "rect": [
+   182,
+   851,
+   30,
+   30
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "100%",
+  "aria": null,
+  "title": "重置为 100%",
+  "cls": "canvas-bottom-toolbar-module__nrkaTW__zoomPercentButton",
+  "rect": [
+   214,
+   852,
+   44,
+   28
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": null,
+  "title": "放大画布",
+  "cls": "canvas-bottom-toolbar-module__nrkaTW__zoomStepButton",
+  "rect": [
+   260,
+   851,
+   30,
+   30
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": "新增节点",
+  "title": "新增节点",
+  "cls": "canvas-bottom-toolbar-module__nrkaTW__dockButton canvas-bottom-toolbar-module__n",
+  "rect": [
+   680,
+   841,
+   32,
+   32
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": "自动排布",
+  "title": "自动排布",
+  "cls": "canvas-bottom-toolbar-module__nrkaTW__dockButton ",
+  "rect": [
+   720,
+   841,
+   32,
+   32
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": "适应视图",
+  "title": "适应视图",
+  "cls": "canvas-bottom-toolbar-module__nrkaTW__dockButton ",
+  "rect": [
+   760,
+   841,
+   32,
+   32
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": "历史记录",
+  "title": "历史记录",
+  "cls": "canvas-bottom-toolbar-module__nrkaTW__dockButton ",
+  "rect": [
+   800,
+   841,
+   32,
+   32
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": "撤销",
+  "title": "撤销",
+  "cls": "canvas-bottom-toolbar-module__nrkaTW__dockButton ",
+  "rect": [
+   849,
+   841,
+   32,
+   32
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "",
+  "aria": "重做",
+  "title": "重做",
+  "cls": "canvas-bottom-toolbar-module__nrkaTW__dockButton ",
+  "rect": [
+   889,
+   841,
+   32,
+   32
+  ]
+ },
+ {
+  "tag": "button",
+  "text": "未命名项目",
+  "aria": null,
+  "title": "点击重命名",
+  "cls": "group flex items-center gap-1.5",
+  "rect": [
+   73,
+   25,
+   88,
+   20
+  ]
+ }
+]
