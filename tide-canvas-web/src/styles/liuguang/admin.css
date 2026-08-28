@@ -4790,38 +4790,6 @@ tr:hover .rowacts,
   margin-top: 4px;
   font-size: 18px;
 }
-.uport-storage {
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border-weak);
-}
-.uport-storage > div:first-child {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--text-faint);
-  font-size: 11px;
-}
-.uport-storage b {
-  color: var(--text-dim);
-  font-family: var(--mono);
-  font-size: 10.5px;
-  font-weight: 500;
-}
-.uport-storage-track {
-  height: 6px;
-  margin-top: 9px;
-  overflow: hidden;
-  border-radius: 99px;
-  background: var(--panel);
-}
-.uport-storage-track i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #7665e8, #65c9d0);
-}
-
 .uport-detail-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4871,7 +4839,7 @@ tr:hover .rowacts,
   margin-left: 0;
 }
 .uport-wide-card .uport-figures-side {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0;
   margin-top: 18px;
 }
@@ -4879,10 +4847,6 @@ tr:hover .rowacts,
   padding-left: 17px;
   border-left: 1px solid var(--border-weak);
 }
-.uport-wide-card .uport-storage {
-  max-width: 520px;
-}
-
 /* 桌面端：主栏和侧栏只负责上半部；账务详情作为一个完整网格行，
    放到两列内容之后，避免主栏继续变长而右侧提前结束。 */
 @media (min-width: 821px) {

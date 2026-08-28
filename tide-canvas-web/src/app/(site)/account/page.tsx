@@ -34,9 +34,9 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Loader2 } from "lucide-react";
+import { Activity, ArrowUpRight, Loader2, Palette, Sparkles } from "lucide-react";
 import { useAuthStore } from "@/stores/use-auth-store";
-import { authApi, fileApi, projectApi } from "@/lib/api";
+import { aiApi, authApi, fileApi, projectApi } from "@/lib/api";
 import { pointsApi } from "@/lib/points-api";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { toast } from "@/components/shared/toast";
@@ -44,6 +44,7 @@ import { fmt } from "@/lib/utils";
 import { defaultAvatar } from "@/lib/default-avatar";
 import { hasAdminAccess } from "@/lib/admin-access";
 import type { UserVO } from "@/types/user";
+import type { UserGenerationHistoryVO } from "@/types/ai";
 import { OrdersPanel, PointsPanel } from "./ledger-panels";
 import "./account.css";
 
@@ -341,6 +342,117 @@ function AccountStats({ points }: { points: number }) {
   );
 }
 
+/* ── 创作画像 ──────────────────────────────────────────────────────────────── */
+
+const PORTRAIT_MEDIA: Record<UserGenerationHistoryVO["mediaType"], string> = {
+  image: "图片",
+  video: "视频",
+  audio: "音频",
+  "3d": "3D",
+  text: "文字",
+};
+
+function portraitDate(s: string): number {
+  const value = Date.parse(s);
+  return Number.isNaN(value) ? 0 : value;
+}
+
+function CreativePortrait({ user }: { user: UserVO }) {
+  const [rows, setRows] = useState<UserGenerationHistoryVO[]>([]);
+  const [total, setTotal] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    aiApi.myHistory({ pageNum: 1, pageSize: 60 }).then((res) => {
+      if (!alive) return;
+      if (res.success && res.data) {
+        setRows(res.data.records);
+        setTotal(res.data.total);
+      }
+      setLoading(false);
+    }).catch(() => {
+      if (alive) setLoading(false);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const [now] = useState(Date.now);
+  const recent = rows.filter((row) => {
+    const created = portraitDate(row.createTime);
+    return created > 0 && now - created <= 30 * 86400000;
+  });
+  const mediaCounts = rows.reduce<Record<string, number>>((counts, row) => {
+    counts[row.mediaType] = (counts[row.mediaType] ?? 0) + 1;
+    return counts;
+  }, {});
+  const dominant = Object.entries(mediaCounts).sort((a, b) => b[1] - a[1])[0];
+  const successCount = rows.filter((row) => row.success === 1).length;
+  const sampledSuccessRate = rows.length > 0 ? Math.round((successCount / rows.length) * 100) : 0;
+  const activeDays = new Set(recent.map((row) => row.createTime.slice(0, 10))).size;
+  const name = user.nickname || user.username || "创作者";
+
+  const summary = rows.length === 0
+    ? `${name}，你的创作旅程还没有开始。选一个灵感，把第一件作品留在这里。`
+    : dominant && dominant[1] >= 3
+      ? `最近的创作更偏向${PORTRAIT_MEDIA[dominant[0] as UserGenerationHistoryVO["mediaType"]]}，已经留下 ${fmt(total ?? rows.length)} 次生成记录。`
+      : `${name}正在探索不同的创作方式，最近 30 天有 ${recent.length} 次生成记录。`;
+
+  return (
+    <section className="pf-portrait reveal-scale in" id="my-portrait">
+      <div className="pf-portrait-glow" />
+      <div className="pf-portrait-head">
+        <div>
+          <span className="pf-portrait-eyebrow"><Sparkles size={13} aria-hidden /> YOUR CREATIVE DNA</span>
+          <h2>你的创作画像</h2>
+          <p>从你的创作轨迹里，找到正在形成的风格。</p>
+        </div>
+        <Link className="pf-portrait-link" href="/generation-history">
+          查看生成记录 <ArrowUpRight size={14} aria-hidden />
+        </Link>
+      </div>
+
+      {loading ? (
+        <div className="pf-portrait-loading" aria-busy="true">
+          <span className="pf-portrait-skeleton orb" />
+          <div><span className="pf-portrait-skeleton line lg" /><span className="pf-portrait-skeleton line" /><span className="pf-portrait-skeleton line sm" /></div>
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="pf-portrait-empty">
+          <div className="pf-portrait-empty-icon"><Palette size={21} aria-hidden /></div>
+          <div><strong>还没有足够的创作数据</strong><span>{summary}</span></div>
+          <Link href="/studio" className="pf-portrait-cta">开始创作 <ArrowUpRight size={14} aria-hidden /></Link>
+        </div>
+      ) : (
+        <div className="pf-portrait-body">
+          <div className="pf-portrait-orbit" aria-hidden>
+            <span className="pf-orbit-ring one" />
+            <span className="pf-orbit-ring two" />
+            <span className="pf-orbit-dot a" />
+            <span className="pf-orbit-dot b" />
+            <div className="pf-portrait-core"><Sparkles size={19} /><b>{dominant ? PORTRAIT_MEDIA[dominant[0] as UserGenerationHistoryVO["mediaType"]] : "多元"}</b><small>创作偏好</small></div>
+          </div>
+          <div className="pf-portrait-copy">
+            <p className="pf-portrait-summary">{summary}</p>
+            <div className="pf-portrait-tags">
+              <span><Activity size={13} aria-hidden /> {activeDays} 天活跃</span>
+              <span><Sparkles size={13} aria-hidden /> 最近记录成功率 {sampledSuccessRate}%</span>
+              {dominant ? <span>{PORTRAIT_MEDIA[dominant[0] as UserGenerationHistoryVO["mediaType"]]}偏好</span> : null}
+            </div>
+            <div className="pf-portrait-numbers">
+              <div><b>{fmt(total ?? rows.length)}</b><span>累计生成</span></div>
+              <div><b>{fmt(recent.length)}</b><span>近 30 天</span></div>
+              <div><b>{fmt(rows.length)}</b><span>最近记录</span></div>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function AccountPage() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
@@ -456,6 +568,9 @@ export default function AccountPage() {
               <Link className="pf-btn sec" href="/assets">
                 我的作品
               </Link>
+              <Link className="pf-btn sec" href="#my-portrait">
+                我的画像
+              </Link>
               <Link className="pf-btn pri" href="/studio">
                 ✦ 去创作
               </Link>
@@ -464,6 +579,8 @@ export default function AccountPage() {
 
           {/* stats — all real, no social placeholders */}
           <AccountStats points={user.points || 0} />
+
+          <CreativePortrait user={user} />
 
           <div className="pf-grid">
             {/* account info */}

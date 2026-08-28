@@ -104,14 +104,6 @@ const handlerLabel = (key: string) => HANDLER_LABELS[key] ?? (key || "—");
 
 const fmtNum = (n: number) => n.toLocaleString("zh-CN");
 const fmtSigned = (n: number) => (n > 0 ? `+${fmtNum(n)}` : fmtNum(n));
-const fmtBytes = (n: number) => {
-  if (n <= 0) return "0";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let v = n;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
-  return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
-};
 const fmtDateTime = (s: string) => (s ? s.replace("T", " ").slice(0, 16) : "—");
 const WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
 
@@ -537,7 +529,7 @@ export default function AdminUserPortraitPage() {
     );
   }
 
-  const { user, points, activity, generation, models, assets, commerce, community } = data;
+  const { user, points, activity, generation, models, assets, commerce } = data;
   const email = !user.email || isPlaceholderEmail(user.email) ? "未绑定邮箱" : user.email;
   const summary = buildSummary(data);
   const traits = deriveTraits(data);
@@ -549,15 +541,9 @@ export default function AdminUserPortraitPage() {
     commerce.recentOrders.length > 0 || commerce.recentClaims.length > 0 ||
     commerce.checkinCount > 0 || commerce.paidOrderCount > 0;
   const hasAssets =
-    assets.workCount > 0 || assets.projectCount > 0 || assets.fileCount > 0 ||
-    assets.storageUsed > 0 || assets.skillRunCount > 0 ||
-    community.commentCount > 0 || community.likeCount > 0 ||
-    community.followers > 0 || community.following > 0;
+    generation.success > 0 || assets.workCount > 0 || assets.projectCount > 0 || assets.fileCount > 0;
   const detailNeedsFullWidth =
     points.transactions.length > 0 || commerce.recentOrders.length > 0 || commerce.recentClaims.length > 0;
-  const storagePercent = assets.storageQuota > 0
-    ? Math.min(100, Math.round((assets.storageUsed / assets.storageQuota) * 100))
-    : 0;
   const paidAmount = commerce.paidAmount || "0.00";
 
   return (
@@ -834,14 +820,8 @@ export default function AdminUserPortraitPage() {
                 { k: "作品", v: fmtNum(assets.workCount) },
                 { k: "项目", v: fmtNum(assets.projectCount) },
                 { k: "上传素材", v: fmtNum(assets.fileCount) },
-                { k: "技能运行", v: fmtNum(assets.skillRunCount) },
-                { k: "评论 / 点赞", v: `${fmtNum(community.commentCount)} / ${fmtNum(community.likeCount)}` },
-                { k: "粉丝 / 关注", v: `${fmtNum(community.followers)} / ${fmtNum(community.following)}` },
+                { k: "生成素材", v: fmtNum(generation.success) },
               ]} />
-              <div className="uport-storage">
-                <div><span>存储空间</span><b>{fmtBytes(assets.storageUsed)}{assets.storageQuota > 0 ? ` / ${fmtBytes(assets.storageQuota)}` : ""}</b></div>
-                <div className="uport-storage-track"><i style={{ width: `${storagePercent}%` }} /></div>
-              </div>
             </>
           ) : (
             <div className="uport-empty-state"><Database aria-hidden size={20} /><span>还没有沉淀资产或社区活动</span></div>
