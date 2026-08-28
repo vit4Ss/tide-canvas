@@ -952,9 +952,10 @@ export default function ToolPage() {
           kind={isVideoTool ? "video" : "image"}
           lockKind
           onClose={() => setPicking(false)}
-          onPick={(a) => {
+          onPick={([a]) => {
+            // 智能工具只处理单个源素材，弹窗按 remaining 默认（1）走单选。
             setPicking(false);
-            if (a.url) applySource(a.url);
+            if (a?.url) applySource(a.url);
           }}
         />
       )}

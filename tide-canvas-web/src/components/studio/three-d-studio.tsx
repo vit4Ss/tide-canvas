@@ -111,7 +111,9 @@ export default function ThreeDStudio() {
     pickLocal,
     onLocalFiles,
     openAssets,
-    chooseAsset,
+    chooseAssets,
+    assetPickRemaining,
+    assetPickExistingUrls,
     removeFile,
     swapFlf,
   } = useUploadSlots({ slots, tool, mCfg, slotData, setSlotData, ensureSession });
@@ -628,7 +630,9 @@ export default function ThreeDStudio() {
       {assetPick && (
         <AssetPickerModal
           kind={slotTypeOf(slots, assetPick)}
-          onPick={chooseAsset}
+          onPick={chooseAssets}
+          remaining={assetPickRemaining}
+          existingUrls={assetPickExistingUrls}
           onClose={() => setAssetPick(null)}
         />
       )}

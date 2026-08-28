@@ -4,8 +4,8 @@
    slotData 本身由组合层持有（生成引擎 / @ 引用 / 参数恢复都要读），这里只收
    setter 与当前值。 */
 
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { uploadFileSmart } from "@/lib/api";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { fileApi, uploadFileSmart } from "@/lib/api";
 import { validateKnownFileSize } from "@/lib/upload-limits";
 import type { ModelConfig } from "@/types/admin-models";
 import type { PickedAsset } from "@/components/studio/assets-browser";
@@ -47,6 +47,9 @@ export function useUploadSlots({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const localTargetRef = useRef<string | null>(null); // slot key awaiting a local file pick
   const uploadSeqRef = useRef(0); // 上传中占位的唯一 key 计数
+
+  // 3D 的单图大小是硬限制（模型配置 max3DImageSizeMB），未知大小不能放行。
+  const needsKnownSize = tool === "i2_3d" || tool === "mv2_3d";
 
   const totalUploadedCount = (data: SlotData): number =>
     (slots ?? []).reduce((sum, slot) => sum + (data[slot.k] || []).length, 0);
@@ -108,38 +111,72 @@ export function useUploadSlots({
     setSrcMenu(k);
   };
 
-  // push a real asset (uploaded or picked from 资产库) into a slot, honoring its max.
-  const addRealFile = (k: string, file: { url: string; name?: string; size?: string; sizeBytes?: number }): boolean => {
+  type RealFile = { url: string; name?: string; size?: string; sizeBytes?: number };
+
+  const toUploadFile = (slot: SlotDef, file: RealFile): UploadFile =>
+    slot.type === "image"
+      ? { g: file.url, url: file.url, n: file.name || "参考图", s: file.size || "", sizeBytes: file.sizeBytes }
+      : { n: file.name || (slot.type === "video" ? "video.mp4" : "audio.mp3"), d: "", url: file.url };
+
+  /** 槽位还能再放几个：本槽上限与（多视图的）总上限取小。 */
+  const roomFor = (data: SlotData, slot: SlotDef): number => {
+    const perSlot = slotMax(mCfg, tool, slot) - (data[slot.k] || []).length;
+    const total = tool === "mv2_3d" ? threeDMultiViewLimit(mCfg) - totalUploadedCount(data) : Infinity;
+    return Math.max(0, Math.min(perSlot, total));
+  };
+
+  // push real assets (uploaded or picked from 资产库) into a slot, honoring its max.
+  // 一次收一批：多选确认后逐个 setSlotData 会各自读到旧的 prev 长度，容量判定
+  // 只有合到同一次更新里才准。
+  const addRealFiles = (k: string, files: RealFile[]): number => {
     const slot = slots?.find((s) => s.k === k);
-    if (!slot) return false;
+    if (!slot || files.length === 0) return 0;
     const issue = capacityIssue(slotData, slot);
     if (issue) {
       toast.info(issue);
-      return false;
+      return 0;
     }
     const sizeMB = refLimitFor(mCfg, tool, slot).size;
-    if ((tool === "i2_3d" || tool === "mv2_3d") && (!Number.isFinite(file.sizeBytes) || !file.sizeBytes || file.sizeBytes <= 0)) {
-      toast.info("无法确认该素材的文件大小，请下载后通过本地上传添加");
-      return false;
+    const passed: RealFile[] = [];
+    let unknownSize = 0;
+    let sizeIssue: string | null = null;
+    for (const file of files) {
+      if (needsKnownSize && (!Number.isFinite(file.sizeBytes) || !file.sizeBytes || file.sizeBytes <= 0)) {
+        unknownSize += 1;
+        continue;
+      }
+      const tooLarge = validateKnownFileSize(file.sizeBytes, file.name, {
+        maxBytes: sizeMB > 0 ? sizeMB * 1024 * 1024 : undefined,
+        label: slot.label,
+      });
+      if (tooLarge) {
+        sizeIssue ??= tooLarge;
+        continue;
+      }
+      passed.push(file);
     }
-    const sizeIssue = validateKnownFileSize(file.sizeBytes, file.name, {
-      maxBytes: sizeMB > 0 ? sizeMB * 1024 * 1024 : undefined,
-      label: slot.label,
-    });
-    if (sizeIssue) {
-      toast.info(sizeIssue);
-      return false;
+    if (unknownSize > 0) {
+      toast.info(
+        unknownSize > 1
+          ? `有 ${unknownSize} 个素材无法确认文件大小，请下载后通过本地上传添加`
+          : "无法确认该素材的文件大小，请下载后通过本地上传添加",
+      );
+    }
+    if (sizeIssue) toast.info(sizeIssue);
+
+    const accepted = passed.slice(0, roomFor(slotData, slot));
+    if (accepted.length === 0) return 0;
+    if (accepted.length < passed.length) {
+      toast.info(`已添加 ${accepted.length} 个，其余超出${slot.label}数量上限`);
     }
     setSlotData((prev) => {
-      const arr = prev[k] || [];
-      if (capacityIssue(prev, slot)) return prev;
-      const uf: UploadFile =
-        slot.type === "image"
-          ? { g: file.url, url: file.url, n: file.name || "参考图", s: file.size || "", sizeBytes: file.sizeBytes }
-          : { n: file.name || (slot.type === "video" ? "video.mp4" : "audio.mp3"), d: "", url: file.url };
-      return { ...prev, [k]: [...arr, uf] };
+      // 以 prev 复算余量：与上面基于闭包 slotData 的切片一致（弹窗期间没有
+      // 并发写入），重算只是把 StrictMode 下的重复调用做成幂等。
+      const take = accepted.slice(0, roomFor(prev, slot));
+      if (take.length === 0) return prev;
+      return { ...prev, [k]: [...(prev[k] || []), ...take.map((f) => toUploadFile(slot, f))] };
     });
-    return true;
+    return accepted.length;
   };
 
   // 本地上传: open the OS file picker for the slot, then upload each chosen file.
@@ -249,12 +286,37 @@ export function useUploadSlots({
     setAssetPick(k);
   };
 
-  const chooseAsset = (a: PickedAsset) => {
+  // 资产库选取(可多选):生成历史的结果直接写在对象存储里、没有 files 行,
+  // PickedAsset 因此不带 sizeBytes。3D 必须按模型配置卡单图大小(refLimitFor),
+  // 未知大小只能拒收,而「生成一张图 → 转 3D」恰恰是最常见的用法。这里先并发
+  // 问一次存储把大小补齐,查不到才落回本地上传的提示。
+  const chooseAssets = async (assets: PickedAsset[]) => {
     const k = assetPick;
-    if (k && addRealFile(k, { url: a.url, name: a.name, sizeBytes: a.sizeBytes })) {
-      setAssetPick(null);
-    }
+    if (!k || assets.length === 0) return;
+    const files = await Promise.all(
+      assets.map(async (a) => {
+        let sizeBytes = a.sizeBytes;
+        if (needsKnownSize && (!Number.isFinite(sizeBytes) || !sizeBytes || sizeBytes <= 0)) {
+          const res = await fileApi.assetSize(a.url).catch(() => null);
+          const resolved = res?.success ? res.data?.sizeBytes : undefined;
+          if (Number.isFinite(resolved) && (resolved ?? 0) > 0) sizeBytes = resolved;
+        }
+        return { url: a.url, name: a.name, sizeBytes };
+      }),
+    );
+    if (addRealFiles(k, files) > 0) setAssetPick(null);
   };
+
+  /** 弹窗需要的槽位余量与去重信息（当前打开的槽位；未打开时为空）。
+      memo 住数组身份：弹窗开着时父层每次重渲染（输入提示词等）都新建数组，
+      会让资产库整张网格跟着重渲染。 */
+  const assetPickExistingUrls = useMemo(() => {
+    const slot = slots?.find((s) => s.k === assetPick);
+    if (!slot) return [];
+    return (slotData[slot.k] || []).map((f) => f.url || f.g || "").filter(Boolean);
+  }, [assetPick, slotData, slots]);
+  const assetPickSlot = slots?.find((s) => s.k === assetPick);
+  const assetPickRemaining = assetPickSlot ? roomFor(slotData, assetPickSlot) : 0;
 
   const removeFile = (k: string, i: number) =>
     setSlotData((prev) => {
@@ -276,12 +338,14 @@ export function useUploadSlots({
     srcMenuPos,
     assetPick,
     setAssetPick,
+    assetPickRemaining,
+    assetPickExistingUrls,
     fileInputRef,
     addFile,
     pickLocal,
     onLocalFiles,
     openAssets,
-    chooseAsset,
+    chooseAssets,
     removeFile,
     swapFlf,
   };

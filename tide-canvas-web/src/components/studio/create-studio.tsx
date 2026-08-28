@@ -276,7 +276,9 @@ export default function CreateStudio() {
     pickLocal,
     onLocalFiles,
     openAssets,
-    chooseAsset,
+    chooseAssets,
+    assetPickRemaining,
+    assetPickExistingUrls,
     removeFile,
     swapFlf,
   } = useUploadSlots({ slots, tool, mCfg, slotData, setSlotData, ensureSession });
@@ -1447,7 +1449,9 @@ export default function CreateStudio() {
         <AssetPickerModal
           kind={slotTypeOf(slots, assetPick)}
           lockKind
-          onPick={chooseAsset}
+          onPick={chooseAssets}
+          remaining={assetPickRemaining}
+          existingUrls={assetPickExistingUrls}
           onClose={() => setAssetPick(null)}
         />
       )}
