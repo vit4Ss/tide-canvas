@@ -4822,12 +4822,81 @@ tr:hover .rowacts,
   background: linear-gradient(90deg, #7665e8, #65c9d0);
 }
 
+.uport-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  min-width: 0;
+}
+.uport-detail-grid > .uport-card {
+  min-width: 0;
+}
+.uport-detail-grid > .uport-detail-full {
+  grid-column: 1 / -1;
+}
+.uport-detail-grid > .uport-card:not(.uport-detail-full) {
+  align-self: start;
+}
+.uport-benefit-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.uport-benefit-strip > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 11px;
+  border: 1px solid var(--border-weak);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.uport-benefit-strip span,
+.uport-benefit-strip small {
+  color: var(--text-faint);
+  font-size: 10.5px;
+}
+.uport-benefit-strip strong {
+  color: var(--text-title);
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+}
+.uport-wide-card {
+  width: 100%;
+}
+.uport-wide-card .uport-side-title small {
+  margin-left: 0;
+}
+.uport-wide-card .uport-figures-side {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0;
+  margin-top: 18px;
+}
+.uport-wide-card .uport-figures-side > div + div {
+  padding-left: 17px;
+  border-left: 1px solid var(--border-weak);
+}
+.uport-wide-card .uport-storage {
+  max-width: 520px;
+}
+
 @media (max-width: 1040px) {
   .uport-layout {
     grid-template-columns: minmax(0, 1.35fr) minmax(270px, 0.8fr);
   }
   .uport-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .uport-wide-card .uport-figures-side {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 15px 12px;
+  }
+  .uport-wide-card .uport-figures-side > div + div {
+    padding-left: 0;
+    border-left: 0;
   }
 }
 @media (max-width: 820px) {
@@ -4902,6 +4971,7 @@ tr:hover .rowacts,
   }
   .uport-activity,
   .uport-two,
+  .uport-detail-grid,
   .uport-aside {
     grid-template-columns: 1fr;
   }
@@ -4913,5 +4983,12 @@ tr:hover .rowacts,
   }
   .uport-assets-card {
     grid-column: auto;
+  }
+  .uport-wide-card .uport-figures-side {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 15px 12px;
+  }
+  .uport-benefit-strip {
+    grid-template-columns: 1fr;
   }
 }

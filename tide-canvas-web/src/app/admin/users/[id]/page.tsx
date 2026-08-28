@@ -185,7 +185,7 @@ function buildSummary(d: UserPortraitVO): string[] {
 
   const second: string[] = [];
   if (commerce.paidOrderCount > 0) {
-    second.push(`累计付费 ¥${commerce.paidAmount}`);
+    second.push(`累计付费 ¥${commerce.paidAmount || "0.00"}`);
   } else if (commerce.claimPoints > 0) {
     second.push(`靠兑换码获得 ${fmtNum(commerce.claimPoints)} 积分`);
   }
@@ -545,9 +545,17 @@ export default function AdminUserPortraitPage() {
   const hasCommerce =
     commerce.recentOrders.length > 0 || commerce.recentClaims.length > 0 ||
     commerce.checkinCount > 0 || commerce.paidOrderCount > 0;
+  const hasAssets =
+    assets.workCount > 0 || assets.projectCount > 0 || assets.fileCount > 0 ||
+    assets.storageUsed > 0 || assets.skillRunCount > 0 ||
+    community.commentCount > 0 || community.likeCount > 0 ||
+    community.followers > 0 || community.following > 0;
+  const detailNeedsFullWidth =
+    points.transactions.length > 0 || commerce.recentOrders.length > 0 || commerce.recentClaims.length > 0;
   const storagePercent = assets.storageQuota > 0
     ? Math.min(100, Math.round((assets.storageUsed / assets.storageQuota) * 100))
     : 0;
+  const paidAmount = commerce.paidAmount || "0.00";
 
   return (
     <div className="adm-page uport-page">
@@ -604,7 +612,7 @@ export default function AdminUserPortraitPage() {
           <MetricCard icon={Coins} tone="violet" label="积分余额" value={fmtNum(points.balance)} detail={`累计获得 ${fmtNum(points.totalEarned)}`} />
           <MetricCard icon={Sparkles} tone="cyan" label="生成总数" value={fmtNum(generation.total)} detail={`近 30 天 ${fmtNum(generation.total30)}`} />
           <MetricCard icon={Activity} tone="green" label="创作成功率" value={successRate} detail={`失败 ${fmtNum(generation.failed)} 次`} />
-          <MetricCard icon={BadgeDollarSign} tone="amber" label="累计付费" value={`¥${commerce.paidAmount}`} detail={`${fmtNum(commerce.paidOrderCount)} 笔订单`} />
+          <MetricCard icon={BadgeDollarSign} tone="amber" label="累计付费" value={`¥${paidAmount}`} detail={`${fmtNum(commerce.paidOrderCount)} 笔订单`} />
         </section>
 
         <div className="uport-layout">
@@ -677,12 +685,13 @@ export default function AdminUserPortraitPage() {
           )}
         </Section>
 
+            <div className="uport-detail-grid">
         {/* ── 积分 ── */}
         <Section
           title="积分流水"
           note={`累计获得 ${fmtNum(points.totalEarned)} · 消耗 ${fmtNum(points.totalSpent)}${points.refundCount > 0 ? ` · 退款 ${fmtNum(points.refundCount)} 笔` : ""}`}
           link={{ href: `/admin/points?userId=${user.id}`, text: "完整流水" }}
-          className="uport-card"
+          className={`uport-card${detailNeedsFullWidth ? " uport-detail-full" : ""}`}
         >
           {points.byType.length === 0 && points.transactions.length === 0 ? (
             <div className="uport-empty-state"><Coins aria-hidden size={20} /><span>暂无积分流水</span></div>
@@ -724,12 +733,17 @@ export default function AdminUserPortraitPage() {
               ? `兑换码 ${fmtNum(commerce.claimCount)} 次 / +${fmtNum(commerce.claimPoints)} 分 · 签到 ${fmtNum(commerce.checkinCount)} 次 / +${fmtNum(commerce.checkinPoints)} 分${commerce.lastCheckin ? ` · 最近签到 ${commerce.lastCheckin}` : ""}`
               : undefined
           }
-          className="uport-card uport-commerce-sec"
+          className={`uport-card uport-commerce-sec${detailNeedsFullWidth ? " uport-detail-full" : ""}`}
         >
           {!hasCommerce ? (
             <div className="uport-empty-state"><BadgeDollarSign aria-hidden size={20} /><span>没有订单、兑换与签到记录</span></div>
           ) : (
             <>
+              <div className="uport-benefit-strip">
+                <div><span>兑换码</span><strong>{fmtNum(commerce.claimCount)} 次</strong><small>+{fmtNum(commerce.claimPoints)} 分</small></div>
+                <div><span>签到</span><strong>{fmtNum(commerce.checkinCount)} 次</strong><small>+{fmtNum(commerce.checkinPoints)} 分</small></div>
+                <div><span>付费订单</span><strong>{fmtNum(commerce.paidOrderCount)} 笔</strong><small>¥{paidAmount}</small></div>
+              </div>
               {commerce.recentOrders.length > 0 ? (
                 <>
                   <Caption>最近订单</Caption>
@@ -755,6 +769,8 @@ export default function AdminUserPortraitPage() {
             </>
           )}
         </Section>
+
+            </div>
 
           </main>
 
@@ -801,8 +817,13 @@ export default function AdminUserPortraitPage() {
               )}
             </section>
 
-            <section className="uport-side-card uport-assets-card">
-              <div className="uport-side-title"><Database aria-hidden size={17} /><span>资产沉淀</span></div>
+          </aside>
+        </div>
+
+        <section className="uport-wide-card uport-side-card uport-assets-card">
+          <div className="uport-side-title"><Database aria-hidden size={17} /><span>资产沉淀</span><small>产出资产与社区参与</small></div>
+          {hasAssets ? (
+            <>
               <Figures className="uport-figures-side" items={[
                 { k: "作品", v: fmtNum(assets.workCount) },
                 { k: "项目", v: fmtNum(assets.projectCount) },
@@ -815,9 +836,11 @@ export default function AdminUserPortraitPage() {
                 <div><span>存储空间</span><b>{fmtBytes(assets.storageUsed)}{assets.storageQuota > 0 ? ` / ${fmtBytes(assets.storageQuota)}` : ""}</b></div>
                 <div className="uport-storage-track"><i style={{ width: `${storagePercent}%` }} /></div>
               </div>
-            </section>
-          </aside>
-        </div>
+            </>
+          ) : (
+            <div className="uport-empty-state"><Database aria-hidden size={20} /><span>还没有沉淀资产或社区活动</span></div>
+          )}
+        </section>
       </div>
     </div>
   );
