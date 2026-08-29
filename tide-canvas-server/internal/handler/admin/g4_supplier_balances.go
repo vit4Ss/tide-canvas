@@ -88,6 +88,8 @@ type supplierBalanceChecker interface {
 	source() string
 	cacheIdentity() [sha256.Size]byte
 	lowBalance() float64
+	currency() string
+	exchangeRate() float64
 	configurationIssue() (state, message string)
 	read(context.Context, *http.Client) (supplierBalanceReading, error)
 }
@@ -391,8 +393,9 @@ func (m *supplierBalanceMonitor) currentCheckers() ([]supplierBalanceChecker, er
 
 // loadLiveSupplierBalanceConfig overlays the database-owned suppliers from
 // sys_config for every snapshot. A blank stored credential intentionally
-// clears any legacy environment value. Only endpoint shape (base URL, quota
-// conversion, currency) stays on the deployment configuration.
+// clears any legacy environment value. Endpoint shape (base URL and quota
+// conversion) stays in deployment config; currency, exchange rate, credentials,
+// switches, and the CNY warning threshold are live database settings.
 func loadLiveSupplierBalanceConfig(db *gorm.DB, cfg config.BalanceMonitorConfig) (config.BalanceMonitorConfig, error) {
 	// These values have a single source of truth: sys_config. Clear any values
 	// Viper may have accepted from legacy environment variables before reading
@@ -448,21 +451,27 @@ func loadLiveSupplierBalanceConfig(db *gorm.DB, cfg config.BalanceMonitorConfig)
 	if value, ok := parseSupplierBalanceThreshold(values, model.ConfigKeyBalanceDLAPILowBalance); ok {
 		cfg.DLAPI.LowBalance = value
 	}
+	overlaySupplierMonetaryConfig(values, model.ConfigKeyBalanceDLAPICurrency, model.ConfigKeyBalanceDLAPIExchangeRate,
+		&cfg.DLAPI.Currency, &cfg.DLAPI.ExchangeRate)
 	overlayProfileBalanceConfig(values, profileBalanceConfigKeys{
 		enabled: model.ConfigKeyBalanceMikotoEnabled, email: model.ConfigKeyBalanceMikotoEmail, password: model.ConfigKeyBalanceMikotoPassword,
-		token: model.ConfigKeyBalanceMikotoAccessToken, threshold: model.ConfigKeyBalanceMikotoLowBalance,
+		token: model.ConfigKeyBalanceMikotoAccessToken, currency: model.ConfigKeyBalanceMikotoCurrency,
+		exchangeRate: model.ConfigKeyBalanceMikotoExchangeRate, threshold: model.ConfigKeyBalanceMikotoLowBalance,
 	}, &cfg.Mikoto)
 	overlayProfileBalanceConfig(values, profileBalanceConfigKeys{
 		enabled: model.ConfigKeyBalanceCCGOEnabled, email: model.ConfigKeyBalanceCCGOEmail, password: model.ConfigKeyBalanceCCGOPassword,
-		token: model.ConfigKeyBalanceCCGOAccessToken, threshold: model.ConfigKeyBalanceCCGOLowBalance,
+		token: model.ConfigKeyBalanceCCGOAccessToken, currency: model.ConfigKeyBalanceCCGOCurrency,
+		exchangeRate: model.ConfigKeyBalanceCCGOExchangeRate, threshold: model.ConfigKeyBalanceCCGOLowBalance,
 	}, &cfg.CCGO)
 	overlayProfileBalanceConfig(values, profileBalanceConfigKeys{
 		enabled: model.ConfigKeyBalanceCCGO2Enabled, email: model.ConfigKeyBalanceCCGO2Email, password: model.ConfigKeyBalanceCCGO2Password,
-		token: model.ConfigKeyBalanceCCGO2AccessToken, threshold: model.ConfigKeyBalanceCCGO2LowBalance,
+		token: model.ConfigKeyBalanceCCGO2AccessToken, currency: model.ConfigKeyBalanceCCGO2Currency,
+		exchangeRate: model.ConfigKeyBalanceCCGO2ExchangeRate, threshold: model.ConfigKeyBalanceCCGO2LowBalance,
 	}, &cfg.CCGO2)
 	overlayProfileBalanceConfig(values, profileBalanceConfigKeys{
 		enabled: model.ConfigKeyBalanceSecureSkillEnabled, email: model.ConfigKeyBalanceSecureSkillEmail, password: model.ConfigKeyBalanceSecureSkillPassword,
-		token: model.ConfigKeyBalanceSecureSkillAccessToken, threshold: model.ConfigKeyBalanceSecureSkillLowBalance,
+		token: model.ConfigKeyBalanceSecureSkillAccessToken, currency: model.ConfigKeyBalanceSecureSkillCurrency,
+		exchangeRate: model.ConfigKeyBalanceSecureSkillExchangeRate, threshold: model.ConfigKeyBalanceSecureSkillLowBalance,
 	}, &cfg.SecureSkill)
 	if value, ok := values[model.ConfigKeyBalanceDimensioEnabled]; ok {
 		cfg.Dimensio.Enabled = parseSupplierBalanceEnabled(value)
@@ -497,6 +506,8 @@ func loadLiveSupplierBalanceConfig(db *gorm.DB, cfg config.BalanceMonitorConfig)
 	if value, ok := parseSupplierBalanceThreshold(values, model.ConfigKeyBalanceUniartLowBalance); ok {
 		cfg.Uniart.LowBalance = value
 	}
+	overlaySupplierMonetaryConfig(values, model.ConfigKeyBalanceUniartCurrency, model.ConfigKeyBalanceUniartExchangeRate,
+		&cfg.Uniart.Currency, &cfg.Uniart.ExchangeRate)
 	if value, ok := values[model.ConfigKeyBalanceWxartEnabled]; ok {
 		cfg.Wxart.Enabled = parseSupplierBalanceEnabled(value)
 	}
@@ -515,6 +526,8 @@ func loadLiveSupplierBalanceConfig(db *gorm.DB, cfg config.BalanceMonitorConfig)
 	if value, ok := parseSupplierBalanceThreshold(values, model.ConfigKeyBalanceWxartLowBalance); ok {
 		cfg.Wxart.LowBalance = value
 	}
+	overlaySupplierMonetaryConfig(values, model.ConfigKeyBalanceWxartCurrency, model.ConfigKeyBalanceWxartExchangeRate,
+		&cfg.Wxart.Currency, &cfg.Wxart.ExchangeRate)
 	if value, ok := values[model.ConfigKeyBalanceAPIYIEnabled]; ok {
 		cfg.APIYI.Enabled = parseSupplierBalanceEnabled(value)
 	}
@@ -533,11 +546,13 @@ func loadLiveSupplierBalanceConfig(db *gorm.DB, cfg config.BalanceMonitorConfig)
 	if value, ok := parseSupplierBalanceThreshold(values, model.ConfigKeyBalanceAPIYILowBalance); ok {
 		cfg.APIYI.LowBalance = value
 	}
+	overlaySupplierMonetaryConfig(values, model.ConfigKeyBalanceAPIYICurrency, model.ConfigKeyBalanceAPIYIExchangeRate,
+		&cfg.APIYI.Currency, &cfg.APIYI.ExchangeRate)
 	return cfg, nil
 }
 
 type profileBalanceConfigKeys struct {
-	enabled, email, password, token, threshold string
+	enabled, email, password, token, currency, exchangeRate, threshold string
 }
 
 func overlayProfileBalanceConfig(values map[string]string, keys profileBalanceConfigKeys, cfg *config.BearerProfileBalanceConfig) {
@@ -555,6 +570,21 @@ func overlayProfileBalanceConfig(values map[string]string, keys profileBalanceCo
 	}
 	if value, ok := parseSupplierBalanceThreshold(values, keys.threshold); ok {
 		cfg.LowBalance = value
+	}
+	overlaySupplierMonetaryConfig(values, keys.currency, keys.exchangeRate, &cfg.Currency, &cfg.ExchangeRate)
+}
+
+func overlaySupplierMonetaryConfig(values map[string]string, currencyKey, rateKey string, currency *string, rate *float64) {
+	if value, ok := values[currencyKey]; ok {
+		*currency = strings.ToUpper(strings.TrimSpace(value))
+	}
+	if value, ok := values[rateKey]; ok {
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+			*rate = 0
+		} else {
+			*rate = parsed
+		}
 	}
 }
 
@@ -577,7 +607,7 @@ func (m *supplierBalanceMonitor) check(parent context.Context, checker supplierB
 		Key:      checker.key(),
 		Name:     checker.name(),
 		Source:   checker.source(),
-		Currency: "USD",
+		Currency: "CNY",
 		Details:  []SupplierBalanceDetailVO{},
 	}
 	if threshold := checker.lowBalance(); threshold > 0 {
@@ -593,6 +623,9 @@ func (m *supplierBalanceMonitor) check(parent context.Context, checker supplierB
 	ctx, cancel := context.WithTimeout(parent, supplierBalanceTimeout)
 	defer cancel()
 	reading, err := checker.read(ctx, m.client)
+	if err == nil {
+		reading, err = convertSupplierBalanceToCNY(reading, checker.currency(), checker.exchangeRate())
+	}
 	checkedAt := time.Now().UTC()
 	row.CheckedAt = checkedAt.Format(time.RFC3339)
 	row.LatencyMs = time.Since(started).Milliseconds()
@@ -641,6 +674,71 @@ func (m *supplierBalanceMonitor) storeLast(key string, value supplierLastSuccess
 }
 
 func float64Ptr(v float64) *float64 { return &v }
+
+// normalizeSupplierCurrency accepts the historical aliases used by the
+// supplier integrations while keeping the external dashboard contract small.
+// R is wxart's old label for RMB; POINTS is reserved for Dimensio.
+func normalizeSupplierCurrency(raw string) string {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "CNY", "RMB", "R", "¥":
+		return "CNY"
+	case "USD", "US$", "$":
+		return "USD"
+	case "POINTS", "POINT", "积分":
+		return "POINTS"
+	default:
+		return ""
+	}
+}
+
+func supplierMonetaryConfigIssue(currency string, rate float64) string {
+	switch normalizeSupplierCurrency(currency) {
+	case "CNY":
+		return ""
+	case "USD":
+		if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+			return "美元汇率配置无效，请填写大于 0 的人民币汇率"
+		}
+		return ""
+	default:
+		return "原始计价单位配置无效，请选择 CNY 或 USD"
+	}
+}
+
+// convertSupplierBalanceToCNY is the only place where upstream amounts cross
+// into the admin dashboard contract. LowBalance is loaded as CNY already, so
+// it is deliberately not converted here.
+func convertSupplierBalanceToCNY(reading supplierBalanceReading, sourceCurrency string, rate float64) (supplierBalanceReading, error) {
+	source := normalizeSupplierCurrency(sourceCurrency)
+	factor := 1.0
+	switch source {
+	case "CNY":
+		factor = 1
+	case "USD":
+		if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+			return supplierBalanceReading{}, errors.New("美元汇率配置无效，请填写大于 0 的人民币汇率")
+		}
+		factor = rate
+	case "POINTS":
+		// Dimensio's fixed contract: 100 points = 1 RMB.
+		factor = 0.01
+	default:
+		return supplierBalanceReading{}, errors.New("供应商原始计价单位配置无效")
+	}
+	if math.IsNaN(reading.Balance) || math.IsInf(reading.Balance, 0) {
+		return supplierBalanceReading{}, errors.New("供应商余额不是有效数字")
+	}
+	reading.Balance *= factor
+	reading.Currency = "CNY"
+	for i := range reading.Details {
+		if math.IsNaN(reading.Details[i].Value) || math.IsInf(reading.Details[i].Value, 0) {
+			return supplierBalanceReading{}, errors.New("供应商余额明细不是有效数字")
+		}
+		reading.Details[i].Value *= factor
+		reading.Details[i].Currency = "CNY"
+	}
+	return reading, nil
+}
 
 func cloneBalanceDetails(details []SupplierBalanceDetailVO) []SupplierBalanceDetailVO {
 	if len(details) == 0 {
@@ -756,10 +854,13 @@ func (c *newAPIBalanceChecker) source() string {
 }
 
 func (c *newAPIBalanceChecker) cacheIdentity() [sha256.Size]byte {
-	return supplierBalanceIdentity(c.providerKey, c.cfg.BaseURL, c.cfg.UserID, c.cfg.AccessToken, c.cfg.Username, c.cfg.Password)
+	return supplierBalanceIdentity(c.providerKey, c.cfg.BaseURL, c.cfg.UserID, c.cfg.AccessToken, c.cfg.Username, c.cfg.Password,
+		c.cfg.Currency, strconv.FormatFloat(c.cfg.ExchangeRate, 'g', -1, 64))
 }
 
-func (c *newAPIBalanceChecker) lowBalance() float64 { return c.cfg.LowBalance }
+func (c *newAPIBalanceChecker) lowBalance() float64   { return c.cfg.LowBalance }
+func (c *newAPIBalanceChecker) currency() string      { return c.cfg.Currency }
+func (c *newAPIBalanceChecker) exchangeRate() float64 { return c.cfg.ExchangeRate }
 
 func (c *newAPIBalanceChecker) hasLoginCredentials() bool {
 	return strings.TrimSpace(c.cfg.Username) != "" && strings.TrimSpace(c.cfg.Password) != ""
@@ -777,6 +878,9 @@ func (c *newAPIBalanceChecker) configurationIssue() (string, string) {
 	// response. When the panel needs it and it is missing, the upstream auth
 	// error surfaces on the dashboard row.
 	if issue := supplierCredentialIssue(c.cfg.Username, c.cfg.Password, c.cfg.AccessToken, "登录用户名"); issue != "" {
+		return "unconfigured", issue
+	}
+	if issue := supplierMonetaryConfigIssue(c.cfg.Currency, c.cfg.ExchangeRate); issue != "" {
 		return "unconfigured", issue
 	}
 	return "", ""
@@ -1228,10 +1332,13 @@ func (c *balanceProfileChecker) source() string {
 }
 
 func (c *balanceProfileChecker) cacheIdentity() [sha256.Size]byte {
-	return supplierBalanceIdentity(c.providerKey, c.cfg.BaseURL, c.cfg.AccessToken, c.cfg.Email, c.cfg.Password)
+	return supplierBalanceIdentity(c.providerKey, c.cfg.BaseURL, c.cfg.AccessToken, c.cfg.Email, c.cfg.Password,
+		c.cfg.Currency, strconv.FormatFloat(c.cfg.ExchangeRate, 'g', -1, 64))
 }
 
-func (c *balanceProfileChecker) lowBalance() float64 { return c.cfg.LowBalance }
+func (c *balanceProfileChecker) lowBalance() float64   { return c.cfg.LowBalance }
+func (c *balanceProfileChecker) currency() string      { return c.cfg.Currency }
+func (c *balanceProfileChecker) exchangeRate() float64 { return c.cfg.ExchangeRate }
 
 func (c *balanceProfileChecker) hasLoginCredentials() bool {
 	return strings.TrimSpace(c.cfg.Email) != "" && strings.TrimSpace(c.cfg.Password) != ""
@@ -1245,6 +1352,9 @@ func (c *balanceProfileChecker) configurationIssue() (string, string) {
 		return "unconfigured", "缺少请求地址"
 	}
 	if issue := supplierCredentialIssue(c.cfg.Email, c.cfg.Password, c.cfg.AccessToken, "登录邮箱"); issue != "" {
+		return "unconfigured", issue
+	}
+	if issue := supplierMonetaryConfigIssue(c.cfg.Currency, c.cfg.ExchangeRate); issue != "" {
 		return "unconfigured", issue
 	}
 	return "", ""
@@ -1484,7 +1594,9 @@ func (c *dimensioBalanceChecker) cacheIdentity() [sha256.Size]byte {
 	return supplierBalanceIdentity(c.providerKey, c.cfg.BaseURL, c.cfg.AccessToken, c.cfg.Username, c.cfg.Password)
 }
 
-func (c *dimensioBalanceChecker) lowBalance() float64 { return c.cfg.LowBalance }
+func (c *dimensioBalanceChecker) lowBalance() float64   { return c.cfg.LowBalance }
+func (c *dimensioBalanceChecker) currency() string      { return "POINTS" }
+func (c *dimensioBalanceChecker) exchangeRate() float64 { return 0.01 }
 
 func (c *dimensioBalanceChecker) hasLoginCredentials() bool {
 	return strings.TrimSpace(c.cfg.Username) != "" && strings.TrimSpace(c.cfg.Password) != ""

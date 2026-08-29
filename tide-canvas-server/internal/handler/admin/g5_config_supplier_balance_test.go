@@ -139,3 +139,44 @@ func TestSupplierBalanceThresholdRejectsNonFiniteValue(t *testing.T) {
 		t.Fatalf("non-finite threshold status = %d, body=%s", response.Code, response.Body.String())
 	}
 }
+
+func TestSupplierBalanceMonetaryConfigValidation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&model.SysConfig{}); err != nil {
+		t.Fatalf("migrate sys_config: %v", err)
+	}
+	router := gin.New()
+	RegisterConfig(router.Group(""), &app.Deps{DB: db})
+
+	invalid := []struct {
+		key, value string
+	}{
+		{model.ConfigKeyBalanceAPIYIEnabled, "yes"},
+		{model.ConfigKeyBalanceAPIYILowBalance, "NaN"},
+		{model.ConfigKeyBalanceAPIYICurrency, "EUR"},
+		{model.ConfigKeyBalanceAPIYIExchangeRate, "0"},
+		{model.ConfigKeyBalanceDLAPIExchangeRate, "Inf"},
+	}
+	for _, tc := range invalid {
+		t.Run(tc.key, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{"items": []map[string]string{{
+				"configKey": tc.key, "configValue": tc.value,
+				"group": model.ConfigGroupSupplierBalances, "description": "test",
+			}}})
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPut, "/config", bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}

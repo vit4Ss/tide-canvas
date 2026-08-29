@@ -73,7 +73,7 @@ type BalanceMonitorConfig struct {
 
 // NewAPIBalanceConfig configures a New API compatible GET /api/user/self
 // account. QuotaPerUnit converts the raw integer quota returned by New API into
-// the displayed currency amount (DLAPI currently publishes 500000 units/USD).
+// the supplier's configured native amount before the monitor converts it to CNY.
 // With Username and Password set the monitor logs in via POST /api/user/login
 // and reads the profile with the session cookie; AccessToken is the manual
 // fallback sent verbatim in the Authorization header.
@@ -86,7 +86,11 @@ type NewAPIBalanceConfig struct {
 	Password     string  `mapstructure:"password"`
 	AccessToken  string  `mapstructure:"accessToken"`
 	QuotaPerUnit float64 `mapstructure:"quotaPerUnit"`
-	Currency     string  `mapstructure:"currency"`
+	// Currency is the supplier's raw monetary unit (CNY or USD). The monitor
+	// converts the resulting amount to CNY before exposing it to the admin UI.
+	Currency string `mapstructure:"currency"`
+	// ExchangeRate is CNY per one raw currency unit; it is used only for USD.
+	ExchangeRate float64 `mapstructure:"exchangeRate"`
 	LowBalance   float64 `mapstructure:"lowBalance"`
 }
 
@@ -97,16 +101,20 @@ type NewAPIBalanceConfig struct {
 // fallback JWT sent as a Bearer credential. UIRequest adds the
 // x-user-ui-request header required by CCGO.
 type BearerProfileBalanceConfig struct {
-	Enabled     bool    `mapstructure:"enabled"`
-	Name        string  `mapstructure:"name"`
-	BaseURL     string  `mapstructure:"baseUrl"`
-	Email       string  `mapstructure:"email"`
-	Password    string  `mapstructure:"password"`
-	AccessToken string  `mapstructure:"accessToken"`
-	Timezone    string  `mapstructure:"timezone"`
-	Currency    string  `mapstructure:"currency"`
-	LowBalance  float64 `mapstructure:"lowBalance"`
-	UIRequest   bool    `mapstructure:"uiRequest"`
+	Enabled     bool   `mapstructure:"enabled"`
+	Name        string `mapstructure:"name"`
+	BaseURL     string `mapstructure:"baseUrl"`
+	Email       string `mapstructure:"email"`
+	Password    string `mapstructure:"password"`
+	AccessToken string `mapstructure:"accessToken"`
+	Timezone    string `mapstructure:"timezone"`
+	// Currency is the supplier's raw monetary unit (CNY or USD). The monitor
+	// converts the resulting amount to CNY before exposing it to the admin UI.
+	Currency string `mapstructure:"currency"`
+	// ExchangeRate is CNY per one raw currency unit; it is used only for USD.
+	ExchangeRate float64 `mapstructure:"exchangeRate"`
+	LowBalance   float64 `mapstructure:"lowBalance"`
+	UIRequest    bool    `mapstructure:"uiRequest"`
 }
 
 // MikotoBalanceConfig is kept as a source-compatible name for focused tests
@@ -451,37 +459,49 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("balanceMonitor.dlapi.name", "DLAPI")
 	v.SetDefault("balanceMonitor.dlapi.baseUrl", "https://api.dlapi.xyz")
 	v.SetDefault("balanceMonitor.dlapi.quotaPerUnit", 500000)
-	v.SetDefault("balanceMonitor.dlapi.currency", "USD")
+	v.SetDefault("balanceMonitor.dlapi.currency", "CNY")
+	v.SetDefault("balanceMonitor.dlapi.exchangeRate", 1)
 	v.SetDefault("balanceMonitor.uniart.name", "Uniart")
 	v.SetDefault("balanceMonitor.uniart.baseUrl", "https://uniart.fun")
 	v.SetDefault("balanceMonitor.uniart.quotaPerUnit", 500000)
-	v.SetDefault("balanceMonitor.uniart.currency", "USD")
+	v.SetDefault("balanceMonitor.uniart.currency", "CNY")
+	v.SetDefault("balanceMonitor.uniart.exchangeRate", 1)
 	v.SetDefault("balanceMonitor.wxart.name", "wxart")
 	v.SetDefault("balanceMonitor.wxart.baseUrl", "https://wxart.space")
 	v.SetDefault("balanceMonitor.wxart.quotaPerUnit", 100)
-	v.SetDefault("balanceMonitor.wxart.currency", "R")
+	v.SetDefault("balanceMonitor.wxart.currency", "CNY")
+	v.SetDefault("balanceMonitor.wxart.exchangeRate", 1)
 	v.SetDefault("balanceMonitor.apiyi.name", "APIYI")
 	v.SetDefault("balanceMonitor.apiyi.baseUrl", "https://api.apiyi.com")
 	v.SetDefault("balanceMonitor.apiyi.quotaPerUnit", 500000)
 	v.SetDefault("balanceMonitor.apiyi.currency", "USD")
+	v.SetDefault("balanceMonitor.apiyi.exchangeRate", 7.2)
 	v.SetDefault("balanceMonitor.mikoto.name", "Mikoto")
 	v.SetDefault("balanceMonitor.mikoto.baseUrl", "https://api.mikoto.vip")
 	v.SetDefault("balanceMonitor.mikoto.timezone", "Asia/Shanghai")
-	v.SetDefault("balanceMonitor.mikoto.currency", "USD")
+	v.SetDefault("balanceMonitor.mikoto.currency", "CNY")
+	v.SetDefault("balanceMonitor.mikoto.exchangeRate", 1)
 	v.SetDefault("balanceMonitor.mikoto.uiRequest", false)
 	v.SetDefault("balanceMonitor.ccgo.name", "CCGO")
 	v.SetDefault("balanceMonitor.ccgo.baseUrl", "https://www.ccgoai.com")
 	v.SetDefault("balanceMonitor.ccgo.timezone", "Asia/Shanghai")
-	v.SetDefault("balanceMonitor.ccgo.currency", "USD")
+	v.SetDefault("balanceMonitor.ccgo.currency", "CNY")
+	v.SetDefault("balanceMonitor.ccgo.exchangeRate", 1)
 	v.SetDefault("balanceMonitor.ccgo.uiRequest", true)
 	v.SetDefault("balanceMonitor.ccgo2.name", "CCGO2")
 	v.SetDefault("balanceMonitor.ccgo2.baseUrl", "https://www.ccgoai.com")
 	v.SetDefault("balanceMonitor.ccgo2.timezone", "Asia/Shanghai")
-	v.SetDefault("balanceMonitor.ccgo2.currency", "USD")
+	v.SetDefault("balanceMonitor.ccgo2.currency", "CNY")
+	v.SetDefault("balanceMonitor.ccgo2.exchangeRate", 1)
 	v.SetDefault("balanceMonitor.ccgo2.uiRequest", true)
 	v.SetDefault("balanceMonitor.dimensio.name", "Dimensio")
 	v.SetDefault("balanceMonitor.dimensio.baseUrl", "https://jimeng.dimensio.cn")
 	v.SetDefault("balanceMonitor.dimensio.unit", "积分")
+	v.SetDefault("balanceMonitor.secureskill.name", "secure-skill")
+	v.SetDefault("balanceMonitor.secureskill.baseUrl", "https://token.secure-skill.com")
+	v.SetDefault("balanceMonitor.secureskill.timezone", "Asia/Shanghai")
+	v.SetDefault("balanceMonitor.secureskill.currency", "CNY")
+	v.SetDefault("balanceMonitor.secureskill.exchangeRate", 1)
 
 	v.SetDefault("eliandapay.enabled", true)
 	v.SetDefault("eliandapay.gateway", "https://api.ndow.cn/")
@@ -567,7 +587,10 @@ func normalize(cfg *Config) {
 		cfg.BalanceMonitor.DLAPI.QuotaPerUnit = 500000
 	}
 	if strings.TrimSpace(cfg.BalanceMonitor.DLAPI.Currency) == "" {
-		cfg.BalanceMonitor.DLAPI.Currency = "USD"
+		cfg.BalanceMonitor.DLAPI.Currency = "CNY"
+	}
+	if cfg.BalanceMonitor.DLAPI.ExchangeRate <= 0 {
+		cfg.BalanceMonitor.DLAPI.ExchangeRate = 1
 	}
 	if strings.TrimSpace(cfg.BalanceMonitor.Uniart.Name) == "" {
 		cfg.BalanceMonitor.Uniart.Name = "Uniart"
@@ -576,7 +599,10 @@ func normalize(cfg *Config) {
 		cfg.BalanceMonitor.Uniart.QuotaPerUnit = 500000
 	}
 	if strings.TrimSpace(cfg.BalanceMonitor.Uniart.Currency) == "" {
-		cfg.BalanceMonitor.Uniart.Currency = "USD"
+		cfg.BalanceMonitor.Uniart.Currency = "CNY"
+	}
+	if cfg.BalanceMonitor.Uniart.ExchangeRate <= 0 {
+		cfg.BalanceMonitor.Uniart.ExchangeRate = 1
 	}
 	if strings.TrimSpace(cfg.BalanceMonitor.Wxart.Name) == "" {
 		cfg.BalanceMonitor.Wxart.Name = "wxart"
@@ -585,7 +611,10 @@ func normalize(cfg *Config) {
 		cfg.BalanceMonitor.Wxart.QuotaPerUnit = 100
 	}
 	if strings.TrimSpace(cfg.BalanceMonitor.Wxart.Currency) == "" {
-		cfg.BalanceMonitor.Wxart.Currency = "R"
+		cfg.BalanceMonitor.Wxart.Currency = "CNY"
+	}
+	if cfg.BalanceMonitor.Wxart.ExchangeRate <= 0 {
+		cfg.BalanceMonitor.Wxart.ExchangeRate = 1
 	}
 	if strings.TrimSpace(cfg.BalanceMonitor.APIYI.Name) == "" {
 		cfg.BalanceMonitor.APIYI.Name = "APIYI"
@@ -596,6 +625,9 @@ func normalize(cfg *Config) {
 	if strings.TrimSpace(cfg.BalanceMonitor.APIYI.Currency) == "" {
 		cfg.BalanceMonitor.APIYI.Currency = "USD"
 	}
+	if cfg.BalanceMonitor.APIYI.ExchangeRate <= 0 {
+		cfg.BalanceMonitor.APIYI.ExchangeRate = 7.2
+	}
 	if strings.TrimSpace(cfg.BalanceMonitor.Mikoto.Name) == "" {
 		cfg.BalanceMonitor.Mikoto.Name = "Mikoto"
 	}
@@ -603,7 +635,10 @@ func normalize(cfg *Config) {
 		cfg.BalanceMonitor.Mikoto.Timezone = "Asia/Shanghai"
 	}
 	if strings.TrimSpace(cfg.BalanceMonitor.Mikoto.Currency) == "" {
-		cfg.BalanceMonitor.Mikoto.Currency = "USD"
+		cfg.BalanceMonitor.Mikoto.Currency = "CNY"
+	}
+	if cfg.BalanceMonitor.Mikoto.ExchangeRate <= 0 {
+		cfg.BalanceMonitor.Mikoto.ExchangeRate = 1
 	}
 	if strings.TrimSpace(cfg.BalanceMonitor.CCGO.Name) == "" {
 		cfg.BalanceMonitor.CCGO.Name = "CCGO"
@@ -612,7 +647,10 @@ func normalize(cfg *Config) {
 		cfg.BalanceMonitor.CCGO.Timezone = "Asia/Shanghai"
 	}
 	if strings.TrimSpace(cfg.BalanceMonitor.CCGO.Currency) == "" {
-		cfg.BalanceMonitor.CCGO.Currency = "USD"
+		cfg.BalanceMonitor.CCGO.Currency = "CNY"
+	}
+	if cfg.BalanceMonitor.CCGO.ExchangeRate <= 0 {
+		cfg.BalanceMonitor.CCGO.ExchangeRate = 1
 	}
 	if strings.TrimSpace(cfg.BalanceMonitor.CCGO2.Name) == "" {
 		cfg.BalanceMonitor.CCGO2.Name = "CCGO2"
@@ -621,13 +659,28 @@ func normalize(cfg *Config) {
 		cfg.BalanceMonitor.CCGO2.Timezone = "Asia/Shanghai"
 	}
 	if strings.TrimSpace(cfg.BalanceMonitor.CCGO2.Currency) == "" {
-		cfg.BalanceMonitor.CCGO2.Currency = "USD"
+		cfg.BalanceMonitor.CCGO2.Currency = "CNY"
+	}
+	if cfg.BalanceMonitor.CCGO2.ExchangeRate <= 0 {
+		cfg.BalanceMonitor.CCGO2.ExchangeRate = 1
 	}
 	if strings.TrimSpace(cfg.BalanceMonitor.Dimensio.Name) == "" {
 		cfg.BalanceMonitor.Dimensio.Name = "Dimensio"
 	}
 	if strings.TrimSpace(cfg.BalanceMonitor.Dimensio.Unit) == "" {
 		cfg.BalanceMonitor.Dimensio.Unit = "积分"
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.SecureSkill.Name) == "" {
+		cfg.BalanceMonitor.SecureSkill.Name = "secure-skill"
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.SecureSkill.Timezone) == "" {
+		cfg.BalanceMonitor.SecureSkill.Timezone = "Asia/Shanghai"
+	}
+	if strings.TrimSpace(cfg.BalanceMonitor.SecureSkill.Currency) == "" {
+		cfg.BalanceMonitor.SecureSkill.Currency = "CNY"
+	}
+	if cfg.BalanceMonitor.SecureSkill.ExchangeRate <= 0 {
+		cfg.BalanceMonitor.SecureSkill.ExchangeRate = 1
 	}
 
 	// Email policy guards: fall back to sane defaults when values are missing or

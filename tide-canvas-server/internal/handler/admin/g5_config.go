@@ -155,6 +155,21 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 					return
 				}
 			}
+			if isSupplierBalanceCurrencyKey(key) {
+				currency := strings.ToUpper(strings.TrimSpace(items[i].ConfigValue))
+				if currency != "CNY" && currency != "USD" {
+					response.Fail(c, response.CodeBadRequest, "供应商原始计价单位只能是 CNY 或 USD")
+					return
+				}
+				items[i].ConfigValue = currency
+			}
+			if isSupplierBalanceExchangeRateKey(key) {
+				value, parseErr := strconv.ParseFloat(strings.TrimSpace(items[i].ConfigValue), 64)
+				if parseErr != nil || value <= 0 || math.IsInf(value, 0) || math.IsNaN(value) {
+					response.Fail(c, response.CodeBadRequest, "供应商人民币换算汇率必须是大于 0 的数字")
+					return
+				}
+			}
 		}
 
 		// The flat-map convenience shape is update-only: any JSON object would
@@ -285,10 +300,15 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 
 func isSupplierBalanceEnabledKey(key string) bool {
 	switch key {
-	case model.ConfigKeyBalanceMikotoEnabled,
+	case model.ConfigKeyBalanceDLAPIEnabled,
+		model.ConfigKeyBalanceMikotoEnabled,
 		model.ConfigKeyBalanceCCGOEnabled,
 		model.ConfigKeyBalanceCCGO2Enabled,
-		model.ConfigKeyBalanceDimensioEnabled:
+		model.ConfigKeyBalanceDimensioEnabled,
+		model.ConfigKeyBalanceUniartEnabled,
+		model.ConfigKeyBalanceWxartEnabled,
+		model.ConfigKeyBalanceSecureSkillEnabled,
+		model.ConfigKeyBalanceAPIYIEnabled:
 		return true
 	default:
 		return false
@@ -297,10 +317,47 @@ func isSupplierBalanceEnabledKey(key string) bool {
 
 func isSupplierBalanceThresholdKey(key string) bool {
 	switch key {
-	case model.ConfigKeyBalanceMikotoLowBalance,
+	case model.ConfigKeyBalanceDLAPILowBalance,
+		model.ConfigKeyBalanceMikotoLowBalance,
 		model.ConfigKeyBalanceCCGOLowBalance,
 		model.ConfigKeyBalanceCCGO2LowBalance,
-		model.ConfigKeyBalanceDimensioLowBalance:
+		model.ConfigKeyBalanceDimensioLowBalance,
+		model.ConfigKeyBalanceUniartLowBalance,
+		model.ConfigKeyBalanceWxartLowBalance,
+		model.ConfigKeyBalanceSecureSkillLowBalance,
+		model.ConfigKeyBalanceAPIYILowBalance:
+		return true
+	default:
+		return false
+	}
+}
+
+func isSupplierBalanceCurrencyKey(key string) bool {
+	switch key {
+	case model.ConfigKeyBalanceDLAPICurrency,
+		model.ConfigKeyBalanceMikotoCurrency,
+		model.ConfigKeyBalanceCCGOCurrency,
+		model.ConfigKeyBalanceCCGO2Currency,
+		model.ConfigKeyBalanceUniartCurrency,
+		model.ConfigKeyBalanceWxartCurrency,
+		model.ConfigKeyBalanceSecureSkillCurrency,
+		model.ConfigKeyBalanceAPIYICurrency:
+		return true
+	default:
+		return false
+	}
+}
+
+func isSupplierBalanceExchangeRateKey(key string) bool {
+	switch key {
+	case model.ConfigKeyBalanceDLAPIExchangeRate,
+		model.ConfigKeyBalanceMikotoExchangeRate,
+		model.ConfigKeyBalanceCCGOExchangeRate,
+		model.ConfigKeyBalanceCCGO2ExchangeRate,
+		model.ConfigKeyBalanceUniartExchangeRate,
+		model.ConfigKeyBalanceWxartExchangeRate,
+		model.ConfigKeyBalanceSecureSkillExchangeRate,
+		model.ConfigKeyBalanceAPIYIExchangeRate:
 		return true
 	default:
 		return false

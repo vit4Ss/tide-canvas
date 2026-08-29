@@ -92,9 +92,9 @@ worldLabs:
   pollInterval: 5s
   timeout: 20m
 
-# 后台「供应商余额」监控。DLAPI 凭据由环境变量注入；Mikoto、CCGO、CCGO2、
-# Dimensio 的开关、JWT 与预警线由 sys_config 保存，在后台配置管理维护。
-# DLAPI 是 New API 协议：GET /api/user/self 返回的 data.quota / 500000 = USD 余额。
+# 后台「供应商余额」监控。这里只保存各供应商接口形状；开关、凭证、原始计价单位、
+# 美元汇率与人民币预警线均由 sys_config 保存，在余额监控页的供应商配置中维护。
+# 余额统一换算成人民币：人民币渠道汇率为 1；APIYI 按美元汇率换算；Dimensio 按 100 积分 = 1 元换算。
 balanceMonitor:
   refreshSeconds: 30
   dlapi:
@@ -103,24 +103,28 @@ balanceMonitor:
     baseUrl: https://api.dlapi.xyz
     userId: "245"
     quotaPerUnit: 500000
-    currency: USD
+    currency: CNY
+    exchangeRate: 1
     lowBalance: 20
   mikoto:
     name: Mikoto
     baseUrl: https://api.mikoto.vip
     timezone: Asia/Shanghai
-    currency: USD
+    currency: CNY
+    exchangeRate: 1
   ccgo:
     name: CCGO
     baseUrl: https://www.ccgoai.com
     timezone: Asia/Shanghai
-    currency: USD
+    currency: CNY
+    exchangeRate: 1
     uiRequest: true
   ccgo2:
     name: CCGO2
     baseUrl: https://www.ccgoai.com
     timezone: Asia/Shanghai
-    currency: USD
+    currency: CNY
+    exchangeRate: 1
     uiRequest: true
   dimensio:
     name: Dimensio
@@ -132,21 +136,24 @@ balanceMonitor:
     name: Uniart
     baseUrl: https://uniart.fun
     quotaPerUnit: 500000
-    currency: USD
+    currency: CNY
+    exchangeRate: 1
   # wxart 是 one-api 面板（quota_per_unit=100，面板单位 R）：令牌与预警线
   # 同样在管理后台「配置管理 → 供应商余额」维护，用户 ID 通常可留空。
   wxart:
     name: wxart
     baseUrl: https://wxart.space
     quotaPerUnit: 100
-    currency: R
+    currency: CNY
+    exchangeRate: 1
   # secure-skill 与 Mikoto/CCGO 同款平台：账号密码自动登录续期，
   # 凭证在管理后台「配置管理 → 供应商余额」维护。
   secureskill:
     name: secure-skill
     baseUrl: https://token.secure-skill.com
     timezone: Asia/Shanghai
-    currency: USD
+    currency: CNY
+    exchangeRate: 1
   # APIYI 是标准 New API 面板（官方文档化的余额接口）：系统令牌长期有效，
   # 令牌与预警线在管理后台「余额监控 → APIYI 配置」维护。
   apiyi:
@@ -154,6 +161,7 @@ balanceMonitor:
     baseUrl: https://api.apiyi.com
     quotaPerUnit: 500000
     currency: USD
+    exchangeRate: 7.2
 
 # 易联达Pay (eliandapay / api.ndow.cn) 聚合收银台 —— 一个接口同时支持支付宝 + 微信，
 # MD5 签名。下单在 /api/orders 生成 submit.php 跳转 URL；网关异步回调打到

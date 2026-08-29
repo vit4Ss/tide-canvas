@@ -270,6 +270,9 @@ func prepareNullableIdempotencyColumns(db *gorm.DB) error {
 
 // ensureBaselineConfig inserts must-exist sys_config rows when missing.
 func ensureBaselineConfig(db *gorm.DB) error {
+	if err := migrateSupplierBalanceCurrency(db); err != nil {
+		return err
+	}
 	baseline := []SysConfig{
 		{
 			ConfigKey:   ConfigKeyFooterLinks,

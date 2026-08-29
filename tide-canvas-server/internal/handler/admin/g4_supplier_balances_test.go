@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -147,6 +148,72 @@ func TestDimensioBalanceCheckerCalculatesRemainingCredits(t *testing.T) {
 	}
 	if len(reading.Details) != 2 || reading.Details[0].Value != 560100 || reading.Details[1].Value != 519891 {
 		t.Errorf("details = %+v, want budget and used credits", reading.Details)
+	}
+}
+
+func TestConvertSupplierBalanceToCNY(t *testing.T) {
+	tests := []struct {
+		name     string
+		currency string
+		rate     float64
+		balance  float64
+		detail   float64
+		want     float64
+		wantItem float64
+	}{
+		{name: "renminbi stays unchanged", currency: "CNY", rate: 1, balance: 86.58, detail: 145, want: 86.58, wantItem: 145},
+		{name: "legacy RMB alias stays unchanged", currency: "R", rate: 1, balance: 89.58, detail: 210.42, want: 89.58, wantItem: 210.42},
+		{name: "USD uses configured rate", currency: "USD", rate: 7.2, balance: 10, detail: 2, want: 72, wantItem: 14.4},
+		{name: "Dimensio points divide by one hundred", currency: "POINTS", rate: 0.01, balance: 40209, detail: 560100, want: 402.09, wantItem: 5601},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reading, err := convertSupplierBalanceToCNY(supplierBalanceReading{
+				Balance: tc.balance,
+				Details: []SupplierBalanceDetailVO{{Label: "detail", Value: tc.detail, Currency: tc.currency}},
+			}, tc.currency, tc.rate)
+			if err != nil {
+				t.Fatalf("convert: %v", err)
+			}
+			if math.Abs(reading.Balance-tc.want) > 1e-9 || reading.Currency != "CNY" {
+				t.Errorf("balance = %v %s, want %v CNY", reading.Balance, reading.Currency, tc.want)
+			}
+			if len(reading.Details) != 1 || math.Abs(reading.Details[0].Value-tc.wantItem) > 1e-9 || reading.Details[0].Currency != "CNY" {
+				t.Errorf("details = %+v, want %v CNY", reading.Details, tc.wantItem)
+			}
+		})
+	}
+	if _, err := convertSupplierBalanceToCNY(supplierBalanceReading{Balance: 1}, "USD", 0); err == nil {
+		t.Fatal("USD conversion without a positive rate must fail")
+	}
+}
+
+func TestAPIYIMonitorConvertsBalanceAndWarningToCNY(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/user/self" || r.Header.Get("Authorization") != "apiyi-token" {
+			t.Errorf("request = %s auth=%q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":{"quota":1000000,"used_quota":500000}}`))
+	}))
+	defer server.Close()
+
+	cfg := config.BalanceMonitorConfig{APIYI: config.NewAPIBalanceConfig{
+		Enabled: true, Name: "APIYI", BaseURL: server.URL, AccessToken: "apiyi-token",
+		QuotaPerUnit: 500000, Currency: "USD", ExchangeRate: 7.2, LowBalance: 15,
+	}}
+	row := newSupplierBalanceMonitorWithClient(cfg, server.Client()).snapshot(context.Background()).Suppliers[8]
+	if row.State != "low" || row.Balance == nil || math.Abs(*row.Balance-14.4) > 1e-9 {
+		t.Fatalf("row = %+v, want low balance 14.4 CNY", row)
+	}
+	if row.Currency != "CNY" || row.LowBalance == nil || *row.LowBalance != 15 {
+		t.Fatalf("currency/threshold = %s/%v, want CNY/15", row.Currency, row.LowBalance)
+	}
+	if len(row.Details) != 1 || math.Abs(row.Details[0].Value-7.2) > 1e-9 || row.Details[0].Currency != "CNY" {
+		t.Fatalf("details = %+v, want cumulative usage 7.2 CNY", row.Details)
+	}
+	if !strings.Contains(row.Message, "CNY") {
+		t.Errorf("warning message = %q, want CNY", row.Message)
 	}
 }
 
@@ -376,7 +443,7 @@ func TestSupplierBalanceMonitorKeepsLastSuccessOnFailure(t *testing.T) {
 
 	cfg := config.BalanceMonitorConfig{RefreshSeconds: 30, DLAPI: config.NewAPIBalanceConfig{
 		Enabled: true, Name: "DLAPI", BaseURL: server.URL, UserID: "245",
-		AccessToken: "token", QuotaPerUnit: 500000, Currency: "USD", LowBalance: 2,
+		AccessToken: "token", QuotaPerUnit: 500000, Currency: "CNY", ExchangeRate: 1, LowBalance: 2,
 	}}
 	monitor := newSupplierBalanceMonitorWithClient(cfg, server.Client())
 
@@ -398,7 +465,7 @@ func TestSupplierBalanceMonitorKeepsLastSuccessOnFailure(t *testing.T) {
 func TestSupplierBalanceMonitorReportsMissingTokenWithoutRequest(t *testing.T) {
 	cfg := config.BalanceMonitorConfig{RefreshSeconds: 30, DLAPI: config.NewAPIBalanceConfig{
 		Enabled: true, Name: "DLAPI", BaseURL: "https://api.dlapi.xyz", UserID: "245",
-		QuotaPerUnit: 500000, Currency: "USD",
+		QuotaPerUnit: 500000, Currency: "CNY", ExchangeRate: 1,
 	}}
 	monitor := newSupplierBalanceMonitorWithClient(cfg, http.DefaultClient)
 	row := monitor.snapshot(context.Background()).Suppliers[0]
@@ -445,7 +512,7 @@ func TestSupplierBalanceMonitorReloadsDatabaseTokenForEverySnapshot(t *testing.T
 
 	cfg := config.BalanceMonitorConfig{RefreshSeconds: 30, Mikoto: config.BearerProfileBalanceConfig{
 		Enabled: false, Name: "Mikoto", BaseURL: server.URL, AccessToken: "legacy-env-token",
-		Timezone: "Asia/Shanghai", Currency: "USD",
+		Timezone: "Asia/Shanghai", Currency: "CNY", ExchangeRate: 1,
 	}}
 	monitor := newSupplierBalanceMonitorWithDBAndClient(db, cfg, server.Client())
 
@@ -520,6 +587,38 @@ func TestSupplierBalanceMonitorNeverFallsBackToLegacyEnvironmentCredentials(t *t
 	}
 }
 
+func TestLoadLiveSupplierBalanceConfigOverlaysCurrencyAndExchangeRate(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&model.SysConfig{}); err != nil {
+		t.Fatalf("migrate sys_config: %v", err)
+	}
+	rows := []model.SysConfig{
+		{ConfigKey: model.ConfigKeyBalanceDLAPICurrency, ConfigValue: "usd"},
+		{ConfigKey: model.ConfigKeyBalanceDLAPIExchangeRate, ConfigValue: "7.35"},
+		{ConfigKey: model.ConfigKeyBalanceAPIYICurrency, ConfigValue: "CNY"},
+		{ConfigKey: model.ConfigKeyBalanceAPIYIExchangeRate, ConfigValue: "1"},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatalf("seed monetary config: %v", err)
+	}
+	live, err := loadLiveSupplierBalanceConfig(db, config.BalanceMonitorConfig{
+		DLAPI: config.NewAPIBalanceConfig{Currency: "CNY", ExchangeRate: 1},
+		APIYI: config.NewAPIBalanceConfig{Currency: "USD", ExchangeRate: 7.2},
+	})
+	if err != nil {
+		t.Fatalf("load live config: %v", err)
+	}
+	if live.DLAPI.Currency != "USD" || live.DLAPI.ExchangeRate != 7.35 {
+		t.Errorf("DLAPI monetary config = %q/%v, want USD/7.35", live.DLAPI.Currency, live.DLAPI.ExchangeRate)
+	}
+	if live.APIYI.Currency != "CNY" || live.APIYI.ExchangeRate != 1 {
+		t.Errorf("APIYI monetary config = %q/%v, want CNY/1", live.APIYI.Currency, live.APIYI.ExchangeRate)
+	}
+}
+
 func TestWxartBalanceCheckerConvertsQuotaWithoutUserIDHeader(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/user/self" {
@@ -588,7 +687,7 @@ func TestSupplierBalanceMonitorReadsDLAPIFromDatabase(t *testing.T) {
 	}
 
 	cfg := config.BalanceMonitorConfig{RefreshSeconds: 30, DLAPI: config.NewAPIBalanceConfig{
-		Name: "DLAPI", BaseURL: server.URL, QuotaPerUnit: 500000, Currency: "USD",
+		Name: "DLAPI", BaseURL: server.URL, QuotaPerUnit: 500000, Currency: "CNY", ExchangeRate: 1,
 	}}
 	monitor := newSupplierBalanceMonitorWithDBAndClient(db, cfg, server.Client())
 
@@ -632,7 +731,7 @@ func TestSupplierBalanceMonitorReadsUniartFromDatabase(t *testing.T) {
 	}
 
 	cfg := config.BalanceMonitorConfig{RefreshSeconds: 30, Uniart: config.NewAPIBalanceConfig{
-		Name: "Uniart", BaseURL: server.URL, QuotaPerUnit: 500000, Currency: "USD",
+		Name: "Uniart", BaseURL: server.URL, QuotaPerUnit: 500000, Currency: "CNY", ExchangeRate: 1,
 	}}
 	monitor := newSupplierBalanceMonitorWithDBAndClient(db, cfg, server.Client())
 
@@ -690,7 +789,7 @@ func TestSupplierBalanceMonitorLogsInWithDatabaseAccount(t *testing.T) {
 	}
 
 	cfg := config.BalanceMonitorConfig{RefreshSeconds: 30, Mikoto: config.BearerProfileBalanceConfig{
-		Name: "Mikoto", BaseURL: server.URL, Timezone: "Asia/Shanghai", Currency: "USD",
+		Name: "Mikoto", BaseURL: server.URL, Timezone: "Asia/Shanghai", Currency: "CNY", ExchangeRate: 1,
 	}}
 	monitor := newSupplierBalanceMonitorWithDBAndClient(db, cfg, server.Client())
 
@@ -788,7 +887,7 @@ func TestSupplierBalanceMonitorLogsInUniartWithDatabaseAccount(t *testing.T) {
 	}
 
 	cfg := config.BalanceMonitorConfig{RefreshSeconds: 30, Uniart: config.NewAPIBalanceConfig{
-		Name: "Uniart", BaseURL: server.URL, QuotaPerUnit: 500000, Currency: "USD",
+		Name: "Uniart", BaseURL: server.URL, QuotaPerUnit: 500000, Currency: "CNY", ExchangeRate: 1,
 	}}
 	monitor := newSupplierBalanceMonitorWithDBAndClient(db, cfg, server.Client())
 

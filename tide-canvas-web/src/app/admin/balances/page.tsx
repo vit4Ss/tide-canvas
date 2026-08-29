@@ -38,7 +38,9 @@ const SUPPLIER_CONFIG_FIELD: Record<string, { label: string; order: number }> = 
   userId: { label: "用户 ID", order: 1 },
   password: { label: "登录密码", order: 2 },
   accessToken: { label: "访问令牌", order: 3 },
-  lowBalance: { label: "低余额预警线", order: 4 },
+  currency: { label: "原始计价单位", order: 4 },
+  exchangeRate: { label: "美元兑人民币汇率", order: 5 },
+  lowBalance: { label: "人民币低余额预警线", order: 6 },
 };
 
 const STATE_META: Record<SupplierBalanceState, { label: string }> = {
@@ -54,7 +56,7 @@ function formatMoney(value: number | null, currency: string): string {
   try {
     return new Intl.NumberFormat("zh-CN", {
       style: "currency",
-      currency: currency || "USD",
+      currency: currency || "CNY",
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(value);
@@ -179,11 +181,11 @@ export default function AdminBalancesPage() {
     return { connected: healthy + low, healthy, low, errors, inactive };
   }, [rows]);
 
-  const liveUSD = useMemo(() => {
+  const liveCNY = useMemo(() => {
     const connected = rows.filter(
       (row) =>
         (row.state === "healthy" || row.state === "low") &&
-        row.currency.toUpperCase() === "USD" &&
+        row.currency.toUpperCase() === "CNY" &&
         row.balance != null,
     );
     if (connected.length === 0) return null;
@@ -199,7 +201,7 @@ export default function AdminBalancesPage() {
       <header className="balance-page-head">
         <div>
           <h1>余额</h1>
-          <p>查看上游账户余额与认证状态，异常账户不会影响其他供应商查询。</p>
+          <p>查看上游账户余额与认证状态；余额、明细与预警线统一折算为人民币，异常账户不会影响其他供应商查询。</p>
         </div>
         <button
           type="button"
@@ -215,9 +217,9 @@ export default function AdminBalancesPage() {
       <section className="balance-summary" aria-label="资金监控概况">
         <div className="balance-hero">
           <span className="balance-hero-eyebrow">
-            在线美元余额<em>TOTAL / USD</em>
+            在线人民币余额<em>TOTAL / CNY</em>
           </span>
-          <strong className="balance-hero-value">{liveUSD == null ? "—" : formatMoney(liveUSD, "USD")}</strong>
+          <strong className="balance-hero-value">{liveCNY == null ? "—" : formatMoney(liveCNY, "CNY")}</strong>
           <div
             className="balance-hero-meter"
             role="img"
@@ -275,7 +277,7 @@ export default function AdminBalancesPage() {
         <header className="balance-ledger-head">
           <div>
             <h2 id="balance-ledger-title">供应商账户</h2>
-            <p>余额与状态来自最近一次服务端查询。</p>
+            <p>余额与状态来自最近一次服务端查询，所有金额均为人民币口径。</p>
           </div>
           <div className="balance-ledger-security">
             <ShieldCheck aria-hidden size={14} />
@@ -905,7 +907,8 @@ export default function AdminBalancesPage() {
           font-family: var(--mono);
           font-size: 10.5px;
         }
-        .balance-config-row input {
+        .balance-config-row input,
+        .balance-config-row select {
           width: min(360px, 46%);
           flex: none;
           padding: 8px 12px;
@@ -918,7 +921,9 @@ export default function AdminBalancesPage() {
           outline: none;
           transition: border-color var(--dur) var(--ease);
         }
-        .balance-config-row input:focus { border-color: var(--border-strong); }
+        .balance-config-row select { cursor: pointer; }
+        .balance-config-row input:focus,
+        .balance-config-row select:focus { border-color: var(--border-strong); }
         .balance-config-foot {
           display: flex;
           align-items: center;
@@ -946,7 +951,8 @@ export default function AdminBalancesPage() {
             gap: 8px;
             padding: 12px 0;
           }
-          .balance-config-row input { width: 100%; text-align: left; }
+          .balance-config-row input,
+          .balance-config-row select { width: 100%; text-align: left; }
         }
         @media (max-width: 560px) {
           .balance-page { gap: 20px; }
@@ -1069,7 +1075,7 @@ function SupplierBalanceAccount({
         <div className="balance-account-sub">
           {row.stale ? <span className="is-stale">最近成功值 · 非实时</span> : (
             <>
-              <span>预警阈值</span>
+              <span>人民币预警线</span>
               <b>{row.lowBalance == null ? "未设置" : formatMoney(row.lowBalance, row.currency)}</b>
             </>
           )}
@@ -1160,6 +1166,10 @@ function SupplierConfigPanel({
     });
   };
   const dirtyCount = Object.keys(edits).length;
+  const configuredCurrency = fields.find((field) => field.suffix === "currency");
+  const sourceCurrency = configuredCurrency
+    ? valueOf(configuredCurrency.row).trim().toUpperCase()
+    : "CNY";
 
   const save = async () => {
     if (dirtyCount === 0 || saving) return;
@@ -1194,7 +1204,7 @@ function SupplierConfigPanel({
       <header className="balance-config-head">
         <div>
           <h3>{supplier.name} 接入配置</h3>
-          <p>保存后下一次刷新生效；凭证仅保存在服务端，页面显示脱敏值。</p>
+          <p>保存后下一次刷新生效；预警线始终填写人民币，美元供应商还需填写美元兑人民币汇率。</p>
         </div>
         <button type="button" className="adm-btn ghost" onClick={onClose}>
           <X aria-hidden size={14} />
@@ -1212,6 +1222,7 @@ function SupplierConfigPanel({
         <>
           <div className="balance-config-list">
             {fields.map(({ row, suffix, secret, label }) => {
+              if (suffix === "exchangeRate" && sourceCurrency !== "USD") return null;
               const value = valueOf(row);
               const dirty = row.configKey in edits;
               return (
@@ -1226,18 +1237,43 @@ function SupplierConfigPanel({
                       onChange={(next) => setValue(row, next ? "1" : "0")}
                       aria-label={`${supplier.name} ${label}`}
                     />
+                  ) : suffix === "currency" ? (
+                    <select
+                      value={value.trim().toUpperCase() || "CNY"}
+                      onChange={(event) => {
+                        const next = event.target.value;
+                        setValue(row, next);
+                        // A CNY supplier's seeded rate is 1 only as a neutral
+                        // placeholder. When switching it to USD, require the
+                        // operator to enter the real rate instead of silently
+                        // treating one dollar as one yuan.
+                        if (next === "USD" && sourceCurrency !== "USD") {
+                          const rateField = fields.find((field) => field.suffix === "exchangeRate");
+                          if (rateField && valueOf(rateField.row).trim() === "1") {
+                            setValue(rateField.row, "");
+                          }
+                        } else if (next === "CNY") {
+                          const rateField = fields.find((field) => field.suffix === "exchangeRate");
+                          if (rateField) setValue(rateField.row, rateField.row.configValue);
+                        }
+                      }}
+                      aria-label={`${supplier.name} ${label}`}
+                    >
+                      <option value="CNY">人民币（CNY）</option>
+                      <option value="USD">美元（USD）</option>
+                    </select>
                   ) : (
                     <input
-                      type={secret ? "password" : suffix === "lowBalance" ? "number" : "text"}
+                      type={secret ? "password" : suffix === "lowBalance" || suffix === "exchangeRate" ? "number" : "text"}
                       value={value}
-                      min={suffix === "lowBalance" ? 0 : undefined}
-                      step={suffix === "lowBalance" ? "any" : undefined}
+                      min={suffix === "lowBalance" ? 0 : suffix === "exchangeRate" ? 0.000001 : undefined}
+                      step={suffix === "lowBalance" || suffix === "exchangeRate" ? "any" : undefined}
                       onChange={(event) => setValue(row, event.target.value)}
                       onFocus={secret ? (event) => {
                         if (event.currentTarget.value === SUPPLIER_CONFIG_MASK) event.currentTarget.select();
                       } : undefined}
                       autoComplete={secret ? "new-password" : undefined}
-                      placeholder={secret ? "粘贴新值可替换，清空可移除" : undefined}
+                      placeholder={secret ? "粘贴新值可替换，清空可移除" : suffix === "exchangeRate" ? "例如 7.2" : undefined}
                       spellCheck={false}
                       aria-label={`${supplier.name} ${label}`}
                     />
