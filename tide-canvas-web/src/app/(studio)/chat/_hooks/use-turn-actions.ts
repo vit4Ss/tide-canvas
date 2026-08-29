@@ -114,7 +114,10 @@ export function useTurnActions({
     (p?: Record<string, unknown>) => {
       // 无技能的历史轮次也必须显式清空当前技能，不能把当前 chip 静默套用过去。
       setSkill(null);
-      if (!p) return;
+      if (!p) {
+        restoreRefs(undefined);
+        return;
+      }
       if (typeof p.mode === "string") setMode(p.mode);
       if (typeof p.ratio === "string") setRatio(p.ratio);
       if (typeof p.resolution === "string") setRes(p.resolution);
@@ -128,9 +131,10 @@ export function useTurnActions({
           ? { ...DEFAULT_MUSIC_PARAMS, ...(p.music as Partial<MusicParams>) }
           : DEFAULT_MUSIC_PARAMS,
       );
-      // restore reference media as url-only items (the originals are hosted; no
-      // local blob/file is recreated). Lets 再次生成 work on a reference turn.
-      restoreRefs(p.references);
+      // Restore both generation references and normal text-chat attachments.
+      // They share the same URL-only composer shape; text turns persist them as
+      // `attachments`, while media turns use `references`.
+      restoreRefs(Array.isArray(p.references) ? p.references : p.attachments);
     },
     [restoreRefs, setMode, setRatio, setRes, setQuality, setDur, setBatch, setMusic, setSkill],
   );
@@ -146,6 +150,12 @@ export function useTurnActions({
     const requestedOutputType = typeof p?.type === "string" ? p.type : savedModel?.type;
     if (!saved) {
       if (!savedModel) {
+        // Plain text-chat turns historically persisted only attachments and no
+        // model snapshot. They are still editable with the current text model;
+        // do not report a misleading "historical model unavailable" warning.
+        if (!p?.modelRowId && !p?.modelKey && !p?.model && !modelRowId) {
+          return { ok: true };
+        }
         const label = typeof p?.model === "string" ? p.model : "原模型";
         toast.info(`历史模型「${label}」已下架，已保留当前模型，请确认后手动发送`);
         return { ok: false };

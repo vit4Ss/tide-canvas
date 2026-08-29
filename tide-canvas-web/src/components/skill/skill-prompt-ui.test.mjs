@@ -15,6 +15,7 @@ const chatComposer = read("../../app/(studio)/chat/_components/composer.tsx");
 const chatThread = read("../../app/(studio)/chat/_components/chat-thread.tsx");
 const chatConfig = read("../../app/(studio)/chat/_hooks/use-composer-config.ts");
 const chatSend = read("../../app/(studio)/chat/_hooks/use-send-message.ts");
+const turnActions = read("../../app/(studio)/chat/_hooks/use-turn-actions.ts");
 const chatApi = read("../../lib/chat-api.ts");
 const chatBubble = read("../../app/(studio)/chat/_components/message-bubble.tsx");
 const chatSkillPresentation = read("../../app/(studio)/chat/_components/skill-run-presentation.ts");
@@ -127,6 +128,15 @@ test("失败的聊天技能支持恢复原始输入并重新编辑", () => {
   assert.match(chatPage, /restoreReferences\(assets\)/);
   assert.match(chatPage, /setComposerWeb\(input\.parameters\.webSearch === true\)/);
   assert.match(chatPage, /onReEditSkillRun=\{handleSkillRunReEdit\}/);
+});
+
+test("普通文本回复也提供重新编辑，并恢复文本附件", () => {
+  assert.match(chatBubble, /className="chat-text-edit"/);
+  assert.match(chatBubble, /!isMe && \(/);
+  assert.match(chatBubble, /onClick=\{\(\) => onReEdit\(msg\)\}/);
+  assert.match(chatBubble, /onClick=\{\(\) => void onReEditSkillRun\(run\)\}/);
+  assert.match(turnActions, /restoreRefs\(Array\.isArray\(p\.references\) \? p\.references : p\.attachments\)/);
+  assert.match(turnActions, /if \(!p\) \{[\s\S]*?restoreRefs\(undefined\)/);
 });
 
 test("聊天里的纯文本工具结果使用普通 Markdown 回复而不是 SkillRun 卡片", () => {

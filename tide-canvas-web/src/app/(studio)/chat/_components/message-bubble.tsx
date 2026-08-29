@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { FileDown } from "lucide-react";
+import { FileDown, Pencil } from "lucide-react";
 import { AiTaskStatus } from "@/types/ai";
 import type { MessageVO, MessageTaskVO } from "@/types/chat";
 import { mesh } from "@/lib/mesh";
@@ -311,6 +311,17 @@ export function Bubble({
         {!isImage && !isVideo && msg.content ? (
           <div className="bubble-acts">
             <CopyBtn text={msg.content} />
+            {!isMe && (
+              <button
+                type="button"
+                className="chat-text-edit"
+                title="重新编辑这条消息"
+                onClick={() => onReEdit(msg)}
+              >
+                <Pencil aria-hidden />
+                <span>重新编辑</span>
+              </button>
+            )}
           </div>
         ) : null}
       </div>
@@ -433,7 +444,7 @@ function AssistantSkillRun({
     : [];
   const finalText = run ? finalTextSkillResult(run) : "";
 
-  if (finalText) {
+  if (finalText && run) {
     return (
       <div className="msg ai">
         <span className="av" />
@@ -445,6 +456,15 @@ function AssistantSkillRun({
           </div>
           <div className="bubble-acts">
             <CopyBtn text={finalText} />
+            <button
+              type="button"
+              className="chat-text-edit"
+              title="重新编辑这次技能输入"
+              onClick={() => void onReEditSkillRun(run)}
+            >
+              <Pencil aria-hidden />
+              <span>重新编辑</span>
+            </button>
           </div>
         </div>
       </div>
@@ -455,19 +475,32 @@ function AssistantSkillRun({
     <div className="msg ai">
       <span className="av" />
       <div className="bubble">
-        {finalFiles.length > 0 ? (
-          <div className="chat-skill-files" aria-label="生成文件">
-            {finalFiles.map((artifact) => (
-              <button key={artifact.id} type="button" onClick={() => void openArtifact(artifact)}>
-                <span className="ic"><FileDown aria-hidden /></span>
-                <span className="copy">
-                  <strong>{artifact.title || fileNameFromUrl(artifact.url) || "生成文件"}</strong>
-                  <small>可编辑文件 · 点击下载</small>
-                </span>
-                <span className="act">下载</span>
+        {finalFiles.length > 0 && run ? (
+          <>
+            <div className="chat-skill-files" aria-label="生成文件">
+              {finalFiles.map((artifact) => (
+                <button key={artifact.id} type="button" onClick={() => void openArtifact(artifact)}>
+                  <span className="ic"><FileDown aria-hidden /></span>
+                  <span className="copy">
+                    <strong>{artifact.title || fileNameFromUrl(artifact.url) || "生成文件"}</strong>
+                    <small>可编辑文件 · 点击下载</small>
+                  </span>
+                  <span className="act">下载</span>
+                </button>
+              ))}
+            </div>
+            <div className="bubble-acts">
+              <button
+                type="button"
+                className="chat-text-edit"
+                title="重新编辑这次技能输入"
+                onClick={() => void onReEditSkillRun(run)}
+              >
+                <Pencil aria-hidden />
+                <span>重新编辑</span>
               </button>
-            ))}
-          </div>
+            </div>
+          </>
         ) : run ? (
           <SkillRunPanel
             run={presentableSkillRun(run)}

@@ -364,8 +364,13 @@ export function SkillRunPanel({
         </div>
       )}
 
-      {isSkillRunTerminal(run.status) && (onDismiss || (run.status === "cancelled" && onAction)) && (
+      {isSkillRunTerminal(run.status) && (onDismiss || onReEdit || (run.status === "cancelled" && onAction)) && (
         <div className={styles.quietActions}>
+          {run.status === "succeeded" && onReEdit && (
+            <button type="button" disabled={busy} onClick={() => void reEdit()}>
+              <Pencil aria-hidden /> 重新编辑
+            </button>
+          )}
           {run.status === "cancelled" && onAction && (
             <button type="button" disabled={busy} onClick={() => void dispatch("retry")}>
               <RotateCcw aria-hidden /> 重新运行

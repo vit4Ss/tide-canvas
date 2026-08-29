@@ -39,6 +39,7 @@ import { promptAfterSkillPick } from "@/lib/skill-prompt";
 import type { SkillRunPanelActionPayload } from "@/components/skill/skill-run-panel";
 import { toast } from "@/components/shared/toast";
 import type { MentionEditorHandle } from "@/components/studio/mention-prompt-editor";
+import type { MessageVO } from "@/types/chat";
 import { skillApi } from "@/lib/skill-api";
 import { skillRunApi } from "@/lib/skill-run-api";
 import { skillKindOf, skillSupportsEntryPoint, type SkillVO } from "@/types/skill";
@@ -243,6 +244,13 @@ export default function ChatPage() {
     taRef,
   });
 
+  const handleReEdit = useCallback((message: MessageVO) => {
+    // A normal text turn must leave any currently selected tool behind; the
+    // restored message is edited as a plain chat request.
+    setToolSkill(null);
+    return reEdit(message);
+  }, [reEdit]);
+
   useTaskPolling({ msgs: conv.msgs, activeId: conv.activeId, busy, loadMessages: conv.loadMessages });
   useResumeStream({
     msgs: conv.msgs,
@@ -419,7 +427,7 @@ export default function ChatPage() {
           msgsLoading={conv.msgsLoading}
           msgs={conv.msgs}
           avatar={curModelAv}
-          onReEdit={reEdit}
+          onReEdit={handleReEdit}
           onRegenerate={regenerate}
           onReEditSkillRun={handleSkillRunReEdit}
           onOpenLightbox={openLightbox}
