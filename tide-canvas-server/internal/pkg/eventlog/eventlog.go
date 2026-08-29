@@ -7,6 +7,7 @@ package eventlog
 
 import (
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -102,7 +103,21 @@ type ModelTextBillingRef struct {
 func ModelText(userID idgen.ID, scene, modelID, endpoint, requestBody, responseBody string, startedAt time.Time, err error, pointCost int64, billingRef ...ModelTextBillingRef) {
 	success, status, errMsg := 1, 200, ""
 	if err != nil {
-		success, status, errMsg, responseBody = 0, 0, err.Error(), ""
+		success, status, errMsg = 0, 0, err.Error()
+		// Text relay failures used to discard the response body here. That made
+		// the admin generation detail show "-" and made a real upstream 400/413
+		// indistinguishable from a network failure. Keep the body only in the
+		// administrator audit log; user-facing paths still redact it.
+		var detail interface {
+			ErrorResponseBody() string
+			ErrorHTTPStatus() int
+		}
+		if errors.As(err, &detail) {
+			responseBody = detail.ErrorResponseBody()
+			if code := detail.ErrorHTTPStatus(); code > 0 {
+				status = code
+			}
+		}
 	}
 	var billingRefID idgen.ID
 	billingRefType := "ledger"

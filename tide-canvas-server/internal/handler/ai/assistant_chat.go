@@ -152,10 +152,45 @@ func (s *service) runAssistantChat(ctx context.Context, taskID, userID idgen.ID,
 	if n := len(msgs); n > 1 {
 		turn = msgs[n-1:]
 	}
-	reqBody, _ := json.Marshal(turn)
-	eventlog.ModelText(userID, "assistant", modelKey, "/v1/chat/completions", eventlog.SanitizeDataURIs(string(reqBody)), reply, start, err, pointCost, eventlog.ModelTextBillingRef{ID: taskID, Type: "task"})
-	if err != nil {
-		return GenerateResult{}, err
+	// Keep the same request shape as the actual relay call in the generation
+	// detail. Only the current turn is retained to avoid duplicating the full
+	// transcript; data/file payloads are sanitized before entering audit logs.
+	reqBody, _ := json.Marshal(struct {
+		Model    string          `json:"model"`
+		Messages []relaychat.Msg `json:"messages"`
+		Stream   bool            `json:"stream"`
+	}{Model: modelKey, Messages: turn, Stream: true})
+	auditRequestBody := eventlog.SanitizeDataURIs(string(reqBody))
+	result := GenerateResult{
+		RequestURL:   s.relay.ChatEndpoint(),
+		RequestBody:  auditRequestBody,
+		ResponseBody: reply,
+		HttpStatus:   200,
 	}
-	return GenerateResult{Meta: map[string]any{"text": reply}}, nil
+	// HTTPError carries the upstream body/status while preserving the original
+	// error for the existing safe user-facing classifier.
+	var httpErr interface {
+		ErrorResponseBody() string
+		ErrorHTTPStatus() int
+		ErrorRequestURL() string
+		ErrorRequestBody() string
+	}
+	if errors.As(err, &httpErr) {
+		result.ResponseBody = httpErr.ErrorResponseBody()
+		if code := httpErr.ErrorHTTPStatus(); code > 0 {
+			result.HttpStatus = code
+		}
+		if url := strings.TrimSpace(httpErr.ErrorRequestURL()); url != "" {
+			result.RequestURL = url
+		}
+		if raw := strings.TrimSpace(httpErr.ErrorRequestBody()); raw != "" {
+			result.RequestBody = eventlog.SanitizeDataURIs(raw)
+		}
+	}
+	eventlog.ModelText(userID, "assistant", modelKey, result.RequestURL, result.RequestBody, result.ResponseBody, start, err, pointCost, eventlog.ModelTextBillingRef{ID: taskID, Type: "task"})
+	if err != nil {
+		return result, err
+	}
+	result.Meta = map[string]any{"text": reply}
+	return result, nil
 }

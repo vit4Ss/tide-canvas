@@ -257,6 +257,9 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	if !modelSupportsHandler(m, dto.Handler) {
 		return nil, skillPlacementError{message: "所选模型不支持当前生成方式，请切换模型或生成模式"}
 	}
+	if err := validateAssistantChatInput(&dto, m); err != nil {
+		return nil, err
+	}
 	if err := validateRequiredReferenceInput(&dto); err != nil {
 		return nil, err
 	}
@@ -1418,6 +1421,11 @@ var inputErrorRules = []struct {
 		"参考图数量超过", "参考素材数量超过",
 	}, "参考素材数量超过当前模型上限，请减少后重试"},
 	{[]string{
+		"too many images", "too many files", "too many attachments",
+		"maximum number of images", "maximum number of files", "maximum attachments",
+		"max_file_count", "max file count", "image count exceeds",
+	}, "选择的图片或文件数量超过当前模型上限，请减少后重试"},
+	{[]string{
 		"failed to download image", "download image failed", "cannot fetch image",
 		"fetch image failed", "invalid image url", "unable to access image",
 		"image url is not accessible",
@@ -1429,8 +1437,13 @@ var inputErrorRules = []struct {
 	{[]string{
 		"image too large", "image is too large", "image size exceeds",
 		"file too large", "file size exceeds", "resolution too high",
+		"request entity too large", "payload too large", "content too large", "request too large",
 	}, "参考素材体积或分辨率超限，请压缩后重试"},
 
+	{[]string{
+		"image input is not supported", "image input not supported",
+		"does not support image input", "vision is not supported",
+	}, "当前文本模型不支持图片输入，请切换支持视觉理解的文本模型"},
 	{[]string{
 		"does not support audio input", "audio input is not supported",
 		"input_audio is not supported", "unsupported input_audio",
@@ -1470,6 +1483,14 @@ var inputErrorRules = []struct {
 func userFacingGenError(err error) string {
 	if err == nil {
 		return userFacingGenErr
+	}
+	// A 413 is unambiguous: the upstream rejected the request envelope before
+	// generation. In multimodal requests this is normally the combined image
+	// payload, so give the user a useful action even when the provider body is
+	// empty or uses a vendor-specific message.
+	var httpStatusErr interface{ ErrorHTTPStatus() int }
+	if errors.As(err, &httpStatusErr) && httpStatusErr.ErrorHTTPStatus() == 413 {
+		return "参考图片或附件总体积超过上游限制，请减少数量或压缩后重试"
 	}
 	// Relay 数字业务码优先于旧的 msg 关键词分类。5001 + InputImageRisk
 	// （参考图风控）、5002（安全审核）与 5009（版权限制）使用稳定的

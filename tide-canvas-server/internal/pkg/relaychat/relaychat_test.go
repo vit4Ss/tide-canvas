@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -29,6 +30,31 @@ func TestWebSearchOptionIsForwarded(t *testing.T) {
 	}
 	if !received.WebSearch {
 		t.Fatal("web_search=true was not forwarded to relay")
+	}
+}
+
+func TestHTTPErrorPreservesUpstreamDiagnostics(t *testing.T) {
+	const body = `{"error":{"message":"maximum images exceeded","code":"too_many_images"}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	_, err := testClient(t, srv.URL).Chat(context.Background(), "m", []Msg{TextMsg("user", "hi")})
+	if err == nil {
+		t.Fatal("expected upstream HTTP error")
+	}
+	var upstream *HTTPError
+	if !errors.As(err, &upstream) {
+		t.Fatalf("error type = %T, want *HTTPError", err)
+	}
+	if upstream.StatusCode != http.StatusRequestEntityTooLarge || upstream.Body != body {
+		t.Fatalf("HTTP error details = %+v, want status/body preserved", upstream)
+	}
+	if upstream.URL != srv.URL+"/v1/chat/completions" || upstream.RequestBody == "" {
+		t.Fatalf("HTTP error request details = %+v, want endpoint and payload", upstream)
 	}
 }
 

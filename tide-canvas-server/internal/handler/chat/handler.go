@@ -256,6 +256,13 @@ func (h *handler) streamMessage(c *gin.Context) {
 			frame(map[string]string{"error": contextFullMsg, "code": "CONTEXT_LIMIT"})
 		case errors.Is(err, errInsufficientPoints):
 			frame(map[string]string{"error": "积分不足，请充值后再试", "code": "INSUFFICIENT_POINTS"})
+		case errors.Is(err, errInvalidTextAttachments):
+			var invalid invalidTextAttachmentsError
+			message := "附件不符合当前文本模型的输入限制"
+			if errors.As(err, &invalid) && strings.TrimSpace(invalid.message) != "" {
+				message = invalid.message
+			}
+			frame(map[string]string{"error": message, "code": "INVALID_ATTACHMENTS"})
 		default:
 			frame(map[string]string{"error": "生成失败"})
 		}
@@ -365,6 +372,13 @@ func (h *handler) fail(c *gin.Context, err error, fallbackMsg string) {
 		response.Fail(c, response.CodeContextLimit, contextFullMsg)
 	case errors.Is(err, errInsufficientPoints):
 		response.Fail(c, response.CodeQuotaInsufficient, "积分不足，请充值后再试")
+	case errors.Is(err, errInvalidTextAttachments):
+		var invalid invalidTextAttachmentsError
+		message := "附件不符合当前文本模型的输入限制"
+		if errors.As(err, &invalid) && strings.TrimSpace(invalid.message) != "" {
+			message = invalid.message
+		}
+		response.Fail(c, response.CodeBadRequest, message)
 	default:
 		response.Fail(c, response.CodeServerError, fallbackMsg)
 	}

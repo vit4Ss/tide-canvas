@@ -633,6 +633,9 @@ func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen
 	if err != nil {
 		return nil, errInvalidSkill
 	}
+	if err := s.validateTextAttachments(dto.Attachments, dto.Model); err != nil {
+		return nil, err
+	}
 	// 越过阈值先自动压缩（就地更新 conv），压缩后仍超硬上限才拒绝。
 	s.maybeCompact(ctx, conv)
 	if err := s.guardContext(conv, content); err != nil {
@@ -802,6 +805,11 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 		skillPrompt, err = presetPrompt(preset, content)
 		if err != nil {
 			return nil, errInvalidSkill
+		}
+	}
+	if !resuming {
+		if err := s.validateTextAttachments(attachments, requestedModel); err != nil {
+			return nil, err
 		}
 	}
 	if !resuming {

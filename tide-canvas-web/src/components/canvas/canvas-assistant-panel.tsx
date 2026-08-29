@@ -65,6 +65,7 @@ const MAX_SKILL_PROMPT_BYTES = 32 * 1024;
 const MAX_SKILL_ASSETS = 32;
 const MAX_SKILL_SOURCE_NODES = 64;
 const MAX_RECOVERY_RUNS = 50;
+const MAX_ASSISTANT_ATTACHMENTS = 12;
 
 export const CANVAS_ASSISTANT_VISIBILITY_EVENT = "tidecanvas:canvas-assistant-visibility";
 
@@ -137,6 +138,36 @@ function assistantChatRecoveryKey(job: AssistantChatRecoveryJob) {
 
 function clampPanelWidth(width: number) {
   return Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, width));
+}
+
+function assistantAttachmentError(model: AiModelVO | undefined, count: number): string | null {
+  if (count <= 0) return null;
+  if (count > MAX_ASSISTANT_ATTACHMENTS) {
+    return `一次最多分析 ${MAX_ASSISTANT_ATTACHMENTS} 个附件，请减少后重试`;
+  }
+  if (!model?.config) return null;
+  let config: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(model.config);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    config = parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const fileUpload = config.fileUpload;
+  const schema = config.paramsSchema;
+  const schemaFileUpload = schema && typeof schema === "object" && !Array.isArray(schema)
+    ? (schema as Record<string, unknown>).file_upload
+    : undefined;
+  if (fileUpload === false || schemaFileUpload === false) {
+    return "当前文本模型不支持图片或文件输入，请切换支持视觉理解的文本模型";
+  }
+  const rawMax = Number(config.maxFileCount);
+  const max = Number.isFinite(rawMax) && rawMax > 0 ? Math.floor(rawMax) : 0;
+  if (max > 0 && count > max) {
+    return `当前文本模型最多分析 ${max} 个附件，当前选择了 ${count} 个，请减少后重试`;
+  }
+  return null;
 }
 
 function formatFileSize(size: number) {
@@ -959,6 +990,12 @@ export function CanvasAssistantPanel({
     event.target.value = "";
     if (!files.length) return;
 
+    const attachmentError = assistantAttachmentError(selectedModel, attachments.length + files.length);
+    if (attachmentError) {
+      toast.error(attachmentError);
+      return;
+    }
+
     setUploading(true);
     setUploadProgress(0);
     toast.info(files.length > 1 ? `正在上传 ${files.length} 个文件...` : "正在上传文件...");
@@ -1281,6 +1318,12 @@ export function CanvasAssistantPanel({
     const currentParameters = options?.parameters ?? skillParameters;
     const hasCanvasSources = !!currentSkill && selectedNodeIds.size > 0;
     if ((!text && currentAttachments.length === 0 && !hasCanvasSources) || sendLockRef.current || sending || uploading) return;
+
+    const attachmentError = assistantAttachmentError(selectedModel, currentAttachments.length);
+    if (attachmentError) {
+      toast.error(attachmentError);
+      return;
+    }
 
     for (const file of currentAttachments) {
       const kind = referenceKindFromMeta(file);

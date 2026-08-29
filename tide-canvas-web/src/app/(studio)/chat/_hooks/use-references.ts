@@ -266,8 +266,12 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
         toast.info("当前模式不支持该类型素材");
         return false;
       }
-      // 与本地上传同口径:后台配置了格式白名单则校验扩展名
-      if (policy.exts && !policy.exts.includes(extOf(name || fileNameFromUrl(url)))) {
+      // 资产库素材已经由资产页按 kind 分类；生成历史的签名 URL 经常没有
+      // 文件扩展名，不能把“未知扩展名”误判成“不支持”。有明确扩展名时仍
+      // 严格遵守模型白名单，本地上传则继续在 attachFiles 中按真实文件名校验。
+      const assetName = name || fileNameFromUrl(url);
+      const extension = extOf(assetName);
+      if (policy.exts && extension && !policy.exts.includes(extension)) {
         toast.info(`该素材格式不支持，允许：${policy.exts.join(" / ")}`);
         return false;
       }
@@ -281,7 +285,7 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
       }
       commitRefs((prev) => [
         ...prev,
-        { key: `r${refSeq.current++}`, id, kind, blobUrl: "", url, name: name || fileNameFromUrl(url), uploading: false },
+        { key: `r${refSeq.current++}`, id, kind, blobUrl: "", url, name: assetName, uploading: false },
       ]);
       return true;
     },

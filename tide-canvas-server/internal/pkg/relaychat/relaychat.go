@@ -65,6 +65,56 @@ type InputAudio struct {
 	Format string `json:"format"`
 }
 
+// HTTPError keeps the upstream response that caused a non-2xx chat request to
+// fail. The response is administrator-only diagnostic data; callers that send
+// an error to an end user must still run it through their product error mapper.
+type HTTPError struct {
+	StatusCode  int
+	URL         string
+	RequestBody string
+	Body        string
+}
+
+func (e *HTTPError) Error() string {
+	if e == nil {
+		return "relaychat: upstream HTTP error"
+	}
+	if body := strings.TrimSpace(e.Body); body != "" {
+		return fmt.Sprintf("relaychat: HTTP %d: %s", e.StatusCode, body)
+	}
+	return fmt.Sprintf("relaychat: HTTP %d", e.StatusCode)
+}
+
+// These small accessors let the audit logger retain diagnostic fields without
+// importing relaychat and creating a package dependency cycle.
+func (e *HTTPError) ErrorResponseBody() string {
+	if e == nil {
+		return ""
+	}
+	return e.Body
+}
+
+func (e *HTTPError) ErrorHTTPStatus() int {
+	if e == nil {
+		return 0
+	}
+	return e.StatusCode
+}
+
+func (e *HTTPError) ErrorRequestURL() string {
+	if e == nil {
+		return ""
+	}
+	return e.URL
+}
+
+func (e *HTTPError) ErrorRequestBody() string {
+	if e == nil {
+		return ""
+	}
+	return e.RequestBody
+}
+
 type AudioAttachment struct {
 	Data   string
 	Format string
@@ -135,6 +185,16 @@ type Client struct {
 	// 合理时间内验证断流，包级变量会被别的用例仍在运行的看门狗并发读到（竞态）。
 	idleTimeout time.Duration
 	idleCheck   time.Duration
+}
+
+// ChatEndpoint returns the endpoint used by Chat/ChatStream. It is used by
+// generation audit records so a failed assistant task can be investigated from
+// the same detail page as media generations.
+func (c *Client) ChatEndpoint() string {
+	if c == nil {
+		return ""
+	}
+	return c.baseURL + "/v1/chat/completions"
 }
 
 // defaultStreamDeadline caps a stream whose caller context carries no deadline.
@@ -277,7 +337,12 @@ func (c *Client) stream(ctx context.Context, model string, msgs []Msg, webSearch
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", fmt.Errorf("relaychat: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return "", &HTTPError{
+			StatusCode:  resp.StatusCode,
+			URL:         req.URL.String(),
+			RequestBody: string(payload),
+			Body:        strings.TrimSpace(string(body)),
+		}
 	}
 
 	// 空闲看门狗：每收到一次字节就续命，连续 streamIdleTimeout 没有新数据才

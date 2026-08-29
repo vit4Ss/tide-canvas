@@ -23,3 +23,10 @@ test("聊天资产选择器支持受上限约束的多选并集中确认", () =>
   assert.match(browser, /pickMode && multiPick && <SelectBadge selected={pickSelected}/);
   assert.match(styles, /\.ws-assetbox-f\{/);
 });
+
+test("资产库 URL 没有扩展名时按已分类媒体类型继续回填", () => {
+  assert.match(references, /const assetName = name \|\| fileNameFromUrl\(url\)/);
+  assert.match(references, /const extension = extOf\(assetName\)/);
+  assert.match(references, /if \(policy\.exts && extension && !policy\.exts\.includes\(extension\)\)/);
+  assert.doesNotMatch(references, /policy\.exts && !policy\.exts\.includes\(extOf\(name \|\| fileNameFromUrl\(url\)\)\)/);
+});
