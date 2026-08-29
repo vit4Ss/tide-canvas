@@ -79,7 +79,7 @@ func toChatAttaches(atts []assistantAttach) []chatattach.Attach {
 // runAssistantChat handles handler == "assistant_chat": call the relay text model
 // with the conversation history and return the reply in Meta["text"]. Empty reply
 // / no relay / no text model surface as a task failure with a clear message.
-func (s *service) runAssistantChat(ctx context.Context, userID idgen.ID, m *model.AiModel, effectiveInput map[string]any, pointCost int64) (GenerateResult, error) {
+func (s *service) runAssistantChat(ctx context.Context, taskID, userID idgen.ID, m *model.AiModel, effectiveInput map[string]any, pointCost int64) (GenerateResult, error) {
 	if s.relay == nil {
 		return GenerateResult{}, errors.New("AI 助手未启用：未配置中转站密钥")
 	}
@@ -153,7 +153,7 @@ func (s *service) runAssistantChat(ctx context.Context, userID idgen.ID, m *mode
 		turn = msgs[n-1:]
 	}
 	reqBody, _ := json.Marshal(turn)
-	eventlog.ModelText(userID, "assistant", modelKey, "/v1/chat/completions", eventlog.SanitizeDataURIs(string(reqBody)), reply, start, err, pointCost)
+	eventlog.ModelText(userID, "assistant", modelKey, "/v1/chat/completions", eventlog.SanitizeDataURIs(string(reqBody)), reply, start, err, pointCost, eventlog.ModelTextBillingRef{ID: taskID, Type: "task"})
 	if err != nil {
 		return GenerateResult{}, err
 	}

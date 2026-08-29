@@ -1681,6 +1681,45 @@ tr:hover .rowacts,
   color: var(--text-dim);
   margin: 0 0 10px;
 }
+.genr-refund-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 28%, var(--border));
+  border-radius: var(--r-sm);
+  background: var(--warn-soft);
+}
+.genr-refund-bar > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.genr-refund-bar strong {
+  color: var(--warn-strong);
+  font-size: 12.5px;
+}
+.genr-refund-bar span {
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+.genr-refund-bar.done {
+  border-color: color-mix(in srgb, var(--ok) 28%, var(--border));
+  background: var(--ok-soft);
+}
+.genr-refund-bar.done strong {
+  color: var(--ok-strong);
+}
+.genr-refund-bar .adm-btn.danger {
+  color: #fff;
+  border-color: var(--danger);
+  background: var(--danger);
+}
+.genr-refund-bar .adm-btn.danger:hover {
+  background: var(--danger-strong);
+}
 .genr-media video,
 .genr-media img {
   display: block;

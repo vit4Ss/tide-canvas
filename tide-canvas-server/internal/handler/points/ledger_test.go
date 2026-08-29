@@ -116,6 +116,82 @@ func TestRefundExistingReceiptMarksAiTaskRefundedWithoutCreditingAgain(t *testin
 	}
 }
 
+func TestAdminRefundCreditsSettledTaskWithoutRefundEvidence(t *testing.T) {
+	db := refundTestDB(t)
+	userID, taskID := idgen.Next(), idgen.Next()
+	if err := db.Create(&model.User{ID: userID, Username: "admin-refund-settled", Email: "admin-refund-settled@example.test", Points: 100}).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Refunded=true may mean a dispatched cancellation was settled without any
+	// point credit. The absence of receipt/ledger is the authoritative signal.
+	if err := db.Create(&model.AiTask{ID: taskID, UserID: userID, PointCost: 25, Refunded: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	credited, err := AdminRefund(db, userID, 25, "administrator refund", taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !credited {
+		t.Fatal("administrator refund did not report a new balance credit")
+	}
+	var user model.User
+	if err := db.Select("id", "points").First(&user, "id = ?", userID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if user.Points != 125 {
+		t.Fatalf("balance = %d, want 125", user.Points)
+	}
+	credited, err = AdminRefund(db, userID, 25, "administrator refund retry", taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credited {
+		t.Fatal("idempotent administrator retry reported another credit")
+	}
+	if err := db.Select("id", "points").First(&user, "id = ?", userID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if user.Points != 125 {
+		t.Fatalf("retry balance = %d, want unchanged 125", user.Points)
+	}
+}
+
+func TestAdminRefundDoesNotDuplicateLegacyLedgerWithoutReceipt(t *testing.T) {
+	db := refundTestDB(t)
+	userID, taskID := idgen.Next(), idgen.Next()
+	if err := db.Create(&model.User{ID: userID, Username: "admin-refund-legacy", Email: "admin-refund-legacy@example.test", Points: 125}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AiTask{ID: taskID, UserID: userID, PointCost: 25, Refunded: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	ref := taskID
+	if err := db.Create(&model.PointRecord{UserID: userID, ChangeType: ChangeRefund, Amount: 25, Balance: 125, Remark: "legacy refund", RefID: &ref}).Error; err != nil {
+		t.Fatal(err)
+	}
+	credited, err := AdminRefund(db, userID, 25, "administrator legacy retry", taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credited {
+		t.Fatal("legacy refund ledger was credited twice")
+	}
+	var user model.User
+	if err := db.Select("id", "points").First(&user, "id = ?", userID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if user.Points != 125 {
+		t.Fatalf("balance = %d, want unchanged 125", user.Points)
+	}
+	var receiptCount int64
+	if err := db.Model(&model.PointRefundReceipt{}).Where("ref_id = ?", taskID).Count(&receiptCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if receiptCount != 1 {
+		t.Fatalf("backfilled receipt count = %d, want 1", receiptCount)
+	}
+}
+
 func TestRefundRejectsMismatchedReceipt(t *testing.T) {
 	db := refundTestDB(t)
 	userID, refID := idgen.Next(), idgen.Next()

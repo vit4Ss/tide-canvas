@@ -94,24 +94,39 @@ func ModelCall(e *model.ModelCallLog) {
 //
 // startedAt 是调用方在发起上游请求前打的本地时间点；耗时由本函数按它现算，
 // 保证「开始时间 + 耗时」永远自洽（调用方一律在上游返回后立刻调用本函数）。
-func ModelText(userID idgen.ID, scene, modelID, endpoint, requestBody, responseBody string, startedAt time.Time, err error, pointCost int64) {
+type ModelTextBillingRef struct {
+	ID   idgen.ID
+	Type string
+}
+
+func ModelText(userID idgen.ID, scene, modelID, endpoint, requestBody, responseBody string, startedAt time.Time, err error, pointCost int64, billingRef ...ModelTextBillingRef) {
 	success, status, errMsg := 1, 200, ""
 	if err != nil {
 		success, status, errMsg, responseBody = 0, 0, err.Error(), ""
 	}
+	var billingRefID idgen.ID
+	billingRefType := "ledger"
+	if len(billingRef) > 0 {
+		billingRefID = billingRef[0].ID
+		if kind := strings.TrimSpace(billingRef[0].Type); kind != "" {
+			billingRefType = kind
+		}
+	}
 	ModelCall(&model.ModelCallLog{
-		UserID:       userID,
-		Scene:        scene,
-		Model:        modelID,
-		Endpoint:     endpoint,
-		RequestBody:  requestBody,
-		ResponseBody: responseBody,
-		HttpStatus:   status,
-		Success:      success,
-		ErrorMsg:     Truncate(errMsg, 1024),
-		StartTime:    startedAt,
-		DurationMs:   time.Since(startedAt).Milliseconds(),
-		PointCost:    pointCost,
+		UserID:         userID,
+		Scene:          scene,
+		Model:          modelID,
+		Endpoint:       endpoint,
+		RequestBody:    requestBody,
+		ResponseBody:   responseBody,
+		HttpStatus:     status,
+		Success:        success,
+		ErrorMsg:       Truncate(errMsg, 1024),
+		StartTime:      startedAt,
+		DurationMs:     time.Since(startedAt).Milliseconds(),
+		PointCost:      pointCost,
+		BillingRefID:   billingRefID,
+		BillingRefType: billingRefType,
 	})
 }
 

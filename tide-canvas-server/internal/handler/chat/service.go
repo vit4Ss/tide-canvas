@@ -1049,7 +1049,7 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 					turn = msgs[n-1:]
 				}
 				reqBody, _ := json.Marshal(turn)
-				eventlog.ModelText(ownerID, "chat", model, "/v1/chat/completions", eventlog.SanitizeDataURIs(string(reqBody)), reply, start, err, charge.cost64())
+				eventlog.ModelText(ownerID, "chat", model, "/v1/chat/completions", eventlog.SanitizeDataURIs(string(reqBody)), reply, start, err, charge.cost64(), eventlog.ModelTextBillingRef{ID: charge.billingRefID(), Type: "ledger"})
 				if err == nil {
 					return reply, false
 				}
@@ -1285,7 +1285,7 @@ func (s *service) generateReply(ctx context.Context, conv *model.IMConversation,
 				turn = msgs[n-1:]
 			}
 			reqBody, _ := json.Marshal(turn)
-			eventlog.ModelText(ownerID, "chat", model, "/v1/chat/completions", eventlog.SanitizeDataURIs(string(reqBody)), reply, start, err, charge.cost64())
+			eventlog.ModelText(ownerID, "chat", model, "/v1/chat/completions", eventlog.SanitizeDataURIs(string(reqBody)), reply, start, err, charge.cost64(), eventlog.ModelTextBillingRef{ID: charge.billingRefID(), Type: "ledger"})
 			if err == nil {
 				return reply
 			}

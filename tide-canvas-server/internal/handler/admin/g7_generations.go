@@ -15,6 +15,7 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"regexp"
 	"strconv"
 	"strings"
@@ -22,11 +23,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/handler/ai"
+	"tidecanvas/internal/handler/points"
+	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/authz"
+	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/response"
 )
@@ -35,8 +40,10 @@ import (
 //
 //	GET /generations      (userId?, scene?, success?, keyword?, startDate?, endDate?) -> PageData<GenerationRowVO>
 //	GET /generations/:id                                                       -> GenerationDetailVO
+//	POST /generations/:id/refund                                               -> GenerationDetailVO
 func RegisterGenerations(g *gin.RouterGroup, d *app.Deps) {
 	g.GET("/generations", func(c *gin.Context) { listGenerations(c, d) })
+	g.POST("/generations/:id/refund", func(c *gin.Context) { refundGeneration(c, d) })
 	g.GET("/generations/:id", func(c *gin.Context) { generationDetail(c, d) })
 }
 
@@ -650,6 +657,8 @@ type GenerationRowVO struct {
 	HttpStatus     int      `json:"httpStatus"`
 	ErrorMsg       string   `json:"errorMsg"`
 	PointCost      *int64   `json:"pointCost"` // nil = 无计费记录（文本场景/未关联到任务）
+	Refunded       bool     `json:"refunded"`
+	Refundable     bool     `json:"refundable"`
 	DurationMs     int64    `json:"durationMs"`
 	UpstreamTaskID string   `json:"upstreamTaskId"`
 	CreateTime     string   `json:"createTime"`
@@ -714,6 +723,262 @@ func pointCostOf(r *model.ModelCallLog, chain map[string]int64) *int64 {
 	return nil
 }
 
+// generationTaskID resolves the application's durable task behind an upstream
+// provider operation. A model-call log may also be a synchronous text call
+// with no task; those records are refunded against the log id itself.
+func generationTaskID(db *gorm.DB, upstreamID string) (idgen.ID, bool, error) {
+	if strings.TrimSpace(upstreamID) == "" {
+		return 0, false, nil
+	}
+	var link struct {
+		TaskID idgen.ID
+	}
+	if err := db.Model(&model.AiGenerationLog{}).
+		Select("task_id").
+		Where("upstream_task_id = ? AND task_id <> 0", upstreamID).
+		Order("id DESC").First(&link).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	return link.TaskID, link.TaskID != 0, nil
+}
+
+func generationRefundRef(db *gorm.DB, record *model.ModelCallLog) (idgen.ID, bool, bool, error) {
+	if record == nil {
+		return 0, false, false, nil
+	}
+	if record.BillingRefID != 0 {
+		if record.BillingRefType != "task" {
+			return record.BillingRefID, false, true, nil
+		}
+		var count int64
+		if err := db.Model(&model.AiTask{}).Where("id = ?", record.BillingRefID).Count(&count).Error; err != nil {
+			return 0, false, false, err
+		}
+		return record.BillingRefID, count > 0, true, nil
+	}
+	taskID, ok, err := generationTaskID(db, record.UpstreamTaskID)
+	return taskID, ok, ok, err
+}
+
+func refundedTaskEvidence(db *gorm.DB, taskIDs []idgen.ID) map[idgen.ID]bool {
+	out := map[idgen.ID]bool{}
+	if len(taskIDs) == 0 {
+		return out
+	}
+	var receipts []struct{ RefID idgen.ID }
+	if err := db.Model(&model.PointRefundReceipt{}).Select("ref_id").Where("ref_id IN ?", taskIDs).Find(&receipts).Error; err == nil {
+		for _, receipt := range receipts {
+			out[receipt.RefID] = true
+		}
+	}
+	// Compatibility for old deployments that wrote the user-visible refund
+	// ledger but did not yet create PointRefundReceipt.
+	var ledger []struct{ RefID idgen.ID }
+	if err := db.Model(&model.PointRecord{}).Select("ref_id").
+		Where("change_type = ? AND amount > 0 AND ref_id IN ?", points.ChangeRefund, taskIDs).
+		Find(&ledger).Error; err == nil {
+		for _, row := range ledger {
+			out[row.RefID] = true
+		}
+	}
+	return out
+}
+
+// resolveGenerationRefunded fills the list view's durable refund state from
+// the model-call row plus actual refund evidence. AiTask.Refunded alone is not
+// enough: cancellation also uses it to mark a provider charge as settled
+// without crediting points.
+func resolveGenerationRefunded(db *gorm.DB, rows []model.ModelCallLog) map[idgen.ID]bool {
+	out := make(map[idgen.ID]bool, len(rows))
+	upstreamIDs := make([]string, 0, len(rows))
+	seenUpstream := map[string]bool{}
+	refByRecord := map[idgen.ID]idgen.ID{}
+	for i := range rows {
+		if rows[i].BillingRefID != 0 {
+			refByRecord[rows[i].ID] = rows[i].BillingRefID
+			continue
+		}
+		upstream := strings.TrimSpace(rows[i].UpstreamTaskID)
+		if upstream != "" && !seenUpstream[upstream] {
+			seenUpstream[upstream] = true
+			upstreamIDs = append(upstreamIDs, upstream)
+		}
+	}
+	if len(upstreamIDs) == 0 && len(refByRecord) == 0 {
+		return out
+	}
+	var links []struct {
+		UpstreamTaskID string
+		TaskID         idgen.ID
+	}
+	if len(upstreamIDs) > 0 {
+		if err := db.Model(&model.AiGenerationLog{}).
+			Select("upstream_task_id, task_id").
+			Where("upstream_task_id IN ? AND task_id <> 0", upstreamIDs).
+			Order("id DESC").Find(&links).Error; err != nil {
+			return out
+		}
+	}
+	latestTask := map[string]idgen.ID{}
+	for _, link := range links {
+		if _, exists := latestTask[link.UpstreamTaskID]; !exists {
+			latestTask[link.UpstreamTaskID] = link.TaskID
+		}
+	}
+	taskIDs := make([]idgen.ID, 0, len(latestTask))
+	seenTasks := map[idgen.ID]bool{}
+	for _, taskID := range latestTask {
+		if taskID != 0 && !seenTasks[taskID] {
+			seenTasks[taskID] = true
+			taskIDs = append(taskIDs, taskID)
+		}
+	}
+	for _, refID := range refByRecord {
+		if refID != 0 && !seenTasks[refID] {
+			seenTasks[refID] = true
+			taskIDs = append(taskIDs, refID)
+		}
+	}
+	if len(taskIDs) == 0 {
+		return out
+	}
+	refundedTasks := refundedTaskEvidence(db, taskIDs)
+	for i := range rows {
+		refID := refByRecord[rows[i].ID]
+		if refID == 0 {
+			refID = latestTask[strings.TrimSpace(rows[i].UpstreamTaskID)]
+		}
+		if refID != 0 && refundedTasks[refID] {
+			out[rows[i].ID] = true
+		}
+	}
+	return out
+}
+
+func generationRefundedForRecord(db *gorm.DB, record *model.ModelCallLog) bool {
+	if record == nil {
+		return false
+	}
+	refID, _, reliable, err := generationRefundRef(db, record)
+	if err != nil || !reliable {
+		return false
+	}
+	return refundedTaskEvidence(db, []idgen.ID{refID})[refID]
+}
+
+var (
+	errGenerationRefundNotFound     = errors.New("generation refund: record not found")
+	errGenerationRefundProcessing   = errors.New("generation refund: task is still processing")
+	errGenerationRefundNoCharge     = errors.New("generation refund: no platform points")
+	errGenerationRefundUnlinked     = errors.New("generation refund: missing billing reference")
+	errGenerationRefundCostConflict = errors.New("generation refund: point cost conflict")
+)
+
+// refundGeneration performs an administrator-only platform-point refund for
+// one model-call record. It updates the call row and the point ledger in one
+// transaction; points.Refund supplies the exactly-once receipt and balance
+// mutation, including the async AiTask.Refunded flag when a task exists.
+func refundGeneration(c *gin.Context, d *app.Deps) {
+	if !authz.IsActiveAdministrator(c, d.DB) {
+		response.Fail(c, response.CodeForbidden, "administrator access required")
+		return
+	}
+	id, ok := g5ParseID(c)
+	if !ok {
+		return
+	}
+	var record model.ModelCallLog
+	didRefund := false
+	refundAmount := int64(0)
+	err := d.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&record, "id = ?", id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return errGenerationRefundNotFound
+			}
+			return err
+		}
+		if generationRefundedForRecord(tx, &record) {
+			return nil
+		}
+		if record.UserID == 0 {
+			return errGenerationRefundNoCharge
+		}
+
+		refID, hasTask, reliable, err := generationRefundRef(tx, &record)
+		if err != nil {
+			return err
+		}
+		if !reliable || refID == 0 {
+			return errGenerationRefundUnlinked
+		}
+		amount := record.PointCost
+		if hasTask {
+			var task model.AiTask
+			if err := tx.Select("id, user_id, status, point_cost, refunded").First(&task, "id = ?", refID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return errGenerationRefundNotFound
+				}
+				return err
+			}
+			if task.UserID != record.UserID || task.PointCost <= 0 || (amount > 0 && task.PointCost != amount) {
+				return errGenerationRefundCostConflict
+			}
+			if task.Status == 0 {
+				return errGenerationRefundProcessing
+			}
+			if amount <= 0 {
+				amount = task.PointCost
+			}
+		}
+		if amount <= 0 {
+			return errGenerationRefundNoCharge
+		}
+		if amount > int64(^uint(0)>>1) {
+			return errGenerationRefundCostConflict
+		}
+		credited, err := points.AdminRefund(tx, record.UserID, int(amount), "管理员退款：生成记录 "+record.ID.String(), refID)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&model.ModelCallLog{}).Where("id = ?", record.ID).Update("refunded", true).Error; err != nil {
+			return err
+		}
+		didRefund = credited
+		refundAmount = amount
+		return nil
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, errGenerationRefundNotFound):
+			response.Fail(c, response.CodeNotFound, "generation record not found")
+		case errors.Is(err, errGenerationRefundNoCharge):
+			response.Fail(c, response.CodeBadRequest, "this record has no refundable platform points")
+		case errors.Is(err, errGenerationRefundUnlinked):
+			response.Fail(c, response.CodeConflict, "this legacy record has no reliable billing reference")
+		case errors.Is(err, errGenerationRefundProcessing):
+			response.Fail(c, response.CodeBadRequest, "generation is still processing")
+		case errors.Is(err, errGenerationRefundCostConflict):
+			response.Fail(c, response.CodeConflict, "generation point cost is inconsistent")
+		default:
+			response.Fail(c, response.CodeServerError, "failed to refund generation")
+		}
+		return
+	}
+	if didRefund {
+		eventlog.Biz(&model.BizLog{
+			UserID: record.UserID, Action: "generation_refund", Summary: "管理员退回生成积分",
+			Points: refundAmount, RefID: record.ID, RefType: "model_call_log",
+			OperatorID: middleware.CurrentUserID(c), Detail: record.Model,
+		})
+	}
+	// Return the refreshed detail so the drawer immediately displays 已退款 and
+	// the same result remains available after a page refresh.
+	generationDetail(c, d)
+}
+
 func listGenerations(c *gin.Context, d *app.Deps) {
 	var q genListQuery
 	if err := c.ShouldBindQuery(&q); err != nil {
@@ -767,17 +1032,22 @@ func listGenerations(c *gin.Context, d *app.Deps) {
 	costs := resolvePointCosts(db, ups)
 	modelNames := resolveModelNames(db, keys)
 	hosts := storageHosts(d)
+	refunded := resolveGenerationRefunded(db, rows)
 
 	vos := make([]GenerationRowVO, 0, len(rows))
 	for i := range rows {
 		r := &rows[i]
 		prompt := promptExcerpt(parseRequestBody(r.RequestBody, hosts).Prompt, 200)
+		pointCost := pointCostOf(r, costs)
+		_, linkedTask := costs[r.UpstreamTaskID]
+		ledgerRef := r.BillingRefID != 0 && r.BillingRefType != "task"
+		canRefund := r.UserID != 0 && pointCost != nil && *pointCost > 0 && (ledgerRef || linkedTask)
 		vos = append(vos, GenerationRowVO{
 			ID: r.ID, UserID: r.UserID, Username: names[r.UserID], Scene: r.Scene, Model: r.Model,
 			ModelName: modelNames[r.Model],
 			Prompt:    prompt, Success: r.Success, HttpStatus: r.HttpStatus, ErrorMsg: r.ErrorMsg,
-			PointCost:  pointCostOf(r, costs),
-			DurationMs: r.DurationMs, UpstreamTaskID: r.UpstreamTaskID, CreateTime: g5FmtTime(r.CreateTime),
+			PointCost: pointCost,
+			Refunded:  refunded[r.ID], Refundable: canRefund, DurationMs: r.DurationMs, UpstreamTaskID: r.UpstreamTaskID, CreateTime: g5FmtTime(r.CreateTime),
 		})
 	}
 	response.Page(c, vos, total, q.PageNum, q.PageSize)
@@ -803,13 +1073,17 @@ func generationDetail(c *gin.Context, d *app.Deps) {
 	}
 
 	names := resolveUserNames(db, []idgen.ID{r.UserID})
+	pointCost := pointCostOf(&r, resolvePointCosts(db, []string{r.UpstreamTaskID}))
+	_, _, reliableRefundRef, _ := generationRefundRef(db, &r)
 	vo := GenerationDetailVO{
 		GenerationRowVO: GenerationRowVO{
 			ID: r.ID, UserID: r.UserID, Username: names[r.UserID], Scene: r.Scene, Model: r.Model,
 			ModelName: resolveModelNames(db, []string{r.Model})[r.Model],
 			Prompt:    req.Prompt, Success: r.Success, HttpStatus: r.HttpStatus, ErrorMsg: r.ErrorMsg,
-			PointCost:      pointCostOf(&r, resolvePointCosts(db, []string{r.UpstreamTaskID})),
+			PointCost:      pointCost,
 			DurationMs:     r.DurationMs,
+			Refunded:       generationRefundedForRecord(db, &r),
+			Refundable:     r.UserID != 0 && pointCost != nil && *pointCost > 0 && reliableRefundRef,
 			UpstreamTaskID: r.UpstreamTaskID, CreateTime: g5FmtTime(r.CreateTime),
 		},
 		StartTime: g5FmtTime(r.StartTime),

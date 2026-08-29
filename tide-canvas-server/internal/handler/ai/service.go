@@ -701,9 +701,9 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	} else if gh.Name() == assistantChatHandler {
 		// 画布 AI 助手:走 relay 文本对话,回复在 Meta["text"](无 URL 结果)。
 		// 积分由 generate() 按模型定价预扣,随任务 PointCost 传入日志。
-		res, genErr = s.runAssistantChat(ctx, task.UserID, m, input, task.PointCost)
+		res, genErr = s.runAssistantChat(ctx, task.ID, task.UserID, m, input, task.PointCost)
 	} else if gh.Name() == skillTextCompletionHandler {
-		res, genErr = s.runSkillTextCompletion(ctx, task.UserID, m, input, task.PointCost)
+		res, genErr = s.runSkillTextCompletion(ctx, task.ID, task.UserID, m, input, task.PointCost)
 	} else {
 		res, genErr = gh.Execute(ctx, s.provider, req)
 	}
@@ -767,6 +767,7 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	}
 
 	// Audit log row (best-effort).
+	task.Refunded = refunded
 	s.writeLog(ctx, task, gh, m, userID, dto, res, genErr, start, duration)
 }
 
@@ -1223,6 +1224,9 @@ func (s *service) writeLog(ctx context.Context, task *model.AiTask, gh GenHandle
 		UpstreamTaskID: res.UpstreamTaskID,
 		Cost:           res.Cost,
 		PointCost:      task.PointCost,
+		BillingRefID:   task.ID,
+		BillingRefType: "task",
+		Refunded:       task.Refunded,
 	})
 }
 

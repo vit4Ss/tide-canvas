@@ -104,3 +104,10 @@ func (ch *textCharge) cost64() int64 {
 	}
 	return int64(ch.cost)
 }
+
+func (ch *textCharge) billingRefID() idgen.ID {
+	if ch == nil {
+		return 0
+	}
+	return ch.refID
+}

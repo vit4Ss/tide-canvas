@@ -94,10 +94,50 @@ func Consume(db *gorm.DB, userID idgen.ID, amount int, remark string, refID idge
 // generation) and writes a "refund" ledger row keyed to refID. amount <= 0 is a
 // no-op.
 func Refund(db *gorm.DB, userID idgen.ID, amount int, remark string, refID idgen.ID) error {
+	_, err := refund(db, userID, amount, remark, refID, false)
+	return err
+}
+
+// AdminRefund is the explicit administrator override for a charged generation.
+// It differs from automatic Refund only when AiTask.Refunded was used as a
+// non-refundable settlement marker without a refund receipt/ledger: an admin
+// may still credit those points. The returned bool reports whether this call
+// actually credited the balance (false = an earlier refund already existed).
+func AdminRefund(db *gorm.DB, userID idgen.ID, amount int, remark string, refID idgen.ID) (bool, error) {
+	return refund(db, userID, amount, remark, refID, true)
+}
+
+func refund(db *gorm.DB, userID idgen.ID, amount int, remark string, refID idgen.ID, allowSettled bool) (bool, error) {
 	if amount <= 0 {
-		return nil
+		return false, nil
 	}
-	return db.Transaction(func(tx *gorm.DB) error {
+	credited := false
+	err := db.Transaction(func(tx *gorm.DB) error {
+		// Rolling deployments before PointRefundReceipt may already have the
+		// positive refund ledger row. Backfill the receipt and never credit twice.
+		if refID != 0 && allowSettled {
+			var legacyCount int64
+			if err := tx.Model(&model.PointRecord{}).
+				Where("user_id = ? AND change_type = ? AND ref_id = ? AND amount = ?", userID, ChangeRefund, refID, amount).
+				Count(&legacyCount).Error; err != nil {
+				return err
+			}
+			if legacyCount > 0 {
+				receipt := model.PointRefundReceipt{RefID: refID, UserID: userID, Amount: amount}
+				if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&receipt).Error; err != nil {
+					return err
+				}
+				var existing model.PointRefundReceipt
+				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&existing, "ref_id = ?", refID).Error; err != nil {
+					return err
+				}
+				if existing.UserID != userID || existing.Amount != amount {
+					return ErrRefundConflict
+				}
+				return tx.Unscoped().Model(&model.AiTask{}).Where("id = ?", refID).Update("refunded", true).Error
+			}
+		}
+
 		claimedReceipt := false
 		if refID != 0 {
 			claimID := idgen.Next()
@@ -125,7 +165,7 @@ func Refund(db *gorm.DB, userID idgen.ID, amount int, remark string, refID idgen
 				if task.UserID != userID || task.PointCost != int64(amount) {
 					return ErrRefundConflict
 				}
-				if task.Refunded {
+				if task.Refunded && !allowSettled {
 					return nil
 				}
 			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -144,11 +184,13 @@ func Refund(db *gorm.DB, userID idgen.ID, amount int, remark string, refID idgen
 		if _, err := mutate(tx, userID, amount, ChangeRefund, remark, refID); err != nil {
 			return err
 		}
+		credited = true
 		if taskExists {
 			return tx.Unscoped().Model(&model.AiTask{}).Where("id = ?", refID).Update("refunded", true).Error
 		}
 		return nil
 	})
+	return credited, err
 }
 
 // GrantSignup grants the admin-configured signup bonus to a freshly created

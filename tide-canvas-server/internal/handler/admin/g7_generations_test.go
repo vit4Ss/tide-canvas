@@ -2,8 +2,19 @@ package admin
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+
+	"tidecanvas/internal/app"
+	"tidecanvas/internal/middleware"
+	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/idgen"
 )
 
 var testHosts = []string{"cdn.example.com", "bucket.oss-cn-shanghai.aliyuncs.com"}
@@ -15,6 +26,152 @@ func TestGenerationDetailOmitsEmptyRawBodies(t *testing.T) {
 	}
 	if strings.Contains(string(body), "requestBody") || strings.Contains(string(body), "responseBody") {
 		t.Fatalf("empty raw bodies must be omitted from non-admin JSON: %s", body)
+	}
+}
+
+func TestRefundGenerationIsAdminOnlyAndExactlyOnce(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:g7_generation_refund?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql db: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(&model.User{}, &model.AiTask{}, &model.AiGenerationLog{}, &model.ModelCallLog{}, &model.PointRecord{}, &model.PointRefundReceipt{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	const userID idgen.ID = 7101
+	const adminID idgen.ID = 7102
+	const taskID idgen.ID = 7103
+	const logID idgen.ID = 7104
+	now := time.Now()
+	if err := db.Create(&model.User{ID: userID, Username: "refund-target", Email: "refund-target@example.test", Points: 100, Status: 1}).Error; err != nil {
+		t.Fatalf("create target: %v", err)
+	}
+	if err := db.Create(&model.User{ID: adminID, Username: "refund-admin", Email: "refund-admin@example.test", Role: middleware.AdminRole, Status: 1}).Error; err != nil {
+		t.Fatalf("create admin: %v", err)
+	}
+	if err := db.Create(&model.AiTask{ID: taskID, UserID: userID, Status: 1, PointCost: 12, Refunded: true, CreateTime: now}).Error; err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if err := db.Create(&model.AiGenerationLog{ID: 7105, TaskID: taskID, UserID: userID, UpstreamTaskID: "remote-refund-1", CreateTime: now}).Error; err != nil {
+		t.Fatalf("create generation log: %v", err)
+	}
+	if err := db.Create(&model.ModelCallLog{BaseModel: model.BaseModel{ID: logID, CreateTime: now}, UserID: userID, Scene: "image", Model: "model-a", Success: 1, PointCost: 12, Refunded: true, UpstreamTaskID: "remote-refund-1"}).Error; err != nil {
+		t.Fatalf("create call log: %v", err)
+	}
+	var markerRecord model.ModelCallLog
+	if err := db.First(&markerRecord, "id = ?", logID).Error; err != nil {
+		t.Fatalf("load marker record: %v", err)
+	}
+	if generationRefundedForRecord(db, &markerRecord) {
+		t.Fatal("settled marker without receipt/ledger was misreported as refunded")
+	}
+
+	// An operator token must not be able to invoke the refund action.
+	operatorRecorder := httptest.NewRecorder()
+	operatorCtx, _ := gin.CreateTestContext(operatorRecorder)
+	operatorCtx.Set(middleware.CtxUserID, userID)
+	operatorCtx.Set(middleware.CtxRole, 0)
+	operatorCtx.Params = gin.Params{{Key: "id", Value: logID.String()}}
+	refundGeneration(operatorCtx, &app.Deps{DB: db})
+	if operatorRecorder.Code != 403 {
+		t.Fatalf("operator status = %d, want 403", operatorRecorder.Code)
+	}
+
+	gin.SetMode(gin.TestMode)
+	// A legacy synchronous row with no billing ref/upstream task is deliberately
+	// not refundable: its amount alone cannot prove which debit to reverse.
+	const unlinkedLogID idgen.ID = 7106
+	if err := db.Create(&model.ModelCallLog{BaseModel: model.BaseModel{ID: unlinkedLogID, CreateTime: now}, UserID: userID, Scene: "chat", Model: "legacy-text", Success: 1, PointCost: 9}).Error; err != nil {
+		t.Fatalf("create unlinked call log: %v", err)
+	}
+	unlinkedRecorder := httptest.NewRecorder()
+	unlinkedCtx, _ := gin.CreateTestContext(unlinkedRecorder)
+	unlinkedCtx.Set(middleware.CtxUserID, adminID)
+	unlinkedCtx.Set(middleware.CtxRole, middleware.AdminRole)
+	unlinkedCtx.Params = gin.Params{{Key: "id", Value: unlinkedLogID.String()}}
+	refundGeneration(unlinkedCtx, &app.Deps{DB: db})
+	if unlinkedRecorder.Code != 409 {
+		t.Fatalf("unlinked legacy refund status = %d, want 409; body=%s", unlinkedRecorder.Code, unlinkedRecorder.Body.String())
+	}
+
+	call := func(recordID idgen.ID) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Set(middleware.CtxUserID, adminID)
+		ctx.Set(middleware.CtxRole, middleware.AdminRole)
+		ctx.Params = gin.Params{{Key: "id", Value: recordID.String()}}
+		refundGeneration(ctx, &app.Deps{DB: db})
+		return recorder
+	}
+	first := call(logID)
+	if first.Code != 200 {
+		t.Fatalf("first refund status = %d, body=%s", first.Code, first.Body.String())
+	}
+	second := call(logID)
+	if second.Code != 200 {
+		t.Fatalf("idempotent refund status = %d, body=%s", second.Code, second.Body.String())
+	}
+
+	var user model.User
+	if err := db.First(&user, "id = ?", userID).Error; err != nil {
+		t.Fatalf("load target: %v", err)
+	}
+	if user.Points != 112 {
+		t.Fatalf("target points = %d, want 112", user.Points)
+	}
+	var task model.AiTask
+	if err := db.First(&task, "id = ?", taskID).Error; err != nil {
+		t.Fatalf("load task: %v", err)
+	}
+	if !task.Refunded {
+		t.Fatal("task was not marked refunded")
+	}
+	var record model.ModelCallLog
+	if err := db.First(&record, "id = ?", logID).Error; err != nil {
+		t.Fatalf("load call log: %v", err)
+	}
+	if !record.Refunded {
+		t.Fatal("call log was not marked refunded")
+	}
+	var ledgerCount, receiptCount int64
+	if err := db.Model(&model.PointRecord{}).Where("user_id = ? AND change_type = ? AND amount = ?", userID, "refund", 12).Count(&ledgerCount).Error; err != nil {
+		t.Fatalf("count refund ledger: %v", err)
+	}
+	if err := db.Model(&model.PointRefundReceipt{}).Where("ref_id = ?", taskID).Count(&receiptCount).Error; err != nil {
+		t.Fatalf("count refund receipt: %v", err)
+	}
+	if ledgerCount != 1 || receiptCount != 1 {
+		t.Fatalf("refund counts = ledger %d receipt %d, want 1/1", ledgerCount, receiptCount)
+	}
+
+	// New synchronous text calls carry a standalone billing ref even though no
+	// AiTask exists; that exact debit can be safely refunded too.
+	const syncLogID idgen.ID = 7107
+	const syncBillingRef idgen.ID = 7108
+	if err := db.Create(&model.ModelCallLog{BaseModel: model.BaseModel{ID: syncLogID, CreateTime: now}, UserID: userID, Scene: "chat", Model: "text-model", Success: 1, PointCost: 7, BillingRefID: syncBillingRef}).Error; err != nil {
+		t.Fatalf("create sync call log: %v", err)
+	}
+	if recorder := call(syncLogID); recorder.Code != 200 {
+		t.Fatalf("sync refund status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	if err := db.First(&user, "id = ?", userID).Error; err != nil {
+		t.Fatalf("reload target after sync refund: %v", err)
+	}
+	if user.Points != 119 {
+		t.Fatalf("target points after sync refund = %d, want 119", user.Points)
+	}
+	var syncLedger int64
+	if err := db.Model(&model.PointRecord{}).Where("user_id = ? AND change_type = ? AND amount = ? AND ref_id = ?", userID, "refund", 7, syncBillingRef).Count(&syncLedger).Error; err != nil {
+		t.Fatalf("count sync refund ledger: %v", err)
+	}
+	if syncLedger != 1 {
+		t.Fatalf("sync refund ledger count = %d, want 1", syncLedger)
 	}
 }
 

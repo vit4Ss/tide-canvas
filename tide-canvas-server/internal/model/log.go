@@ -96,6 +96,15 @@ type ModelCallLog struct {
 	// 生成记录直接读本列——不再靠 upstream_task_id 反查任务链(同步调用
 	// 没有上游任务 id,反查会丢)。
 	PointCost int64 `gorm:"column:point_cost;not null;default:0" json:"pointCost"`
+	// BillingRefID is the durable points-ledger correlation id. For task-backed
+	// calls it is AiTask.ID; synchronous text calls store their standalone charge
+	// ref. Zero means a legacy/unbilled call that cannot be safely refunded.
+	BillingRefID   idgen.ID `gorm:"column:billing_ref_id;not null;default:0;index" json:"billingRefId"`
+	BillingRefType string   `gorm:"column:billing_ref_type;size:16;not null;default:'ledger'" json:"-"`
+	// Refunded records an administrator-initiated refund for this model call.
+	// Async generation calls also mirror the AiTask.Refunded flag into this
+	// column; the task remains the authoritative exactly-once refund receipt.
+	Refunded bool `gorm:"column:refunded;not null;default:false;index" json:"refunded"`
 }
 
 // TableName overrides the default pluralization.

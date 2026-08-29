@@ -46,7 +46,7 @@ type skillTextInput struct {
 	TemporaryStorageKeys []string `json:"temporaryStorageKeys"`
 }
 
-func (s *service) runSkillTextCompletion(ctx context.Context, userID idgen.ID, m *model.AiModel, effectiveInput map[string]any, pointCost int64) (GenerateResult, error) {
+func (s *service) runSkillTextCompletion(ctx context.Context, taskID, userID idgen.ID, m *model.AiModel, effectiveInput map[string]any, pointCost int64) (GenerateResult, error) {
 	if s.relay == nil {
 		return GenerateResult{}, errors.New("text model relay is not configured")
 	}
@@ -137,7 +137,7 @@ func (s *service) runSkillTextCompletion(ctx context.Context, userID idgen.ID, m
 		}
 	}
 	reqBody, _ := json.Marshal(msgs)
-	eventlog.ModelText(userID, "skill", modelKey, "/v1/chat/completions", eventlog.SanitizeDataURIs(string(reqBody)), reply, started, err, pointCost)
+	eventlog.ModelText(userID, "skill", modelKey, "/v1/chat/completions", eventlog.SanitizeDataURIs(string(reqBody)), reply, started, err, pointCost, eventlog.ModelTextBillingRef{ID: taskID, Type: "task"})
 	if err != nil {
 		return GenerateResult{}, err
 	}

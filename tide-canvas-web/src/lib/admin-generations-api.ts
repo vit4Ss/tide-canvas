@@ -14,4 +14,6 @@ export const adminGenerationsApi = {
 
   /** GET /api/admin/generations/:id -> GenerationDetailVO */
   detail: (id: string) => http.get<GenerationDetailVO>(`/api/admin/generations/${id}`),
+  /** POST /api/admin/generations/:id/refund -> GenerationDetailVO */
+  refund: (id: string) => http.post<GenerationDetailVO>(`/api/admin/generations/${id}/refund`),
 };

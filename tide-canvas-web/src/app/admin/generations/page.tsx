@@ -33,9 +33,11 @@ import {
   AdminEmptyState,
   AdminTable,
   Panel,
+  RowActions,
   StatusPill,
   TableSkeleton,
   type Column,
+  type RowAction,
   type StatusPillProps,
 } from "@/components/admin";
 import CapturableVideo from "@/components/studio/create-studio/video-result";
@@ -48,6 +50,8 @@ import type {
 import { useAuthStore } from "@/stores/use-auth-store";
 import { UserRole } from "@/types/user";
 import { shouldShowGenerationResult } from "@/lib/generation-result-visibility";
+import { confirmDialog } from "@/components/shared/confirm";
+import { toast } from "@/components/shared/toast";
 
 type PillTone = StatusPillProps["tone"];
 
@@ -94,6 +98,11 @@ const SCENE_TO_KEY: Record<string, string | undefined> = {
 };
 
 const STATUS_OPTIONS = ["全部", "成功", "失败"] as const;
+
+function generationStatus(row: Pick<GenerationRowVO, "success" | "refunded">): { label: string; tone: PillTone } {
+  if (row.refunded) return { label: "退款", tone: "amber" };
+  return row.success === 1 ? { label: "成功", tone: "green" } : { label: "失败", tone: "red" };
+}
 
 /* ── 小工具 ──────────────────────────────────────────────────────────── */
 
@@ -394,11 +403,12 @@ function TechRow({ k, mono, children }: { k: string; mono?: boolean; children: R
   );
 }
 
-function GenerationDetailDrawer({ id, onClose }: { id: string; onClose: () => void }) {
+function GenerationDetailDrawer({ id, onClose, onRefunded }: { id: string; onClose: () => void; onRefunded: (detail: GenerationDetailVO) => void }) {
   const ensureSession = useAuthStore((s) => s.ensureSession);
   const canViewRawBodies = useAuthStore((s) => s.user?.role === UserRole.ADMIN);
   const [d, setD] = useState<GenerationDetailVO | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refunding, setRefunding] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -418,11 +428,38 @@ function GenerationDetailDrawer({ id, onClose }: { id: string; onClose: () => vo
     };
   }, [id, ensureSession]);
 
+  const refund = async () => {
+    if (!d || refunding || d.refunded || !d.refundable || d.pointCost == null || d.pointCost <= 0 || !canViewRawBodies) return;
+    if (!(await confirmDialog({
+      title: "确认生成记录退款",
+      message: `确定将这条生成记录退回 ${d.pointCost} 积分给用户「${d.username || d.userId}」？退款后会写入用户积分流水，且不可重复退款。`,
+      confirmText: "确认退款",
+    }))) return;
+    setRefunding(true);
+    try {
+      const res = await adminGenerationsApi.refund(d.id);
+      if (res.success && res.data) {
+        setD(res.data);
+        onRefunded(res.data);
+        toast.success(`已退回 ${d.pointCost} 积分，用户积分流水已更新`);
+      } else {
+        toast.error(res.message || "退款失败");
+      }
+    } catch {
+      toast.error("退款失败，请稍后重试");
+    } finally {
+      setRefunding(false);
+    }
+  };
+
+  const detailStatus = d ? generationStatus(d) : null;
+  const canRefund = canViewRawBodies && !!d && !d.refunded && d.refundable && d.pointCost != null && d.pointCost > 0;
+
   return (
     <AdminDrawer
       open
       title="生成记录详情"
-      extra={d ? <StatusPill tone={d.success === 1 ? "green" : "red"}>{d.success === 1 ? "成功" : "失败"}</StatusPill> : undefined}
+      extra={d ? <StatusPill tone={detailStatus!.tone}>{detailStatus!.label}</StatusPill> : undefined}
       onClose={onClose}
     >
       {error ? (
@@ -455,6 +492,20 @@ function GenerationDetailDrawer({ id, onClose }: { id: string; onClose: () => vo
             </div>
           </div>
 
+          {canViewRawBodies && (canRefund || d.refunded) ? (
+            <div className={`genr-refund-bar${d.refunded ? " done" : ""}`}>
+              <div>
+                <strong>{d.refunded ? "这条记录已退款" : "管理员操作"}</strong>
+                <span>{d.refunded ? "积分已退回用户账户，用户可在积分流水中查看" : `退回本次生成消耗的 ${d.pointCost} 积分`}</span>
+              </div>
+              {canRefund ? (
+                <button type="button" className="adm-btn danger small" disabled={refunding} onClick={() => void refund()}>
+                  {refunding ? "退款中…" : "退款"}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
           {shouldShowGenerationResult(d.scene) && (
             <section>
               <SecTitle>生成结果</SecTitle>
@@ -477,9 +528,11 @@ function GenerationDetailDrawer({ id, onClose }: { id: string; onClose: () => vo
                 <div className="k">平台积分消耗</div>
                 <div className="v">
                   {d.pointCost != null
-                    ? d.success === 1
-                      ? d.pointCost
-                      : `${d.pointCost}（已退款）`
+                    ? d.refunded
+                      ? `${d.pointCost}（已退款）`
+                      : d.success === 1
+                        ? d.pointCost
+                        : `${d.pointCost}（待退款）`
                     : "—"}
                 </div>
               </div>
@@ -568,6 +621,8 @@ export default function AdminGenerationsPage() {
   const [endDate, setEndDate] = useState("");
   const [page, setPage] = useState(1);
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [refundingId, setRefundingId] = useState<string | null>(null);
+  const isAdministrator = useAuthStore((s) => s.user?.role === UserRole.ADMIN);
 
   const PAGE_SIZE = 20;
   const reqIdRef = useRef(0);
@@ -617,6 +672,33 @@ export default function AdminGenerationsPage() {
     setPage(1);
   };
 
+  const applyRefundedDetail = useCallback((detail: GenerationDetailVO) => {
+    setRows((current) => current.map((row) => row.id === detail.id ? { ...row, refunded: detail.refunded } : row));
+  }, []);
+
+  const refundRow = useCallback(async (row: GenerationRowVO) => {
+    if (!isAdministrator || refundingId || row.refunded || !row.refundable || row.pointCost == null || row.pointCost <= 0 || row.userId === "0") return;
+    if (!(await confirmDialog({
+      title: "确认生成记录退款",
+      message: `确定将这条生成记录退回 ${row.pointCost} 积分给用户「${row.username || row.userId}」？退款后状态会变为“退款”，用户可在积分流水中查看。`,
+      confirmText: "确认退款",
+    }))) return;
+    setRefundingId(row.id);
+    try {
+      const res = await adminGenerationsApi.refund(row.id);
+      if (res.success && res.data) {
+        applyRefundedDetail(res.data);
+        toast.success(`已退回 ${row.pointCost} 积分，用户积分流水已更新`);
+      } else {
+        toast.error(res.message || "退款失败");
+      }
+    } catch {
+      toast.error("退款失败，请稍后重试");
+    } finally {
+      setRefundingId(null);
+    }
+  }, [applyRefundedDetail, isAdministrator, refundingId]);
+
   const columns: Column<GenerationRowVO>[] = useMemo(
     () => [
       {
@@ -652,9 +734,10 @@ export default function AdminGenerationsPage() {
       {
         header: "状态",
         width: 76,
-        cell: (r) => (
-          <StatusPill tone={r.success === 1 ? "green" : "red"}>{r.success === 1 ? "成功" : "失败"}</StatusPill>
-        ),
+        cell: (r) => {
+          const s = generationStatus(r);
+          return <StatusPill tone={s.tone}>{s.label}</StatusPill>;
+        },
       },
       {
         header: "平台积分",
@@ -662,7 +745,7 @@ export default function AdminGenerationsPage() {
         align: "right",
         className: "mono",
         // 失败/取消的任务积分全额退款(服务端 refund 口径),净消耗为 0,显示「—」
-        cell: (r) => (r.pointCost != null && r.success === 1 ? r.pointCost : "—"),
+        cell: (r) => (r.pointCost != null && r.success === 1 && !r.refunded ? r.pointCost : "—"),
       },
       {
         header: "耗时",
@@ -682,16 +765,19 @@ export default function AdminGenerationsPage() {
         header: "操作",
         /* 88 = 详情按钮实测 75px + 余量;72 会让按钮探出表格右缘 3px(fixed 布局
            单元格 overflow:visible,按钮直接画出面板边框外) */
-        width: 88,
+        width: 150,
         align: "right",
-        cell: (r) => (
-          <button type="button" className="adm-btn ghost" onClick={() => setDetailId(r.id)}>
-            详情
-          </button>
-        ),
+        cell: (r) => {
+          const actions: RowAction[] = [];
+          if (isAdministrator && !r.refunded && r.refundable && r.pointCost != null && r.pointCost > 0 && r.userId !== "0") {
+            actions.push({ label: refundingId === r.id ? "退款中…" : "退款", danger: true, onClick: () => void refundRow(r) });
+          }
+          actions.push({ label: "详情", onClick: () => setDetailId(r.id) });
+          return <RowActions actions={actions} />;
+        },
       },
     ],
-    [page],
+    [isAdministrator, page, refundRow, refundingId],
   );
 
   const hasFilter =
@@ -817,7 +903,7 @@ export default function AdminGenerationsPage() {
       {detailId ? (
         // key 强制按记录重挂载:切到另一条记录时旧详情不残留,也避免在
         // effect 里同步 setState 重置(react-hooks/set-state-in-effect)。
-        <GenerationDetailDrawer key={detailId} id={detailId} onClose={() => setDetailId(null)} />
+        <GenerationDetailDrawer key={detailId} id={detailId} onClose={() => setDetailId(null)} onRefunded={applyRefundedDetail} />
       ) : null}
     </div>
   );
