@@ -203,10 +203,12 @@ export function useTurnActions({
     return { ok: true, model: fixedModel || savedModel, skillId: restored.id };
   }, [setModel, setSkill]);
 
-  // find the user (prompt) message of the turn an assistant result belongs to.
+  // Resolve the user prompt for a turn. Re-edit can be triggered from either
+  // an assistant result or the user bubble itself.
   const turnUserOf = useCallback(
     (aiMsg: MessageVO): MessageVO | null => {
       const idx = msgs.findIndex((m) => m.id === aiMsg.id);
+      if (msgs[idx]?.role === "user") return msgs[idx];
       for (let i = idx - 1; i >= 0; i--) if (msgs[i].role === "user") return msgs[i];
       return null;
     },

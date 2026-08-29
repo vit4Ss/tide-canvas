@@ -309,13 +309,13 @@ export function Bubble({
         </div>
         {/* copy action sits BELOW the bubble (outside it), not inside the colored pill */}
         {!isImage && !isVideo && msg.content ? (
-          <div className={`bubble-acts${isMe ? "" : " chat-text-acts"}`}>
+          <div className={`bubble-acts${isMe ? " chat-user-acts" : " chat-text-acts"}`}>
             <CopyBtn text={msg.content} />
-            {!isMe && (
+            {isMe && (
               <button
                 type="button"
                 className="chat-text-edit"
-                title="重新编辑这条消息"
+                title="重新编辑这次输入"
                 onClick={() => onReEdit(msg)}
               >
                 <Pencil aria-hidden />

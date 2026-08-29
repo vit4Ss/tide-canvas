@@ -132,12 +132,13 @@ test("失败的聊天技能支持恢复原始输入并重新编辑", () => {
 
 test("普通文本回复也提供重新编辑，并恢复文本附件", () => {
   assert.match(chatBubble, /className="chat-text-edit"/);
-  assert.match(chatBubble, /className=\{`bubble-acts\$\{isMe \? "" : " chat-text-acts"\}`\}/);
-  assert.match(chatBubble, /!isMe && \(/);
+  assert.match(chatBubble, /className=\{`bubble-acts\$\{isMe \? " chat-user-acts" : " chat-text-acts"\}`\}/);
+  assert.match(chatBubble, /isMe && \(/);
   assert.match(chatBubble, /onClick=\{\(\) => onReEdit\(msg\)\}/);
   assert.match(chatBubble, /onClick=\{\(\) => void onReEditSkillRun\(run\)\}/);
   assert.match(turnActions, /restoreRefs\(Array\.isArray\(p\.references\) \? p\.references : p\.attachments\)/);
   assert.match(turnActions, /if \(!p\) \{[\s\S]*?restoreRefs\(undefined\)/);
+  assert.match(turnActions, /if \(msgs\[idx\]\?\.role === "user"\) return msgs\[idx\]/);
 });
 
 test("聊天里的纯文本工具结果使用普通 Markdown 回复而不是 SkillRun 卡片", () => {

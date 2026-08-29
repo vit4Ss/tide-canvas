@@ -259,6 +259,7 @@
 .bubble-acts{display:flex; gap:6px; margin-top:6px; opacity:0; transition:opacity .14s;}
 .msg:hover .bubble-acts{opacity:1;}
 .bubble-acts.chat-text-acts{opacity:1;}
+.bubble-acts.chat-user-acts{opacity:1;}
 
 /* user-message attachment thumbnails (text-model 文件上传), sit ABOVE the bubble. */
 .chat-msg-atts{display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; margin-bottom:6px;}
