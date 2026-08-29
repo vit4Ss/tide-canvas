@@ -882,6 +882,7 @@
   cursor:pointer; transition:border-color .15s var(--ease), color .15s, background .15s;}
 .ws-run-foot button:hover{border-color:rgba(139,124,248,.8); color:#fff; background:rgba(99,88,240,.2);}
 .ws-run-foot button:disabled{opacity:.5; cursor:not-allowed;}
+.ws-run-foot button[aria-busy="true"] svg{animation:wsSpin .7s linear infinite;}
 .ws-run-foot button.danger:hover{border-color:#e5484d; color:#ff9599; background:rgba(229,72,77,.16);}
 .ws-run-foot svg{width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round;}
 /* each result card is sized by its image's TRUE ratio: fixed height, width:auto.

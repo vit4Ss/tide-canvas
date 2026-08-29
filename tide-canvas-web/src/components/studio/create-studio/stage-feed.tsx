@@ -194,6 +194,12 @@ export function StageFeed({
   const sentinelRef = useRef<HTMLDivElement>(null);
   const feedRef = useRef<HTMLDivElement>(null);
   const newestRunRef = useRef<string | null>(null);
+  const [downloadingRun, setDownloadingRun] = useState<{
+    run: string;
+    current: number;
+    total: number;
+  } | null>(null);
+  const downloadingRunRef = useRef(false);
   const orderedFeedRuns = useMemo(
     () => orderStudioFeedRuns(inflightRuns, runs),
     [inflightRuns, runs],
@@ -251,23 +257,41 @@ export function StageFeed({
       toast.info(r.type === "3d" ? "该作品暂无可下载的模型文件" : "该作品暂无可下载的图片");
       return;
     }
-    for (let i = 0; i < files.length; i++) {
-      const { url, ext } = files[i];
-      try {
-        const resp = await fetch(url);
-        const blob = await resp.blob();
-        const obj = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = obj;
-        const baseName = (r.prompt || r.model || "creation").slice(0, 20);
-        a.download = `${baseName}-${i + 1}${ext ? `.${ext.toLowerCase()}` : ""}`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(obj);
-      } catch {
-        window.open(url, "_blank", "noopener");
+    if (downloadingRunRef.current) {
+      toast.info("已有下载正在准备，请稍候");
+      return;
+    }
+
+    // Lock synchronously so a rapid double-click cannot start two full fetches
+    // before React has committed the disabled state to the button.
+    downloadingRunRef.current = true;
+    setDownloadingRun({ run: r.run, current: 0, total: files.length });
+    toast.info(files.length > 1 ? `正在准备 ${files.length} 个文件下载…` : "正在准备下载…");
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const { url, ext } = files[i];
+        setDownloadingRun({ run: r.run, current: i + 1, total: files.length });
+        try {
+          const resp = await fetch(url);
+          if (!resp.ok) throw new Error(`download failed: ${resp.status}`);
+          const blob = await resp.blob();
+          const obj = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = obj;
+          const baseName = (r.prompt || r.model || "creation").slice(0, 20);
+          a.download = `${baseName}-${i + 1}${ext ? `.${ext.toLowerCase()}` : ""}`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          // Give the browser a turn to consume the object URL before releasing it.
+          window.setTimeout(() => URL.revokeObjectURL(obj), 1000);
+        } catch {
+          window.open(url, "_blank", "noopener");
+        }
       }
+    } finally {
+      downloadingRunRef.current = false;
+      setDownloadingRun(null);
     }
     toast.success(
       files.length > 1
@@ -543,13 +567,21 @@ export function StageFeed({
                     重新生成
                   </button>
                   {r.status !== "failed" && (
-                    <button type="button" onClick={() => downloadRun(r)} title="下载">
+                    <button
+                      type="button"
+                      onClick={() => void downloadRun(r)}
+                      disabled={downloadingRun !== null}
+                      aria-busy={downloadingRun?.run === r.run}
+                      title={downloadingRun?.run === r.run ? "正在准备下载" : "下载"}
+                    >
                       <svg viewBox="0 0 24 24">
                         <path d="M12 3v12" />
                         <path d="M7 10l5 5 5-5" />
                         <path d="M4 21h16" />
                       </svg>
-                      下载
+                      {downloadingRun?.run === r.run
+                        ? `正在下载${downloadingRun.total > 1 ? ` ${downloadingRun.current}/${downloadingRun.total}` : ""}…`
+                        : "下载"}
                     </button>
                   )}
                   <button

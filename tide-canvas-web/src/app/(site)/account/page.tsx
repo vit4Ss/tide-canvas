@@ -322,7 +322,7 @@ function AccountStats({ points }: { points: number }) {
   return (
     <div className="pf-stats">
       <div className="pf-stat reveal in">
-        <div className="v grad">{fmt(points || 0)}</div>
+        <div className="v grad">{(points || 0).toLocaleString("zh-CN")}</div>
         <div className="k">可用积分</div>
       </div>
       <div className="pf-stat reveal in">

@@ -40,5 +40,6 @@ test("failed rows visibly render the reason and do not offer a fake download", (
   assert.match(source, /className="ws-run-failure" role="group" aria-label="生成失败"/);
   assert.match(source, />失败原因<\/span>/);
   assert.match(source, /r\.errorMsg \|\|/);
-  assert.match(source, /r\.status !== "failed" && \(\s*<button type="button" onClick=\{\(\) => downloadRun\(r\)\}/);
+  assert.match(source, /r\.status !== "failed" && \(\s*<button[\s\S]*?onClick=\{\(\) => void downloadRun\(r\)\}/);
+  assert.match(source, /disabled=\{downloadingRun !== null\}/);
 });
