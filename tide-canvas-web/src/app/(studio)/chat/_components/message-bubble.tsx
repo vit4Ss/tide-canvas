@@ -309,7 +309,7 @@ export function Bubble({
         </div>
         {/* copy action sits BELOW the bubble (outside it), not inside the colored pill */}
         {!isImage && !isVideo && msg.content ? (
-          <div className="bubble-acts">
+          <div className={`bubble-acts${isMe ? "" : " chat-text-acts"}`}>
             <CopyBtn text={msg.content} />
             {!isMe && (
               <button
@@ -454,7 +454,7 @@ function AssistantSkillRun({
               <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{finalText}</ReactMarkdown>
             </div>
           </div>
-          <div className="bubble-acts">
+          <div className="bubble-acts chat-text-acts">
             <CopyBtn text={finalText} />
             <button
               type="button"
@@ -489,7 +489,7 @@ function AssistantSkillRun({
                 </button>
               ))}
             </div>
-            <div className="bubble-acts">
+            <div className="bubble-acts chat-text-acts">
               <button
                 type="button"
                 className="chat-text-edit"
