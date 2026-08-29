@@ -271,7 +271,8 @@
 .checkRow { display: flex; min-height: 34px; align-items: center; gap: 8px; font-size: 11px; }
 
 .failure { color: var(--sr-danger); }
-.failure button { align-self: flex-start; }
+.failureActions { display: flex; flex-wrap: wrap; gap: 8px; }
+.failureActions button { align-self: flex-start; }
 .activeActions { display: flex; min-height: 38px; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 14px 10px; }
 .activeActions > span { color: var(--sr-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 .activeActions button { min-height: 26px; color: var(--sr-muted); border: 0; }

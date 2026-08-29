@@ -12,6 +12,7 @@ const skillPicker = read("./skill-picker.tsx");
 const skillCover = read("./skill-cover.ts");
 const chatPage = read("../../app/(studio)/chat/page.tsx");
 const chatComposer = read("../../app/(studio)/chat/_components/composer.tsx");
+const chatThread = read("../../app/(studio)/chat/_components/chat-thread.tsx");
 const chatConfig = read("../../app/(studio)/chat/_hooks/use-composer-config.ts");
 const chatSend = read("../../app/(studio)/chat/_hooks/use-send-message.ts");
 const chatApi = read("../../lib/chat-api.ts");
@@ -113,6 +114,19 @@ test("聊天技能结果隐藏中间 JSON 并突出最终可下载文件", () =>
   assert.match(chatBubble, /className="chat-skill-files"/);
   assert.match(runPanel, /<FileDown aria-hidden/);
   assert.match(runPanel, /terminal \? STATUS_LABEL\[run\.status\]/);
+});
+
+test("失败的聊天技能支持恢复原始输入并重新编辑", () => {
+  assert.match(runPanel, /onReEdit\?: \(\) => void \| Promise<unknown>/);
+  assert.match(runPanel, /<Pencil aria-hidden \/> 重新编辑/);
+  assert.match(runPanel, /onReEdit && \(/);
+  assert.match(chatBubble, /onReEditSkillRun=\{onReEditSkillRun\}/);
+  assert.match(chatThread, /onReEditSkillRun: \(run: SkillRunVO\) => void \| Promise<unknown>/);
+  assert.match(chatPage, /const handleSkillRunReEdit = useCallback/);
+  assert.match(chatPage, /setToolSkill\(skill\)/);
+  assert.match(chatPage, /restoreReferences\(assets\)/);
+  assert.match(chatPage, /setComposerWeb\(input\.parameters\.webSearch === true\)/);
+  assert.match(chatPage, /onReEditSkillRun=\{handleSkillRunReEdit\}/);
 });
 
 test("聊天里的纯文本工具结果使用普通 Markdown 回复而不是 SkillRun 卡片", () => {

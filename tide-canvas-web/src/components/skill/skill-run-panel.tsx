@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronRight, CircleAlert, Clock3, ExternalLink, FileDown, Loader2, RotateCcw, X } from "lucide-react";
+import { Check, ChevronRight, CircleAlert, Clock3, ExternalLink, FileDown, Loader2, Pencil, RotateCcw, X } from "lucide-react";
 import { defaultSkillInputValues, validateSkillInputValues } from "@/lib/skill-api";
 import type { SkillRunAction, SkillRunArtifactVO, SkillRunVO } from "@/types/skill-run";
 import { isSkillRunTerminal, skillRunError } from "@/types/skill-run";
@@ -36,6 +36,8 @@ export interface SkillRunPanelProps {
   onArtifact?: (artifact: SkillRunArtifactVO) => void;
   artifactActionLabel?: string | ((artifact: SkillRunArtifactVO) => string);
   actionBusy?: boolean;
+  /** Restore the original skill request into its composer for editing. */
+  onReEdit?: () => void | Promise<unknown>;
   onDismiss?: () => void;
 }
 
@@ -62,6 +64,7 @@ export function SkillRunPanel({
   onArtifact,
   artifactActionLabel = "使用",
   actionBusy = false,
+  onReEdit,
   onDismiss,
 }: SkillRunPanelProps) {
   const pending = run.pendingAction;
@@ -134,6 +137,18 @@ export function SkillRunPanel({
     setLocalBusy(true);
     try {
       await onAction(action, payload);
+    } finally {
+      localBusyRef.current = false;
+      setLocalBusy(false);
+    }
+  };
+
+  const reEdit = async () => {
+    if (!onReEdit || actionBusy || localBusyRef.current) return;
+    localBusyRef.current = true;
+    setLocalBusy(true);
+    try {
+      await onReEdit();
     } finally {
       localBusyRef.current = false;
       setLocalBusy(false);
@@ -321,10 +336,19 @@ export function SkillRunPanel({
       {run.status === "failed" && (
         <div className={styles.failure}>
           <p>{skillRunError(run) || "本次运行未能完成，请重试。"}</p>
-          {onAction && (
-            <button type="button" disabled={busy} onClick={() => void dispatch("retry")}>
-              <RotateCcw aria-hidden /> 重试
-            </button>
+          {(onReEdit || onAction) && (
+            <div className={styles.failureActions}>
+              {onReEdit && (
+                <button type="button" disabled={busy} onClick={() => void reEdit()}>
+                  <Pencil aria-hidden /> 重新编辑
+                </button>
+              )}
+              {onAction && (
+                <button type="button" disabled={busy} onClick={() => void dispatch("retry")}>
+                  <RotateCcw aria-hidden /> 重试
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}

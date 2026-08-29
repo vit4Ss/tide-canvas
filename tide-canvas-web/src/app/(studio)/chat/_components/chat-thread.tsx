@@ -7,7 +7,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { MessageVO } from "@/types/chat";
-import type { SkillRunAction } from "@/types/skill-run";
+import type { SkillRunAction, SkillRunVO } from "@/types/skill-run";
 import type { SkillRunPanelActionPayload } from "@/components/skill/skill-run-panel";
 import { Bubble, MD_COMPONENTS } from "./message-bubble";
 import type { LightboxItem } from "./chat-utils";
@@ -20,6 +20,7 @@ export function ChatThread({
   avatar,
   onReEdit,
   onRegenerate,
+  onReEditSkillRun,
   onOpenLightbox,
   onSkillRunAction,
   swatchFor,
@@ -38,6 +39,7 @@ export function ChatThread({
   avatar: React.ReactNode;
   onReEdit: (m: MessageVO) => void;
   onRegenerate: (m: MessageVO) => void;
+  onReEditSkillRun: (run: SkillRunVO) => void | Promise<unknown>;
   onOpenLightbox: (items: LightboxItem[], index: number) => void;
   onSkillRunAction: (
     runId: string,
@@ -86,6 +88,7 @@ export function ChatThread({
               msg={m}
               onReEdit={onReEdit}
               onRegenerate={onRegenerate}
+              onReEditSkillRun={onReEditSkillRun}
               onOpenLightbox={onOpenLightbox}
               onSkillRunAction={onSkillRunAction}
               swatchFor={swatchFor}

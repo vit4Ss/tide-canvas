@@ -41,8 +41,8 @@ import { toast } from "@/components/shared/toast";
 import type { MentionEditorHandle } from "@/components/studio/mention-prompt-editor";
 import { skillApi } from "@/lib/skill-api";
 import { skillRunApi } from "@/lib/skill-run-api";
-import type { SkillVO } from "@/types/skill";
-import type { SkillRunAction } from "@/types/skill-run";
+import { skillKindOf, skillSupportsEntryPoint, type SkillVO } from "@/types/skill";
+import type { SkillRunAction, SkillRunInput, SkillRunVO } from "@/types/skill-run";
 import { type LightboxItem } from "./_components/chat-utils";
 import { Lightbox } from "./_components/lightbox";
 import { ConversationSidebar } from "./_components/conversation-sidebar";
@@ -62,6 +62,32 @@ import { useTaskPolling } from "./_hooks/use-task-polling";
 import { useResumeStream } from "./_hooks/use-resume-stream";
 import { skillModelSupport } from "./_hooks/tool-analysis-model";
 
+function editableSkillRunInput(raw: SkillRunVO["input"]): SkillRunInput | null {
+  let value: unknown = raw;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const input = value as Record<string, unknown>;
+  if (typeof input.prompt !== "string") return null;
+  const parameters = input.parameters;
+  return {
+    prompt: input.prompt,
+    assets: Array.isArray(input.assets) ? input.assets as SkillRunInput["assets"] : [],
+    sourceNodeIds: Array.isArray(input.sourceNodeIds)
+      ? input.sourceNodeIds.filter((id): id is string => typeof id === "string")
+      : [],
+    parameters: parameters && typeof parameters === "object" && !Array.isArray(parameters)
+      ? parameters as Record<string, unknown>
+      : {},
+    ...(Array.isArray(input.messages) ? { messages: input.messages as SkillRunInput["messages"] } : {}),
+  };
+}
+
 /* ── component ────────────────────────────────────────────────────────────── */
 
 export default function ChatPage() {
@@ -80,6 +106,11 @@ export default function ChatPage() {
 
   const models = useGenModels();
   const cfg = useComposerConfig(models, toolSkill);
+  const removeComposerSkill = cfg.removeSkill;
+  const setComposerWeb = cfg.setWeb;
+  const availableModels = models.genModels;
+  const currentModel = models.selModel;
+  const setSelectedModel = models.setModel;
   const availableToolSkills = useMemo(
     () => toolSkills?.filter((candidate) => skillModelSupport(candidate, models.selModel).supported) ?? toolSkills,
     [models.selModel, toolSkills],
@@ -92,6 +123,7 @@ export default function ChatPage() {
     [models.selModel],
   );
   const refsApi = useReferences({ refPolicy: cfg.refPolicy });
+  const restoreReferences = refsApi.restoreRefs;
   const streamingApi = useStreaming();
   const conv = useConversations({
     ensureSession,
@@ -273,6 +305,62 @@ export default function ChatPage() {
     [activeConversationId, conv.activeIdRef, ensureSession, loadConversationMessages],
   );
 
+  const handleSkillRunReEdit = useCallback(async (run: SkillRunVO) => {
+    if (busy) return;
+    const input = editableSkillRunInput(run.input);
+    if (!input) {
+      toast.info("原始输入已过期，无法恢复编辑");
+      return;
+    }
+    const result = await skillApi.get(run.skillId, "studio", run.targetType);
+    const skill = result.success ? result.data : undefined;
+    if (!skill || skill.status !== 1 || skillKindOf(skill) !== "tool" || !skillSupportsEntryPoint(skill, "studio")) {
+      toast.info("该技能已下架或暂不支持从聊天中重新编辑");
+      return;
+    }
+
+    const requestedModel = typeof input.parameters.textModelId === "string"
+      ? input.parameters.textModelId.trim()
+      : "";
+    const restoredModel = requestedModel
+      ? availableModels.find((candidate) => candidate.modelKey === requestedModel || candidate.id === requestedModel)
+      : currentModel;
+    if (!restoredModel) {
+      toast.info("原分析模型已下架，请先选择可用的文本模型");
+      return;
+    }
+    const support = skillModelSupport(skill, restoredModel);
+    if (!support.supported) {
+      toast.info(support.reason || "当前模型不支持该技能，请先切换模型");
+      return;
+    }
+
+    const assets = input.assets.flatMap((asset) => {
+      if (!asset || typeof asset !== "object" || typeof asset.url !== "string" || !asset.url.trim()) return [];
+      const type = asset.type === "image" || asset.type === "video" || asset.type === "audio" || asset.type === "file"
+        ? asset.type
+        : null;
+      if (!type) return [];
+      return [{
+        url: asset.url,
+        kind: type,
+        ...(asset.id ? { id: asset.id } : {}),
+        ...(asset.name ? { name: asset.name } : {}),
+      }];
+    });
+    removeComposerSkill();
+    setSelectedModel(restoredModel.name);
+    setToolSkill(skill);
+    setDraft(input.prompt);
+    restoreReferences(assets);
+    // Reset the toggle as well when the historical run did not use search;
+    // otherwise a previous composer state could silently change the retried
+    // request after the skill is restored.
+    setComposerWeb(input.parameters.webSearch === true);
+    requestAnimationFrame(() => taRef.current?.focus());
+    toast.success("已恢复原始输入，可修改后重新发送");
+  }, [availableModels, busy, currentModel, removeComposerSkill, restoreReferences, setComposerWeb, setDraft, setSelectedModel, taRef]);
+
   // 当前所选模型的头像（发送占位/流式回复/文字回复的 AI 头像都用它，
   // 让"正在生成"的气泡直接亮出当前模型的图标而不是通用 ✦）。
   const curModelAv = (
@@ -333,6 +421,7 @@ export default function ChatPage() {
           avatar={curModelAv}
           onReEdit={reEdit}
           onRegenerate={regenerate}
+          onReEditSkillRun={handleSkillRunReEdit}
           onOpenLightbox={openLightbox}
           onSkillRunAction={handleSkillRunAction}
           swatchFor={models.swatchForName}

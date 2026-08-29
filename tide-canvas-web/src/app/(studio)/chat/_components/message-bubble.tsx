@@ -187,6 +187,7 @@ export function Bubble({
   onRegenerate,
   onOpenLightbox,
   onSkillRunAction,
+  onReEditSkillRun,
   swatchFor,
   fallbackModel,
 }: {
@@ -200,6 +201,7 @@ export function Bubble({
     payload?: SkillRunPanelActionPayload,
     expectedRevision?: number,
   ) => void | Promise<unknown>;
+  onReEditSkillRun: (run: SkillRunVO) => void | Promise<unknown>;
   /** 模型名 → 图标 swatch（生成结果的 AI 头像显示生成所用模型）。 */
   swatchFor: (name: string) => { style: React.CSSProperties; glyph: string };
   /** 任务没存 modelName 时的兜底模型名（该轮 params.model，再退当前所选）。 */
@@ -210,6 +212,7 @@ export function Bubble({
       <AssistantSkillRun
         message={msg}
         onAction={onSkillRunAction}
+        onReEditSkillRun={onReEditSkillRun}
         onOpenLightbox={onOpenLightbox}
       />
     );
@@ -321,6 +324,7 @@ export function Bubble({
 function AssistantSkillRun({
   message,
   onAction,
+  onReEditSkillRun,
   onOpenLightbox,
 }: {
   message: MessageVO;
@@ -330,6 +334,7 @@ function AssistantSkillRun({
     payload?: SkillRunPanelActionPayload,
     expectedRevision?: number,
   ) => void | Promise<unknown>;
+  onReEditSkillRun: (run: SkillRunVO) => void | Promise<unknown>;
   onOpenLightbox: (items: LightboxItem[], index: number) => void;
 }) {
   const [fetchedRun, setFetchedRun] = useState<SkillRunVO | null>(null);
@@ -467,6 +472,7 @@ function AssistantSkillRun({
           <SkillRunPanel
             run={presentableSkillRun(run)}
             compact
+            onReEdit={() => onReEditSkillRun(run)}
             onAction={async (action, payload) => {
               await onAction(run.id, action, payload, run.revision);
               const result = await skillRunApi.detail(run.id);
