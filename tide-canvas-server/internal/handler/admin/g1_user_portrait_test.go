@@ -11,6 +11,7 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
 )
@@ -41,7 +42,7 @@ func TestAdminUserPortraitAggregates(t *testing.T) {
 	const userID idgen.ID = 7001
 	now := time.Now()
 	if err := db.Create(&model.User{
-		ID: userID, Username: "portrait-user", Email: "p@example.test", Nickname: "画像用户", Points: 85,
+		ID: userID, Username: "portrait-user", Email: "p@example.test", Nickname: "画像用户", Points: 85, Remark: "private admin note",
 	}).Error; err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -183,5 +184,28 @@ func TestAdminUserPortraitAggregates(t *testing.T) {
 	}
 	if cm.CheckinCount != 2 || cm.CheckinPoints != 10 || cm.CheckinStreak != 2 || cm.LastCheckin == "" {
 		t.Fatalf("checkin = %+v", cm)
+	}
+
+	// The caller-scoped route reuses the aggregate but must not expose the
+	// admin-only remark or login IPs to the front-end account surface.
+	selfRecorder := httptest.NewRecorder()
+	selfCtx, _ := gin.CreateTestContext(selfRecorder)
+	selfCtx.Set(middleware.CtxUserID, userID)
+	selfCtx.Request = httptest.NewRequest("GET", "/me/portrait", nil)
+	(&userHandler{db: db}).currentUserPortrait(selfCtx)
+	var selfEnvelope struct {
+		Success bool           `json:"success"`
+		Data    UserPortraitVO `json:"data"`
+	}
+	if err := json.Unmarshal(selfRecorder.Body.Bytes(), &selfEnvelope); err != nil {
+		t.Fatalf("decode self portrait response: %v (%s)", err, selfRecorder.Body.String())
+	}
+	if !selfEnvelope.Success || selfEnvelope.Data.User.ID != userID || selfEnvelope.Data.User.Remark != "" {
+		t.Fatalf("self portrait identity leaked or missing: %+v", selfEnvelope.Data.User)
+	}
+	for _, login := range selfEnvelope.Data.Activity.RecentLogins {
+		if login.IP != "" {
+			t.Fatalf("self portrait exposed login IP: %+v", login)
+		}
 	}
 }

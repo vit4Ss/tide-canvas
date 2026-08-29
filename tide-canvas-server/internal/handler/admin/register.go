@@ -18,6 +18,12 @@ import (
 // role=9 超管全量;运营角色按 sys_role.permissions 里的 admin.<模块> 键放行
 // (键表见 model.AdminModuleKeys,与前端后台侧栏一一对应)。
 func Register(api *gin.RouterGroup, d *app.Deps) {
+	// The front-end portrait is caller-scoped and intentionally lives outside
+	// /api/admin. The handler shares the aggregate implementation with the admin
+	// portrait, but always derives the user id from JWTAuth.
+	self := api.Group("/me", middleware.JWTAuth(d))
+	self.GET("/portrait", (&userHandler{db: d.DB}).currentUserPortrait)
+
 	g := api.Group("/admin")
 	g.Use(middleware.JWTAuth(d), middleware.AdminAccess(d))
 

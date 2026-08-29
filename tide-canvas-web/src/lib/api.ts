@@ -14,6 +14,7 @@ import type {
   UserGenerationHistoryDetailVO, UserGenerationHistoryQuery, UserGenerationHistoryVO,
 } from "@/types/ai";
 import type { FileCategory, FileVO, FileQuery } from "@/types/file";
+import type { UserPortraitVO } from "@/types/admin-users";
 // 画布风格库所需类型
 import type {
   StylePresetQuery, StylePresetVO, StyleFavoriteToggleVO, StylePresetSaveDTO,
@@ -43,6 +44,9 @@ export const authApi = {
     http.post<void>("/api/auth/logout"),
   me: () =>
     http.get<UserVO>("/api/auth/me"),
+  /** Current user's own creative portrait; the server scopes this by JWT. */
+  portrait: () =>
+    http.get<UserPortraitVO>("/api/me/portrait"),
   updatePassword: (data: UpdatePasswordDTO) =>
     http.put<void>("/api/auth/password", data),
   updateProfile: (data: UpdateProfileDTO) =>

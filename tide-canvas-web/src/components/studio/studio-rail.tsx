@@ -257,7 +257,18 @@ export default function StudioRail() {
       )}
 
       {user ? (
-        <Link className="ws-tool" href="/account" title={accountName || "个人中心"}>
+        <>
+          <Link className={toolClass("/portrait")} href="/portrait" title="用户画像">
+            <span className="ic">
+              <svg viewBox="0 0 24 24">
+                <circle cx="12" cy="8" r="3.5" />
+                <path d="M5 20c.7-3.4 3.1-5.2 7-5.2s6.3 1.8 7 5.2" />
+                <path d="M19 3.5v3M17.5 5h3" />
+              </svg>
+            </span>
+            <span>画像</span>
+          </Link>
+          <Link className="ws-tool" href="/account" title={accountName || "个人中心"}>
           <span className="ic">
             <span
               aria-hidden
@@ -277,7 +288,8 @@ export default function StudioRail() {
             </span>
           </span>
           <span>我的</span>
-        </Link>
+          </Link>
+        </>
       ) : (
         <Link className="ws-tool" href="/login" title="登录">
           <span className="ic">

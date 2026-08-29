@@ -18,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/response"
@@ -159,10 +160,39 @@ func (h *userHandler) userPortrait(c *gin.Context) {
 	if !ok {
 		return
 	}
-	u, err := h.findUser(id)
+	vo, err := h.buildUserPortrait(id)
 	if err != nil {
 		h.failLookup(c, err, "failed to load user")
 		return
+	}
+	response.OK(c, vo)
+}
+
+// currentUserPortrait serves the same aggregate data to the signed-in user,
+// but never accepts a user id from the request. It deliberately clears the
+// admin-only remark and login IPs before returning the shared portrait shape.
+func (h *userHandler) currentUserPortrait(c *gin.Context) {
+	id := middleware.CurrentUserID(c)
+	if id == 0 {
+		response.Fail(c, response.CodeUnauthorized, "authentication required")
+		return
+	}
+	vo, err := h.buildUserPortrait(id)
+	if err != nil {
+		h.failLookup(c, err, "failed to load current user portrait")
+		return
+	}
+	vo.User.Remark = ""
+	for i := range vo.Activity.RecentLogins {
+		vo.Activity.RecentLogins[i].IP = ""
+	}
+	response.OK(c, vo)
+}
+
+func (h *userHandler) buildUserPortrait(id idgen.ID) (UserPortraitVO, error) {
+	u, err := h.findUser(id)
+	if err != nil {
+		return UserPortraitVO{}, err
 	}
 	vo := UserPortraitVO{User: toAdminUserVO(u)}
 	vo.User.PlanName = planNameFor(h.planNameByVip(), u.VipLevel)
@@ -183,7 +213,7 @@ func (h *userHandler) userPortrait(c *gin.Context) {
 	vo.Assets = h.portraitAssets(id, u)
 	vo.Commerce = h.portraitCommerce(id)
 	vo.Community = h.portraitCommunity(id)
-	response.OK(c, vo)
+	return vo, nil
 }
 
 func (h *userHandler) portraitPoints(id idgen.ID, balance int64, since30 time.Time) portraitPointsVO {
