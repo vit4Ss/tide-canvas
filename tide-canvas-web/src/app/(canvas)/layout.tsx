@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useAuthStore } from "@/stores/use-auth-store";
+// The canvas asset picker reuses AssetsBrowser. Its styles are fully scoped to
+// studio/asset class names, so loading them here does not alter canvas nodes.
+import "@/styles/liuguang/studio.css";
 
 /**
  * 画布路由组外壳。登录态门禁:进入画布前先 ensureSession()——有 token 则确保拉过用户

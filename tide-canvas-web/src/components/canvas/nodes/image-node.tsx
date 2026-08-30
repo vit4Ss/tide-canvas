@@ -50,6 +50,8 @@ import { useCanvasNodeFeatures } from "@/stores/use-canvas-node-config-store";
 import { findRightColumnSpot, getIncomingSources, inlineIncomingTextRefs, parseModelConfig, stopEvent as stop, validateReferenceFileSizes } from "./shared/node-utils";
 import { NodeDimsBadge, NodeErrorBadge, NodeGeneratingOverlay, NodeMediaLightbox, NodeShell, NodeUploadingOverlay } from "./shared/node-overlays";
 import { buildImageDerivativeMetadata, imageDerivativeTitle } from "./image-node-derivation";
+import { AssetPickerModal } from "@/components/studio/create-studio/asset-picker-modal";
+import type { PickedAsset } from "@/components/studio/assets-browser";
 
 // 自定义宫格选择器的最大行列（N×N 网格）
 const CUSTOM_MAX = 8;
@@ -605,6 +607,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     fileInputRef,
     openFilePicker,
     handleFileUpload: handleFileChange,
+    applyHostedMedia,
     nodeUploading,
     nodeUploadPct,
     uploadPreviewSrc,
@@ -612,6 +615,34 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     setDims: setImageDims,
     mountedRef,
   } = useMediaUpload(node, "image", selectedModel);
+  const [assetPickerOpen, setAssetPickerOpen] = useState(false);
+  const assetPickerFilter = node.type === CHARACTER_NODE_TYPE
+    ? "character"
+    : node.type === SCENE_NODE_TYPE
+      ? "scene"
+      : "image";
+  const openAssetPicker = useCallback((event?: React.MouseEvent) => {
+    event?.stopPropagation();
+    if (nodeUploading || generating) {
+      toast.info(nodeUploading ? "素材正在处理，请稍候" : "生成完成后可替换素材");
+      return;
+    }
+    setAssetPickerOpen(true);
+  }, [generating, nodeUploading]);
+  const handleAssetPick = useCallback((assets: PickedAsset[]) => {
+    const asset = assets[0];
+    if (!asset) return;
+    if (asset.kind !== "image") {
+      toast.error("该节点仅支持图片素材");
+      return;
+    }
+    setAssetPickerOpen(false);
+    void applyHostedMedia({
+      url: asset.url,
+      name: asset.name,
+      sizeBytes: asset.sizeBytes,
+    });
+  }, [applyHostedMedia]);
   const { downloading, download: handleDownload } = useFileDownload();
   const { promptExpanded, setPromptExpanded, handlePromptChange } = useNodePrompt(node, node.imageSrc);
   // ===== 比例默认值：与上游连接节点统一 =====
@@ -2132,6 +2163,17 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
                 上传
               </button>
+              <button
+                type="button"
+                onMouseDown={stop}
+                onClick={openAssetPicker}
+                disabled={nodeUploading || generating}
+                title={generating ? "生成完成后可选择素材" : "从资产库选择图片"}
+                className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800"
+              >
+                <Images className="h-3.5 w-3.5" />
+                资产库
+              </button>
             </div>
           </NodeChrome>
         )}
@@ -2191,6 +2233,20 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           onClick={stop}
           onChange={handleFileChange}
         />
+
+        {assetPickerOpen && typeof document !== "undefined"
+          ? createPortal(
+              <AssetPickerModal
+                kind="image"
+                defaultFilter={assetPickerFilter}
+                className="canvas-asset-picker-theme"
+                lockKind
+                onPick={handleAssetPick}
+                onClose={() => setAssetPickerOpen(false)}
+              />,
+              document.body,
+            )
+          : null}
 
         {/* 360° 全景查看器（展示 AI 生成的全景扩图） */}
         {panoramaOpen && panoramaSrc && (
@@ -2727,7 +2783,25 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                   }
                   styles={{ root: { paddingLeft: 8, paddingRight: 10 }, label: { fontWeight: 500 } }}
                 >
-                  图生图
+                  本地上传
+                </Button>
+                <Button
+                  onMouseDown={stop}
+                  onClick={openAssetPicker}
+                  disabled={nodeUploading || generating}
+                  title={generating ? "生成完成后可选择素材" : undefined}
+                  variant="subtle"
+                  color="dark"
+                  radius="md"
+                  size="sm"
+                  leftSection={
+                    <ThemeIcon variant="light" color="gray" size={24} radius="md">
+                      <Images className="h-3.5 w-3.5" />
+                    </ThemeIcon>
+                  }
+                  styles={{ root: { paddingLeft: 8, paddingRight: 10 }, label: { fontWeight: 500 } }}
+                >
+                  从资产库选图
                 </Button>
                 <Button
                   onMouseDown={stop}

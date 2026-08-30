@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { uploadFileSmart } from "@/lib/api";
+import { fileApi, uploadFileSmart } from "@/lib/api";
 import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE } from "@/lib/canvas-node-types";
-import { resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
+import { resolveModelReferenceLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
 import { toast } from "@/components/shared/toast";
 import type { AiModelVO } from "@/types/ai";
@@ -15,6 +15,12 @@ import {
 } from "@/lib/canvas-generation-guard";
 
 export type UploadMediaKind = "image" | "video";
+
+export interface HostedMediaAsset {
+  url: string;
+  name?: string;
+  sizeBytes?: number;
+}
 
 /** 图片/视频上传的差异全部收敛在这张表：写回字段、成功后状态、大小上限口径、提示文案 */
 const KIND_META: Record<UploadMediaKind, { status: "idle" | "success"; label: string; successToast: string }> = {
@@ -142,6 +148,80 @@ export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selected
     }
   }, [assetCategory, kind, mountedRef, node.id, selectedModel, updateNode]);
 
+  /** Apply an already-hosted asset selected from the asset library.
+   *
+   *  Generated assets do not always have a File row, so their byte size may
+   *  need to be resolved from object storage before the same model limit used
+   *  by local uploads can be enforced. The store-level uploading flag keeps
+   *  generation and all replacement entry points mutually exclusive while
+   *  that lookup is in flight. */
+  const applyHostedMedia = useCallback(async (asset: HostedMediaAsset): Promise<boolean> => {
+    const current = useCanvasStore.getState().nodes.find((item) => item.id === node.id);
+    if (!canReplaceCanvasMedia(current)) {
+      toast.info(current?.uploading ? "素材正在处理，请稍候" : "生成期间暂不能替换素材");
+      return false;
+    }
+
+    const attempt = uploadAttemptRef.current + 1;
+    uploadAttemptRef.current = attempt;
+    updateNode(node.id, { uploading: true, uploadProgress: 0 }, false);
+    setUploadPct(0);
+    setUploading(true);
+
+    try {
+      let sizeBytes = asset.sizeBytes;
+      if (!Number.isFinite(sizeBytes) || !sizeBytes || sizeBytes <= 0) {
+        const response = await fileApi.assetSize(asset.url).catch(() => null);
+        const resolved = response?.success ? response.data?.sizeBytes : undefined;
+        if (Number.isFinite(resolved) && (resolved ?? 0) > 0) sizeBytes = resolved;
+      }
+
+      const sizeIssue = validateKnownFileSize(sizeBytes, asset.name, {
+        maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
+        label: KIND_META[kind].label,
+      });
+      if (sizeIssue) {
+        toast.error(sizeIssue);
+        return false;
+      }
+
+      const latest = useCanvasStore.getState().nodes.find((item) => item.id === node.id);
+      if (attempt !== uploadAttemptRef.current || !canCommitCanvasMediaUpload(latest)) {
+        toast.info("节点已开始生成，本次资产选择未替换当前素材");
+        return false;
+      }
+
+      const patch: Partial<CanvasNode> = {
+        status: KIND_META[kind].status,
+        fileSize: sizeBytes,
+        fileType: kind,
+        mimeType: undefined,
+      };
+      if (kind === "image") {
+        patch.imageSrc = asset.url;
+        patch.images = undefined;
+      } else {
+        patch.videoSrc = asset.url;
+      }
+
+      // Keep history clean: the transient mutex is never part of the undo
+      // snapshot; only the actual media replacement is reversible.
+      updateNode(node.id, { uploading: false, uploadProgress: undefined }, false);
+      updateNode(node.id, patch, true);
+      setDims(null);
+      toast.success(kind === "image" ? "已从资产库添加图片" : "已从资产库添加视频");
+      return true;
+    } catch {
+      toast.error("资产添加失败，请稍后重试");
+      return false;
+    } finally {
+      if (attempt === uploadAttemptRef.current) {
+        updateNode(node.id, { uploading: false, uploadProgress: undefined }, false);
+      }
+      if (mountedRef.current) setUploading(false);
+    }
+  }, [kind, mountedRef, node.id, selectedModel, updateNode]);
+
   const mediaSrc = kind === "image" ? node.imageSrc : node.videoSrc;
   const nodeUploading = uploading || node.uploading === true;
   const nodeUploadPct = uploading ? uploadPct : node.uploadProgress ?? 0;
@@ -151,6 +231,7 @@ export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selected
     fileInputRef,
     openFilePicker,
     handleFileUpload,
+    applyHostedMedia,
     nodeUploading,
     nodeUploadPct,
     uploadPreviewSrc,

@@ -21,6 +21,8 @@ const ALLOWED_BY_KIND: Record<SlotType, readonly AssetFilterKey[]> = {
 
 export function AssetPickerModal({
   kind,
+  defaultFilter,
+  className,
   onPick,
   onClose,
   lockKind = false,
@@ -28,6 +30,10 @@ export function AssetPickerModal({
   existingUrls,
 }: {
   kind: SlotType;
+  /** Optional initial category for image pickers (for example character/scene on canvas nodes). */
+  defaultFilter?: AssetFilterKey;
+  /** Extra root class for callers whose route supplies a different theme token scope. */
+  className?: string;
   onPick: (assets: PickedAsset[]) => void;
   onClose: () => void;
   /** 只允许选 kind 这一种素材(智能工具:图片工具只收图、视频工具只收视频)。
@@ -64,7 +70,7 @@ export function AssetPickerModal({
   };
 
   return (
-    <div className="ws-srcmask" onClick={onClose}>
+    <div className={`ws-srcmask${className ? ` ${className}` : ""}`} onClick={onClose}>
       <div className="ws-assetbox" onClick={(e) => e.stopPropagation()}>
         <div className="ws-assetbox-h">
           <span>从资产库选取{multi ? " · 可多选" : ""}</span>
@@ -79,8 +85,8 @@ export function AssetPickerModal({
             onPick={toggleAsset}
             pickedUrls={multi ? pickedUrls : undefined}
             disabledPickUrls={existing}
-            defaultFilter={kind}
-            defaultTab={kind === "audio" ? "upload" : "hist"}
+            defaultFilter={defaultFilter ?? kind}
+            defaultTab={(defaultFilter ?? kind) === "audio" ? "upload" : "hist"}
             allowedFilters={lockKind ? ALLOWED_BY_KIND[kind] : undefined}
           />
         </div>
