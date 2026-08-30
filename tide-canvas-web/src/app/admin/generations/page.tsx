@@ -7,7 +7,7 @@
    同表,覆盖 chat/assistant/optimize/image/video/audio 全场景):
 
      列表:类型 / 用户 / 模型 / Prompt 摘要 / 状态 / 平台积分 / 耗时 / 时间,
-     支持 Prompt 关键词、类型、状态、日期范围筛选,服务端分页。
+     支持 Prompt 关键词、用户、类型、状态、日期范围筛选,服务端分页。
 
      详情(右侧抽屉):生成结果(视频/图片/音频预览或文本回复)→ 生成参数网格
      → 输入素材(参考图缩略图 + chat 附件)→ 完整 Prompt → 技术信息 →
@@ -26,6 +26,7 @@ import {
   Music,
   RefreshCw,
   Search,
+  UserRound,
   Video,
 } from "lucide-react";
 import {
@@ -650,6 +651,7 @@ export default function AdminGenerationsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [keyword, setKeyword] = useState("");
+  const [userKeyword, setUserKeyword] = useState("");
   const [sceneOpt, setSceneOpt] = useState<string>(SCENE_OPTIONS[0]);
   const [statusOpt, setStatusOpt] = useState<string>(STATUS_OPTIONS[0]);
   const [startDate, setStartDate] = useState("");
@@ -671,6 +673,7 @@ export default function AdminGenerationsPage() {
         pageNum: page,
         pageSize: PAGE_SIZE,
         keyword: keyword.trim() || undefined,
+        userKeyword: userKeyword.trim() || undefined,
         scene: SCENE_TO_KEY[sceneOpt],
         success: statusOpt === "成功" ? "1" : statusOpt === "失败" ? "0" : undefined,
         startDate: startDate || undefined,
@@ -693,7 +696,7 @@ export default function AdminGenerationsPage() {
     } finally {
       if (id === reqIdRef.current) setLoading(false);
     }
-  }, [ensureSession, page, keyword, sceneOpt, statusOpt, startDate, endDate]);
+  }, [ensureSession, page, keyword, userKeyword, sceneOpt, statusOpt, startDate, endDate]);
 
   // 筛选/搜索/翻页变化后重新加载;关键词等文本输入走 300ms 防抖。
   useEffect(() => {
@@ -817,6 +820,7 @@ export default function AdminGenerationsPage() {
 
   const hasFilter =
     Boolean(keyword.trim()) ||
+    Boolean(userKeyword.trim()) ||
     sceneOpt !== SCENE_OPTIONS[0] ||
     statusOpt !== STATUS_OPTIONS[0] ||
     Boolean(startDate) ||
@@ -883,6 +887,19 @@ export default function AdminGenerationsPage() {
             value={endDate}
             onChange={(e) => applyFilter(setEndDate)(e.target.value)}
           />
+          <div className="genr-user-filter">
+            <UserRound aria-hidden size={14} />
+            <input
+              type="search"
+              aria-label="按用户筛选生成记录"
+              placeholder="用户名 / 邮箱 / ID"
+              autoComplete="off"
+              spellCheck={false}
+              maxLength={100}
+              value={userKeyword}
+              onChange={(e) => applyFilter(setUserKeyword)(e.target.value)}
+            />
+          </div>
         </div>
         {loading ? (
           <TableSkeleton />
@@ -912,6 +929,7 @@ export default function AdminGenerationsPage() {
                   className="adm-btn ghost"
                   onClick={() => {
                     setKeyword("");
+                    setUserKeyword("");
                     setSceneOpt(SCENE_OPTIONS[0]);
                     setStatusOpt(STATUS_OPTIONS[0]);
                     setStartDate("");

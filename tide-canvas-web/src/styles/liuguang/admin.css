@@ -1673,6 +1673,46 @@ tr:hover .rowacts,
 .genr-select {
   padding-right: 6px;
 }
+.genr-user-filter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 210px;
+  height: 32px;
+  padding: 0 9px;
+  color: var(--text-faint);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.genr-user-filter:focus-within {
+  color: var(--text-dim);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.genr-user-filter > svg {
+  flex: none;
+}
+.genr-user-filter input {
+  min-width: 0;
+  flex: 1;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font: inherit;
+  font-size: 13px;
+}
+.genr-user-filter input::placeholder {
+  color: var(--text-placeholder);
+}
+@media (max-width: 640px) {
+  .genr-user-filter {
+    width: 100%;
+  }
+}
 /* 分区小标题：左对齐小字重题（旧版为居中双线分隔符，与后台 Linear 风词汇不符） */
 .genr-sec-t {
   font-size: 12.5px;

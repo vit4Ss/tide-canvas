@@ -38,7 +38,7 @@ import (
 
 // RegisterGenerations mounts the 生成记录 routes.
 //
-//	GET /generations      (userId?, scene?, success?, keyword?, startDate?, endDate?) -> PageData<GenerationRowVO>
+//	GET /generations      (userId?, userKeyword?, scene?, success?, keyword?, startDate?, endDate?) -> PageData<GenerationRowVO>
 //	GET /generations/:id                                                       -> GenerationDetailVO
 //	POST /generations/:id/refund                                               -> GenerationDetailVO
 func RegisterGenerations(g *gin.RouterGroup, d *app.Deps) {
@@ -721,11 +721,47 @@ type GenerationDetailVO struct {
 	ResponseBody string     `json:"responseBody,omitempty"`
 }
 
-// genListQuery 在共享分页参数上加日期范围。
+// genListQuery 在共享分页参数上加日期范围与用户模糊检索。
 type genListQuery struct {
 	g5PageQuery
-	StartDate string `form:"startDate"`
-	EndDate   string `form:"endDate"`
+	StartDate   string `form:"startDate"`
+	EndDate     string `form:"endDate"`
+	UserKeyword string `form:"userKeyword"`
+}
+
+func (q *genListQuery) normalize() {
+	q.g5PageQuery.normalize()
+	q.StartDate = strings.TrimSpace(q.StartDate)
+	q.EndDate = strings.TrimSpace(q.EndDate)
+	q.UserKeyword = strings.TrimSpace(q.UserKeyword)
+	if runes := []rune(q.UserKeyword); len(runes) > 100 {
+		q.UserKeyword = string(runes[:100])
+	}
+}
+
+// applyGenerationUserSearch filters model-call rows through the real user
+// table. Displayed names prefer nickname, so search must cover nickname as
+// well as username/email; a complete snowflake id remains an exact fast path.
+// The system pseudo-user has no users row and is intentionally searchable by
+// its UI label.
+func applyGenerationUserSearch(tx, db *gorm.DB, raw string) *gorm.DB {
+	keyword := strings.TrimSpace(raw)
+	if keyword == "" {
+		return tx
+	}
+	// Use a dedicated escape character supported by both MySQL and SQLite so
+	// '%' / '_' in usernames or operator input remain literal characters.
+	like := "%" + strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(keyword) + "%"
+	matchingUsers := db.Model(&model.User{}).
+		Select("id").
+		Where("username LIKE ? ESCAPE '!' OR nickname LIKE ? ESCAPE '!' OR email LIKE ? ESCAPE '!'", like, like, like)
+	if id, err := idgen.Parse(keyword); err == nil && id != 0 {
+		return tx.Where("user_id = ? OR user_id IN (?)", id, matchingUsers)
+	}
+	if keyword == "系统" {
+		return tx.Where("user_id = ? OR user_id IN (?)", 0, matchingUsers)
+	}
+	return tx.Where("user_id IN (?)", matchingUsers)
 }
 
 // promptExcerpt 列表用的 prompt 摘要（限长,避免长 prompt 撑爆行）。
@@ -1029,6 +1065,7 @@ func listGenerations(c *gin.Context, d *app.Deps) {
 
 	db := d.DB
 	tx := applyUserFilter(db.Model(&model.ModelCallLog{}), q.UserID)
+	tx = applyGenerationUserSearch(tx, db, q.UserKeyword)
 	if q.Scene != "" {
 		tx = tx.Where("scene = ?", q.Scene)
 	}

@@ -29,6 +29,84 @@ func TestGenerationDetailOmitsEmptyRawBodies(t *testing.T) {
 	}
 }
 
+func TestApplyGenerationUserSearch(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:g7_generation_user_search?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql db: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(&model.User{}, &model.ModelCallLog{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	const alphaID idgen.ID = 7201
+	const betaID idgen.ID = 7202
+	const underscoreID idgen.ID = 7203
+	users := []model.User{
+		{ID: alphaID, Username: "alpha-maker", Nickname: "星河", Email: "alpha@example.test", Status: 1},
+		{ID: betaID, Username: "beta-user", Nickname: "另一位", Email: "billing-beta@example.test", Status: 1},
+		{ID: underscoreID, Username: "under_score", Nickname: "下划线用户", Email: "underscore@example.test", Status: 1},
+	}
+	if err := db.Create(&users).Error; err != nil {
+		t.Fatalf("create users: %v", err)
+	}
+	now := time.Now()
+	logs := []model.ModelCallLog{
+		{BaseModel: model.BaseModel{ID: 7211, CreateTime: now}, UserID: alphaID, Scene: "image", Model: "model-a"},
+		{BaseModel: model.BaseModel{ID: 7212, CreateTime: now}, UserID: betaID, Scene: "video", Model: "model-b"},
+		{BaseModel: model.BaseModel{ID: 7213, CreateTime: now}, UserID: 0, Scene: "chat", Model: "system-model"},
+		{BaseModel: model.BaseModel{ID: 7214, CreateTime: now}, UserID: underscoreID, Scene: "image", Model: "model-c"},
+	}
+	if err := db.Create(&logs).Error; err != nil {
+		t.Fatalf("create model logs: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		term string
+		want idgen.ID
+	}{
+		{name: "username", term: "maker", want: alphaID},
+		{name: "nickname", term: "星河", want: alphaID},
+		{name: "email", term: "billing-beta", want: betaID},
+		{name: "exact id", term: betaID.String(), want: betaID},
+		{name: "system label", term: "系统", want: 0},
+		{name: "literal underscore", term: "_", want: underscoreID},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []model.ModelCallLog
+			tx := applyGenerationUserSearch(db.Model(&model.ModelCallLog{}), db, tt.term)
+			if err := tx.Find(&got).Error; err != nil {
+				t.Fatalf("query %q: %v", tt.term, err)
+			}
+			if len(got) != 1 || got[0].UserID != tt.want {
+				t.Fatalf("query %q users = %+v, want only %s", tt.term, got, tt.want.String())
+			}
+		})
+	}
+
+	var missing []model.ModelCallLog
+	if err := applyGenerationUserSearch(db.Model(&model.ModelCallLog{}), db, "not-a-user").Find(&missing).Error; err != nil {
+		t.Fatalf("missing query: %v", err)
+	}
+	if len(missing) != 0 {
+		t.Fatalf("missing query returned %+v", missing)
+	}
+	var wildcard []model.ModelCallLog
+	if err := applyGenerationUserSearch(db.Model(&model.ModelCallLog{}), db, "%").Find(&wildcard).Error; err != nil {
+		t.Fatalf("literal percent query: %v", err)
+	}
+	if len(wildcard) != 0 {
+		t.Fatalf("percent was treated as a wildcard: %+v", wildcard)
+	}
+}
+
 func TestRefundGenerationIsAdminOnlyAndExactlyOnce(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:g7_generation_refund?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {

@@ -68,6 +68,8 @@ export interface GenerationQuery {
   scene?: string;
   success?: string;
   userId?: string;
+  /** 模糊匹配用户名、昵称、邮箱；完整用户 ID 精确匹配。 */
+  userKeyword?: string;
   startDate?: string;
   endDate?: string;
 }
