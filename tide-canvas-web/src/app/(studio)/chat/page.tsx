@@ -44,7 +44,7 @@ import { skillApi } from "@/lib/skill-api";
 import { skillRunApi } from "@/lib/skill-run-api";
 import { skillKindOf, skillSupportsEntryPoint, type SkillVO } from "@/types/skill";
 import type { SkillRunAction, SkillRunInput, SkillRunVO } from "@/types/skill-run";
-import { type LightboxItem } from "./_components/chat-utils";
+import { type LightboxItem, type RefItem } from "./_components/chat-utils";
 import { Lightbox } from "./_components/lightbox";
 import { ConversationSidebar } from "./_components/conversation-sidebar";
 import { ChatThread } from "./_components/chat-thread";
@@ -62,6 +62,28 @@ import { useTurnActions } from "./_hooks/use-turn-actions";
 import { useTaskPolling } from "./_hooks/use-task-polling";
 import { useResumeStream } from "./_hooks/use-resume-stream";
 import { skillModelSupport } from "./_hooks/tool-analysis-model";
+import { useAppUpdateGuard } from "@/hooks/use-app-update-guard";
+import { CURRENT_APP_VERSION, isFreshUpdateSnapshot, type AppUpdateSnapshot } from "@/lib/app-update";
+import { DEFAULT_MUSIC_PARAMS, type MusicParams } from "@/lib/music-modes";
+
+const CHAT_AUTO_UPDATE_DRAFT_KEY = "flowinglight:auto-update:chat-draft";
+
+interface ChatAutoUpdateDraft extends AppUpdateSnapshot {
+  draft: string;
+  conversationId: string | null;
+  references: Array<Pick<RefItem, "key" | "id" | "kind" | "url" | "name">>;
+  model: string;
+  web: boolean;
+  mode: string;
+  ratio: string;
+  res: string;
+  quality: string;
+  dur: string;
+  batch: number;
+  music: MusicParams;
+  skill: SkillVO | null;
+  toolSkill: SkillVO | null;
+}
 
 function editableSkillRunInput(raw: SkillRunVO["input"]): SkillRunInput | null {
   let value: unknown = raw;
@@ -107,6 +129,18 @@ export default function ChatPage() {
 
   const models = useGenModels();
   const cfg = useComposerConfig(models, toolSkill);
+  const restoreChatModel = models.setModel;
+  const restoreComposerWeb = cfg.setWeb;
+  const restoreComposerMode = cfg.setMode;
+  const restoreComposerRatio = cfg.setRatio;
+  const restoreComposerResolution = cfg.setRes;
+  const restoreComposerQuality = cfg.setQuality;
+  const restoreComposerDuration = cfg.setDur;
+  const restoreComposerBatch = cfg.setBatch;
+  const restoreComposerMusic = cfg.setMusic;
+  const restoreComposerSkill = cfg.setSkill;
+  const updateModelName = models.model;
+  const updateModelCatalog = models.genModels;
   const removeComposerSkill = cfg.removeSkill;
   const setComposerWeb = cfg.setWeb;
   const availableModels = models.genModels;
@@ -125,6 +159,7 @@ export default function ChatPage() {
   );
   const refsApi = useReferences({ refPolicy: cfg.refPolicy });
   const restoreReferences = refsApi.restoreRefs;
+  const restoreReferencesIfEmpty = refsApi.restoreRefsIfEmpty;
   const streamingApi = useStreaming();
   const conv = useConversations({
     ensureSession,
@@ -136,8 +171,137 @@ export default function ChatPage() {
   });
   const { ctxUsage, refreshCtxUsage } = useContextUsage(conv.activeId);
   const scroll = useAutoScroll({ msgs: conv.msgs, typing, activeId: conv.activeId });
+  const updateActiveConversationId = conv.activeId;
+  const updateConversations = conv.convos;
+  const updateConversationsLoading = conv.convosLoading;
+  const pickUpdateConversation = conv.pickConvo;
 
   const taRef = useRef<MentionEditorHandle>(null);
+  const autoUpdateDraftRef = useRef<ChatAutoUpdateDraft | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(CHAT_AUTO_UPDATE_DRAFT_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as Partial<ChatAutoUpdateDraft>;
+      if (
+        saved.version === 1 &&
+        saved.targetVersion === CURRENT_APP_VERSION &&
+        isFreshUpdateSnapshot(saved.savedAt) &&
+        typeof saved.draft === "string"
+      ) {
+        autoUpdateDraftRef.current = {
+          version: 1,
+          savedAt: saved.savedAt as number,
+          targetVersion: saved.targetVersion,
+          draft: saved.draft,
+          conversationId: typeof saved.conversationId === "string" ? saved.conversationId : null,
+          references: Array.isArray(saved.references) ? saved.references : [],
+          model: typeof saved.model === "string" ? saved.model : "",
+          web: saved.web === true,
+          mode: typeof saved.mode === "string" ? saved.mode : "",
+          ratio: typeof saved.ratio === "string" ? saved.ratio : "",
+          res: typeof saved.res === "string" ? saved.res : "",
+          quality: typeof saved.quality === "string" ? saved.quality : "",
+          dur: typeof saved.dur === "string" ? saved.dur : "",
+          batch: typeof saved.batch === "number" ? saved.batch : 1,
+          music: saved.music && typeof saved.music === "object" ? saved.music : DEFAULT_MUSIC_PARAMS,
+          skill: saved.skill && typeof saved.skill === "object" ? saved.skill : null,
+          toolSkill: saved.toolSkill && typeof saved.toolSkill === "object" ? saved.toolSkill : null,
+        };
+      } else {
+        sessionStorage.removeItem(CHAT_AUTO_UPDATE_DRAFT_KEY);
+      }
+    } catch {
+      // Ignore malformed or unavailable session storage.
+      try {
+        sessionStorage.removeItem(CHAT_AUTO_UPDATE_DRAFT_KEY);
+      } catch {
+        // Storage itself is unavailable.
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    const saved = autoUpdateDraftRef.current;
+    if (!saved || updateConversationsLoading) return;
+    if (saved.model) {
+      if (updateModelCatalog.length === 0) return;
+      if (!updateModelCatalog.some((item) => item.name === saved.model)) saved.model = "";
+      else if (updateModelName !== saved.model) {
+        restoreChatModel(saved.model);
+        return;
+      }
+    }
+    if (saved.conversationId && updateConversations.some((item) => item.id === saved.conversationId) && updateActiveConversationId !== saved.conversationId) {
+      pickUpdateConversation(saved.conversationId);
+      return;
+    }
+    autoUpdateDraftRef.current = null;
+    try {
+      sessionStorage.removeItem(CHAT_AUTO_UPDATE_DRAFT_KEY);
+    } catch {
+      // Snapshot already lives in memory; cleanup failure is harmless.
+    }
+    setDraft((current) => current || saved.draft);
+    restoreReferencesIfEmpty(saved.references);
+    if (saved.model) restoreChatModel(saved.model);
+    restoreComposerWeb(saved.web);
+    restoreComposerMode(saved.mode);
+    restoreComposerRatio(saved.ratio);
+    restoreComposerResolution(saved.res);
+    restoreComposerQuality(saved.quality);
+    restoreComposerDuration(saved.dur);
+    restoreComposerBatch(saved.batch);
+    restoreComposerMusic(saved.music);
+    restoreComposerSkill(saved.skill);
+    setToolSkill(saved.toolSkill);
+  }, [
+    pickUpdateConversation,
+    restoreChatModel,
+    restoreComposerBatch,
+    restoreComposerDuration,
+    restoreComposerMode,
+    restoreComposerMusic,
+    restoreComposerQuality,
+    restoreComposerRatio,
+    restoreComposerResolution,
+    restoreComposerSkill,
+    restoreComposerWeb,
+    restoreReferencesIfEmpty,
+    updateActiveConversationId,
+    updateConversations,
+    updateConversationsLoading,
+    updateModelCatalog,
+    updateModelName,
+  ]);
+
+  useAppUpdateGuard(
+    busy || textRecovering || typing || streamingApi.streaming !== null || refsApi.refs.some((ref) => ref.uploading),
+    (targetVersion) => {
+      sessionStorage.setItem(CHAT_AUTO_UPDATE_DRAFT_KEY, JSON.stringify({
+        version: 1,
+        savedAt: Date.now(),
+        targetVersion,
+        draft,
+        conversationId: conv.activeId,
+        references: refsApi.getLatestRefs()
+          .filter((ref): ref is RefItem & { url: string } => !!ref.url && !ref.uploading)
+          .map(({ key, id, kind, url, name }) => ({ key, id, kind, url, name })),
+        model: models.model,
+        web: cfg.web,
+        mode: cfg.mode,
+        ratio: cfg.ratio,
+        res: cfg.res,
+        quality: cfg.quality,
+        dur: cfg.dur,
+        batch: cfg.batch,
+        music: cfg.music,
+        skill: cfg.skill,
+        toolSkill,
+      } satisfies ChatAutoUpdateDraft));
+    },
+  );
 
   useEffect(() => {
     if (!toolSkill || !models.selModel) return;

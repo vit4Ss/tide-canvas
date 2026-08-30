@@ -24,6 +24,7 @@ import {
   type CanvasLaunchJournal,
 } from "@/lib/canvas-launch";
 import { parseCanvasDocument } from "@/lib/canvas-document";
+import { useAppUpdateGuard } from "@/hooks/use-app-update-guard";
 
 const AUTOSAVE_DELAY = 3000; // 3 秒无变化触发自动保存
 
@@ -383,6 +384,23 @@ export default function CanvasEditorPage() {
   useEffect(() => {
     saveRef.current = save;
   }, [save]);
+
+  useAppUpdateGuard(!loaded || saveConflict || editingName, () => {
+    const timerPending = !!autosaveTimerRef.current;
+    const savePending = savingRef.current || pendingSaveRef.current;
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+    if ((timerPending || savePending) && !savingRef.current) {
+      pendingSaveRef.current = false;
+      void saveRef.current(true);
+    }
+    if (timerPending || savePending) {
+      // The global updater catches this and retries after the save boundary.
+      throw new Error("canvas save pending");
+    }
+  });
 
   // SkillRun recovery journaling needs a real persistence boundary. A caller
   // receives success only from the request that serialized its latest changes.

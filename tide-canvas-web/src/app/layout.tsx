@@ -4,6 +4,7 @@ import "./globals.css";
 import { ToastContainer } from "@/components/shared/toast";
 import { ConfirmHost } from "@/components/shared/confirm";
 import { GenerationHistoryFab } from "@/components/shared/generation-history-fab";
+import { AppAutoUpdate } from "@/components/shared/app-auto-update";
 
 const inter = Inter({
   variable: "--font-sans",
@@ -48,6 +49,7 @@ export default function RootLayout({
         suppressHydrationWarning
         className="imini flex min-h-full flex-col bg-background font-sans text-foreground"
       >
+        <AppAutoUpdate />
         {children}
         <GenerationHistoryFab />
         <ToastContainer />

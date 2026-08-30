@@ -116,6 +116,39 @@ import { PreviewModal } from "./create-studio/preview-modal";
 import { Lightbox } from "./create-studio/lightbox";
 import { SrcMenu } from "./create-studio/src-menu";
 import { AssetPickerModal } from "./create-studio/asset-picker-modal";
+import { useAppUpdateGuard } from "@/hooks/use-app-update-guard";
+import { CURRENT_APP_VERSION, isFreshUpdateSnapshot, type AppUpdateSnapshot } from "@/lib/app-update";
+import type { ClipOption } from "@/lib/music-modes";
+
+const STUDIO_AUTO_UPDATE_DRAFT_KEY = "flowinglight:auto-update:studio-draft";
+
+interface StudioAutoUpdateDraft extends AppUpdateSnapshot {
+  curType: ArtworkType;
+  tool: ToolKey;
+  model: string;
+  prompt: string;
+  ratio: string;
+  count: number;
+  imgRes: string;
+  res: string;
+  dur: string;
+  quality: string;
+  enablePbr: boolean;
+  faceCount: number;
+  generateType: "Normal" | "Geometry";
+  resultFormat: "" | "STL" | "USDZ" | "FBX";
+  musicMode: MusicMode;
+  lyrics: string;
+  songStyle: string;
+  songTitle: string;
+  instrumental: boolean;
+  slotData: SlotData;
+  skill: SkillVO | null;
+  sourceClipId: string;
+  sourceIsUpload: boolean;
+  continueAt: string;
+  extraClips: ClipOption[];
+}
 
 function withHistoryRestoreTimeout<T>(promise: Promise<T>, timeoutMs = 15_000): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -262,7 +295,14 @@ export default function CreateStudio() {
   const clip = useSourceClip({ selModel });
   // 渲染期直接读 hook 返回对象的成员会被 react-hooks/refs 按「渲染期访问 ref」
   // 误报（拆分前这些都是 useRef/useState 的局部量）；JSX 直接用到的先解构出来。
-  const { clipFileRef, onClipFilePicked } = clip;
+  const {
+    clipFileRef,
+    onClipFilePicked,
+    setSourceClipId,
+    setSourceIsUpload,
+    setContinueAt,
+    setExtraClips,
+  } = clip;
   const { hist, setHist, pushHistory, clipOptions } = useHistory(clip.extraClips);
 
   const {
@@ -457,6 +497,43 @@ export default function CreateStudio() {
     promptRef,
   });
 
+  const updateBlocked = submitting || optimizing || restoringRun || recoveringRuns ||
+    referenceVideoQuote.loading || !!assetPick || !!srcMenu || skillPickerOpen ||
+    !!clip.clipUploadStage || clip.clipPickOpen ||
+    Object.values(slotData).some((files) => files.some((file) => file.uploading));
+  useAppUpdateGuard(updateBlocked, (targetVersion) => {
+    sessionStorage.setItem(STUDIO_AUTO_UPDATE_DRAFT_KEY, JSON.stringify({
+      version: 1,
+      savedAt: Date.now(),
+      targetVersion,
+      curType,
+      tool,
+      model,
+      prompt,
+      ratio,
+      count,
+      imgRes,
+      res,
+      dur,
+      quality,
+      enablePbr,
+      faceCount,
+      generateType,
+      resultFormat,
+      musicMode,
+      lyrics,
+      songStyle,
+      songTitle,
+      instrumental,
+      slotData,
+      skill,
+      sourceClipId: clip.sourceClipId,
+      sourceIsUpload: clip.sourceIsUpload,
+      continueAt: clip.continueAt,
+      extraClips: clip.extraClips,
+    } satisfies StudioAutoUpdateDraft));
+  });
+
   // group the flat history into runs (one block per generation), newest first —
   // `hist` is already newest-first, so first-seen order is preserved.
   const runs = useMemo<HistRun[]>(() => {
@@ -498,6 +575,47 @@ export default function CreateStudio() {
     // client post-mount (avoids a hydration mismatch from a lazy initializer),
     // so setting state here is the intended pattern despite the lint heuristic.
     try {
+      const rawDraft = sessionStorage.getItem(STUDIO_AUTO_UPDATE_DRAFT_KEY);
+      if (rawDraft) {
+        sessionStorage.removeItem(STUDIO_AUTO_UPDATE_DRAFT_KEY);
+        try {
+          const saved = JSON.parse(rawDraft) as Partial<StudioAutoUpdateDraft>;
+          if (saved.version === 1 && saved.targetVersion === CURRENT_APP_VERSION && isFreshUpdateSnapshot(saved.savedAt)) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect -- restore the complete draft captured immediately before automatic reload
+            if (saved.curType === "image" || saved.curType === "video" || saved.curType === "audio") setCurType(saved.curType);
+            if (typeof saved.tool === "string") setTool(saved.tool);
+            if (typeof saved.model === "string") {
+              deepModelRef.current = saved.model;
+              setModel(saved.model);
+            }
+            if (typeof saved.prompt === "string") setPrompt(saved.prompt);
+            if (typeof saved.ratio === "string") setRatio(saved.ratio);
+            if (typeof saved.count === "number") setCount(saved.count);
+            if (typeof saved.imgRes === "string") setImgRes(saved.imgRes);
+            if (typeof saved.res === "string") setRes(saved.res);
+            if (typeof saved.dur === "string") setDur(saved.dur);
+            if (typeof saved.quality === "string") setQuality(saved.quality);
+            if (typeof saved.enablePbr === "boolean") setEnablePbr(saved.enablePbr);
+            if (typeof saved.faceCount === "number") setFaceCount(saved.faceCount);
+            if (saved.generateType === "Normal" || saved.generateType === "Geometry") setGenerateType(saved.generateType);
+            if (saved.resultFormat === "" || saved.resultFormat === "STL" || saved.resultFormat === "USDZ" || saved.resultFormat === "FBX") setResultFormat(saved.resultFormat);
+            if (saved.musicMode === "inspire" || saved.musicMode === "custom" || saved.musicMode === "extend" || saved.musicMode === "cover") setMusicMode(saved.musicMode);
+            if (typeof saved.lyrics === "string") setLyrics(saved.lyrics);
+            if (typeof saved.songStyle === "string") setSongStyle(saved.songStyle);
+            if (typeof saved.songTitle === "string") setSongTitle(saved.songTitle);
+            if (typeof saved.instrumental === "boolean") setInstrumental(saved.instrumental);
+            if (saved.slotData && typeof saved.slotData === "object") setSlotData(saved.slotData);
+            if (saved.skill && typeof saved.skill === "object") setSkill(saved.skill);
+            if (typeof saved.sourceClipId === "string") setSourceClipId(saved.sourceClipId);
+            if (typeof saved.sourceIsUpload === "boolean") setSourceIsUpload(saved.sourceIsUpload);
+            if (typeof saved.continueAt === "string") setContinueAt(saved.continueAt);
+            if (Array.isArray(saved.extraClips)) setExtraClips(saved.extraClips);
+          }
+        } catch {
+          // Ignore a malformed update snapshot; normal handoff still applies.
+        }
+      }
+
       // asset handoff: load a picked image into the matching tool's slot.
       const rawAsset = sessionStorage.getItem("studio_use_asset");
       if (rawAsset) {
@@ -511,7 +629,6 @@ export default function CreateStudio() {
           };
           const r = route[op || "pad"] || route.pad;
           if (url) {
-            // eslint-disable-next-line react-hooks/set-state-in-effect
             setCurType(r[0]);
             setTool(r[1]);
             setSlotData({ [r[2]]: [{ g: url, url, n: "垫图", s: "" }] });
@@ -536,7 +653,7 @@ export default function CreateStudio() {
     } catch {
       /* sessionStorage may be unavailable */
     }
-  }, []);
+  }, [deepModelRef, setContinueAt, setExtraClips, setSourceClipId, setSourceIsUpload]);
 
   // 深链：/studio?type=image|video|audio|3d&tool=<工具>&model=<名称>（首页跑马灯 /
   // 能力卡直达创作台）。类型立即切换（默认选对应的文生工具，tool 参数可指定

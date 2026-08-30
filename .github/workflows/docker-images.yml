@@ -59,6 +59,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: ${{ matrix.build-args }}
+          # 前端把提交 SHA 内联为构建版本；后端镜像收到未使用的 build-arg
+          # 不产生副作用。浏览器据此自动发现新前端并安全重载。
+          build-args: |
+            ${{ matrix.build-args }}
+            NEXT_PUBLIC_APP_VERSION=${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
