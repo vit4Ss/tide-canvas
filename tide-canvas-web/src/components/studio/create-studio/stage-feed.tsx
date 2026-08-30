@@ -558,7 +558,7 @@ export function StageFeed({
                     </div>
                   </div>
                 ) : (
-                <div className="ws-run-imgs">
+                <div className={`ws-run-imgs${r.type === "audio" ? " audio-stage" : ""}`}>
                   {/* 音频：Suno/Udio 式歌曲行列表（封面+歌名+波形+时间），
                       两首纵向成列——不走通用的并排卡片。 */}
                   {r.type === "3d" ? (
@@ -573,6 +573,7 @@ export function StageFeed({
                           subtitle={r.model || "AI 音乐"}
                           cover={it.trackCover}
                           duration={it.trackDur}
+                          trackNumber={itemIndex + 1}
                           onDownload={it.url ? () => void downloadItem(r, it, itemIndex) : undefined}
                           downloadPending={downloadingRun?.run === r.run && downloadingRun.item === it.id}
                           downloadDisabled={downloadingRun !== null}

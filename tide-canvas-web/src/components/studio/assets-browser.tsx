@@ -1279,6 +1279,7 @@ const TaskCard = memo(function TaskCard({
             subtitle={task.modelName}
             cover={t.coverUrl}
             duration={t.duration}
+            trackNumber={i + 1}
           />
         ))}
         {batchMode && (

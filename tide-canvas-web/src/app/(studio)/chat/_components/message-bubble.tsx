@@ -588,6 +588,7 @@ function AssistantResult({
               subtitle={modelName || "AI 音乐"}
               cover={tracks[i]?.coverUrl}
               duration={tracks[i]?.duration}
+              trackNumber={i + 1}
             />
           ))}
         </div>

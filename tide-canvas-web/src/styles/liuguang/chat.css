@@ -180,8 +180,8 @@
 .cm-tag.on{color:var(--accent); border-color:color-mix(in oklab,var(--accent) 45%,transparent); background:var(--accent-soft);}
 
 /* 音频结果气泡：SongCard 歌曲行列表（Suno 一次两首纵向成列，行样式在 studio.css） */
-.chat-gen-audio{display:flex; flex-direction:column; width:480px; max-width:100%;
-  border:1px solid var(--border); border-radius:14px; background:var(--panel); overflow:hidden;}
+.chat-gen-audio{display:flex; flex-direction:column; gap:8px; width:520px; max-width:100%;
+  padding:8px; border:1px solid var(--border); border-radius:14px; background:var(--panel); overflow:visible;}
 .cm-send{width:36px; height:36px; border-radius:11px; display:grid; place-items:center; color:#fff; background:var(--accent); transition:filter .15s, transform .12s;}
 .cm-send:hover{filter:brightness(1.07);} .cm-send:active{transform:scale(.94);}
 .cm-send:disabled{opacity:.4; cursor:default;}

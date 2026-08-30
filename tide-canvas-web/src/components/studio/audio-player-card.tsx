@@ -118,6 +118,7 @@ function useWavePlayer(src: string, autoPlay?: boolean) {
   const [playing, setPlaying] = useState(false);
   const [cur, setCur] = useState(0);
   const [dur, setDur] = useState(0);
+  const [decodeRequested, setDecodeRequested] = useState(() => !!autoPlay);
   const peaksRef = useRef<number[]>(pseudoPeaks(src));
   // 波形入场：峰值就绪后 ~360ms 从中线长出（ease-out）
   const growRef = useRef({ start: 0 });
@@ -179,6 +180,14 @@ function useWavePlayer(src: string, autoPlay?: boolean) {
     ctx.globalAlpha = 1;
   }, []);
 
+  // A reused player must never show the previous source's waveform while the
+  // new source is waiting for interaction/decoding.
+  useEffect(() => {
+    peaksRef.current = pseudoPeaks(src);
+    growRef.current.start = 0;
+    draw();
+  }, [src, draw]);
+
   // 播放中 / 入场动画期间用 RAF 平滑重绘
   useEffect(() => {
     let alive = true;
@@ -196,11 +205,14 @@ function useWavePlayer(src: string, autoPlay?: boolean) {
 
   // 真实峰值异步解码（有缓存；失败保持伪波形）
   useEffect(() => {
+    if (!decodeRequested) return;
     let alive = true;
     const cached = peaksCache.get(src);
     if (cached) {
       peaksRef.current = cached;
-      growRef.current.start = performance.now();
+      // Cached peaks need no reveal animation; a paused player has no active
+      // RAF loop and would otherwise remain stuck on the near-zero first frame.
+      growRef.current.start = 0;
       draw();
       return;
     }
@@ -223,7 +235,7 @@ function useWavePlayer(src: string, autoPlay?: boolean) {
     return () => {
       alive = false;
     };
-  }, [src, draw]);
+  }, [src, draw, decodeRequested]);
 
   // 容器尺寸变化时重绘（feed 列宽自适应）
   useEffect(() => {
@@ -247,10 +259,11 @@ function useWavePlayer(src: string, autoPlay?: boolean) {
   const toggle = useCallback(() => {
     const au = audioRef.current;
     if (!au) return;
+    setDecodeRequested(true);
     if (au.paused) {
       if (nowPlaying && nowPlaying !== au) nowPlaying.pause();
       nowPlaying = au;
-      void au.play();
+      void au.play().catch(() => setPlaying(false));
     } else {
       au.pause();
     }
@@ -289,6 +302,7 @@ function useWavePlayer(src: string, autoPlay?: boolean) {
       ref={canvasRef}
       className="ap-wave"
       onPointerDown={(e) => {
+        setDecodeRequested(true);
         draggingRef.current = true;
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
         seekTo(e.clientX);
@@ -355,6 +369,7 @@ export function SongCard({
   onDownload,
   downloadPending,
   downloadDisabled,
+  trackNumber,
 }: {
   src: string;
   title?: string;
@@ -364,6 +379,7 @@ export function SongCard({
   onDownload?: () => void;
   downloadPending?: boolean;
   downloadDisabled?: boolean;
+  trackNumber?: number;
 }) {
   const p = useWavePlayer(src);
   const [coverBroken, setCoverBroken] = useState(false);
@@ -389,6 +405,10 @@ export function SongCard({
         </span>
       </button>
       <div className="sc-info">
+        <div className="sc-meta">
+          <span>{trackNumber ? `TRACK ${String(trackNumber).padStart(2, "0")}` : "AUDIO"}</span>
+          {p.playing && <span className="sc-now">PLAYING</span>}
+        </div>
         <div className="sc-title" title={title}>
           {title || "未命名"}
         </div>
