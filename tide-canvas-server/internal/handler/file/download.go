@@ -10,12 +10,14 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/pkg/response"
 	"tidecanvas/internal/pkg/storage"
+	"tidecanvas/internal/pkg/token"
 )
 
 // filenameSanitizer strips characters that would break a Content-Disposition header.
@@ -25,6 +27,62 @@ var filenameSanitizer = strings.NewReplacer("\"", "", "\\", "", "\r", "", "\n", 
 // limit. Downloads stream without buffering, so allow the same 2 GiB ceiling
 // used by generation-result archival while retaining a hard abuse cap.
 const maxDownloadSize int64 = 2 << 30
+
+const downloadTicketTTL = 2 * time.Minute
+
+const (
+	maxDownloadURLLength  = 8 << 10
+	maxDownloadNameLength = 240
+)
+
+type downloadTicketDTO struct {
+	URL  string `json:"url" binding:"required"`
+	Name string `json:"name"`
+}
+
+// issueDownloadTicket verifies ownership under the caller's Bearer token, then
+// returns a short-lived URL that the browser can navigate to natively. The
+// ticket is cryptographically bound to the exact URL/name pair; download()
+// rechecks ownership again when it is consumed.
+func (h *handler) issueDownloadTicket(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+	var dto downloadTicketDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid request body")
+		return
+	}
+	raw := strings.TrimSpace(dto.URL)
+	name := strings.TrimSpace(dto.Name)
+	if len(raw) > maxDownloadURLLength || len([]rune(name)) > maxDownloadNameLength {
+		response.Fail(c, response.CodeBadRequest, "download url or name is too long")
+		return
+	}
+	u, err := url.ParseRequestURI(raw)
+	if err != nil || u.Hostname() == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		response.Fail(c, response.CodeBadRequest, "invalid url")
+		return
+	}
+	uid := middleware.CurrentUserID(c)
+	owned, err := h.svc.ownsDownloadURL(c.Request.Context(), uid, raw)
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to verify remote file")
+		return
+	}
+	if !owned {
+		response.Fail(c, response.CodeForbidden, "not allowed to download this url")
+		return
+	}
+	ticket, err := token.IssueDownloadTicket(uid, middleware.CurrentRole(c), raw, name, downloadTicketTTL)
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to issue download ticket")
+		return
+	}
+	query := url.Values{}
+	query.Set("url", raw)
+	query.Set("name", name)
+	query.Set("ticket", ticket)
+	response.OK(c, gin.H{"url": "/api/files/download?" + query.Encode()})
+}
 
 // downloadFilename derives the attachment filename: append the URL path's
 // extension unless the name already ends with it. 判定不能用「名字里有没有点」：
@@ -77,7 +135,15 @@ func streamDownload(c *gin.Context, body io.Reader, contentType, name string, co
 		contentType = "application/octet-stream"
 	}
 	c.Header("Content-Type", contentType)
-	c.Header("Content-Disposition", "attachment; filename=\""+filenameSanitizer.Replace(name)+"\"")
+	safeName := filenameSanitizer.Replace(name)
+	if safeName == "" {
+		safeName = "download"
+	}
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": safeName})
+	if disposition == "" {
+		disposition = "attachment"
+	}
+	c.Header("Content-Disposition", disposition)
 	if contentLength >= 0 {
 		c.Header("Content-Length", strconv.FormatInt(contentLength, 10))
 	}

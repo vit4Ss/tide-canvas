@@ -1,6 +1,7 @@
 import type { Result } from "@/types/api";
 
-const SERVER_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8080";
+const PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
+const SERVER_URL = PUBLIC_API_URL || "http://localhost:8080";
 const BASE_URL = typeof window !== "undefined" ? "" : SERVER_URL;
 
 type QueryParams = Record<string, string | number | boolean | undefined | null>;
@@ -308,6 +309,12 @@ async function fetchWithAuth(input: RequestInfo | URL, init: RequestInit = {}): 
     }
   }
   return response;
+}
+
+/** Resolve a public API path for native browser navigations (downloads, etc.). */
+export function apiUrl(path: string): string {
+  if (typeof window === "undefined") return new URL(path, SERVER_URL).toString();
+  return new URL(path, PUBLIC_API_URL || window.location.origin).toString();
 }
 
 export const http = {

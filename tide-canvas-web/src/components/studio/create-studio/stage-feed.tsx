@@ -9,12 +9,13 @@ import { mesh } from "@/lib/mesh";
 import { fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
 import { copyText } from "@/lib/clipboard";
 import { canvasThreeDAssetExtension } from "@/lib/canvas-three-d";
+import { apiUrl, http } from "@/lib/http";
 import { AudioPlayerCard, SongCard } from "@/components/studio/audio-player-card";
 import { toast } from "@/components/shared/toast";
 import { AmbientFrame } from "./ambient-frame";
 import VideoResult from "./video-result";
 import { CELL_TOOLS, SLOT_ICON } from "./icons";
-import type { ArtworkType, HistRun, InflightRun, ResultCell, RunParams, ToolKey } from "./types";
+import type { ArtworkType, HistItem, HistRun, InflightRun, ResultCell, RunParams, ToolKey } from "./types";
 import { fmtTs, ratioLabel } from "./utils";
 import {
   runPromptReferences,
@@ -198,6 +199,7 @@ export function StageFeed({
     run: string;
     current: number;
     total: number;
+    item?: string;
   } | null>(null);
   const downloadingRunRef = useRef(false);
   const orderedFeedRuns = useMemo(
@@ -239,14 +241,89 @@ export function StageFeed({
     else toast.error("复制失败");
   };
 
-  // download every image of a run (cross-origin URLs fall back to opening a tab).
+  const extensionFromURL = (url: string): string => {
+    try {
+      return new URL(url).pathname.match(/\.([a-z0-9]{2,5})$/i)?.[1]?.toLowerCase() || "";
+    } catch {
+      return "";
+    }
+  };
+
+  const downloadName = (
+    r: HistRun,
+    item: HistItem | undefined,
+    index: number,
+    extHint = "",
+    sourceURL = item?.url || "",
+  ): string => {
+    const rawBase = item?.trackTitle || item?.title || r.prompt || r.model || "creation";
+    const cleanBase = rawBase.replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 48) || "creation";
+    // Suno can return sibling tracks with the same generated title. Always
+    // number multi-result downloads so the browser never has to invent an
+    // ambiguous "(1)" duplicate name or overwrite an earlier file.
+    const numberedBase = r.items.length > 1 ? `${cleanBase}-${index + 1}` : cleanBase;
+    const fallbackExt = r.type === "audio" ? "mp3" : r.type === "video" ? "mp4" : r.type === "image" ? "png" : "";
+    const ext = extensionFromURL(sourceURL) || extHint || fallbackExt;
+    return ext && !numberedBase.toLowerCase().endsWith(`.${ext}`) ? `${numberedBase}.${ext}` : numberedBase;
+  };
+
+  // Exchange the Bearer token for a two-minute, exact-file capability, then
+  // navigate a hidden frame to it. The browser's download manager streams the
+  // response directly to disk; no access token enters the URL and no multi-GB
+  // video/3D Blob is accumulated in page memory. Error responses stay inside
+  // the hidden frame instead of replacing this page or opening a new tab.
+  const downloadThroughProxy = async (url: string, name: string) => {
+    const ticket = await http.post<{ url: string }>("/api/files/download-ticket", { url, name });
+    if (!ticket.success || !ticket.data?.url) throw new Error(ticket.message || "download ticket failed");
+    const frame = document.createElement("iframe");
+    frame.title = "文件下载";
+    frame.hidden = true;
+    // Go straight to the API origin. Routing a multi-GB attachment back through
+    // Next's /api rewrite would reintroduce its proxy timeout and buffering.
+    frame.src = apiUrl(ticket.data.url);
+    document.body.appendChild(frame);
+    // Ticket validity is checked when navigation starts; keep the frame alive
+    // long enough that browsers which tie it to an active large-file transfer
+    // do not abort a slow video/3D download during DOM cleanup.
+    window.setTimeout(() => frame.remove(), 30 * 60_000);
+  };
+
+  const downloadItem = async (r: HistRun, item: HistItem, index: number) => {
+    if (!item.url) {
+      toast.info("这首音频暂无可下载文件");
+      return;
+    }
+    if (downloadingRunRef.current) {
+      toast.info("已有下载正在进行，请稍候");
+      return;
+    }
+    downloadingRunRef.current = true;
+    setDownloadingRun({ run: r.run, current: 1, total: 1, item: item.id });
+    try {
+      await downloadThroughProxy(item.url, downloadName(r, item, index));
+      toast.success(`${item.trackTitle ? `《${item.trackTitle}》` : "音频文件"}已交给浏览器下载`);
+    } catch {
+      toast.error("下载失败，请稍后重试");
+    } finally {
+      downloadingRunRef.current = false;
+      setDownloadingRun(null);
+    }
+  };
+
+  // Download every distinct output of a run through the streaming proxy.
   const downloadRun = async (r: HistRun) => {
     const rawFiles = r.type === "3d"
-      ? r.items.flatMap((item) => item.assets?.map((asset) => ({
+      ? r.items.flatMap((item, itemIndex) => item.assets?.map((asset) => ({
           url: asset.url,
-          ext: canvasThreeDAssetExtension(asset.type, asset.url),
-        })) ?? (item.url ? [{ url: item.url, ext: canvasThreeDAssetExtension("model", item.url) }] : []))
-      : r.items.flatMap((item) => item.url ? [{ url: item.url, ext: "" }] : []);
+          name: downloadName(r, item, itemIndex, canvasThreeDAssetExtension(asset.type, asset.url), asset.url),
+        })) ?? (item.url ? [{
+          url: item.url,
+          name: downloadName(r, item, itemIndex, canvasThreeDAssetExtension("model", item.url)),
+        }] : []))
+      : r.items.flatMap((item, itemIndex) => item.url ? [{
+          url: item.url,
+          name: downloadName(r, item, itemIndex),
+        }] : []);
     const seen = new Set<string>();
     const files = rawFiles.filter((file) => {
       if (seen.has(file.url)) return false;
@@ -254,11 +331,11 @@ export function StageFeed({
       return true;
     });
     if (!files.length) {
-      toast.info(r.type === "3d" ? "该作品暂无可下载的模型文件" : "该作品暂无可下载的图片");
+      toast.info(r.type === "3d" ? "该作品暂无可下载的模型文件" : `该作品暂无可下载的${r.type === "audio" ? "音频" : "文件"}`);
       return;
     }
     if (downloadingRunRef.current) {
-      toast.info("已有下载正在准备，请稍候");
+      toast.info("已有下载正在进行，请稍候");
       return;
     }
 
@@ -266,37 +343,25 @@ export function StageFeed({
     // before React has committed the disabled state to the button.
     downloadingRunRef.current = true;
     setDownloadingRun({ run: r.run, current: 0, total: files.length });
-    toast.info(files.length > 1 ? `正在准备 ${files.length} 个文件下载…` : "正在准备下载…");
+    let completed = 0;
     try {
       for (let i = 0; i < files.length; i++) {
-        const { url, ext } = files[i];
+        const { url, name } = files[i];
         setDownloadingRun({ run: r.run, current: i + 1, total: files.length });
-        try {
-          const resp = await fetch(url);
-          if (!resp.ok) throw new Error(`download failed: ${resp.status}`);
-          const blob = await resp.blob();
-          const obj = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = obj;
-          const baseName = (r.prompt || r.model || "creation").slice(0, 20);
-          a.download = `${baseName}-${i + 1}${ext ? `.${ext.toLowerCase()}` : ""}`;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          // Give the browser a turn to consume the object URL before releasing it.
-          window.setTimeout(() => URL.revokeObjectURL(obj), 1000);
-        } catch {
-          window.open(url, "_blank", "noopener");
-        }
+        await downloadThroughProxy(url, name);
+        completed++;
       }
+    } catch {
+      toast.error(completed > 0 ? `已完成 ${completed} 个，第 ${completed + 1} 个下载失败` : "下载失败，请稍后重试");
+      return;
     } finally {
       downloadingRunRef.current = false;
       setDownloadingRun(null);
     }
     toast.success(
       files.length > 1
-        ? `已开始下载 ${files.length} 个${r.type === "3d" ? "模型文件" : "作品"}`
-        : "已开始下载",
+        ? `${files.length} 个${r.type === "audio" ? "音频" : r.type === "3d" ? "模型文件" : "作品"}已交给浏览器下载`
+        : "文件已交给浏览器下载",
     );
   };
 
@@ -409,6 +474,9 @@ export function StageFeed({
                 );
               }
               const r = entry.run;
+              const downloadableCount = r.type === "3d"
+                ? new Set(r.items.flatMap((item) => item.assets?.map((asset) => asset.url) ?? (item.url ? [item.url] : []))).size
+                : new Set(r.items.flatMap((item) => item.url ? [item.url] : [])).size;
               return (
                 <div key={entry.key} className={`ws-run${r.items.length <= 1 ? " single" : ""}${r.status === "failed" ? " failed" : ""}`}>
                 <div className="ws-run-head">
@@ -462,7 +530,7 @@ export function StageFeed({
                     r.items.map((item) => <ThreeDResultCard key={item.id} item={item} />)
                   ) : r.type === "audio" ? (
                     <div className="ws-runimg audio songs">
-                      {r.items.map((it) => (
+                      {r.items.map((it, itemIndex) => (
                         <SongCard
                           key={it.id}
                           src={it.url || ""}
@@ -470,6 +538,9 @@ export function StageFeed({
                           subtitle={r.model || "AI 音乐"}
                           cover={it.trackCover}
                           duration={it.trackDur}
+                          onDownload={it.url ? () => void downloadItem(r, it, itemIndex) : undefined}
+                          downloadPending={downloadingRun?.run === r.run && downloadingRun.item === it.id}
+                          downloadDisabled={downloadingRun !== null}
                         />
                       ))}
                     </div>
@@ -571,17 +642,20 @@ export function StageFeed({
                       type="button"
                       onClick={() => void downloadRun(r)}
                       disabled={downloadingRun !== null}
-                      aria-busy={downloadingRun?.run === r.run}
-                      title={downloadingRun?.run === r.run ? "正在准备下载" : "下载"}
+                      aria-busy={downloadingRun?.run === r.run && !downloadingRun.item}
+                      title={downloadingRun?.run === r.run && !downloadingRun.item ? "正在下载" : downloadableCount > 1 ? "下载全部结果" : "下载"}
+                      className={downloadableCount > 1 ? "download-all" : undefined}
                     >
                       <svg viewBox="0 0 24 24">
                         <path d="M12 3v12" />
                         <path d="M7 10l5 5 5-5" />
                         <path d="M4 21h16" />
                       </svg>
-                      {downloadingRun?.run === r.run
-                        ? `正在下载${downloadingRun.total > 1 ? ` ${downloadingRun.current}/${downloadingRun.total}` : ""}…`
-                        : "下载"}
+                      {downloadingRun?.run === r.run && !downloadingRun.item
+                        ? `正在启动${downloadingRun.total > 1 ? ` ${downloadingRun.current}/${downloadingRun.total}` : ""}…`
+                        : downloadableCount > 1
+                          ? <><span>下载全部</span><em className="download-count">{downloadableCount}</em></>
+                          : "下载"}
                     </button>
                   )}
                   <button

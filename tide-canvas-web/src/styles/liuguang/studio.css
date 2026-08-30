@@ -883,6 +883,11 @@
 .ws-run-foot button:hover{border-color:rgba(139,124,248,.8); color:#fff; background:rgba(99,88,240,.2);}
 .ws-run-foot button:disabled{opacity:.5; cursor:not-allowed;}
 .ws-run-foot button[aria-busy="true"] svg{animation:wsSpin .7s linear infinite;}
+.ws-run-foot button.download-all{border-color:color-mix(in oklab,var(--accent) 44%,rgba(255,255,255,.13));
+  background:color-mix(in oklab,var(--accent) 11%,rgba(255,255,255,.04));}
+.ws-run-foot .download-count{display:grid; min-width:17px; height:17px; padding:0 4px; place-items:center;
+  border-radius:99px; color:#fff; background:color-mix(in oklab,var(--accent) 72%,transparent);
+  font-family:var(--mono); font-size:9.5px; font-style:normal; line-height:1;}
 .ws-run-foot button.danger:hover{border-color:#e5484d; color:#ff9599; background:rgba(229,72,77,.16);}
 .ws-run-foot svg{width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round;}
 /* each result card is sized by its image's TRUE ratio: fixed height, width:auto.
@@ -954,6 +959,17 @@
   border:1px solid var(--border); background:var(--surface-2); cursor:pointer; padding:0;}
 .sc-cover img{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block;}
 .sc-cover-ph{position:absolute; inset:0; display:grid; place-items:center; font-size:17px; color:var(--text-faint);}
+.sc-download{display:grid; width:32px; height:32px; flex:none; place-items:center; padding:0; border-radius:9px;
+  color:var(--text-faint); border:1px solid transparent; background:transparent; cursor:pointer;
+  transition:color .14s, border-color .14s, background .14s, transform .14s;}
+.sc-download:hover{color:#fff; border-color:color-mix(in oklab,var(--accent) 55%,transparent);
+  background:color-mix(in oklab,var(--accent) 18%,transparent); transform:translateY(-1px);}
+.sc-download:disabled{opacity:.45; cursor:not-allowed; transform:none;}
+.sc-download[aria-busy="true"]{color:#fff; border-color:color-mix(in oklab,var(--accent) 55%,transparent);
+  background:color-mix(in oklab,var(--accent) 18%,transparent);}
+.sc-download[aria-busy="true"] svg{animation:wsSpin .7s linear infinite;}
+.sc-download svg{width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:1.8;
+  stroke-linecap:round; stroke-linejoin:round;}
 /* 播放键叠层：默认隐身让封面说话，悬停浮现；播放中常显（此时它就是暂停键） */
 .sc-cover-act{position:absolute; inset:0; display:grid; place-items:center; color:#fff;
   background:rgba(0,0,0,.38); opacity:0; transition:opacity .16s var(--ease);}

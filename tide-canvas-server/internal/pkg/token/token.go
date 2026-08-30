@@ -8,7 +8,11 @@ package token
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -30,8 +34,9 @@ var (
 
 // Token type marker stored in the claims to distinguish access vs refresh.
 const (
-	typeAccess  = "access"
-	typeRefresh = "refresh"
+	typeAccess   = "access"
+	typeRefresh  = "refresh"
+	typeDownload = "download"
 )
 
 // Claims is the JWT payload for both access and refresh tokens.
@@ -39,6 +44,17 @@ type Claims struct {
 	UserID idgen.ID `json:"uid"`
 	Role   int      `json:"role"`
 	JTI    string   `json:"jti"`
+	Typ    string   `json:"typ"`
+	jwt.RegisteredClaims
+}
+
+// DownloadClaims authorizes one exact URL/name pair for a very short native
+// browser download. Only a digest is embedded, keeping signed upstream URLs
+// out of the JWT and preventing a ticket from being retargeted to another file.
+type DownloadClaims struct {
+	UserID idgen.ID `json:"uid"`
+	Role   int      `json:"role"`
+	Digest string   `json:"dig"`
 	Typ    string   `json:"typ"`
 	jwt.RegisteredClaims
 }
@@ -120,6 +136,72 @@ func signToken(uid idgen.ID, role int, jti, typ string, now time.Time, ttl time.
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return tok.SignedString(secret)
+}
+
+func downloadDigest(rawURL, name string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(rawURL) + "\x00" + strings.TrimSpace(name)))
+	return hex.EncodeToString(sum[:])
+}
+
+// IssueDownloadTicket creates a short-lived capability for one download. The
+// handler still rechecks database ownership when the ticket is consumed.
+func IssueDownloadTicket(uid idgen.ID, role int, rawURL, name string, ttl time.Duration) (string, error) {
+	if len(secret) == 0 {
+		return "", ErrNotInitialized
+	}
+	if ttl <= 0 || ttl > 5*time.Minute {
+		ttl = 2 * time.Minute
+	}
+	now := time.Now()
+	claims := DownloadClaims{
+		UserID: uid,
+		Role:   role,
+		Digest: downloadDigest(rawURL, name),
+		Typ:    typeDownload,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    issuer,
+			Subject:   uid.String(),
+			ID:        idgen.Next().String(),
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+		},
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return tok.SignedString(secret)
+}
+
+// ParseDownloadTicket validates signature/expiry and binds the capability to
+// the exact URL/name supplied on the eventual GET request.
+func ParseDownloadTicket(ticket, rawURL, name string) (*DownloadClaims, error) {
+	if len(secret) == 0 {
+		return nil, ErrNotInitialized
+	}
+	claims := &DownloadClaims{}
+	tok, err := jwt.ParseWithClaims(ticket, claims, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, ErrInvalidToken
+		}
+		return secret, nil
+	}, jwt.WithValidMethods([]string{"HS256"}))
+	if err != nil {
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			return nil, ErrExpiredToken
+		}
+		return nil, ErrInvalidToken
+	}
+	if !tok.Valid || claims.Typ != typeDownload || claims.Issuer != issuer {
+		return nil, ErrInvalidToken
+	}
+	want, err := hex.DecodeString(downloadDigest(rawURL, name))
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+	got, err := hex.DecodeString(claims.Digest)
+	if err != nil || subtle.ConstantTimeCompare(got, want) != 1 {
+		return nil, ErrInvalidToken
+	}
+	return claims, nil
 }
 
 // ParseAccess validates an access token's signature/expiry and checks the

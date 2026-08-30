@@ -13,7 +13,35 @@ import (
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/middleware"
+	"tidecanvas/internal/pkg/response"
+	"tidecanvas/internal/pkg/token"
 )
+
+// downloadTicketOrJWT lets an ordinary API fetch keep using Authorization,
+// while a native browser navigation can use a short-lived file-bound ticket.
+// Long-lived access tokens never enter URLs or browser history.
+func downloadTicketOrJWT(d *app.Deps) gin.HandlerFunc {
+	jwtAuth := middleware.JWTAuth(d)
+	return func(c *gin.Context) {
+		ticket := c.Query("ticket")
+		if ticket == "" {
+			jwtAuth(c)
+			return
+		}
+		claims, err := token.ParseDownloadTicket(ticket, c.Query("url"), c.Query("name"))
+		if err != nil {
+			response.Fail(c, response.CodeUnauthorized, "invalid or expired download ticket")
+			c.Abort()
+			return
+		}
+		c.Set(middleware.CtxUserID, claims.UserID)
+		c.Set(middleware.CtxRole, claims.Role)
+		c.Set(middleware.CtxJTI, claims.ID)
+		c.Header("Cache-Control", "private, no-store")
+		c.Header("Referrer-Policy", "no-referrer")
+		c.Next()
+	}
+}
 
 // Register mounts the file routes on the /api group.
 //
@@ -26,15 +54,21 @@ import (
 //	GET    /api/files                FileQuery -> PageData<FileVO>            (auth)
 //	GET    /api/files/asset-size     ?url= -> AssetSizeVO                     (auth)
 //	POST   /api/files/save-from-url  {url,fileType?,originalName?} -> FileVO   (auth)
+//	POST   /api/files/download-ticket {url,name?} -> {url}                    (auth)
+//	GET    /api/files/download       ?url=&name=&ticket= -> attachment         (auth or ticket)
 //	GET    /api/files/detail/:id     -> FileVO                                (auth)
 //	DELETE /api/files/detail/:id     -> void                                  (auth)
 func Register(api *gin.RouterGroup, d *app.Deps) {
 	h := newHandler(d)
+	// Native browser downloads cannot attach Authorization headers. This leaf
+	// accepts either the normal JWT or a two-minute, exact-file ticket issued by
+	// the authenticated endpoint below.
+	api.GET("/files/download", downloadTicketOrJWT(d), h.download)
 
 	g := api.Group("/files")
 	g.Use(middleware.JWTAuth(d))
 
-	g.GET("/download", h.download)
+	g.POST("/download-ticket", middleware.RateLimit(d, 60, time.Minute), h.issueDownloadTicket)
 	g.POST("/upload", h.upload)
 	g.POST("/upload/batch", h.uploadBatch)
 	g.POST("/presign", h.presign)

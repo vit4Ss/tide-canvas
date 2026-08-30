@@ -352,12 +352,18 @@ export function SongCard({
   subtitle,
   cover,
   duration,
+  onDownload,
+  downloadPending,
+  downloadDisabled,
 }: {
   src: string;
   title?: string;
   subtitle?: string;
   cover?: string;
   duration?: number;
+  onDownload?: () => void;
+  downloadPending?: boolean;
+  downloadDisabled?: boolean;
 }) {
   const p = useWavePlayer(src);
   const [coverBroken, setCoverBroken] = useState(false);
@@ -390,6 +396,25 @@ export function SongCard({
       </div>
       {p.waveEl}
       <span className="ap-time">{timeText(p.playing, p.cur, dur)}</span>
+      {onDownload && (
+        <button
+          type="button"
+          className="sc-download"
+          aria-label={downloadPending
+            ? `正在启动下载${title ? `《${title}》` : "这首音频"}`
+            : `下载${title ? `《${title}》` : "这首音频"}`}
+          title={downloadPending ? "正在启动下载" : "下载这首"}
+          disabled={downloadDisabled}
+          aria-busy={downloadPending}
+          onClick={onDownload}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden>
+            <path d="M12 3v12" />
+            <path d="M7 10l5 5 5-5" />
+            <path d="M5 20h14" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }
