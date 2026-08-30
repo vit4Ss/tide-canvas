@@ -114,8 +114,30 @@ func kindOfURL(u string) string {
 		return "audio"
 	case strings.Contains(lowerPath, "/image/"), strings.Contains(lowerPath, "/images/"):
 		return "image"
+	}
+	return ""
+}
+
+// resultKindForURL gives an extension/path classification priority and only
+// falls back to the generation scene for extensionless task/CDN URLs. Audio
+// providers commonly expose signed playback endpoints without a .mp3 suffix;
+// treating every unknown result as an image makes the admin drawer render an
+// <img> instead of an audio player.
+func resultKindForURL(scene, u string) string {
+	if kind := kindOfURL(u); kind != "" {
+		return kind
+	}
+	switch strings.ToLower(strings.TrimSpace(scene)) {
+	case "audio":
+		return "audio"
+	case "video", "upscale":
+		return "video"
+	case "image":
+		return "image"
+	case "3d":
+		return "file"
 	default:
-		return ""
+		return "file"
 	}
 }
 
@@ -494,6 +516,14 @@ func parseResponseBody(scene, body string, hosts []string) parsedResponse {
 			return out
 		}
 		out.Results = regexAssets(body, hosts, map[string]bool{})
+		// regexAssets preserves the legacy same-host=image fallback used by
+		// request parsing. Correct only extensionless result URLs using the
+		// authoritative generation scene.
+		for i := range out.Results {
+			if kindOfURL(out.Results[i].URL) == "" {
+				out.Results[i].Kind = resultKindForURL(scene, out.Results[i].URL)
+			}
+		}
 		return out
 	}
 	// chat 形态:choices[0].message.content(字符串或 parts)。
@@ -512,7 +542,11 @@ func parseResponseBody(scene, body string, hosts []string) parsedResponse {
 		if !isHTTPURL(s) || seen[s] {
 			return
 		}
-		if kind := kindOfURL(s); kind != "" {
+		kind := kindOfURL(s)
+		if kind == "" && onAnyHost(s, hosts) {
+			kind = resultKindForURL(scene, s)
+		}
+		if kind != "" {
 			seen[s] = true
 			out.Results = append(out.Results, genAsset{URL: s, Kind: kind})
 		}
@@ -592,19 +626,22 @@ func resolvePointCosts(db *gorm.DB, upstreamIDs []string) map[string]int64 {
 // result_meta.urls 是全量结果集(MXAPI 双图),result_meta.tracks 是 Suno
 // 分轨(带标题)。优先用它们而不是响应体里的 relay 原始 URL:relay CDN
 // 域名客户端可能被墙,转存后的本站 URL 永远可达。
-func resolveUpstreamResult(db *gorm.DB, upstreamID string) []genAsset {
+func resolveUpstreamResult(db *gorm.DB, upstreamID, scene string) []genAsset {
 	if upstreamID == "" {
 		return nil
 	}
 	var urls []genAsset
 	seen := map[string]bool{}
-	add := func(u, name string) {
+	add := func(u, name, fallbackKind string) {
 		if u == "" || seen[u] {
 			return
 		}
 		kind := kindOfURL(u)
 		if kind == "" {
-			kind = "image"
+			kind = fallbackKind
+		}
+		if kind == "" {
+			kind = resultKindForURL(scene, u)
 		}
 		seen[u] = true
 		urls = append(urls, genAsset{URL: u, Name: name, Kind: kind})
@@ -626,18 +663,21 @@ func resolveUpstreamResult(db *gorm.DB, upstreamID string) []genAsset {
 						} `json:"tracks"`
 					}
 					if json.Unmarshal([]byte(t.ResultMeta), &meta) == nil {
-						for _, u := range meta.URLs {
-							add(u, "")
-						}
+						// Tracks carry the song title and an authoritative audio
+						// hint. Add them before the usually duplicate urls[] list so
+						// URL de-duplication does not discard that metadata.
 						for _, tr := range meta.Tracks {
-							add(tr.URL, tr.Title)
+							add(tr.URL, tr.Title, "audio")
+						}
+						for _, u := range meta.URLs {
+							add(u, "", resultKindForURL(scene, u))
 						}
 					}
 				}
-				add(t.ResultUrl, "")
+				add(t.ResultUrl, "", resultKindForURL(scene, t.ResultUrl))
 			}
 		}
-		add(gl.ResultUrl, "")
+		add(gl.ResultUrl, "", resultKindForURL(scene, gl.ResultUrl))
 	}
 	return urls
 }
@@ -1068,7 +1108,7 @@ func generationDetail(c *gin.Context, d *app.Deps) {
 	req := parseRequestBody(r.RequestBody, hosts)
 	resp := parseResponseBody(r.Scene, r.ResponseBody, hosts)
 	// 结果优先取转存后的本站 URL(稳定可达),查不到再用响应体里的原始 URL。
-	if upstream := resolveUpstreamResult(db, r.UpstreamTaskID); len(upstream) > 0 {
+	if upstream := resolveUpstreamResult(db, r.UpstreamTaskID, r.Scene); len(upstream) > 0 {
 		resp.Results = upstream
 	}
 

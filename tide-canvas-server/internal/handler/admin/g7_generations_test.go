@@ -341,6 +341,69 @@ func TestParseResponseMediaURL(t *testing.T) {
 	}
 }
 
+// 本站 CDN/签名播放地址可能没有 .mp3 后缀，结果类型应以生成场景兜底，
+// 否则管理端会把音频 URL 塞进 <img> 而不是 <audio>。
+func TestParseResponseExtensionlessAudioURL(t *testing.T) {
+	body := `{"data":[{"url":"https://cdn.example.com/canvas/uploads/gen/playback?id=audio-1"}]}`
+	got := parseResponseBody("audio", body, testHosts)
+	if len(got.Results) != 1 || got.Results[0].Kind != "audio" {
+		t.Fatalf("results: %+v", got.Results)
+	}
+}
+
+func TestResultKindPrefersExplicitExtensionOverScene(t *testing.T) {
+	if got := resultKindForURL("audio", "https://cdn.example.com/cover.jpeg"); got != "image" {
+		t.Fatalf("kind = %q, want image", got)
+	}
+	if got := resultKindForURL("audio", "https://cdn.example.com/play?id=1"); got != "audio" {
+		t.Fatalf("kind = %q, want audio", got)
+	}
+}
+
+func TestResolveUpstreamResultUsesAudioKindForExtensionlessTracks(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:g7_audio_preview?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql db: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(&model.AiTask{}, &model.AiGenerationLog{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	const taskID idgen.ID = 7201
+	if err := db.Create(&model.AiTask{
+		ID:         taskID,
+		ResultUrl:  "https://cdn.example.com/canvas/uploads/gen/play?id=audio-main",
+		ResultMeta: `{"urls":["https://cdn.example.com/canvas/uploads/gen/play?id=audio-track"],"tracks":[{"url":"https://cdn.example.com/canvas/uploads/gen/play?id=audio-track","title":"测试曲目"}]}`,
+		CreateTime: time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if err := db.Create(&model.AiGenerationLog{
+		ID: 7202, TaskID: taskID, UpstreamTaskID: "up-audio-preview", CreateTime: time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("create generation log: %v", err)
+	}
+
+	got := resolveUpstreamResult(db, "up-audio-preview", "audio")
+	if len(got) != 2 {
+		t.Fatalf("results: %+v", got)
+	}
+	if got[0].Name != "测试曲目" {
+		t.Fatalf("track title was lost during URL de-duplication: %+v", got)
+	}
+	for _, asset := range got {
+		if asset.Kind != "audio" {
+			t.Fatalf("asset kind = %q, want audio: %+v", asset.Kind, asset)
+		}
+	}
+}
+
 // 生成类响应截断行:正则兜底媒体 URL。
 func TestParseResponseTruncatedMedia(t *testing.T) {
 	body := `{"data":[{"url":"https://cdn.example.com/canvas/uploads/out.png","revised_prompt":"很长的描…(truncated)`

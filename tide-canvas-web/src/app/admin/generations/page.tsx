@@ -20,6 +20,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  ExternalLink,
   FileText,
   Image as ImageIcon,
   Music,
@@ -179,6 +180,42 @@ function SecTitle({ children }: { children: React.ReactNode }) {
   return <h3 className="genr-sec-t">{children}</h3>;
 }
 
+const AUDIO_WAVE_BARS = [12, 23, 16, 31, 20, 39, 27, 44, 18, 35, 25, 41, 30, 19, 34, 22, 29, 15];
+
+function AudioResultCard({ asset, index }: { asset: GenAsset; index: number }) {
+  const title = asset.name?.trim() || `生成音频 ${index + 1}`;
+  return (
+    <article className="genr-audio-card">
+      <div className="genr-audio-head">
+        <span className="genr-audio-icon" aria-hidden><Music size={20} /></span>
+        <div className="genr-audio-copy">
+          <strong title={title}>{title}</strong>
+          <span>音频作品 · 第 {index + 1} 轨</span>
+        </div>
+        <div className="genr-audio-wave" aria-hidden>
+          {AUDIO_WAVE_BARS.map((height, bar) => <i key={bar} style={{ height }} />)}
+        </div>
+        <a className="genr-result-link" href={asset.url} target="_blank" rel="noreferrer">
+          <ExternalLink aria-hidden size={13} />
+          原文件
+        </a>
+      </div>
+      <audio aria-label={title} controls preload="metadata" src={asset.url} />
+    </article>
+  );
+}
+
+function FileResultCard({ asset, index }: { asset: GenAsset; index: number }) {
+  const title = asset.name?.trim() || `生成文件 ${index + 1}`;
+  return (
+    <a className="genr-file-result" href={asset.url} target="_blank" rel="noreferrer">
+      <span aria-hidden><FileText size={18} /></span>
+      <div><strong>{title}</strong><small>当前格式不支持在线预览</small></div>
+      <ExternalLink aria-hidden size={14} />
+    </a>
+  );
+}
+
 /** 生成结果:按 kind 渲染媒体预览;文本场景显示回复;空结果显示占位。 */
 function ResultBlock({ d }: { d: GenerationDetailVO }) {
   const results = d.results ?? [];
@@ -201,12 +238,10 @@ function ResultBlock({ d }: { d: GenerationDetailVO }) {
             );
           }
           if (r.kind === "audio") {
-            return (
-              <div key={key}>
-                <audio controls preload="metadata" src={url} />
-                {caption}
-              </div>
-            );
+            return <AudioResultCard key={key} asset={r} index={i} />;
+          }
+          if (r.kind !== "image") {
+            return <FileResultCard key={key} asset={r} index={i} />;
           }
           return (
             <a key={key} href={url} target="_blank" rel="noreferrer">

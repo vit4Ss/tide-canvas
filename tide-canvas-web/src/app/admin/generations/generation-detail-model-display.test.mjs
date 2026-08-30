@@ -30,3 +30,10 @@ test("generation refunds are administrator-only, confirmed, and update the row s
   assert.match(source, /adminGenerationsApi\.refund\(row\.id\)[\s\S]*?applyRefundedDetail\(res\.data\)/);
   assert.match(source, /if \(row\.refunded\) return \{ label: "退款", tone: "amber" \}/);
 });
+
+test("audio generation results use a titled player card instead of a bare media element", () => {
+  assert.match(source, /function AudioResultCard[\s\S]*?genr-audio-card/);
+  assert.match(source, /<audio aria-label=\{title\} controls preload="metadata" src=\{asset\.url\}/);
+  assert.match(source, /r\.kind === "audio"[\s\S]*?<AudioResultCard/);
+  assert.match(source, /r\.kind !== "image"[\s\S]*?<FileResultCard/);
+});
