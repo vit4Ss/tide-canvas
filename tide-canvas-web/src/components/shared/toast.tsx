@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Info, TriangleAlert, X } from "lucide-react";
 import styles from "./toast.module.css";
 
@@ -28,9 +28,9 @@ export const toast = {
 };
 
 const META = {
-  success: { Icon: Check, label: "成功" },
-  error: { Icon: TriangleAlert, label: "错误" },
-  info: { Icon: Info, label: "提醒" },
+  success: { Icon: Check, label: "完成啦", ariaLabel: "成功" },
+  error: { Icon: TriangleAlert, label: "遇到问题", ariaLabel: "错误" },
+  info: { Icon: Info, label: "提醒一下", ariaLabel: "提醒" },
 };
 
 function ToastCard({ item, onRemove }: { item: ToastItem; onRemove: (id: number) => void }) {
@@ -41,7 +41,7 @@ function ToastCard({ item, onRemove }: { item: ToastItem; onRemove: (id: number)
   const startedAtRef = useRef(0);
   const closingRef = useRef(false);
   const exitTimerRef = useRef<number | null>(null);
-  const { Icon, label } = META[item.type];
+  const { Icon, label, ariaLabel } = META[item.type];
 
   const requestClose = useCallback(() => {
     if (closingRef.current) return;
@@ -64,8 +64,6 @@ function ToastCard({ item, onRemove }: { item: ToastItem; onRemove: (id: number)
     if (exitTimerRef.current !== null) window.clearTimeout(exitTimerRef.current);
   }, []);
 
-  const lifeStyle = { "--toast-life": `${duration}ms` } as CSSProperties;
-
   return (
     <div
       role={item.type === "error" ? "alert" : "status"}
@@ -77,24 +75,25 @@ function ToastCard({ item, onRemove }: { item: ToastItem; onRemove: (id: number)
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setPaused(false);
       }}
-      className={`${styles.card} ${styles[item.type]}${paused ? ` ${styles.paused}` : ""}${closing ? ` ${styles.closing}` : ""}`}
-      style={lifeStyle}
+      className={`${styles.card} ${styles[item.type]}${closing ? ` ${styles.closing}` : ""}`}
       data-toast-type={item.type}
     >
       <span className={styles.icon} aria-hidden>
         <Icon />
       </span>
-      <span className={styles.message}>{item.message}</span>
+      <span className={styles.content}>
+        <span className={styles.title}>{label}</span>
+        <span className={styles.message}>{item.message}</span>
+      </span>
       <button
         type="button"
-        aria-label={`关闭${label}提示`}
+        aria-label={`关闭${ariaLabel}提示`}
         title="关闭"
         onClick={requestClose}
         className={styles.close}
       >
         <X aria-hidden />
       </button>
-      <span className={styles.life} aria-hidden />
     </div>
   );
 }

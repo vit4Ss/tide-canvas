@@ -20,7 +20,11 @@ export default function CanvasLayout({ children }: { children: React.ReactNode }
   // 这套浅色画布 UI。挂载期间摘除标记类，离开时恢复。
   useEffect(() => {
     document.body.classList.remove("imini");
-    return () => document.body.classList.add("imini");
+    document.body.classList.add("canvas-route");
+    return () => {
+      document.body.classList.remove("canvas-route");
+      document.body.classList.add("imini");
+    };
   }, []);
 
   useEffect(() => {
