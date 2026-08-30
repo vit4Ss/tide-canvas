@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { CheckCircle, XCircle, AlertCircle, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { Check, Info, TriangleAlert, X } from "lucide-react";
+import styles from "./toast.module.css";
 
 export type ToastType = "success" | "error" | "info";
 
@@ -13,6 +14,7 @@ interface ToastItem {
 
 let toastIdCounter = 0;
 const listeners: Array<(item: ToastItem) => void> = [];
+const MAX_VISIBLE_TOASTS = 4;
 
 export function showToast(type: ToastType, message: string) {
   const item: ToastItem = { id: ++toastIdCounter, type, message };
@@ -25,29 +27,44 @@ export const toast = {
   info: (msg: string) => showToast("info", msg),
 };
 
-const ICONS = {
-  success: CheckCircle,
-  error: XCircle,
-  info: AlertCircle,
-};
-
-const COLORS = {
-  success: "border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950/50 dark:text-green-400",
-  error: "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/50 dark:text-red-400",
-  info: "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/50 dark:text-blue-400",
+const META = {
+  success: { Icon: Check, label: "成功" },
+  error: { Icon: TriangleAlert, label: "错误" },
+  info: { Icon: Info, label: "提醒" },
 };
 
 function ToastCard({ item, onRemove }: { item: ToastItem; onRemove: (id: number) => void }) {
   const [paused, setPaused] = useState(false);
-  const Icon = ICONS[item.type];
-  const isError = item.type === "error";
+  const [closing, setClosing] = useState(false);
+  const duration = item.type === "error" ? 8000 : 5000;
+  const remainingRef = useRef(duration);
+  const startedAtRef = useRef(0);
+  const closingRef = useRef(false);
+  const exitTimerRef = useRef<number | null>(null);
+  const { Icon, label } = META[item.type];
+
+  const requestClose = useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setClosing(true);
+    exitTimerRef.current = window.setTimeout(() => onRemove(item.id), 180);
+  }, [item.id, onRemove]);
 
   useEffect(() => {
-    if (paused) return;
-    const duration = item.type === "error" ? 8000 : 5000;
-    const timer = window.setTimeout(() => onRemove(item.id), duration);
-    return () => window.clearTimeout(timer);
-  }, [item.id, item.type, onRemove, paused]);
+    if (paused || closing) return;
+    startedAtRef.current = performance.now();
+    const timer = window.setTimeout(requestClose, remainingRef.current);
+    return () => {
+      window.clearTimeout(timer);
+      remainingRef.current = Math.max(0, remainingRef.current - (performance.now() - startedAtRef.current));
+    };
+  }, [closing, paused, requestClose]);
+
+  useEffect(() => () => {
+    if (exitTimerRef.current !== null) window.clearTimeout(exitTimerRef.current);
+  }, []);
+
+  const lifeStyle = { "--toast-life": `${duration}ms` } as CSSProperties;
 
   return (
     <div
@@ -60,22 +77,24 @@ function ToastCard({ item, onRemove }: { item: ToastItem; onRemove: (id: number)
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setPaused(false);
       }}
-      className={`pointer-events-auto flex items-center rounded-lg border shadow-md ${COLORS[item.type]} ${
-        isError
-          ? "min-h-14 w-[min(760px,calc(100vw-32px))] gap-3 px-5 py-3.5 text-[15px]"
-          : "min-h-11 w-fit max-w-[calc(100vw-32px)] gap-2 px-4 py-2.5 text-sm"
-      }`}
+      className={`${styles.card} ${styles[item.type]}${paused ? ` ${styles.paused}` : ""}${closing ? ` ${styles.closing}` : ""}`}
+      style={lifeStyle}
+      data-toast-type={item.type}
     >
-      <Icon className={isError ? "h-5 w-5 shrink-0" : "h-4 w-4 shrink-0"} aria-hidden />
-      <span className={`min-w-0 flex-1 break-words ${isError ? "leading-6" : "leading-5"}`}>{item.message}</span>
+      <span className={styles.icon} aria-hidden>
+        <Icon />
+      </span>
+      <span className={styles.message}>{item.message}</span>
       <button
         type="button"
-        aria-label="关闭提示"
-        onClick={() => onRemove(item.id)}
-        className={`${isError ? "-my-2 -mr-2" : "-my-2.5 -mr-3"} grid h-11 w-11 shrink-0 place-items-center opacity-60 transition-opacity hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-4px]`}
+        aria-label={`关闭${label}提示`}
+        title="关闭"
+        onClick={requestClose}
+        className={styles.close}
       >
-        <X className={isError ? "h-4 w-4" : "h-3.5 w-3.5"} aria-hidden />
+        <X aria-hidden />
       </button>
+      <span className={styles.life} aria-hidden />
     </div>
   );
 }
@@ -85,7 +104,13 @@ export function ToastContainer() {
 
   useEffect(() => {
     const listener = (item: ToastItem) => {
-      setItems((prev) => [...prev, item]);
+      setItems((prev) => {
+        const last = prev.at(-1);
+        const next = last?.type === item.type && last.message === item.message
+          ? [...prev.slice(0, -1), item]
+          : [...prev, item];
+        return next.slice(-MAX_VISIBLE_TOASTS);
+      });
     };
     listeners.push(listener);
     return () => {
@@ -101,8 +126,7 @@ export function ToastContainer() {
   // z 必须高于全部弹层（modal-zoom/lightbox/srcmask 均为 1000）：toast 是反馈层，任何时候都要可见
   return (
     <div
-      className="pointer-events-none fixed left-1/2 z-[1200] flex -translate-x-1/2 flex-col items-center gap-2"
-      style={{ top: "max(1.5rem, calc(env(safe-area-inset-top) + 0.5rem))" }}
+      className={styles.viewport}
       aria-live="polite"
       aria-label="操作反馈"
     >
