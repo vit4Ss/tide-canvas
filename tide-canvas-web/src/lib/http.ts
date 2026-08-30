@@ -1,7 +1,13 @@
 import type { Result } from "@/types/api";
+import { resolveBrowserApiUrl } from "@/lib/public-api-url";
 
-const PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
-const SERVER_URL = PUBLIC_API_URL || "http://localhost:8080";
+// SERVER_API_URL may intentionally be a loopback/container-internal address:
+// Next SSR and rewrites can reach it, but a user's browser cannot. Native
+// navigations (downloads) therefore use a separate optional public base and
+// otherwise stay on the current website origin.
+const SERVER_API_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
+const BROWSER_API_URL = process.env.NEXT_PUBLIC_BROWSER_API_BASE_URL || "";
+const SERVER_URL = SERVER_API_URL || "http://localhost:8080";
 const BASE_URL = typeof window !== "undefined" ? "" : SERVER_URL;
 
 type QueryParams = Record<string, string | number | boolean | undefined | null>;
@@ -313,8 +319,8 @@ async function fetchWithAuth(input: RequestInfo | URL, init: RequestInit = {}): 
 
 /** Resolve a public API path for native browser navigations (downloads, etc.). */
 export function apiUrl(path: string): string {
-  if (typeof window === "undefined") return new URL(path, SERVER_URL).toString();
-  return new URL(path, PUBLIC_API_URL || window.location.origin).toString();
+  if (typeof window === "undefined") return resolveBrowserApiUrl(path, BROWSER_API_URL, SERVER_URL);
+  return resolveBrowserApiUrl(path, BROWSER_API_URL, window.location.origin);
 }
 
 export const http = {

@@ -111,4 +111,6 @@ TIDECANVAS_ENV=prod TIDECANVAS_JWT_SECRET=... TIDECANVAS_RELAY_APIKEY=... go run
 >
 > 前端对应机制：`tide-canvas-web/.env.development`（`next dev` 加载）与
 > `.env.production`（`next build` 加载）；Docker 构建时 `--build-arg
-> NEXT_PUBLIC_API_BASE_URL=...` 优先级最高。
+> NEXT_PUBLIC_API_BASE_URL=...` 优先级最高。该值可以是 SSR/Next rewrite
+> 可访问的容器内部地址；浏览器原生下载默认走当前网站 `/api`。只有前后端使用
+> 不同公网域名时，才额外传 `NEXT_PUBLIC_BROWSER_API_BASE_URL=https://api.example.com`。
