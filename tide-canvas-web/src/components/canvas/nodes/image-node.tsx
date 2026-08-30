@@ -2803,22 +2803,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 >
                   从资产库选图
                 </Button>
-                <Button
-                  onMouseDown={stop}
-                  onClick={(e) => { stop(e); toast.info("图片高清功能即将上线"); }}
-                  variant="subtle"
-                  color="dark"
-                  radius="md"
-                  size="sm"
-                  leftSection={
-                    <ThemeIcon variant="light" color="gray" size={24} radius="md">
-                      <Text size="10px" fw={600} lh={1}>HD</Text>
-                    </ThemeIcon>
-                  }
-                  styles={{ root: { paddingLeft: 8, paddingRight: 10 }, label: { fontWeight: 500 } }}
-                >
-                  图片高清
-                </Button>
               </Stack>
             </Center>
           )}
