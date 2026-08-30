@@ -26,37 +26,6 @@ import { orderStudioFeedRuns } from "./inflight-run-order";
 
 const PROMPT_REFERENCE_GLYPH = { image: "图", video: "▶", audio: "♪" } as const;
 
-interface DownloadFileHandle {
-  createWritable: () => Promise<WritableStream<Uint8Array>>;
-}
-
-interface DownloadDirectoryHandle {
-  getFileHandle: (name: string, options: { create: true }) => Promise<DownloadFileHandle>;
-}
-
-type DownloadPickerWindow = Window & {
-  showSaveFilePicker?: (options: { suggestedName: string }) => Promise<DownloadFileHandle>;
-  showDirectoryPicker?: (options: { mode: "readwrite" }) => Promise<DownloadDirectoryHandle>;
-};
-
-function isDownloadPickerCancel(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "name" in error
-    && (error as { name?: unknown }).name === "AbortError";
-}
-
-async function optionalDownloadDestination<T>(picker: Promise<T> | null): Promise<T | undefined> {
-  if (!picker) return undefined;
-  try {
-    return await picker;
-  } catch (error) {
-    // User cancellation is intentional and must stop the download. A browser
-    // that exposes the API but denies it for policy/context reasons should use
-    // the reliable Blob fallback instead of leaving the button inert.
-    if (isDownloadPickerCancel(error)) throw error;
-    return undefined;
-  }
-}
-
 function safeDownloadBaseName(raw: string): string {
   const compact = raw
     .replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ")
@@ -309,61 +278,41 @@ export function StageFeed({
     return ext && !variantBase.toLowerCase().endsWith(`.${ext}`) ? `${variantBase}.${ext}` : variantBase;
   };
 
-  const pickDownloadFile = (name: string): Promise<DownloadFileHandle> | null => {
-    const picker = (window as DownloadPickerWindow).showSaveFilePicker;
-    return picker ? picker.call(window, { suggestedName: name }) : null;
-  };
-
-  const pickDownloadDirectory = (): Promise<DownloadDirectoryHandle> | null => {
-    const picker = (window as DownloadPickerWindow).showDirectoryPicker;
-    return picker ? picker.call(window, { mode: "readwrite" }) : null;
-  };
-
-  // Exchange the Bearer token for a two-minute, exact-file capability and
-  // fetch the attachment as a stream. Chromium writes that stream straight to
-  // the destination chosen by the user, so large videos/3D files never enter
-  // page memory. Browsers without the File System Access API use a Blob only
-  // as a compatibility fallback; unlike the former hidden iframe this path is
-  // observable, checks HTTP failures, and cannot be silently blocked.
-  const downloadThroughProxy = async (
-    url: string,
-    name: string,
-    destination?: DownloadFileHandle,
-  ): Promise<"saved" | "browser"> => {
-    const ticket = await http.post<{ url: string }>("/api/files/download-ticket", { url, name });
-    if (!ticket.success || !ticket.data?.url) throw new Error(ticket.message || "download ticket failed");
-    const directURL = apiUrl(ticket.data.url);
-    let response: Response;
-    try {
-      // Prefer the API origin so a large stream does not pass through Next's
-      // proxy timeout. The ticket is the only credential in this request.
-      response = await fetch(directURL, { credentials: "omit", cache: "no-store" });
-    } catch (error) {
-      // A deployment with a missing CORS origin should still download through
-      // the same-origin Next rewrite instead of failing silently.
-      if (new URL(directURL).origin === window.location.origin) throw error;
-      response = await fetch(ticket.data.url, { credentials: "same-origin", cache: "no-store" });
-    }
-    if (!response.ok) throw new Error(`download failed: HTTP ${response.status}`);
-
-    if (destination) {
-      if (!response.body) throw new Error("download stream unavailable");
-      const writable = await destination.createWritable();
-      await response.body.pipeTo(writable);
-      return "saved";
-    }
-
-    const blobURL = URL.createObjectURL(await response.blob());
+  const clickBrowserDownload = (href: string, name: string) => {
     const anchor = document.createElement("a");
-    anchor.href = blobURL;
+    anchor.href = href;
     anchor.download = name;
     anchor.rel = "noopener";
     anchor.style.display = "none";
     document.body.appendChild(anchor);
     anchor.click();
-    anchor.remove();
+    window.setTimeout(() => anchor.remove(), 1_000);
+  };
+
+  // Exchange the Bearer token for a two-minute exact-file capability, then
+  // hand verified first-party objects straight to the browser's native
+  // download manager. Legacy external URLs use a checked Blob fallback so a
+  // remote error can never navigate this page or open a new tab.
+  const downloadThroughProxy = async (url: string, name: string): Promise<void> => {
+    const ticket = await http.post<{ url: string; native?: boolean }>("/api/files/download-ticket", { url, name });
+    if (!ticket.success || !ticket.data?.url) throw new Error(ticket.message || "download ticket failed");
+    if (ticket.data.native) {
+      clickBrowserDownload(apiUrl(ticket.data.url), name);
+      return;
+    }
+
+    const directURL = apiUrl(ticket.data.url);
+    let response: Response;
+    try {
+      response = await fetch(directURL, { credentials: "omit", cache: "no-store" });
+    } catch (error) {
+      if (new URL(directURL).origin === window.location.origin) throw error;
+      response = await fetch(ticket.data.url, { credentials: "same-origin", cache: "no-store" });
+    }
+    if (!response.ok) throw new Error(`download failed: HTTP ${response.status}`);
+    const blobURL = URL.createObjectURL(await response.blob());
+    clickBrowserDownload(blobURL, name);
     window.setTimeout(() => URL.revokeObjectURL(blobURL), 30_000);
-    return "browser";
   };
 
   const downloadItem = async (r: HistRun, item: HistItem, index: number) => {
@@ -379,18 +328,9 @@ export function StageFeed({
     setDownloadingRun({ run: r.run, current: 1, total: 1, item: item.id });
     try {
       const name = downloadName(r, item, index);
-      // Invoke the native picker before the first network await so it retains
-      // the click's user activation and cannot be silently blocked.
-      const destinationPromise = pickDownloadFile(name);
-      const destination = await optionalDownloadDestination(destinationPromise);
-      const mode = await downloadThroughProxy(item.url, name, destination);
-      toast.success(
-        mode === "saved"
-          ? `${item.trackTitle ? `《${item.trackTitle}》` : "文件"}已保存`
-          : "文件已准备完成，请在浏览器下载列表确认",
-      );
-    } catch (error) {
-      if (isDownloadPickerCancel(error)) return;
+      await downloadThroughProxy(item.url, name);
+      toast.success(`${item.trackTitle ? `《${item.trackTitle}》` : "文件"}已开始下载`);
+    } catch {
       toast.error("下载失败，请稍后重试");
     } finally {
       downloadingRunRef.current = false;
@@ -439,26 +379,14 @@ export function StageFeed({
     downloadingRunRef.current = true;
     setDownloadingRun({ run: r.run, current: 0, total: files.length });
     let completed = 0;
-    let usedNativeDestination = false;
     try {
-      // One directory grant supports every file in a multi-result run without
-      // triggering the browser's automatic multi-download blocker.
-      const directoryPromise = files.length > 1 ? pickDownloadDirectory() : null;
-      const filePromise = files.length === 1 ? pickDownloadFile(files[0].name) : null;
-      const directory = await optionalDownloadDestination(directoryPromise);
-      const singleFile = await optionalDownloadDestination(filePromise);
-      usedNativeDestination = Boolean(directory || singleFile);
       for (let i = 0; i < files.length; i++) {
         const { url, name } = files[i];
         setDownloadingRun({ run: r.run, current: i + 1, total: files.length });
-        const destination = directory
-          ? await directory.getFileHandle(name, { create: true })
-          : singleFile;
-        await downloadThroughProxy(url, name, destination);
+        await downloadThroughProxy(url, name);
         completed++;
       }
-    } catch (error) {
-      if (isDownloadPickerCancel(error)) return;
+    } catch {
       toast.error(completed > 0 ? `已完成 ${completed} 个，第 ${completed + 1} 个下载失败` : "下载失败，请稍后重试");
       return;
     } finally {
@@ -466,13 +394,9 @@ export function StageFeed({
       setDownloadingRun(null);
     }
     toast.success(
-      usedNativeDestination
-        ? files.length > 1
-          ? `${files.length} 个${r.type === "audio" ? "音频" : r.type === "3d" ? "模型文件" : "作品"}已保存`
-          : "文件已保存"
-        : files.length > 1
-          ? `${files.length} 个文件已准备完成，请在浏览器下载列表确认`
-          : "文件已准备完成，请在浏览器下载列表确认",
+      files.length > 1
+        ? `已开始下载 ${files.length} 个${r.type === "audio" ? "音频" : r.type === "3d" ? "模型文件" : "作品"}`
+        : "文件已开始下载",
     );
   };
 

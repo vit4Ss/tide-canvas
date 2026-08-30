@@ -5,19 +5,17 @@ import test from "node:test";
 const feed = readFileSync(new URL("./stage-feed.tsx", import.meta.url), "utf8");
 const player = readFileSync(new URL("../audio-player-card.tsx", import.meta.url), "utf8");
 
-test("studio downloads stream to a user-chosen file and keep a reliable fallback", () => {
+test("studio downloads use the browser default download path without opening a picker", () => {
   assert.match(feed, /import \{ apiUrl, http \} from "@\/lib\/http"/);
-  assert.match(feed, /http\.post<\{ url: string \}>\("\/api\/files\/download-ticket", \{ url, name \}\)/);
-  assert.match(feed, /showSaveFilePicker[\s\S]*?suggestedName: name/);
-  assert.match(feed, /destination\.createWritable\(\)[\s\S]*?response\.body\.pipeTo\(writable\)/);
-  assert.match(feed, /response\.blob\(\)[\s\S]*?anchor\.download = name[\s\S]*?anchor\.click\(\)/);
-  assert.match(feed, /showDirectoryPicker[\s\S]*?directory\.getFileHandle\(name, \{ create: true \}\)/);
+  assert.match(feed, /http\.post<\{ url: string; native\?: boolean \}>\("\/api\/files\/download-ticket", \{ url, name \}\)/);
+  assert.match(feed, /anchor\.href = href[\s\S]*?anchor\.download = name[\s\S]*?anchor\.click\(\)/);
+  assert.match(feed, /ticket\.data\.native[\s\S]*?clickBrowserDownload\(apiUrl\(ticket\.data\.url\), name\)/);
+  assert.match(feed, /response\.blob\(\)[\s\S]*?clickBrowserDownload\(blobURL, name\)/);
   assert.match(feed, /downloadThroughProxy\(item\.url[\s\S]*?setDownloadingRun/);
+  assert.doesNotMatch(feed, /showSaveFilePicker|showDirectoryPicker|createWritable\(\)/);
   assert.doesNotMatch(feed, /document\.createElement\("iframe"\)/);
   assert.doesNotMatch(feed, /window\.open\(/);
   assert.doesNotMatch(feed, /已交给浏览器下载/);
-  assert.match(feed, /"name" in error[\s\S]*?AbortError/);
-  assert.match(feed, /optionalDownloadDestination[\s\S]*?if \(isDownloadPickerCancel\(error\)\) throw error;[\s\S]*?return undefined/);
   assert.match(feed, /r\.type === "audio" \? "mp3"/);
   assert.match(feed, /r\.items\.length > 1 \? `\$\{cleanBase\}-\$\{index \+ 1\}` : cleanBase/);
   assert.match(feed, /\^\(con\|prn\|aux\|nul\|com\[1-9\]\|lpt\[1-9\]\)/i);

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -68,6 +70,64 @@ func TestDownloadFilename(t *testing.T) {
 		if got := downloadFilename(tc.name, tc.urlPath); got != tc.want {
 			t.Errorf("downloadFilename(%q, %q) = %q, want %q", tc.name, tc.urlPath, got, tc.want)
 		}
+	}
+}
+
+func TestDownloadTicketRejectsMissingOwnedStorageObject(t *testing.T) {
+	ginn := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(ginn) })
+
+	dir := t.TempDir()
+	store, err := storage.NewLocalStorage(config.StorageConfig{
+		LocalDir:  dir,
+		PublicURL: "https://cdn.example.test/canvas/uploads",
+	})
+	if err != nil {
+		t.Fatalf("new local storage: %v", err)
+	}
+	raw, err := store.Save(context.Background(), "gen/missing.mp3", strings.NewReader("audio"), "audio/mpeg")
+	if err != nil {
+		t.Fatalf("save fixture: %v", err)
+	}
+	db, err := gorm.Open(sqlite.Open("file:download_ticket_missing_object?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&model.User{}, &model.AiTask{}, &model.File{}, &model.SkillRun{}, &model.SkillRunArtifact{}, &model.CommunityPost{}, &model.BlogPost{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	const ownerID idgen.ID = 8351
+	if err := db.Create(&model.User{ID: ownerID, Username: "missing-owner", Email: "missing-owner@example.test", Status: 1}).Error; err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	if err := db.Create(&model.AiTask{ID: 8352, UserID: ownerID, Status: 1, ResultUrl: raw, CreateTime: time.Now()}).Error; err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	token.Init(config.JWTConfig{Secret: "download-native-test-secret", Issuer: "download-native-test"}, nil)
+	h := &handler{svc: &service{repo: newRepo(db), store: store}}
+	requestBody, _ := json.Marshal(downloadTicketDTO{URL: raw, Name: "missing.mp3"})
+	issue := func() *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/api/files/download-ticket", bytes.NewReader(requestBody))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Set(middleware.CtxUserID, ownerID)
+		h.issueDownloadTicket(c)
+		return recorder
+	}
+
+	available := issue()
+	if available.Code != http.StatusOK || !strings.Contains(available.Body.String(), `"native":true`) {
+		t.Fatalf("available object ticket = %d %s, want native download", available.Code, available.Body.String())
+	}
+	if err := os.Remove(filepath.Join(dir, "gen", "missing.mp3")); err != nil {
+		t.Fatalf("remove fixture: %v", err)
+	}
+	missing := issue()
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing object ticket status = %d, body = %s", missing.Code, missing.Body.String())
 	}
 }
 

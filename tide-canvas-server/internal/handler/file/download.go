@@ -72,6 +72,27 @@ func (h *handler) issueDownloadTicket(c *gin.Context) {
 		response.Fail(c, response.CodeForbidden, "not allowed to download this url")
 		return
 	}
+	nativeDownload := false
+	// Native browser downloads cannot report a later streaming error back to
+	// the page. For first-party objects, verify existence and size before issuing
+	// the ticket so a broken URL cannot navigate the current page to an error
+	// response instead of starting the download. External legacy URLs continue
+	// through the remote fetcher's validation in download().
+	if statter, ok := h.svc.store.(storage.OwnedURLStatter); ok {
+		meta, statErr := statter.StatURL(c.Request.Context(), raw)
+		switch {
+		case errors.Is(statErr, storage.ErrUnsupported):
+			// Not a first-party URL; download() performs the guarded remote fetch.
+		case statErr != nil:
+			response.Fail(c, response.CodeNotFound, "download file is unavailable")
+			return
+		case meta.Size > maxDownloadSize:
+			response.Fail(c, response.CodeBadRequest, "remote file exceeds size limit")
+			return
+		default:
+			nativeDownload = true
+		}
+	}
 	ticket, err := token.IssueDownloadTicket(uid, middleware.CurrentRole(c), raw, name, downloadTicketTTL)
 	if err != nil {
 		response.Fail(c, response.CodeServerError, "failed to issue download ticket")
@@ -81,7 +102,10 @@ func (h *handler) issueDownloadTicket(c *gin.Context) {
 	query.Set("url", raw)
 	query.Set("name", name)
 	query.Set("ticket", ticket)
-	response.OK(c, gin.H{"url": "/api/files/download?" + query.Encode()})
+	response.OK(c, gin.H{
+		"url":    "/api/files/download?" + query.Encode(),
+		"native": nativeDownload,
+	})
 }
 
 // downloadFilename derives the attachment filename: append the URL path's
