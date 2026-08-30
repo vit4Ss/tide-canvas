@@ -11,7 +11,7 @@
  */
 
 /** 支持 x-oss-process 图片处理的本站存储域（CDN 域名与后台存储配置保持一致）。 */
-const PROCESSABLE_HOSTS = ["cdn.mbfczzzz.top"];
+const PROCESSABLE_HOSTS = ["cdn.mbfczzzz.top", "test-cdn.mbfczzzz.top"];
 const MAX_DISABLED_URLS = 256;
 // Deliberately memory-only: reading sessionStorage during the first client
 // render would make its src differ from SSR and cause a hydration mismatch.

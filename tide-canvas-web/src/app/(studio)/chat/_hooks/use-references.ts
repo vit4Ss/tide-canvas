@@ -5,7 +5,7 @@
    blob URL 生命周期（三处 revoke：移除 / 送出或策略收敛 / 卸载与切对话）、
    race-guard、同 url 去重、@ 引用候选编号都在这里。 */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { uploadFileSmart } from "@/lib/api";
 import { toast } from "@/components/shared/toast";
 import { type PickedAsset } from "@/components/studio/assets-browser";
@@ -256,38 +256,54 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
     [commitRefs],
   );
 
-  // add an already-hosted asset (picked from 资产库) directly as a reference — no
-  // upload needed; honors the policy kinds/max and dedups by url.
-  const addAssetRef = useCallback(
-    (url: string, kind: RefKind, name?: string, id?: string) => {
+  // Add already-hosted assets as one atomic batch. Calling commitRefs once is
+  // important here: a 12-image selection must not force 12 composer renders or
+  // repeatedly rebuild the mention/reference projections on the main thread.
+  const addAssetRefs = useCallback(
+    (assets: PickedAsset[]) => {
       const policy = refPolicy;
-      if (!policy || !policy.kinds.length || policy.max <= 0) return false;
-      if (!policy.kinds.includes(kind)) {
-        toast.info("当前模式不支持该类型素材");
-        return false;
+      if (!policy || !policy.kinds.length || policy.max <= 0 || assets.length === 0) return 0;
+      const current = refsRef.current;
+      const existing = new Set(current.flatMap((ref) => ref.url ? [ref.url] : []));
+      const accepted: RefItem[] = [];
+      for (const asset of assets) {
+        const kind: RefKind | null =
+          asset.kind === "image" || asset.kind === "video" || asset.kind === "audio"
+            ? asset.kind
+            : asset.kind === "doc"
+              ? "file"
+              : null;
+        if (!kind || !policy.kinds.includes(kind)) {
+          toast.info("当前模式不支持该类型素材");
+          continue;
+        }
+        const assetName = asset.name || fileNameFromUrl(asset.url);
+        const extension = extOf(assetName);
+        if (policy.exts && extension && !policy.exts.includes(extension)) {
+          toast.info(`该素材格式不支持，允许：${policy.exts.join(" / ")}`);
+          continue;
+        }
+        if (existing.has(asset.url)) {
+          toast.info("该素材已添加");
+          continue;
+        }
+        if (current.length + accepted.length >= policy.max) {
+          toast.info(`最多添加 ${policy.max} 个文件`);
+          break;
+        }
+        existing.add(asset.url);
+        accepted.push({
+          key: `r${refSeq.current++}`,
+          id: asset.id,
+          kind,
+          blobUrl: "",
+          url: asset.url,
+          name: assetName,
+          uploading: false,
+        });
       }
-      // 资产库素材已经由资产页按 kind 分类；生成历史的签名 URL 经常没有
-      // 文件扩展名，不能把“未知扩展名”误判成“不支持”。有明确扩展名时仍
-      // 严格遵守模型白名单，本地上传则继续在 attachFiles 中按真实文件名校验。
-      const assetName = name || fileNameFromUrl(url);
-      const extension = extOf(assetName);
-      if (policy.exts && extension && !policy.exts.includes(extension)) {
-        toast.info(`该素材格式不支持，允许：${policy.exts.join(" / ")}`);
-        return false;
-      }
-      if (refsRef.current.some((r) => r.url === url)) {
-        toast.info("该素材已添加");
-        return false;
-      }
-      if (refCountRef.current >= policy.max) {
-        toast.info(`最多添加 ${policy.max} 个文件`);
-        return false;
-      }
-      commitRefs((prev) => [
-        ...prev,
-        { key: `r${refSeq.current++}`, id, kind, blobUrl: "", url, name: assetName, uploading: false },
-      ]);
-      return true;
+      if (accepted.length) commitRefs((prev) => [...prev, ...accepted]);
+      return accepted.length;
     },
     [commitRefs, refPolicy],
   );
@@ -346,25 +362,18 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
     setAssetPickOpen(true);
   }, []);
 
-  // assets chosen from 资产库 → add them as one bounded batch. 文档("doc")映射为
-  // RefKind "file"：文本模型（kinds 含 file）可挂文档附件；媒体生成模式仍会被
-  // addAssetRef 的 kinds 校验拒绝，不会把文档 URL 当图片发给模型。
+  // Close the heavy asset grid first, then render the bounded reference batch
+  // as a transition. This prevents 10+ thumbnails from delaying the modal's
+  // visual dismissal and making the confirmation button appear frozen.
   const chooseAssets = useCallback(
     (assets: PickedAsset[]) => {
       setAssetPickOpen(false);
-      let added = 0;
-      for (const asset of assets) {
-        const kind: RefKind | null =
-          asset.kind === "image" || asset.kind === "video" || asset.kind === "audio"
-            ? asset.kind
-            : asset.kind === "doc"
-              ? "file"
-              : null;
-        if (kind && addAssetRef(asset.url, kind, asset.name, asset.id)) added++;
-      }
-      if (added > 1) toast.success(`已添加 ${added} 个参考素材`);
+      startTransition(() => {
+        const added = addAssetRefs(assets);
+        if (added > 1) toast.success(`已添加 ${added} 个参考素材`);
+      });
     },
-    [addAssetRef],
+    [addAssetRefs],
   );
 
   // drag-and-drop onto the composer (dragDepth counter avoids overlay flicker
@@ -480,7 +489,7 @@ export function useReferences({ refPolicy }: { refPolicy: RefPolicy | undefined 
     clearRefs,
     clearRefsIfUnchanged,
     restoreRefsIfEmpty,
-    addAssetRef,
+    addAssetRefs,
     restoreRefs,
     mentionRefs,
     dragOver,

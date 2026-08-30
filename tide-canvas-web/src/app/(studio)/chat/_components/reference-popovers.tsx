@@ -3,7 +3,7 @@
 /* ── reference-source popovers (extracted verbatim from page.tsx) ──────────────
    渲染在 chat-wrap 顶层（fixed 定位，与创作台同一套 ws-srcmenu/ws-srcmask 结构）。 */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
 import type { AssetFilterKey } from "@/components/studio/assets-browser-policy";
 import { toast } from "@/components/shared/toast";
@@ -77,6 +77,8 @@ export function AssetPickerDialog({
   const allowedFilters = refPolicy?.kinds.flatMap((kind) => FILTERS_BY_KIND[kind]) ?? [];
   const existing = useMemo(() => new Set(existingUrls.filter(Boolean)), [existingUrls]);
   const [selected, setSelected] = useState<Map<string, PickedAsset>>(() => new Map());
+  const [confirming, setConfirming] = useState(false);
+  const confirmingRef = useRef(false);
   const pickedUrls = useMemo(() => new Set(selected.keys()), [selected]);
   const remaining = Math.max(0, (refPolicy?.max ?? 0) - existingCount);
   const toggleAsset = (asset: PickedAsset) => {
@@ -117,16 +119,34 @@ export function AssetPickerDialog({
           />
         </div>
         <div className="ws-assetbox-f">
-          <span>{remaining > 0 ? `已选择 ${selected.size} / ${remaining}` : "已达到素材数量上限"}</span>
+          <span>
+            {remaining > 0
+              ? selected.size > 0
+                ? `已选 ${selected.size} 项 · 还可选 ${Math.max(0, remaining - selected.size)} 项`
+                : `本次最多可选 ${remaining} 项`
+              : "已达到素材数量上限"}
+          </span>
           <div>
             <button type="button" className="ghost" onClick={onClose}>取消</button>
             <button
               type="button"
               className="primary"
-              disabled={selected.size === 0}
-              onClick={() => onPick([...selected.values()])}
+              disabled={selected.size === 0 || confirming}
+              aria-busy={confirming}
+              onClick={() => {
+                if (confirmingRef.current || selected.size === 0) return;
+                confirmingRef.current = true;
+                setConfirming(true);
+                try {
+                  onPick([...selected.values()]);
+                } catch {
+                  confirmingRef.current = false;
+                  setConfirming(false);
+                  toast.error("添加素材失败，请重试");
+                }
+              }}
             >
-              添加{selected.size > 0 ? ` ${selected.size} 项` : ""}
+              {confirming ? "正在添加…" : `添加${selected.size > 0 ? ` ${selected.size} 项` : ""}`}
             </button>
           </div>
         </div>

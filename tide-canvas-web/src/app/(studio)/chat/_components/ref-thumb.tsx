@@ -3,6 +3,7 @@
 /* ── reference thumbnail (composer strip, extracted verbatim from page.tsx) ─── */
 
 import type { RefItem } from "./chat-utils";
+import { fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
 
 export function RefThumb({
   item,
@@ -14,6 +15,7 @@ export function RefThumb({
   onOpen: () => void;
 }) {
   const src = item.url || item.blobUrl;
+  const imageSrc = item.kind === "image" && src ? (ossDisplayUrl(src, 160) ?? src) : src;
   const progress = Math.max(0, Math.min(100, Math.round(item.progress ?? 0)));
   // 有可用地址、且非上传中/失败时才可点开预览
   const canPreview = !!src && !item.uploading && !item.failed;
@@ -37,7 +39,14 @@ export function RefThumb({
     >
       {item.kind === "image" ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt={item.name || "参考"} />
+        <img
+          src={imageSrc}
+          alt={item.name || "参考"}
+          loading="lazy"
+          decoding="async"
+          onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
+          onError={(event) => fallbackOssDisplayImage(event.currentTarget, src)}
+        />
       ) : item.kind === "video" ? (
         <video src={src} muted />
       ) : item.kind === "audio" ? (
