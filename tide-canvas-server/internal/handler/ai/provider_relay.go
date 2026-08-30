@@ -72,6 +72,7 @@ func (p *relayProviderClient) Generate(ctx context.Context, req GenerateRequest)
 	if req.Model == nil {
 		return GenerateResult{}, errNoModel
 	}
+	ctx = relaymedia.WithTaskAccepted(ctx, req.OnTaskAccepted)
 	model := strings.TrimSpace(req.Model.ModelID) // upstream model id (market_model.model_key)
 
 	switch req.Handler {
@@ -124,6 +125,26 @@ func (p *relayProviderClient) Generate(ctx context.Context, req GenerateRequest)
 	default:
 		return GenerateResult{}, errUnsupportedHandler
 	}
+}
+
+func relayResumeDeadline(handler string) time.Duration {
+	switch handler {
+	case "text_to_video", "image_to_video", "start_end_to_video", "reference_to_video":
+		return 40 * time.Minute
+	case "text_to_audio":
+		return 10 * time.Minute
+	case "generate_3d":
+		return 25 * time.Minute
+	case "video_upscale":
+		return 20 * time.Minute
+	default:
+		return 10 * time.Minute
+	}
+}
+
+func (p *relayProviderClient) Resume(ctx context.Context, req ResumeRequest) (GenerateResult, error) {
+	res, err := p.c.Resume(ctx, req.UpstreamTaskID, relayResumeDeadline(req.Handler))
+	return p.result(ctx, res, err)
 }
 
 // imageParams maps the shared input fields for an image request.

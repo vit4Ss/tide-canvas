@@ -15,7 +15,12 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       { protocol: "https", hostname: "**.aliyuncs.com" },
       { protocol: "https", hostname: "cdn.mbfczzzz.top" },
+      { protocol: "https", hostname: "test-cdn.mbfczzzz.top" },
     ],
+    // oss-display.ts 会直接请求这些宽度。明确列出后，测试 CDN 即使不透传
+    // x-oss-process，也能由 Next 图片优化器真正生成轻量缩略图。
+    imageSizes: [16, 32, 48, 64, 96, 128, 160, 256, 384, 512],
+    deviceSizes: [640, 750, 828, 1024, 1080, 1200, 1280, 1920, 2048, 3840],
     // Next 16 默认拦截解析到私有 IP 的上游图（本机代理 fake-ip 模式下 OSS
     // 域名会解析到 198.18.x.x 私网段而被误杀）。仅开发环境放行。
     ...(process.env.NODE_ENV === "development" ? { dangerouslyAllowLocalIP: true } : {}),

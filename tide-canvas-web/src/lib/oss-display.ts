@@ -11,7 +11,12 @@
  */
 
 /** 支持 x-oss-process 图片处理的本站存储域（CDN 域名与后台存储配置保持一致）。 */
-const PROCESSABLE_HOSTS = ["cdn.mbfczzzz.top", "test-cdn.mbfczzzz.top"];
+const PROCESSABLE_HOSTS = ["cdn.mbfczzzz.top"];
+// test-cdn 当前不会把 x-oss-process 查询参数传到 OSS：请求 640px 时仍返回
+// 原始对象。列表里几十张 2K/4K 原图同时解码会耗尽浏览器内存/GPU，因此该域
+// 必须走本站 Next 图片优化器，不能再伪装成 OSS 缩略图。
+const NEXT_IMAGE_PROXY_HOSTS = new Set(["test-cdn.mbfczzzz.top"]);
+const NEXT_IMAGE_WIDTHS = [16, 32, 48, 64, 96, 128, 160, 256, 384, 512, 640, 750, 828, 1024, 1080, 1200, 1280, 1920, 2048, 3840];
 const MAX_DISABLED_URLS = 256;
 // Deliberately memory-only: reading sessionStorage during the first client
 // render would make its src differ from SSR and cause a hydration mismatch.
@@ -68,9 +73,16 @@ export function fallbackOssDisplayImage(
 export function ossDisplayUrl(url: string | undefined | null, width: number): string | undefined {
   if (!url) return url ?? undefined;
   if (processingDisabledUrls.has(url)) return url;
-  if (!/^https?:\/\//i.test(url) || url.includes("?")) return url;
+  if (!/^https?:\/\//i.test(url)) return url;
   try {
     const host = new URL(url).hostname;
+    if (NEXT_IMAGE_PROXY_HOSTS.has(host)) {
+      const requestedWidth = Math.max(1, Math.round(width));
+      const proxyWidth = NEXT_IMAGE_WIDTHS.find((candidate) => candidate >= requestedWidth)
+        ?? NEXT_IMAGE_WIDTHS[NEXT_IMAGE_WIDTHS.length - 1];
+      return `/_next/image?url=${encodeURIComponent(url)}&w=${proxyWidth}&q=75`;
+    }
+    if (url.includes("?")) return url;
     if (!host.endsWith(".aliyuncs.com") && !PROCESSABLE_HOSTS.includes(host)) return url;
   } catch {
     return url;

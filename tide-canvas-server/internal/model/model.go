@@ -668,6 +668,10 @@ type AiTask struct {
 	ModelName  string   `gorm:"size:128" json:"modelName"`
 	Status     int      `gorm:"default:0" json:"status"` // 0 processing,1 success,2 failed,3 cancelled
 	Progress   int      `gorm:"default:0" json:"progress"`
+	// UpstreamTaskID is persisted as soon as APIRouter accepts an asynchronous
+	// task. It lets a replacement process resume polling after a restart instead
+	// of leaving the paid task in Processing until the stale-task refund sweep.
+	UpstreamTaskID string `gorm:"column:upstream_task_id;size:128;index" json:"-"`
 	// HeartbeatSeq guarantees every live-worker heartbeat changes the row, so a
 	// CAS can distinguish a processing task from a cancelled/deleted one even
 	// when MySQL timestamps round two consecutive updates to the same value.

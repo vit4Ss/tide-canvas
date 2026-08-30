@@ -150,6 +150,13 @@ function tracksOf(task: AiTaskVO): AudioTrack[] {
   return Array.isArray(tracks) ? tracks : [];
 }
 
+/** 选取模式下真正写回调用方的 URL。父层用同一口径只计算布尔选中态，避免把
+ *  每次都会换身份的 Set 传给所有卡片，导致勾选一张时整页卡片全部重渲染。 */
+function taskPickUrlOf(task: AiTaskVO): string | undefined {
+  if (HANDLER_MEDIA_KIND[task.handler] !== "audio") return task.resultUrl;
+  return tracksOf(task).find((track) => Boolean(track.url))?.url ?? task.resultUrl;
+}
+
 /** 3D 任务的封面：resultMeta.assets 里的 previewImageUrl（上游生成的模型截图）。 */
 function threeDPreviewOf(task: AiTaskVO): string | undefined {
   const assets = (metaObjectOf(task) as {
@@ -996,21 +1003,24 @@ export function AssetsBrowser({
               <div className="asset-group" key={g.date}>
                 <div className="asset-date">{g.date}</div>
                 <div className="asset-grid">
-                  {g.items.map((t) => (
-                    <TaskCard
-                      key={t.id}
-                      task={t}
-                      pickMode={pickMode}
-                      multiPick={multiPick}
-                      onPick={onPick}
-                      pickedUrls={pickedUrls}
-                      disabledPickUrls={disabledPickUrls}
-                      onOpen={openAsset}
-                      batchMode={batchMode}
-                      selected={selected.has(String(t.id))}
-                      onToggle={toggleSelect}
-                    />
-                  ))}
+                  {g.items.map((t) => {
+                    const pickUrl = taskPickUrlOf(t);
+                    return (
+                      <TaskCard
+                        key={t.id}
+                        task={t}
+                        pickMode={pickMode}
+                        multiPick={multiPick}
+                        onPick={onPick}
+                        pickSelected={!!multiPick && !!pickUrl && !!pickedUrls?.has(pickUrl)}
+                        pickDisabled={!!pickUrl && !!disabledPickUrls?.has(pickUrl)}
+                        onOpen={openAsset}
+                        batchMode={batchMode}
+                        selected={selected.has(String(t.id))}
+                        onToggle={toggleSelect}
+                      />
+                    );
+                  })}
                 </div>
               </div>
             ))}
@@ -1043,8 +1053,8 @@ export function AssetsBrowser({
                       pickMode={pickMode}
                       multiPick={multiPick}
                       onPick={onPick}
-                      pickedUrls={pickedUrls}
-                      disabledPickUrls={disabledPickUrls}
+                      pickSelected={!!multiPick && !!f.fileUrl && !!pickedUrls?.has(f.fileUrl)}
+                      pickDisabled={!!f.fileUrl && !!disabledPickUrls?.has(f.fileUrl)}
                       onOpen={openAsset}
                       batchMode={batchMode}
                       selected={selected.has(String(f.id))}
@@ -1173,8 +1183,8 @@ const TaskCard = memo(function TaskCard({
   pickMode,
   multiPick,
   onPick,
-  pickedUrls,
-  disabledPickUrls,
+  pickSelected = false,
+  pickDisabled = false,
   onOpen,
   batchMode,
   selected,
@@ -1184,8 +1194,8 @@ const TaskCard = memo(function TaskCard({
   pickMode?: boolean;
   multiPick?: boolean;
   onPick?: (asset: PickedAsset) => void;
-  pickedUrls?: ReadonlySet<string>;
-  disabledPickUrls?: ReadonlySet<string>;
+  pickSelected?: boolean;
+  pickDisabled?: boolean;
   onOpen?: (asset: OpenAsset) => void;
   batchMode?: boolean;
   selected?: boolean;
@@ -1218,8 +1228,6 @@ const TaskCard = memo(function TaskCard({
       : [];
   }, [tracks, task.resultUrl, task.modelName]);
   const pickUrl = kind === "audio" ? audioRows[0]?.url : task.resultUrl;
-  const pickSelected = !!multiPick && !!pickUrl && !!pickedUrls?.has(pickUrl);
-  const pickDisabled = !!pickUrl && !!disabledPickUrls?.has(pickUrl);
   const visuallySelected = batchMode ? !!selected : pickSelected;
   // 非成功任务没有结果可看,兜底卡上标出状态,免得看起来像加载失败的空白图。
   const statusLabel =
@@ -1316,7 +1324,7 @@ const TaskCard = memo(function TaskCard({
   return (
     <button
       type="button"
-      className={`as-card${visuallySelected ? " is-selected" : ""}`}
+      className={`as-card${visuallySelected ? " is-selected" : ""}${pickDisabled ? " is-pick-disabled" : ""}`}
       style={{
         opacity: pickDisabled ? 0.5 : undefined,
       }}
@@ -1336,8 +1344,12 @@ const TaskCard = memo(function TaskCard({
           alt=""
           loading="lazy"
           decoding="async"
+          fetchPriority="low"
+          style={{ background: fallback }}
           onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
-          onError={(event) => fallbackOssDisplayImage(event.currentTarget, coverSource)}
+          // 卡片缩略图失败时保留轻量占位，绝不回退加载 2K/4K 原图；全尺寸
+          // 原图只在用户主动打开预览时加载。
+          onError={(event) => fallbackOssDisplayImage(event.currentTarget, null)}
         />
       ) : (
         <span className="cov" style={{ background: fallback }} />
@@ -1349,7 +1361,7 @@ const TaskCard = memo(function TaskCard({
         </span>
       )}
       {pickMode && !multiPick && <span className="pick" />}
-      {pickMode && multiPick && <SelectBadge selected={pickSelected} />}
+      {pickMode && multiPick && <SelectBadge selected={pickSelected} disabled={pickDisabled} />}
       {batchMode && <SelectBadge selected={!!selected} />}
       {!!task.resultUrl && isVid && <span className="vbadge">▶</span>}
       {!!task.resultUrl && kind === "audio" && <span className="vbadge">♪</span>}
@@ -1392,10 +1404,13 @@ function LazyVideoCover({ src, fallback }: { src: string; fallback?: string }) {
 }
 
 /** 多选模式下的勾选角标，统一由 studio.css 控制视觉状态。 */
-function SelectBadge({ selected }: { selected: boolean }) {
+function SelectBadge({ selected, disabled = false }: { selected: boolean; disabled?: boolean }) {
   return (
-    <span className={`as-select-badge${selected ? " is-selected" : ""}`} aria-hidden>
-      {selected ? <Check size={15} strokeWidth={3} /> : null}
+    <span
+      className={`as-select-badge${selected ? " is-selected" : ""}${disabled ? " is-disabled" : ""}`}
+      aria-hidden
+    >
+      {selected || disabled ? <Check size={15} strokeWidth={3} /> : null}
     </span>
   );
 }
@@ -1407,8 +1422,8 @@ const UploadCard = memo(function UploadCard({
   pickMode,
   multiPick,
   onPick,
-  pickedUrls,
-  disabledPickUrls,
+  pickSelected = false,
+  pickDisabled = false,
   onOpen,
   batchMode,
   selected,
@@ -1418,8 +1433,8 @@ const UploadCard = memo(function UploadCard({
   pickMode?: boolean;
   multiPick?: boolean;
   onPick?: (asset: PickedAsset) => void;
-  pickedUrls?: ReadonlySet<string>;
-  disabledPickUrls?: ReadonlySet<string>;
+  pickSelected?: boolean;
+  pickDisabled?: boolean;
   onOpen?: (asset: OpenAsset) => void;
   batchMode?: boolean;
   selected?: boolean;
@@ -1427,8 +1442,6 @@ const UploadCard = memo(function UploadCard({
 }) {
   const kind = fileMediaKind(file);
   const isImg = kind === "image";
-  const pickSelected = !!multiPick && !!file.fileUrl && !!pickedUrls?.has(file.fileUrl);
-  const pickDisabled = !!file.fileUrl && !!disabledPickUrls?.has(file.fileUrl);
   const visuallySelected = batchMode ? !!selected : pickSelected;
 
   const onClick = () => {
@@ -1508,7 +1521,7 @@ const UploadCard = memo(function UploadCard({
   return (
     <button
       type="button"
-      className={`as-card as-up${visuallySelected ? " is-selected" : ""}`}
+      className={`as-card as-up${visuallySelected ? " is-selected" : ""}${pickDisabled ? " is-pick-disabled" : ""}`}
       style={{
         opacity: pickDisabled ? 0.5 : undefined,
       }}
@@ -1518,7 +1531,7 @@ const UploadCard = memo(function UploadCard({
       onClick={onClick}
     >
       {batchMode && <SelectBadge selected={!!selected} />}
-      {pickMode && multiPick && <SelectBadge selected={pickSelected} />}
+      {pickMode && multiPick && <SelectBadge selected={pickSelected} disabled={pickDisabled} />}
       {isImg && file.fileUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -1527,8 +1540,9 @@ const UploadCard = memo(function UploadCard({
           alt=""
           loading="lazy"
           decoding="async"
+          fetchPriority="low"
           onLoad={(event) => restoreOssDisplayImage(event.currentTarget)}
-          onError={(event) => fallbackOssDisplayImage(event.currentTarget, file.fileUrl)}
+          onError={(event) => fallbackOssDisplayImage(event.currentTarget, null)}
         />
       ) : kind === "video" && file.fileUrl ? (
         // 视频:video 首帧做卡片视觉(背景图铺不了 mp4),配 ▶ 角标

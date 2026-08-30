@@ -5,7 +5,7 @@
    一次一张地开关弹窗是纯粹的重复劳动。remaining 由调用方按槽位余量给出，
    超额在勾选时就挡住，而不是确认后再默默丢弃。 */
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
 import type { AssetFilterKey } from "@/components/studio/assets-browser-policy";
 import { toast } from "@/components/shared/toast";
@@ -34,7 +34,7 @@ export function AssetPickerModal({
   defaultFilter?: AssetFilterKey;
   /** Extra root class for callers whose route supplies a different theme token scope. */
   className?: string;
-  onPick: (assets: PickedAsset[]) => void;
+  onPick: (assets: PickedAsset[]) => void | Promise<void>;
   onClose: () => void;
   /** 只允许选 kind 这一种素材(智能工具:图片工具只收图、视频工具只收视频)。
       创作台的槽位选取不设限，保持原行为。 */
@@ -47,11 +47,29 @@ export function AssetPickerModal({
   const multi = remaining > 1;
   const existing = useMemo(() => new Set((existingUrls ?? []).filter(Boolean)), [existingUrls]);
   const [selected, setSelected] = useState<Map<string, PickedAsset>>(() => new Map());
+  const [confirming, setConfirming] = useState(false);
+  const confirmingRef = useRef(false);
   const pickedUrls = useMemo(() => new Set(selected.keys()), [selected]);
 
-  const toggleAsset = (asset: PickedAsset) => {
+  const submitAssets = useCallback(async (assets: PickedAsset[]) => {
+    if (confirmingRef.current || assets.length === 0) return;
+    confirmingRef.current = true;
+    setConfirming(true);
+    try {
+      await onPick(assets);
+      onClose();
+    } catch {
+      confirmingRef.current = false;
+      setConfirming(false);
+      toast.error("添加素材失败，请稍后重试");
+    }
+  }, [onClose, onPick]);
+
+  // 保持回调身份稳定：勾选一张时 AssetsBrowser 虽会更新选中集合，但未变化的
+  // 卡片可以被 React.memo 跳过，避免整页缩略图反复重渲染后越点越卡。
+  const toggleAsset = useCallback((asset: PickedAsset) => {
     if (!multi) {
-      onPick([asset]);
+      void submitAssets([asset]);
       return;
     }
     setSelected((current) => {
@@ -67,7 +85,7 @@ export function AssetPickerModal({
       next.set(asset.url, asset);
       return next;
     });
-  };
+  }, [multi, remaining, submitAssets]);
 
   return (
     <div className={`ws-srcmask${className ? ` ${className}` : ""}`} onClick={onClose}>
@@ -92,16 +110,17 @@ export function AssetPickerModal({
         </div>
         {multi ? (
           <div className="ws-assetbox-f">
-            <span>已选择 {selected.size} / {remaining}</span>
+            <span>已选 {selected.size} 项 · 还可选 {Math.max(0, remaining - selected.size)} 项</span>
             <div>
-              <button type="button" className="ghost" onClick={onClose}>取消</button>
+              <button type="button" className="ghost" disabled={confirming} onClick={onClose}>取消</button>
               <button
                 type="button"
                 className="primary"
-                disabled={selected.size === 0}
-                onClick={() => onPick([...selected.values()])}
+                disabled={selected.size === 0 || confirming}
+                aria-busy={confirming}
+                onClick={() => void submitAssets([...selected.values()])}
               >
-                添加{selected.size > 0 ? ` ${selected.size} 项` : ""}
+                {confirming ? "正在添加…" : `添加${selected.size > 0 ? ` ${selected.size} 项` : ""}`}
               </button>
             </div>
           </div>

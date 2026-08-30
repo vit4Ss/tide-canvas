@@ -71,6 +71,27 @@ type Client struct {
 	hc      *http.Client
 }
 
+type taskAcceptedContextKey struct{}
+
+// WithTaskAccepted installs a synchronous acceptance callback for callers that
+// need to persist the relay task id before this client starts polling it.
+func WithTaskAccepted(ctx context.Context, callback func(string)) context.Context {
+	if callback == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, taskAcceptedContextKey{}, callback)
+}
+
+func notifyTaskAccepted(ctx context.Context, taskID string) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return
+	}
+	if callback, ok := ctx.Value(taskAcceptedContextKey{}).(func(string)); ok && callback != nil {
+		callback(taskID)
+	}
+}
+
 // New returns a client, or nil when no API key is configured (so the caller can
 // fall back to the stub). An empty baseURL defaults to the test relay so an
 // incompletely configured local process cannot send traffic to production.
@@ -604,6 +625,7 @@ func (c *Client) submit(ctx context.Context, path string, body map[string]any, d
 	if taskStatusFailed(mr.Status) {
 		return res, upstreamError(status, mr, respBody)
 	}
+	notifyTaskAccepted(ctx, mr.ID)
 
 	// A 2xx with inline media is synchronous success only when the response is
 	// terminal (or has no status for legacy synchronous endpoints). A processing
@@ -635,6 +657,24 @@ func (c *Client) submit(ctx context.Context, path string, body map[string]any, d
 		return res, fmt.Errorf("relaymedia: HTTP %d with neither media url nor task id", status)
 	}
 	return res, upstreamError(status, mr, respBody)
+}
+
+// Resume continues polling an already accepted task. It never calls a create
+// endpoint, so process recovery cannot duplicate an upstream generation.
+func (c *Client) Resume(ctx context.Context, taskID string, deadline time.Duration) (Result, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return Result{}, fmt.Errorf("relaymedia: task id is required")
+	}
+	if deadline <= 0 {
+		deadline = imagePollDeadline
+	}
+	ctx, cancel := context.WithTimeout(ctx, deadline)
+	defer cancel()
+	return c.poll(ctx, taskID, Result{
+		TaskID:     taskID,
+		RequestURL: c.baseURL + "/v1/tasks/" + taskID,
+	})
 }
 
 // enrichAudio swaps an inline audio result for the fuller /v1/tasks/{id} view

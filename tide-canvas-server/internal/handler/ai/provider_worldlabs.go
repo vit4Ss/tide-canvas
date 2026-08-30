@@ -51,6 +51,19 @@ func (p *routedProviderClient) Generate(ctx context.Context, req GenerateRequest
 	return p.relay.Generate(ctx, req)
 }
 
+func (p *routedProviderClient) Resume(ctx context.Context, req ResumeRequest) (GenerateResult, error) {
+	// Direct World Labs recovery has a different operation contract. Relay tasks
+	// are safely resumable through the generic /v1/tasks/{id} endpoint.
+	if req.Model != nil && isWorldLabsModelConfig(req.Model.ModelID, req.Model.Config) {
+		return GenerateResult{}, errors.New("World Labs task recovery is not available")
+	}
+	resumer, ok := p.relay.(AiProviderResumer)
+	if !ok {
+		return GenerateResult{}, errors.New("relay task recovery is not available")
+	}
+	return resumer.Resume(ctx, req)
+}
+
 // model.AiModel does not expose methods, so keep routing in a small concrete
 // helper instead of teaching the shared model type about one supplier.
 func isWorldLabsModelConfig(modelID, rawConfig string) bool {

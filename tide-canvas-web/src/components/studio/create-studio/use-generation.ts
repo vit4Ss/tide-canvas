@@ -392,16 +392,10 @@ export function useGeneration(p: GenerationParams) {
       ));
       setBusy(true);
 
-      newCells.forEach((_, i) => {
-        const tick = setInterval(() => {
-          local[i] = Math.min(90, local[i] + 1.5);
-          setInflightRuns((prev) => prev.map((item) =>
-            item.taskId === taskId ? { ...item, progs: [...local] } : item,
-          ));
-          if (isForeground()) setProgs([...local]);
-        }, 500);
-        control.ticks.push(tick);
-      });
+      // Do not fabricate percentage progress. The previous 500ms timer climbed
+      // to 90% even after the backend process had restarted and lost its worker,
+      // producing misleading states such as a task frozen forever at 51%.
+      // Only authoritative progress returned by /api/ai/tasks/:id updates `local`.
 
       const clearTimers = () => {
         control.ticks.forEach((timer) => clearInterval(timer));

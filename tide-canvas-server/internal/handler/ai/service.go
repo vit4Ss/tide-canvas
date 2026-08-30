@@ -41,6 +41,14 @@ const (
 // fast-poll state through finalization.
 const taskStateTTL = 50 * time.Minute
 
+// A live worker updates ai_tasks every five seconds. Once that heartbeat has
+// been quiet for this grace period, a persisted APIRouter task id is safe to
+// resume from another process.
+const orphanResumeGrace = 15 * time.Second
+const unrecoverableOrphanGrace = time.Minute
+
+var orphanResumeClaims sync.Map // map[idgen.ID]struct{}, shared by route/facade/reconciler services
+
 const maxRenderedSkillPromptBytes = 1 << 20
 
 // service holds AI domain business logic.
@@ -687,6 +695,9 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 		Model:    m,
 		Provider: nil, // resolved by a real provider client; stub ignores it
 		Input:    input,
+		OnTaskAccepted: func(upstreamTaskID string) {
+			s.persistAcceptedTaskID(taskID, upstreamTaskID)
+		},
 	}
 	// 注入后台维护的预设工具配置（generate() 已用请求 context 预加载）。计费
 	// (resolveCost) 始终基于客户端原始 input 且早已完成，这里的注入绝不影响费用。
@@ -778,6 +789,183 @@ const taskHeartbeatInterval = 5 * time.Second
 
 func taskCanExecute(task *model.AiTask) bool {
 	return task != nil && task.Status == statusProcessing
+}
+
+func (s *service) persistAcceptedTaskID(taskID idgen.ID, upstreamTaskID string) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		lastErr = s.repo.recordUpstreamTask(ctx, taskID, upstreamTaskID)
+		cancel()
+		if lastErr == nil {
+			return
+		}
+		time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
+	}
+	logger.L().Error("ai: persist upstream task id failed",
+		zap.String("taskId", taskID.String()), zap.String("upstreamTaskId", upstreamTaskID), zap.Error(lastErr))
+}
+
+func (s *service) maybeResumeOrphanedTask(task *model.AiTask) bool {
+	if task == nil || task.Status != statusProcessing || strings.TrimSpace(task.UpstreamTaskID) == "" ||
+		task.UpdateTime.After(time.Now().Add(-orphanResumeGrace)) {
+		return false
+	}
+	if _, loaded := orphanResumeClaims.LoadOrStore(task.ID, struct{}{}); loaded {
+		return false
+	}
+	snapshot := *task
+	go func() {
+		defer orphanResumeClaims.Delete(snapshot.ID)
+		s.resumeOrphanedTask(snapshot)
+	}()
+	return true
+}
+
+func (s *service) resumeOrphanedTasks(ctx context.Context) (int, error) {
+	rows, err := s.repo.orphanedProcessingTasks(ctx, time.Now().Add(-orphanResumeGrace), 100)
+	if err != nil {
+		return 0, err
+	}
+	started := 0
+	for i := range rows {
+		if s.maybeResumeOrphanedTask(&rows[i]) {
+			started++
+		}
+	}
+	return started, nil
+}
+
+func (s *service) failUnrecoverableOrphanedTasks(ctx context.Context) (int, error) {
+	rows, err := s.repo.unrecoverableProcessingTasks(ctx, time.Now().Add(-unrecoverableOrphanGrace), 100)
+	if err != nil {
+		return 0, err
+	}
+	failed := 0
+	for i := range rows {
+		task := &rows[i]
+		end := time.Now()
+		task.Status = statusFailed
+		task.Progress = 100
+		task.ErrorMsg = "generation interrupted (server restart; upstream task id unavailable)"
+		task.UpdateTime = end
+		task.CompleteTime = &end
+		updated, persistErr := s.repo.finalizeTask(ctx, task, statusProcessing)
+		if persistErr != nil {
+			return failed, persistErr
+		}
+		if !updated {
+			continue
+		}
+		failed++
+		s.writeTaskState(ctx, task)
+		if refundErr := refundTaskOnce(s.repo.db, task.ID, "generation restart recovery refund"); refundErr != nil {
+			logger.L().Error("ai: unrecoverable task refund failed", zap.String("taskId", task.ID.String()), zap.Error(refundErr))
+		}
+	}
+	return failed, nil
+}
+
+func (s *service) resumeOrphanedTask(snapshot model.AiTask) {
+	ctx := context.Background()
+	current, err := s.repo.getTask(ctx, snapshot.ID)
+	if err != nil || current == nil || current.Status != statusProcessing ||
+		strings.TrimSpace(current.UpstreamTaskID) == "" ||
+		current.UpdateTime.After(time.Now().Add(-orphanResumeGrace)) {
+		return
+	}
+	resumer, ok := s.provider.(AiProviderResumer)
+	if !ok {
+		return
+	}
+	m, err := s.repo.findModel(ctx, current.ModelID.String())
+	if err != nil {
+		logger.L().Warn("ai: recovery model lookup failed", zap.String("taskId", current.ID.String()), zap.Error(err))
+		return
+	}
+	if m == nil {
+		m = &model.AiModel{ID: current.ModelID, Name: current.ModelName}
+	}
+	gh, ok := s.registry.get(current.Handler)
+	if !ok {
+		return
+	}
+	// Claim freshness in the database before the potentially long provider poll.
+	// A fast transport failure then waits one grace window before retrying instead
+	// of every 1.5-second browser poll spawning another recovery request.
+	if !s.heartbeatProcessingTask(ctx, current.ID) {
+		return
+	}
+
+	resumeCtx, cancel := context.WithCancel(context.Background())
+	s.taskCancels.Store(current.ID, cancel)
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		s.watchProcessingTask(resumeCtx, current.ID)
+	}()
+	startedAt := time.Now()
+	res, genErr := resumer.Resume(resumeCtx, ResumeRequest{
+		Handler: current.Handler, Model: m, UpstreamTaskID: current.UpstreamTaskID,
+	})
+	cancel()
+	<-watchDone
+	s.taskCancels.Delete(current.ID)
+
+	// Transport failures are retryable: leave the durable row Processing so the
+	// next reconciler pass can reconnect. A structured upstream failure is final.
+	var upstreamErr *relaymedia.UpstreamError
+	if genErr != nil && !errors.As(genErr, &upstreamErr) {
+		logger.L().Warn("ai: recovery poll interrupted",
+			zap.String("taskId", current.ID.String()), zap.Error(genErr))
+		return
+	}
+
+	end := time.Now()
+	current.UpdateTime = end
+	current.CompleteTime = &end
+	if genErr != nil || (res.ResultURL == "" && !resultHasText(res)) {
+		current.Status = statusFailed
+		current.Progress = 100
+		current.ErrorMsg = userFacingGenErrorForModel(s.repo.db, m, genErr)
+	} else {
+		current.Status = statusSuccess
+		current.Progress = 100
+		current.ResultUrl = res.ResultURL
+		current.ResultMeta = buildResultMeta(res)
+	}
+	updated, persistErr := s.repo.finalizeTask(context.Background(), current, statusProcessing)
+	if persistErr != nil || !updated {
+		if persistErr != nil {
+			logger.L().Error("ai: persist recovered task failed", zap.String("taskId", current.ID.String()), zap.Error(persistErr))
+		}
+		return
+	}
+	s.writeTaskState(context.Background(), current)
+
+	refunded := false
+	if current.Status == statusFailed {
+		if err := refundTaskOnce(s.repo.db, current.ID, "generation restart recovery refund"); err != nil {
+			logger.L().Error("ai: recovered task refund failed", zap.String("taskId", current.ID.String()), zap.Error(err))
+		} else {
+			refunded = true
+		}
+		s.publishGenerationFailure(current.ID, gh.Name(), m, genErr, int(current.PointCost), refunded)
+	}
+
+	dto := generateDTO{
+		Handler: current.Handler, ModelID: m.ModelID, ProjectID: current.ProjectID,
+		Input: json.RawMessage(current.Input),
+	}
+	if current.Status == statusSuccess && current.RegisterWork {
+		s.registerWork(context.Background(), current, gh, m, current.UserID, dto, res)
+	}
+	current.Refunded = refunded
+	s.writeLog(context.Background(), current, gh, m, current.UserID, dto, res, genErr,
+		startedAt, time.Since(startedAt).Milliseconds())
+	logger.L().Info("ai: resumed upstream task after restart",
+		zap.String("taskId", current.ID.String()), zap.String("upstreamTaskId", current.UpstreamTaskID),
+		zap.Int("status", current.Status))
 }
 
 func (s *service) heartbeatProcessingTask(ctx context.Context, taskID idgen.ID) bool {
@@ -1054,6 +1242,7 @@ func (s *service) getTask(ctx context.Context, userID idgen.ID, id idgen.ID) (*A
 		if p, ok := s.readProgress(ctx, id); ok && p > task.Progress {
 			task.Progress = p
 		}
+		s.maybeResumeOrphanedTask(task)
 	}
 	vo := toTaskVO(task)
 	return &vo, nil

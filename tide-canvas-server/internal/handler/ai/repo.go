@@ -57,6 +57,42 @@ func (r *repo) updateTask(ctx context.Context, t *model.AiTask) error {
 	return r.db.WithContext(ctx).Save(t).Error
 }
 
+func (r *repo) recordUpstreamTask(ctx context.Context, taskID idgen.ID, upstreamTaskID string) error {
+	upstreamTaskID = strings.TrimSpace(upstreamTaskID)
+	if taskID == 0 || upstreamTaskID == "" {
+		return nil
+	}
+	return r.db.WithContext(ctx).Model(&model.AiTask{}).
+		Where("id = ? AND status = ? AND (upstream_task_id = '' OR upstream_task_id = ?)", taskID, statusProcessing, upstreamTaskID).
+		Updates(map[string]any{
+			"upstream_task_id": upstreamTaskID,
+			"update_time":      time.Now(),
+			"heartbeat_seq":    gorm.Expr("heartbeat_seq + 1"),
+		}).Error
+}
+
+func (r *repo) orphanedProcessingTasks(ctx context.Context, before time.Time, limit int) ([]model.AiTask, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var rows []model.AiTask
+	err := r.db.WithContext(ctx).
+		Where("status = ? AND upstream_task_id <> '' AND update_time < ?", statusProcessing, before).
+		Order("update_time ASC, id ASC").Limit(limit).Find(&rows).Error
+	return rows, err
+}
+
+func (r *repo) unrecoverableProcessingTasks(ctx context.Context, before time.Time, limit int) ([]model.AiTask, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var rows []model.AiTask
+	err := r.db.WithContext(ctx).
+		Where("status = ? AND upstream_task_id = '' AND update_time < ?", statusProcessing, before).
+		Order("update_time ASC, id ASC").Limit(limit).Find(&rows).Error
+	return rows, err
+}
+
 // finalizeTask writes terminal state (status/progress/result/error/timestamps)
 // only if the row is still in `fromStatus` (Processing). This makes the terminal
 // transition atomic so a concurrent cancel/delete can never be overwritten by a

@@ -17,12 +17,13 @@ test("an OSS source that rejects image processing uses its original URL afterwar
   assert.equal(ossDisplayUrl(source, 1280), source);
 });
 
-test("test CDN thumbnails use the same safe OSS downsampling path", () => {
+test("test CDN thumbnails use the local optimizer because its CDN drops OSS processing queries", () => {
   const source = "https://test-cdn.mbfczzzz.top/canvas/uploads/gen/reference.png";
   assert.equal(
     ossDisplayUrl(source, 160),
-    `${source}?x-oss-process=image/resize,w_160,m_lfit`,
+    `/_next/image?url=${encodeURIComponent(source)}&w=160&q=75`,
   );
+  assert.match(ossDisplayUrl(source, 500), /&w=512&q=75$/);
 });
 
 test("image recovery tries the original once and clears stale failure styles after a later load", () => {

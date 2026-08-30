@@ -95,18 +95,42 @@ func StartTaskReconciler(ctx context.Context, d *app.Deps) {
 		return
 	}
 	go func() {
+		svc := newService(d)
 		if n, err := SweepStaleTasks(d); err != nil {
 			logger.L().Warn("ai: startup task reconciliation failed", zap.Error(err))
 		} else if n > 0 {
 			logger.L().Info("ai: reconciled stale tasks", zap.Int64("count", n))
 		}
+		if n, err := svc.resumeOrphanedTasks(context.Background()); err != nil {
+			logger.L().Warn("ai: startup upstream task recovery failed", zap.Error(err))
+		} else if n > 0 {
+			logger.L().Info("ai: startup upstream task recovery started", zap.Int("count", n))
+		}
+		if n, err := svc.failUnrecoverableOrphanedTasks(context.Background()); err != nil {
+			logger.L().Warn("ai: startup unrecoverable task reconciliation failed", zap.Error(err))
+		} else if n > 0 {
+			logger.L().Info("ai: startup unrecoverable tasks refunded", zap.Int("count", n))
+		}
 
 		ticker := time.NewTicker(taskReconcileInterval)
+		resumeTicker := time.NewTicker(orphanResumeGrace)
 		defer ticker.Stop()
+		defer resumeTicker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
+			case <-resumeTicker.C:
+				if n, err := svc.resumeOrphanedTasks(context.Background()); err != nil {
+					logger.L().Warn("ai: upstream task recovery scan failed", zap.Error(err))
+				} else if n > 0 {
+					logger.L().Info("ai: upstream task recovery started", zap.Int("count", n))
+				}
+				if n, err := svc.failUnrecoverableOrphanedTasks(context.Background()); err != nil {
+					logger.L().Warn("ai: unrecoverable task reconciliation failed", zap.Error(err))
+				} else if n > 0 {
+					logger.L().Info("ai: unrecoverable tasks refunded", zap.Int("count", n))
+				}
 			case <-ticker.C:
 				if n, err := SweepStaleTasks(d); err != nil {
 					logger.L().Warn("ai: periodic task reconciliation failed", zap.Error(err))

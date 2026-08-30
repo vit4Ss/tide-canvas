@@ -144,6 +144,44 @@ func TestSubmitReturnsStructuredErrorFromFlatFailedTask(t *testing.T) {
 	}
 }
 
+func TestAsyncTaskIDIsReportedBeforePollingAndCanBeResumedWithoutResubmit(t *testing.T) {
+	t.Parallel()
+	postCount, getCount := 0, 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost:
+			postCount++
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"id":"task_restart","status":"processing"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tasks/task_restart":
+			getCount++
+			_, _ = w.Write([]byte(`{"id":"task_restart","status":"succeeded","data":[{"url":"https://cdn/result.png"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := &Client{baseURL: srv.URL, apiKey: "k", hc: srv.Client()}
+	accepted := ""
+	ctx := WithTaskAccepted(context.Background(), func(taskID string) { accepted = taskID })
+	res, err := c.submit(ctx, pathImageGenerations, map[string]any{"model": "m", "prompt": "p"}, time.Second)
+	if err != nil || accepted != "task_restart" || res.URLs[0] != "https://cdn/result.png" {
+		t.Fatalf("submit result=%#v accepted=%q err=%v", res, accepted, err)
+	}
+	if postCount != 1 {
+		t.Fatalf("post count=%d, want 1", postCount)
+	}
+
+	res, err = c.Resume(context.Background(), "task_restart", time.Second)
+	if err != nil || res.URLs[0] != "https://cdn/result.png" {
+		t.Fatalf("resume result=%#v err=%v", res, err)
+	}
+	if postCount != 1 || getCount != 2 {
+		t.Fatalf("resume resubmitted work: post=%d get=%d", postCount, getCount)
+	}
+}
+
 // Suno 实测(2026-07-18)同步 200 的 data 只带主歌:两首全集与 clip_id 只在
 // /v1/tasks/{id}。同步成功后必须补查任务详情,否则第二首歌与延长/翻唱引用全丢。
 func TestSubmitAudioSyncEnrichesFromTaskDetail(t *testing.T) {

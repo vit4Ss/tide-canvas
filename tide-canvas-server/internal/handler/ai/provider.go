@@ -20,6 +20,18 @@ type GenerateRequest struct {
 	// PresetExtra is the decoded ai_tools ExtraParams object, same lifecycle as
 	// PresetPrompt: nil means "use the handler's builtin extra defaults".
 	PresetExtra map[string]any
+	// OnTaskAccepted is called synchronously after an asynchronous provider task
+	// id is known and before polling begins. The service uses it as a durability
+	// barrier for process-restart recovery.
+	OnTaskAccepted func(string)
+}
+
+// ResumeRequest identifies a previously accepted asynchronous provider task.
+// Resuming must never submit a second generation or charge the user again.
+type ResumeRequest struct {
+	Handler        string
+	Model          *model.AiModel
+	UpstreamTaskID string
 }
 
 // GenerateResult is the normalized provider output. For async upstreams the
@@ -47,6 +59,12 @@ type AiProviderClient interface {
 	Generate(ctx context.Context, req GenerateRequest) (GenerateResult, error)
 	// Type reports the provider client identifier (e.g. "stub", "openai").
 	Type() string
+}
+
+// AiProviderResumer is implemented by providers whose task API can be polled
+// after this process restarts.
+type AiProviderResumer interface {
+	Resume(ctx context.Context, req ResumeRequest) (GenerateResult, error)
 }
 
 // stubProviderClient is a no-credentials placeholder. It does NOT fabricate a

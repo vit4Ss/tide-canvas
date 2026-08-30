@@ -293,6 +293,9 @@ export function useUploadSlots({
   const chooseAssets = async (assets: PickedAsset[]) => {
     const k = assetPick;
     if (!k || assets.length === 0) return;
+    // 先收起弹窗再做 3D 素材大小查询。网络查询可能需要数秒，不能让用户
+    // 留在仍可点击的选择器里误以为卡死、反复提交同一批素材。
+    setAssetPick(null);
     const files = await Promise.all(
       assets.map(async (a) => {
         let sizeBytes = a.sizeBytes;
@@ -304,7 +307,7 @@ export function useUploadSlots({
         return { url: a.url, name: a.name, sizeBytes };
       }),
     );
-    if (addRealFiles(k, files) > 0) setAssetPick(null);
+    addRealFiles(k, files);
   };
 
   /** 弹窗需要的槽位余量与去重信息（当前打开的槽位；未打开时为空）。
