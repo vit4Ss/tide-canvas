@@ -15,6 +15,9 @@ test("聊天资产选择器支持受上限约束的多选并集中确认", () =>
   assert.match(dialog, /multiPick/);
   assert.match(dialog, /pickedUrls={pickedUrls}/);
   assert.match(dialog, /disabledPickUrls={existing}/);
+  assert.match(dialog, /const selectedRef = useRef\(selected\)/);
+  assert.match(dialog, /pickLimitReached={limitReached}/);
+  assert.doesNotMatch(dialog, /setSelected\(\(current\) =>[\s\S]*?toast\.info/);
   assert.match(dialog, /`已选 \$\{selected\.size\} 项 · 还可选 \$\{Math\.max\(0, remaining - selected\.size\)\} 项`/);
   assert.match(dialog, /onPick\(\[\.\.\.selected\.values\(\)\]\)/);
   assert.match(dialog, /const \[confirming, setConfirming\] = useState\(false\)/);

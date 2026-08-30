@@ -18,6 +18,12 @@ test("创作台资产多选只更新变化的卡片并保持连续点击响应",
   assert.match(browser, /SelectBadge selected={pickSelected} disabled={pickDisabled}/);
   assert.match(styles, /\.as-card\.is-pick-disabled\{cursor:not-allowed;/);
   assert.match(styles, /\.as-select-badge\{[\s\S]*?pointer-events:none;/);
+  assert.match(modal, /const selectedRef = useRef\(selected\)/);
+  assert.match(modal, /pickLimitReached={limitReached}/);
+  assert.doesNotMatch(modal, /setSelected\(\(current\) =>[\s\S]*?toast\.info/);
+  assert.match(browser, /ossDisplayUrl\(coverSource, 384\)/);
+  assert.match(styles, /\.ws-assetbox \.as-card\{contain:layout paint style;/);
+  assert.match(styles, /\.ws-assetbox \.as-card\.is-pick-disabled:hover/);
 });
 
 test("资产弹窗只解码真实缩略图并避免全屏 GPU 模糊合成", () => {
@@ -34,6 +40,6 @@ test("创作台资产确认有防重复状态并在异步检查前关闭弹窗",
   assert.match(modal, /const confirmingRef = useRef\(false\)/);
   assert.match(modal, /if \(confirmingRef\.current \|\| assets\.length === 0\) return/);
   assert.match(modal, /aria-busy={confirming}/);
-  assert.match(modal, /已选 \{selected\.size\} 项 · 还可选 \{Math\.max\(0, remaining - selected\.size\)\} 项/);
+  assert.match(modal, /已达到上限，请取消一项后再选/);
   assert.match(slots, /const k = assetPick;[\s\S]*?setAssetPick\(null\);[\s\S]*?await Promise\.all/);
 });

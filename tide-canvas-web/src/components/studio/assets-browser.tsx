@@ -347,6 +347,7 @@ function groupByDate<T>(rows: T[], getTime: (r: T) => string): Group<T>[] {
 export function AssetsBrowser({
   pickMode = false,
   multiPick = false,
+  pickLimitReached = false,
   onPick,
   pickedUrls,
   disabledPickUrls,
@@ -358,6 +359,8 @@ export function AssetsBrowser({
   pickMode?: boolean;
   /** pickMode 下允许连续勾选，由调用方集中确认。 */
   multiPick?: boolean;
+  /** 多选容量已满；未选卡片仍接收点击以展示明确的上限提示。 */
+  pickLimitReached?: boolean;
   onPick?: (asset: PickedAsset) => void;
   pickedUrls?: ReadonlySet<string>;
   disabledPickUrls?: ReadonlySet<string>;
@@ -809,7 +812,7 @@ export function AssetsBrowser({
   };
 
   return (
-    <main className="asset">
+    <main className={`asset${pickMode && multiPick && pickLimitReached ? " is-pick-limit" : ""}`}>
       <div className="asset-top">
         <div className="asset-tabs" id="asset-tabs">
           {TABS.map((x) => (
@@ -1212,10 +1215,10 @@ const TaskCard = memo(function TaskCard({
   // 3D 可打开/下载的主文件(resultUrl 缺失时回退 meta.assets,防老数据)。
   const threeDUrl = kind === "3d" ? threeDModelUrlOf(task) : undefined;
   const openUrl = kind === "3d" ? threeDUrl : task.resultUrl;
-  // 卡片封面一律走降采样:原图动辄 2K~4K 几 MB,卡片才 ~340px(2x 余量取 640)。
+  // 卡片实际约 148px；384px 足够覆盖高分屏，同时比 640px 显著降低解码/GPU 压力。
   // 音频结果是 mp3,不能当封面图铺——改走 SongCard 歌曲行(见下)。
   const coverSource = kind === "image" ? task.resultUrl : threeDPreview;
-  const coverUrl = coverSource ? (ossDisplayUrl(coverSource, 640) ?? coverSource) : undefined;
+  const coverUrl = coverSource ? (ossDisplayUrl(coverSource, 384) ?? coverSource) : undefined;
   const fallback = fallbackCover(task.id);
   // 音频分轨信息(歌名/封面/时长/地址)取自 resultMeta.tracks;Suno 一次两首,
   // 两轨都要成行,少了第二首就等于丢歌。
@@ -1536,7 +1539,7 @@ const UploadCard = memo(function UploadCard({
         // eslint-disable-next-line @next/next/no-img-element
         <img
           className="cov"
-          src={ossDisplayUrl(file.fileUrl, 640) ?? file.fileUrl}
+          src={ossDisplayUrl(file.fileUrl, 384) ?? file.fileUrl}
           alt=""
           loading="lazy"
           decoding="async"

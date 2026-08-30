@@ -3,7 +3,7 @@
 /* ── reference-source popovers (extracted verbatim from page.tsx) ──────────────
    渲染在 chat-wrap 顶层（fixed 定位，与创作台同一套 ws-srcmenu/ws-srcmask 结构）。 */
 
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { AssetsBrowser, type PickedAsset } from "@/components/studio/assets-browser";
 import type { AssetFilterKey } from "@/components/studio/assets-browser-policy";
 import { toast } from "@/components/shared/toast";
@@ -77,25 +77,24 @@ export function AssetPickerDialog({
   const allowedFilters = refPolicy?.kinds.flatMap((kind) => FILTERS_BY_KIND[kind]) ?? [];
   const existing = useMemo(() => new Set(existingUrls.filter(Boolean)), [existingUrls]);
   const [selected, setSelected] = useState<Map<string, PickedAsset>>(() => new Map());
+  const selectedRef = useRef(selected);
   const [confirming, setConfirming] = useState(false);
   const confirmingRef = useRef(false);
   const pickedUrls = useMemo(() => new Set(selected.keys()), [selected]);
   const remaining = Math.max(0, (refPolicy?.max ?? 0) - existingCount);
-  const toggleAsset = (asset: PickedAsset) => {
-    setSelected((current) => {
-      const next = new Map(current);
-      if (next.has(asset.url)) {
-        next.delete(asset.url);
-        return next;
-      }
-      if (next.size >= remaining) {
-        toast.info(`本次最多还能选择 ${remaining} 个素材`);
-        return current;
-      }
-      next.set(asset.url, asset);
-      return next;
-    });
-  };
+  const limitReached = selected.size >= remaining;
+  const toggleAsset = useCallback((asset: PickedAsset) => {
+    const current = selectedRef.current;
+    if (!current.has(asset.url) && current.size >= remaining) {
+      toast.info(`已达到本次选择上限（${remaining} 项），请先取消一项`);
+      return;
+    }
+    const next = new Map(current);
+    if (next.has(asset.url)) next.delete(asset.url);
+    else next.set(asset.url, asset);
+    selectedRef.current = next;
+    setSelected(next);
+  }, [remaining]);
   if (!refPolicy?.kinds.length) return null;
   return (
     <div className="ws-srcmask" onClick={onClose}>
@@ -110,6 +109,7 @@ export function AssetPickerDialog({
           <AssetsBrowser
             pickMode
             multiPick
+            pickLimitReached={limitReached}
             onPick={toggleAsset}
             pickedUrls={pickedUrls}
             disabledPickUrls={existing}
@@ -119,9 +119,11 @@ export function AssetPickerDialog({
           />
         </div>
         <div className="ws-assetbox-f">
-          <span>
+          <span className={limitReached ? "is-limit" : undefined}>
             {remaining > 0
-              ? selected.size > 0
+              ? limitReached
+                ? `已选 ${selected.size} 项 · 已达到上限，请取消一项后再选`
+                : selected.size > 0
                 ? `已选 ${selected.size} 项 · 还可选 ${Math.max(0, remaining - selected.size)} 项`
                 : `本次最多可选 ${remaining} 项`
               : "已达到素材数量上限"}

@@ -47,9 +47,11 @@ export function AssetPickerModal({
   const multi = remaining > 1;
   const existing = useMemo(() => new Set((existingUrls ?? []).filter(Boolean)), [existingUrls]);
   const [selected, setSelected] = useState<Map<string, PickedAsset>>(() => new Map());
+  const selectedRef = useRef(selected);
   const [confirming, setConfirming] = useState(false);
   const confirmingRef = useRef(false);
   const pickedUrls = useMemo(() => new Set(selected.keys()), [selected]);
+  const limitReached = multi && selected.size >= remaining;
 
   const submitAssets = useCallback(async (assets: PickedAsset[]) => {
     if (confirmingRef.current || assets.length === 0) return;
@@ -72,19 +74,16 @@ export function AssetPickerModal({
       void submitAssets([asset]);
       return;
     }
-    setSelected((current) => {
-      const next = new Map(current);
-      if (next.has(asset.url)) {
-        next.delete(asset.url);
-        return next;
-      }
-      if (next.size >= remaining) {
-        toast.info(`本次最多还能选择 ${remaining} 个素材`);
-        return current;
-      }
-      next.set(asset.url, asset);
-      return next;
-    });
+    const current = selectedRef.current;
+    if (!current.has(asset.url) && current.size >= remaining) {
+      toast.info(`已达到本次选择上限（${remaining} 项），请先取消一项`);
+      return;
+    }
+    const next = new Map(current);
+    if (next.has(asset.url)) next.delete(asset.url);
+    else next.set(asset.url, asset);
+    selectedRef.current = next;
+    setSelected(next);
   }, [multi, remaining, submitAssets]);
 
   return (
@@ -100,6 +99,7 @@ export function AssetPickerModal({
           <AssetsBrowser
             pickMode
             multiPick={multi}
+            pickLimitReached={limitReached}
             onPick={toggleAsset}
             pickedUrls={multi ? pickedUrls : undefined}
             disabledPickUrls={existing}
@@ -110,7 +110,11 @@ export function AssetPickerModal({
         </div>
         {multi ? (
           <div className="ws-assetbox-f">
-            <span>已选 {selected.size} 项 · 还可选 {Math.max(0, remaining - selected.size)} 项</span>
+            <span className={limitReached ? "is-limit" : undefined}>
+              {limitReached
+                ? `已选 ${selected.size} 项 · 已达到上限，请取消一项后再选`
+                : `已选 ${selected.size} 项 · 还可选 ${Math.max(0, remaining - selected.size)} 项`}
+            </span>
             <div>
               <button type="button" className="ghost" disabled={confirming} onClick={onClose}>取消</button>
               <button

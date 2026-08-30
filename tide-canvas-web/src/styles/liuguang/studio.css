@@ -686,6 +686,7 @@
 .ws-assetbox-f button.primary{background:var(--text); border-color:var(--text); color:var(--surface);}
 .ws-assetbox-f button:hover:not(:disabled){border-color:var(--border-strong);}
 .ws-assetbox-f button:disabled{cursor:not-allowed; opacity:.42;}
+.ws-assetbox-f>span.is-limit{color:#f1b761; font-weight:600;}
 /* 生成中占位卡（创作台生成时，生成历史最前面的 loading 态） */
 .ws-hcard.loading{cursor:default; background:rgba(255,255,255,.05); box-shadow:inset 0 0 0 1px rgba(255,255,255,.1);}
 .ws-hcard.loading .cov{background:linear-gradient(110deg,transparent 30%,color-mix(in oklab,var(--accent) 22%,transparent) 50%,transparent 70%); background-size:220% 100%; animation:wsShim 1.1s linear infinite;}
@@ -1235,6 +1236,19 @@
 .as-card.is-pick-disabled{cursor:not-allowed;}
 .as-card.is-pick-disabled:hover{transform:none; box-shadow:var(--shadow-sm);}
 .as-select-badge.is-disabled{border-color:rgba(255,255,255,.58); color:rgba(255,255,255,.82); background:rgba(42,44,50,.78); box-shadow:0 2px 8px rgba(0,0,0,.22);}
+
+/* 资产弹窗是高频连续点击区：将每张选中卡的多层外发光/缩放改成卡内描边，
+   并隔离卡片绘制，避免选到十几张时整张网格反复触发 GPU 合成。 */
+.ws-assetbox .as-card{contain:layout paint style; transition:box-shadow .12s var(--ease),opacity .12s var(--ease);}
+.ws-assetbox .as-card:hover,.ws-assetbox .as-card.is-selected,.ws-assetbox .as-card.is-selected:hover{
+  transform:none; box-shadow:inset 0 0 0 3px #7568ff;}
+.ws-assetbox .as-card:hover .cov{transform:none;}
+.ws-assetbox .as-card.is-selected::after{background:rgba(117,104,255,.1); box-shadow:none;}
+.ws-assetbox .as-select-badge{box-shadow:none;}
+.ws-assetbox .as-card.is-pick-disabled:hover{box-shadow:inset 0 0 0 1px rgba(255,255,255,.16);}
+.asset.is-pick-limit .as-card:not(.is-selected):not(.is-pick-disabled){opacity:.58; cursor:not-allowed;}
+.asset.is-pick-limit .as-card:not(.is-selected):not(.is-pick-disabled):hover{box-shadow:inset 0 0 0 1px rgba(255,255,255,.18);}
+.asset.is-pick-limit .as-songrow-pick:not([aria-pressed="true"]){opacity:.55; cursor:not-allowed;}
 
 /* upload-history cards (ported from updated design studio.css) */
 .as-card.as-up .as-up-badge{position:absolute; top:8px; right:8px; z-index:3; font-family:var(--mono); font-size:9.5px; font-weight:600;
