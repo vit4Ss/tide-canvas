@@ -689,6 +689,8 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	} else if clipReshootErr == nil {
 		input = s.applySkill(input, gh)
 	}
+	// 基础能力型工具(局部重绘)的「只改描述部分 + 画布形状不变」护栏。
+	applyBaseToolPromptGuard(tool, gh, input)
 	promptErr := validateGenerationPromptSize(input)
 	req := GenerateRequest{
 		Handler:  dto.Handler,

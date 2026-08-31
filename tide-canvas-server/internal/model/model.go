@@ -388,8 +388,11 @@ var CanonicalAiTools = []AiTool{
 		Placeholder: "描述要修改的部分…\n例：把天空换成日落晚霞，保持其余不变",
 	},
 	{
+		// Desc 写明白底:编辑通道无法可靠输出透明 alpha,预设指令即为纯白背景——
+		// 描述与实际产物一致,避免用户按"透明 PNG"预期使用。(FirstOrCreate 只
+		// 播种缺失行,存量部署由管理员在后台工具管理里同步文案。)
 		Key: "rmbg", Handler: "remove_bg", Type: AiToolTypeImage, Enabled: true, ShowPage: true,
-		Title: "一键抠图", Desc: "智能移除背景与对象，输出干净主体。",
+		Title: "一键抠图", Desc: "智能移除背景与对象，输出白底干净主体。",
 		Icon: "⬡", CoverHues: "[95,140,70]", SortOrder: 3,
 		PresetPrompt: "Completely remove the background of this image. Keep the main foreground subject perfectly intact " +
 			"with clean, precise edges and no halo or leftover fringe. Place the subject on a plain solid white " +
@@ -465,6 +468,19 @@ func ensureBaselineTools(db *gorm.DB) error {
 		func(db *gorm.DB) error {
 			return db.Model(&AiTool{}).Where("`key` IN ?", []string{"rmobj", "relight"}).
 				Update("show_page", true).Error
+		}); err != nil {
+		return err
+	}
+
+	// 一键抠图描述与实际产物对齐(编辑通道输出白底,非透明 PNG):仅当存量行
+	// 仍是旧内建文案时才更新,管理员自定义过的描述原样保留。
+	if err := runOnce(db,
+		"tools.desc.rmbgWhiteBg",
+		"一键抠图描述改为白底文案的一次性迁移标记(勿删,删除会在重启时重新执行)",
+		func(db *gorm.DB) error {
+			return db.Model(&AiTool{}).
+				Where("`key` = ? AND `desc` = ?", "rmbg", "智能移除背景与对象，输出干净主体。").
+				Update("desc", "智能移除背景与对象，输出白底干净主体。").Error
 		}); err != nil {
 		return err
 	}

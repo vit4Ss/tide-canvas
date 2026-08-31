@@ -71,7 +71,9 @@ export const FALLBACK_TOOLS: FallbackToolDef[] = [
   {
     key: "rmbg",
     title: "一键抠图",
-    desc: "智能移除背景与对象，输出干净主体。",
+    // 与后端 CanonicalAiTools 同步:实际产物是纯白背景(编辑通道无法可靠输出
+    // 透明 alpha),描述写明白底,避免按"透明 PNG"预期使用。
+    desc: "智能移除背景与对象，输出白底干净主体。",
     handler: "remove_bg",
     type: "image",
     icon: "⬡",
