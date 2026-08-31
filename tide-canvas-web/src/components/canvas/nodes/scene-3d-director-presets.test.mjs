@@ -397,3 +397,136 @@ test("restored geometry ids cannot create unreachable duplicate scene objects", 
   assert.match(rigSource, /while \(propIds\.has\(id\)\)/);
   assert.match(rigSource, /propIds\.add\(id\)/);
 });
+
+test("whitebox quality guards: wall category, grounded snap, duplicate dedupe, seat facing", () => {
+  // 名字推断新增墙类;直出模式的墙经模板限厚。
+  assert.equal(inferWhiteboxCategory("玻璃隔断"), "wall");
+  assert.equal(inferWhiteboxCategory("背景墙"), "wall");
+
+  const parsed = parseRecognizedWhitebox(JSON.stringify({
+    imageType: "perspective",
+    props: [
+      // 悬空的落地椅(y 偏差 0.3 ≤ 0.35)→ 吸附回 h/2。
+      { name: "餐椅", kind: "box", category: "chair", x: 2, y: 0.8, z: 0, rotation: 0, w: 0.5, h: 1.0, d: 0.5 },
+      // 同一沙发被标两次(同类近心)→ 去重保留占地更大的。
+      { name: "沙发", kind: "box", category: "sofa", x: -2, y: 0.4, z: 1, rotation: 0, w: 2.2, h: 0.8, d: 0.9 },
+      { name: "卡座", kind: "box", category: "sofa", x: -2.1, y: 0.4, z: 1.05, rotation: 0, w: 1.8, h: 0.8, d: 0.8 },
+      // 挂墙吊柜(y 偏差远超 0.35)→ 保留悬空。
+      { name: "吊柜", kind: "box", category: "cabinet", x: 4, y: 1.8, z: -2, rotation: 0, w: 1.2, h: 0.6, d: 0.35 },
+      // 直出模式的墙:模板限厚到 0.25 以内。
+      { name: "背景墙", kind: "box", category: "wall", x: 0, y: 1.5, z: -4, rotation: 0, w: 8, h: 3, d: 0.8 },
+    ],
+    characters: [],
+  }));
+  assert.ok(parsed);
+  const names = (parsed.props ?? []).map((prop) => prop.name);
+  // 去重:只剩一件沙发(展开为 座/靠背/扶手),卡座消失。
+  assert.ok(!names.some((name) => name.startsWith("卡座")));
+  assert.ok(names.some((name) => name.startsWith("沙发")));
+  // 椅子吸附落地:展开的座面中心高度应基于 base=0(seatH=0.5,座面 y=0.475)。
+  const seat = (parsed.props ?? []).find((prop) => prop.name === "餐椅·座面");
+  assert.ok(seat && Math.abs(seat.y - 0.475) < 1e-6, `seat y = ${seat?.y}`);
+  // 吊柜不被吸附:柜体中心仍在 1.8 附近(顶板/柜体基于 base=1.5)。
+  const hangingBody = (parsed.props ?? []).find((prop) => prop.name === "吊柜·柜体");
+  assert.ok(hangingBody && hangingBody.y > 1.4, `hanging cabinet y = ${hangingBody?.y}`);
+  // 墙限厚。
+  const wall = (parsed.props ?? []).find((prop) => prop.name === "背景墙");
+  assert.ok(wall && wall.d <= 0.25 && wall.h === 3 && wall.w === 8, `wall = ${JSON.stringify(wall)}`);
+});
+
+test("whitebox prompt teaches perspective walls and single-annotation rule", () => {
+  const prompt = buildWhiteboxRecognitionPrompt();
+  assert.ok(prompt.includes("category用wall"));
+  assert.ok(prompt.includes("同一件物体只标一次"));
+  assert.ok(prompt.includes("落地物体必须取h/2"));
+});
+
+test("panorama door against a wall sits flush instead of floating half a meter into the room", () => {
+  // 一面正前方的墙(两点连线,距观察点约 3.2 米),门贴墙标注。
+  // 门的贴墙落位应使用墙厚级进深(0.12)而非家具默认 0.6——门心距墙面
+  // 不应超过 ~0.15 米。
+  const parsed = parseRecognizedWhitebox(JSON.stringify({
+    imageType: "panorama",
+    cameraHeight: 1.6,
+    room: {
+      wallHeight: 3,
+      wallRuns: [[{ u: 0.42, v: 0.65 }, { u: 0.58, v: 0.65 }]],
+    },
+    objects: [
+      { name: "门", kind: "box", category: "door", u1: 0.48, u2: 0.52, vBottom: 0.66, vTop: 0.34, grounded: true, againstWall: true, depth: 0 },
+    ],
+    characters: [],
+  }));
+  assert.ok(parsed);
+  const door = (parsed.props ?? []).find((prop) => prop.name === "门");
+  const wall = (parsed.props ?? []).find((prop) => prop.name.startsWith("墙"));
+  assert.ok(door && wall, "door and wall must both exist");
+  // 门与墙的 z 距离(都在正前方,x≈0):贴齐意味着 |z差| 很小。
+  assert.ok(Math.abs(door.z - wall.z) < 0.35, `door z=${door.z}, wall z=${wall.z}`);
+});
+
+test("dedupe keeps perpendicular L-sofa segments while merging same-orientation doubles", () => {
+  const parsed = parseRecognizedWhitebox(JSON.stringify({
+    imageType: "perspective",
+    props: [
+      // L 形沙发:两段同类、中心距 1.2 米、朝向差 90° → 都保留。
+      { name: "沙发横段", kind: "box", category: "sofa", x: 0, y: 0.4, z: 0, rotation: 0, w: 2.4, h: 0.8, d: 0.9 },
+      { name: "沙发纵段", kind: "box", category: "sofa", x: 1.2, y: 0.4, z: -0.9, rotation: 90, w: 2.0, h: 0.8, d: 0.9 },
+    ],
+    characters: [],
+  }));
+  assert.ok(parsed);
+  const names = (parsed.props ?? []).map((prop) => prop.name);
+  assert.ok(names.some((name) => name.startsWith("沙发横段")));
+  assert.ok(names.some((name) => name.startsWith("沙发纵段")));
+});
+
+test("floor slab uses rotation-aware extents instead of isotropic max(w,d)", () => {
+  // 一面 8 米长、0.15 米厚、贴着 z=-3 的墙(rotation=0):地板在 z 方向的
+  // 外扩应按墙厚(0.075+margin),而不是按半个墙长(4 米)。
+  const parsed = parseRecognizedWhitebox(JSON.stringify({
+    imageType: "perspective",
+    props: [
+      { name: "背景墙", kind: "box", category: "wall", x: 0, y: 1.5, z: -3, rotation: 0, w: 8, h: 3, d: 0.15 },
+      { name: "圆桌", kind: "cylinder", category: "table", x: 0, y: 0.375, z: 1, rotation: 0, w: 1.2, h: 0.75, d: 1.2 },
+    ],
+    characters: [],
+  }));
+  assert.ok(parsed);
+  const floor = (parsed.props ?? []).find((prop) => prop.name === "地板");
+  assert.ok(floor, "floor slab must exist");
+  // z 覆盖范围:墙内缘约 -3.1、桌前缘 1.6,margin 0.6 → 深度 ≈ 5.9,绝不该是 ~10。
+  assert.ok(floor.d < 7, `floor depth = ${floor.d}`);
+  // x 覆盖范围仍要盖住整面墙(8 米 + margin)。
+  assert.ok(floor.w >= 8, `floor width = ${floor.w}`);
+});
+
+test("dedupe folds opposite-facing duplicates (box footprints are 180-degree symmetric)", () => {
+  const parsed = parseRecognizedWhitebox(JSON.stringify({
+    imageType: "perspective",
+    props: [
+      // 同一件沙发被标两次,第二次正反脸翻转(rotation 差 180°)→ 仍判重。
+      { name: "沙发", kind: "box", category: "sofa", x: 0, y: 0.4, z: 0, rotation: 0, w: 2.2, h: 0.8, d: 0.9 },
+      { name: "长沙发", kind: "box", category: "sofa", x: 0.1, y: 0.4, z: 0.05, rotation: 180, w: 2.0, h: 0.8, d: 0.9 },
+    ],
+    characters: [],
+  }));
+  assert.ok(parsed);
+  const names = (parsed.props ?? []).map((prop) => prop.name);
+  assert.ok(names.some((name) => name.startsWith("沙发·")));
+  assert.ok(!names.some((name) => name.startsWith("长沙发")));
+});
+
+test("architecture categories are unconditionally grounded (wall annotated at floor level)", () => {
+  const parsed = parseRecognizedWhitebox(JSON.stringify({
+    imageType: "perspective",
+    props: [
+      // 模型把 3 米高墙的中心标成 y=0(底边当中心)→ 无条件落地到 1.5。
+      { name: "背景墙", kind: "box", category: "wall", x: 0, y: 0.02, z: -4, rotation: 0, w: 6, h: 3, d: 0.15 },
+    ],
+    characters: [],
+  }));
+  assert.ok(parsed);
+  const wall = (parsed.props ?? []).find((prop) => prop.name === "背景墙");
+  assert.ok(wall && Math.abs(wall.y - 1.5) < 1e-9, `wall y = ${wall?.y}`);
+});

@@ -32,7 +32,7 @@ export interface RecognizedBlockingCharacter {
 
 export type WhiteboxCategory =
   | "table" | "chair" | "sofa" | "stool" | "counter" | "cabinet" | "shelf"
-  | "plant" | "lamp" | "column" | "door" | "window" | "generic";
+  | "plant" | "lamp" | "column" | "door" | "window" | "wall" | "generic";
 
 /** 白膜物体：米制真实尺寸与放置变换，导入时换算为道具几何的缩放。 */
 export interface RecognizedWhiteboxProp {
@@ -119,11 +119,12 @@ function parseCharacterRows(value: unknown): RecognizedBlockingCharacter[] {
 
 const WHITEBOX_CATEGORY_SET = new Set<string>([
   "table", "chair", "sofa", "stool", "counter", "cabinet", "shelf",
-  "plant", "lamp", "column", "door", "window", "generic",
+  "plant", "lamp", "column", "door", "window", "wall", "generic",
 ]);
 
 /** 模型没给类别时按名字关键词推断。顺序有讲究：长椅先于椅、柜台先于柜。 */
 export function inferWhiteboxCategory(name: string): WhiteboxCategory {
+  if (/墙|隔断|屏风/.test(name)) return "wall";
   if (/窗|玻璃/.test(name)) return "window";
   if (/灯/.test(name)) return "lamp";
   if (/植|盆栽|树/.test(name)) return "plant";
@@ -145,6 +146,64 @@ function categoryOf(record: Record<string, unknown>, name: string): WhiteboxCate
     : inferWhiteboxCategory(name);
 }
 
+/** 天然落地的类目:直出模式里模型经常把落地家具的 y 估得悬空或半陷,
+ *  小偏差直接吸附回 y=h/2。阈值 0.35 米——更大的偏差视为有意悬空
+ *  (挂墙吊柜、吧台吊灯),保留模型的判断。 */
+const GROUNDED_CATEGORIES = new Set<WhiteboxCategory>([
+  "table", "chair", "sofa", "stool", "counter", "cabinet", "shelf",
+  "plant", "column", "door", "wall",
+]);
+
+/** 建筑构件没有"合法悬空":墙/柱/门无条件落地——模型把 3 米高墙标成 y=0
+ *  (底边当中心)时偏差 1.5 米,容差式吸附救不回来,会半截埋进地下。 */
+const ALWAYS_GROUNDED_CATEGORIES = new Set<WhiteboxCategory>(["wall", "column", "door"]);
+
+export function snapGroundedWhiteboxY(prop: RecognizedWhiteboxProp): RecognizedWhiteboxProp {
+  const category = prop.category ?? "generic";
+  if (ALWAYS_GROUNDED_CATEGORIES.has(category)) {
+    return prop.y === prop.h / 2 ? prop : { ...prop, y: prop.h / 2 };
+  }
+  if (!GROUNDED_CATEGORIES.has(category)) return prop;
+  return Math.abs(prop.y - prop.h / 2) <= 0.35 ? { ...prop, y: prop.h / 2 } : prop;
+}
+
+/** 盒体占地 180° 对称:朝向差按半圈折算(0° 与 180° 是同一占地朝向——同一
+ *  件家具被重复标注时正反脸经常翻转)。 */
+function footprintOrientationDelta(a: number, b: number): number {
+  const delta = Math.abs(wrapDeg(a - b));
+  return Math.min(delta, 180 - delta);
+}
+
+/** 同类高重叠去重:模型常把同一件家具标两次(如"沙发"与"卡座")。
+ *  判重需同时满足:同类目、中心间距小于较小占地半径的一半、占地朝向相近
+ *  (±45°,按 180° 对称折算)——桌下塞椅这类跨类目重叠不受影响,L 形沙发
+ *  的两段(垂直放置、中心距近)因朝向差 90° 也不会被误合;墙与 generic 不
+ *  参与(长墙段中心距离本就近)。保留占地更大的一件。 */
+export function dedupeWhiteboxBlocks(blocks: readonly RecognizedWhiteboxProp[]): RecognizedWhiteboxProp[] {
+  const kept: RecognizedWhiteboxProp[] = [];
+  for (const block of blocks) {
+    const category = block.category ?? "generic";
+    if (category === "wall" || category === "generic") {
+      kept.push(block);
+      continue;
+    }
+    const footprint = (prop: RecognizedWhiteboxProp) => Math.max(prop.w, prop.d);
+    const duplicateIndex = kept.findIndex((candidate) =>
+      (candidate.category ?? "generic") === category
+      && footprintOrientationDelta(candidate.rotation, block.rotation) < 45
+      && Math.hypot(candidate.x - block.x, candidate.z - block.z)
+        < Math.max(0.3, Math.min(footprint(candidate), footprint(block)) / 2));
+    if (duplicateIndex < 0) {
+      kept.push(block);
+      continue;
+    }
+    if (block.w * block.d > kept[duplicateIndex].w * kept[duplicateIndex].d) {
+      kept[duplicateIndex] = block;
+    }
+  }
+  return kept;
+}
+
 function parsePropRows(value: unknown): RecognizedWhiteboxProp[] {
   const rows = Array.isArray(value) ? value.slice(0, 40) : [];
   return rows.flatMap((row, index): RecognizedWhiteboxProp[] => {
@@ -153,7 +212,7 @@ function parsePropRows(value: unknown): RecognizedWhiteboxProp[] {
     const kind = record.kind === "sphere" || record.kind === "cylinder" ? record.kind : "box";
     const name = typeof record.name === "string" && record.name.trim() ? record.name.trim().slice(0, 40) : `物体${index + 1}`;
     const h = finite(record.h, 0.5, 0.05, 10);
-    return [{
+    return [snapGroundedWhiteboxY({
       name,
       kind,
       category: categoryOf(record, name),
@@ -164,7 +223,7 @@ function parsePropRows(value: unknown): RecognizedWhiteboxProp[] {
       w: finite(record.w, 0.5, 0.05, 10),
       h,
       d: finite(record.d, 0.5, 0.05, 10),
-    }];
+    })];
   });
 }
 
@@ -328,11 +387,17 @@ function appendFloorSlab(props: RecognizedWhiteboxProp[]): RecognizedWhiteboxPro
   let minZ = Infinity;
   let maxZ = -Infinity;
   for (const prop of props) {
-    const extent = Math.max(prop.w, prop.d) / 2;
-    minX = Math.min(minX, prop.x - extent);
-    maxX = Math.max(maxX, prop.x + extent);
-    minZ = Math.min(minZ, prop.z - extent);
-    maxZ = Math.max(maxZ, prop.z + extent);
+    // 旋转矩形的轴对齐半径(长墙用各向同性 max(w,d)/2 会把地板向墙的垂直
+    // 方向外扩半个墙长,按角度精确计算)。
+    const alpha = prop.rotation * DEG;
+    const cos = Math.abs(Math.cos(alpha));
+    const sin = Math.abs(Math.sin(alpha));
+    const extentX = (cos * prop.w + sin * prop.d) / 2;
+    const extentZ = (sin * prop.w + cos * prop.d) / 2;
+    minX = Math.min(minX, prop.x - extentX);
+    maxX = Math.max(maxX, prop.x + extentX);
+    minZ = Math.min(minZ, prop.z - extentZ);
+    maxZ = Math.max(maxZ, prop.z + extentZ);
   }
   const margin = 0.6;
   return [...props, {
@@ -407,6 +472,7 @@ function solveAnnotatedObject(
   shell: readonly WallSegment[],
 ): RecognizedWhiteboxProp | null {
   const azimuth = panoAzimuthRad(row.center);
+  const category = categoryOf(row.record, row.name);
   let distance: number | null = null;
   if (row.grounded) {
     const ground = solvePanoGround(row.center, row.vBottom, cameraHeight);
@@ -414,16 +480,19 @@ function solveAnnotatedObject(
   }
   const wallDistance = row.againstWall && shell.length ? shellDistanceAt(azimuth, shell) : null;
   const depthHint = finite(row.record.depth, 0, 0.05, 10);
+  // 门窗嵌在墙体里,进深默认取墙厚级(0.12);普通家具贴墙默认 0.6——
+  // 否则门窗会被"墙距-进深/2"的落位公式往房间内侧拉出半米,悬空在墙前。
+  const flushCategory = category === "door" || category === "window";
   // 贴墙物体吸附到墙内侧：把"同一面墙同一距离"变成结构保证；
   // 接地点被遮挡的物体只能靠墙距落位，没有墙就跳过。
   if (wallDistance !== null) {
-    const depthGuess = depthHint || 0.6;
+    const depthGuess = depthHint || (flushCategory ? 0.12 : 0.6);
     distance = Math.min(PANO_MAX_DISTANCE, Math.max(PANO_MIN_DISTANCE, wallDistance - WALL_THICKNESS / 2 - depthGuess / 2 - 0.02));
   }
   if (distance === null) return null;
   const w = Math.min(10, Math.max(0.05, 2 * distance * Math.tan(row.spanRad / 2)));
   const depth = row.kind === "box"
-    ? (depthHint || Math.min(1.5, Math.max(0.2, w * 0.45)))
+    ? (depthHint || (flushCategory ? 0.12 : Math.min(1.5, Math.max(0.2, w * 0.45))))
     : w;
   let y: number;
   let h: number;
@@ -436,19 +505,23 @@ function solveAnnotatedObject(
     h = Math.min(10, Math.max(0.05, top - bottom));
     y = Math.min(8, Math.max(0.02, bottom + h / 2));
   }
-  return {
+  // 落地吸附兜底:接地点被遮挡(grounded=false)的落地家具经 bottom+h/2 落位
+  // 后常悬空一二十厘米,与直出模式同一套类目吸附规则拉回地面。
+  return snapGroundedWhiteboxY({
     name: row.name,
     kind: row.kind,
-    category: categoryOf(row.record, row.name),
+    category,
     x: distance * Math.sin(azimuth),
     y,
     z: -distance * Math.cos(azimuth),
-    // 默认沿环绕切线（贴墙/长条物的自然朝向）；模型可用 rotation 字段覆盖
+    // 默认朝向 -azimuth:宽度轴沿环绕切线、正面(进深法线)朝向观察点——对
+    // 贴墙家具和房间中部的座椅都是最优先验(数学上等价于 atan2(-x,-z) 的
+    // "面向场景中心")。模型可用 rotation 字段覆盖。
     rotation: finite(row.record.rotation, wrapDeg(-azimuth / DEG), -180, 180),
     w: row.kind === "box" ? w : Math.max(w, 0.05),
     h,
     d: depth,
-  };
+  });
 }
 
 function parseAnnotatedCharacters(
@@ -502,11 +575,12 @@ function solveAnnotatedScene(raw: Record<string, unknown>): RecognizedBlocking |
     const solved = solveAnnotatedObject(row, cameraHeight, shell);
     if (solved) blocks.push(solved);
   }
+  const deduped = dedupeWhiteboxBlocks(blocks);
   const characters = parseAnnotatedCharacters(raw.characters, cameraHeight, shell);
-  if (!characters.length && !walls.length && !blocks.length) return null;
+  if (!characters.length && !walls.length && !deduped.length) return null;
   // 碰撞消解用整体外包体块（人物应被整张桌子推开，而不是只避开桌腿）
-  const resolved = resolveCharacterPropCollisions(characters, [...walls, ...blocks]);
-  const props = [...walls, ...expandWhiteboxObjects(blocks, MAX_SCENE_PROPS - walls.length - 1)];
+  const resolved = resolveCharacterPropCollisions(characters, [...walls, ...deduped]);
+  const props = [...walls, ...expandWhiteboxObjects(deduped, MAX_SCENE_PROPS - walls.length - 1)];
   return {
     characters: resolved,
     props: appendFloorSlab(props),
@@ -651,6 +725,10 @@ function expandTemplate(block: RecognizedWhiteboxProp): RecognizedWhiteboxProp[]
     case "door":
       // 白膜里门就是一片薄板；限制进深防止模型把门标成一间小屋
       return [{ ...block, d: Math.min(block.d, 0.15) }];
+    case "wall":
+      // 透视直出模式的墙:限制厚度,长度/高度保留模型标注(全景模式的墙走
+      // wallRuns 解算,不经过这里)。
+      return [{ ...block, d: Math.min(Math.max(block.d, 0.1), 0.25) }];
     default:
       return [block];
   }
@@ -742,7 +820,7 @@ export function parseRecognizedWhitebox(text: string): RecognizedBlocking | null
     return solveAnnotatedScene(raw);
   }
   const characters = parseCharacterRows(raw.characters);
-  const blocks = parsePropRows(raw.props);
+  const blocks = dedupeWhiteboxBlocks(parsePropRows(raw.props));
   if (!characters.length && !blocks.length) return null;
   return {
     characters: resolveCharacterPropCollisions(characters, blocks),
@@ -771,12 +849,13 @@ export function buildWhiteboxRecognitionPrompt(): string {
     "{\"imageType\":\"panorama\",\"cameraHeight\":1.6,\"room\":{\"wallHeight\":3.5,\"wallRuns\":[[{\"u\":0.03,\"v\":0.58},{\"u\":0.15,\"v\":0.60}]]},\"objects\":[{\"name\":\"接待台\",\"kind\":\"box\",\"category\":\"counter\",\"u1\":0.68,\"u2\":0.79,\"vBottom\":0.62,\"vTop\":0.47,\"grounded\":true,\"againstWall\":true,\"depth\":0.6}],\"characters\":[{\"name\":\"角色A\",\"preset\":\"standard-male\",\"u\":0.3,\"v\":0.7}],\"cameraPreset\":\"front-medium\"}",
     "wallRuns：只在真实存在连续实体墙面的地方标墙段——每一段连续墙作为一组，组内沿墙脚（墙面与地面交线）按顺序标2到8个点（拐角必须有点，v必须大于0.55）；走廊、门洞、电梯口、通道、大面积玻璃开口处不要标，留空，组与组之间不要连接闭合；没有明显实体墙时wallRuns为空数组。wallHeight为墙高（米）。",
     "objects：标8到25个主要物体（立柱、家具、门、大型陈设、绿植）。每根立柱单独标一个体块（kind用cylinder或box），不要把多根柱子并成一面墙。u1/u2为物体左右边缘；vBottom为接地点（物体与地面接触处的v，标点务必精确，它决定距离）；vTop为顶部；grounded为接地点是否可见（被遮挡标false）；againstWall为是否贴墙；depth为进深米数（可凭常识估）。",
-    "每个物体给category，从 table、chair、sofa、stool、counter、cabinet、shelf、plant、lamp、column、door、window、generic 中选最接近的一类——程序会按类别把体块细化成桌面桌腿、座面靠背、花盆叶冠等组合白膜，所以标注范围取物体的整体外包。",
+    "每个物体给category，从 table、chair、sofa、stool、counter、cabinet、shelf、plant、lamp、column、door、window、generic 中选最接近的一类（wall类别仅供直出模式，标注模式的墙走wallRuns）——程序会按类别把体块细化成桌面桌腿、座面靠背、花盆叶冠等组合白膜，所以标注范围取物体的整体外包。",
     "characters：图中真实人物脚下接地点的u/v。",
     "类型B·普通透视照片——使用直出模式，返回：",
     "{\"imageType\":\"perspective\",\"props\":[{\"name\":\"沙发\",\"kind\":\"box\",\"category\":\"sofa\",\"x\":-1.2,\"y\":0.4,\"z\":0.6,\"rotation\":0,\"w\":2,\"h\":0.8,\"d\":0.9}],\"characters\":[{\"name\":\"角色A\",\"preset\":\"standard-male\",\"x\":-0.8,\"z\":0.2,\"rotation\":0,\"scale\":1}],\"cameraPreset\":\"front-medium\"}",
-    "直出模式坐标：画面左侧为负x、右侧为正x；前景为正z、远景为负z；x/z范围-8到8；w/h/d为真实尺寸（米），y为中心离地高度（落地取h/2），rotation为绕竖直轴角度；category规则与标注模式相同。",
-    "通用规则：kind只能是box、sphere、cylinder，圆柱仅用于立柱、圆桌等真圆物；地板由程序自动生成，不要输出地面、天花板、整铺地毯、灯带；空旷区域保持空白，不要用体块填充；成排成组的小物合并为一个体块；体块之间不得穿插重叠；尺寸符合常识（桌高约0.75米、座面约0.45米、门高约2.1米、层高2.7到4米）。",
+    "直出模式坐标：画面左侧为负x、右侧为正x；前景为正z、远景为负z；x/z范围-8到8；w/h/d为真实尺寸（米），y为中心离地高度（落地物体必须取h/2，不要悬空），rotation为绕竖直轴角度；category规则与标注模式相同。",
+    "直出模式必须把画面中可见的实体墙面也标出来（category用wall，kind用box）：每面连续的墙一个体块，w为墙长、h为墙高、d取0.15、rotation为墙的朝向——室内场景没有墙会像露天舞台。门窗开口处把墙断成两段，不要用一整面墙盖住门窗。",
+    "通用规则：kind只能是box、sphere、cylinder，圆柱仅用于立柱、圆桌等真圆物；地板由程序自动生成，不要输出地面、天花板、整铺地毯、灯带；空旷区域保持空白，不要用体块填充；成排成组的小物合并为一个体块；同一件物体只标一次，不要换个名字重复标注；体块之间不得穿插重叠；尺寸符合常识（桌高约0.75米、座面约0.45米、门高约2.1米、层高2.7到4米）。",
     "characters的preset只能是 standard-male、standard-female、athletic、slim、teen、child、broad、chibi；画面中没有人物时characters返回空数组，不要虚构。",
   ].join("\n");
 }

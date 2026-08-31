@@ -12,6 +12,8 @@ import {
 import type * as THREE_NS from "three";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
 import { aiApi, uploadFileSmart } from "@/lib/api";
+import { AssetPickerModal } from "@/components/studio/create-studio/asset-picker-modal";
+import type { PickedAsset } from "@/components/studio/assets-browser";
 import { fetchWithAuth } from "@/lib/http";
 import { canvasThreeDSceneAssetFromNode } from "@/lib/canvas-three-d";
 import { toast } from "@/components/shared/toast";
@@ -283,6 +285,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
   const [recognitionTab, setRecognitionTab] = useState<"upload" | "history">("upload");
   const [recognitionSource, setRecognitionSource] = useState<{ url: string; title: string } | null>(null);
   const [recognitionUploading, setRecognitionUploading] = useState(false);
+  const [recognitionAssetPickerOpen, setRecognitionAssetPickerOpen] = useState(false);
   const [recognitionBusy, setRecognitionBusy] = useState(false);
   const [recognitionMode, setRecognitionMode] = useState<ImportMode>("replace");
   const [recognitionKind, setRecognitionKind] = useState<RecognitionKind>("blocking");
@@ -2002,6 +2005,22 @@ export function Scene3DEditor({ node, onClose }: Props) {
     setRecognitionTab("upload");
   }, [createRecognitionSourceNode]);
 
+  // 资产库选图:素材已有托管 URL,无需再上传,直接作为识图来源(与上传/历史
+  // 同样在画布落一个来源图片节点,保证识图产物的出处可追溯)。
+  const handleRecognitionAssetPick = useCallback((assets: PickedAsset[]) => {
+    const asset = assets[0];
+    if (!asset) return;
+    if (asset.kind !== "image") {
+      toast.error("识图来源仅支持图片素材");
+      return;
+    }
+    setRecognitionAssetPickerOpen(false);
+    const source = { url: asset.url, title: asset.name?.trim().slice(0, 60) || "资产库图片" };
+    createRecognitionSourceNode({ ...source, fileSize: asset.sizeBytes });
+    setRecognitionSource(source);
+    setRecognitionTab("upload");
+  }, [createRecognitionSourceNode]);
+
   const generateBlockingReference = useCallback(async () => {
     if (!recognitionSource || recognitionBusy) return;
     const runId = ++recognitionRunRef.current;
@@ -2301,6 +2320,11 @@ export function Scene3DEditor({ node, onClose }: Props) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const element = event.target as HTMLElement | null;
+      // 模态分层:资产选择器开着时 Escape 只关它,不穿透到识图面板/编辑器。
+      if (event.key === "Escape" && recognitionAssetPickerOpen) {
+        setRecognitionAssetPickerOpen(false);
+        return;
+      }
       if (event.key === "Escape" && recognitionOpen) {
         setRecognitionOpen(false);
         return;
@@ -2331,7 +2355,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [handleClose, loading, motion.keyframes.length, motionOpen, piloting, playing, recognitionOpen, recordMotionFrame]);
+  }, [handleClose, loading, motion.keyframes.length, motionOpen, piloting, playing, recognitionAssetPickerOpen, recognitionOpen, recordMotionFrame]);
 
   /** 截图以图片节点形式落到导演台右侧（多张时向下排列）并自动连线，作为下游 AI 生成的参考素材 */
   const spawnShotNode = (file: { fileUrl: string; fileSize: number; fileType: string; mimeType: string }, aspect: number) => {
@@ -3387,6 +3411,14 @@ export function Scene3DEditor({ node, onClose }: Props) {
                       </>
                     )}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setRecognitionAssetPickerOpen(true)}
+                    disabled={recognitionUploading || recognitionBusy}
+                    className="mt-2 flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-white/12 bg-white/5 text-xs text-white/70 transition-colors hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <ImagePlus className="h-3.5 w-3.5" /> 从资产库选择
+                  </button>
                   {recognitionSource && (
                     <div className="mt-2 flex items-center text-[11px] text-white/45">
                       <span className="min-w-0 flex-1 truncate">{recognitionSource.title}</span>
@@ -3518,6 +3550,17 @@ export function Scene3DEditor({ node, onClose }: Props) {
             </footer>
           </section>
         </div>
+      )}
+
+      {/* 识图来源 · 资产库选图(生成历史/上传历史,与图片节点同一选择器) */}
+      {recognitionAssetPickerOpen && (
+        <AssetPickerModal
+          kind="image"
+          className="canvas-asset-picker-theme"
+          lockKind
+          onPick={handleRecognitionAssetPick}
+          onClose={() => setRecognitionAssetPickerOpen(false)}
+        />
       )}
     </div>,
     document.body,
