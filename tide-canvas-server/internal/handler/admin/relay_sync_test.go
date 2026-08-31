@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"gorm.io/driver/sqlite"
@@ -330,5 +331,36 @@ func TestSyncRelayModelsCreatesAndResyncs3DModelWithoutLosingAdminSettings(t *te
 	paramsModes, _ := paramsSchema["modes"].([]any)
 	if len(paramsModes) != 1 || paramsModes[0] != "t2_3d" {
 		t.Fatalf("paramsSchema = %v, want refreshed t2_3d", paramsSchema)
+	}
+}
+
+func TestSeedTimestampVideoEditFlagIsSetIfAbsentForSeedance25VideoModels(t *testing.T) {
+	// Seedance 2.5 系视频模型:空配置与既有配置都播种 true,且不破坏既有键。
+	seeded := seedTimestampVideoEditFlag("doubao-seedance-2-5-260628", "video", "")
+	if !strings.Contains(seeded, `"timestampVideoEdit":true`) {
+		t.Fatalf("empty config must seed the flag: %q", seeded)
+	}
+	merged := seedTimestampVideoEditFlag("gmj-video-seedance-2.5-vip", "video", `{"ratios":["16:9"]}`)
+	if !strings.Contains(merged, `"timestampVideoEdit":true`) || !strings.Contains(merged, `"ratios":["16:9"]`) {
+		t.Fatalf("existing keys must survive seeding: %q", merged)
+	}
+
+	// set-if-absent:管理员显式关掉(false)后,同步绝不弹回。
+	kept := seedTimestampVideoEditFlag("seedance-2.5", "video", `{"timestampVideoEdit":false}`)
+	if kept != `{"timestampVideoEdit":false}` {
+		t.Fatalf("admin opt-out must never be overwritten: %q", kept)
+	}
+
+	// 2.0 与相似写法不得误中;非视频类型不播种;坏 JSON 原样返回。
+	for _, key := range []string{"fgh-seedance-2.0", "seedance-25", "lka-seedance-2.0-fast"} {
+		if got := seedTimestampVideoEditFlag(key, "video", `{}`); got != `{}` {
+			t.Fatalf("%s must not be flagged: %q", key, got)
+		}
+	}
+	if got := seedTimestampVideoEditFlag("seedance-2.5-image", "image", `{}`); got != `{}` {
+		t.Fatalf("non-video models must not be flagged: %q", got)
+	}
+	if got := seedTimestampVideoEditFlag("seedance-2.5", "video", "not-json"); got != "not-json" {
+		t.Fatalf("unparseable config must be returned untouched: %q", got)
 	}
 }

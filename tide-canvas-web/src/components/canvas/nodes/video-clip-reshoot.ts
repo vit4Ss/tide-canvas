@@ -26,6 +26,25 @@ export function selectClipReshootModel(
     ?? models.find(supportsVideoReference);
 }
 
+/**
+ * 模型是否支持「原生时间戳级视频编辑」(Seedance 2.5 一类:全片直发 + 按原片
+ * 时间码指令局部重生成,无需服务端裁剪/拼接)。严格 opt-in——管理员在模型
+ * Config 里显式写 `"timestampVideoEdit": true` 才启用,确保只有实测验证过的
+ * 模型走原生管线;其余模型维持 ffmpeg 裁拼路径,行为不变。
+ */
+export function supportsTimestampVideoEdit(
+  model: Pick<AiModelVO, "supportedHandlers" | "config">,
+): boolean {
+  if (!supportsVideoReference(model)) return false;
+  try {
+    const config: unknown = model.config ? JSON.parse(model.config) : {};
+    return !!config && typeof config === "object" && !Array.isArray(config)
+      && (config as Record<string, unknown>).timestampVideoEdit === true;
+  } catch {
+    return false;
+  }
+}
+
 function positiveFinite(value: unknown): number | undefined {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
@@ -175,18 +194,97 @@ export function formatClipReshootTime(seconds: number): string {
   return `${String(minutes).padStart(2, "0")}:${secondsText}`;
 }
 
+/**
+ * ffmpeg 裁拼路径的工程化指令。除基础语义外补两道质量护栏:
+ * ① 首尾帧锚定——裁剪片段的第一帧/最后一帧正是与原片的两个接缝画面,要求
+ *    输出复现它们,回拼时人物位置/光线才不会跳变;
+ * ② 有效时长明示——生成档位(providerSeconds)大于选区总长时,回拼只取前
+ *    N 秒、其余丢弃;不告知模型,它会按完整档位编排动作,被掐断在半途。
+ */
 export function buildClipReshootRangeInstruction(
   ranges: ReadonlyArray<Pick<ClipReshootRange, "start" | "end">> | undefined,
   duration: number,
   sourceLabel = "参考视频",
+  providerSeconds?: number,
 ): string {
-  const count = normalizeClipReshootRanges(ranges, duration).length;
-  return `重拍${sourceLabel}中的全部画面。该参考视频已按时间轴裁出${count > 1 ? `${count}个` : ""}选中片段；输出仅包含这些片段，并按参考视频顺序连续生成。`;
+  const normalized = normalizeClipReshootRanges(ranges, duration);
+  const count = normalized.length;
+  const selectedSeconds = normalized.reduce((total, range) => total + range.end - range.start, 0);
+  let instruction = `重拍${sourceLabel}中的全部画面。该参考视频已按时间轴裁出${count > 1 ? `${count}个` : ""}选中片段；输出仅包含这些片段，并按参考视频顺序连续生成。`
+    + `输出第一帧的构图、人物位置与光线必须与参考视频第一帧保持一致，输出最后一帧必须与参考视频最后一帧保持一致，以便与原视频无缝衔接。`;
+  if (providerSeconds != null && providerSeconds > selectedSeconds + 0.05) {
+    instruction += `全部动作与内容必须在输出的前 ${selectedSeconds.toFixed(1)} 秒内完整呈现并回到收尾画面（其后的画面会被丢弃）。`;
+  }
+  return instruction;
 }
+
+/**
+ * 原生时间戳编辑路径的指令:全片作为参考直发,时间码就是原片时间码——参照系
+ * 天然正确,无需裁剪、拼接与时间码重映射。用户提示词由调用方以「修改要求:」
+ * 标签追加(为空时不追加,避免悬空标签)。
+ */
+export function buildNativeClipReshootInstruction(
+  ranges: ReadonlyArray<Pick<ClipReshootRange, "start" | "end">> | undefined,
+  duration: number,
+  sourceLabel = "参考视频",
+): string {
+  const normalized = normalizeClipReshootRanges(ranges, duration);
+  const spans = normalized
+    .map((range) => `${formatClipReshootTime(range.start)}-${formatClipReshootTime(range.end)}`)
+    .join("、");
+  return `仅重新生成${sourceLabel}中 ${spans} 时间段的画面，其余时间段的画面、时长、运镜与节奏保持完全不变，输出与${sourceLabel}等长的完整视频。`;
+}
+
+/**
+ * ffmpeg 路径的时间码重映射:用户按原片时间轴写的时间码(如 0:04-0:06),在
+ * 模型看到的「裁剪后短片」里指向完全不同的位置——提交前线性映射到裁剪时间轴。
+ * 端点落在未选中区间(缝隙)时无法映射,返回明确错误让用户改选区或删时间码;
+ * 没写时间码则原样通过。跨越缝隙的时间段按拼接语义映射(缝隙被移除后连续)。
+ */
+export function remapClipReshootPromptTimecodes(
+  prompt: string,
+  ranges: ReadonlyArray<Pick<ClipReshootRange, "start" | "end">> | undefined,
+  sourceDuration: number,
+): { prompt: string; error?: undefined } | { prompt?: undefined; error: string } {
+  const normalized = normalizeClipReshootRanges(ranges, sourceDuration);
+  const toClipTime = (time: number): number | null => {
+    let offset = 0;
+    for (const range of normalized) {
+      if (time >= range.start - 0.05 && time <= range.end + 0.05) {
+        return offset + Math.min(Math.max(time - range.start, 0), range.end - range.start);
+      }
+      offset += range.end - range.start;
+    }
+    return null;
+  };
+
+  let error: string | null = null;
+  const remapped = prompt.replace(clipTimecodeRangePattern(), (raw, startText: string, endText: string) => {
+    const start = parseTimecode(startText);
+    const end = parseTimecode(endText);
+    // 格式/顺序问题留给 validateClipReshootPrompt 产出统一报错,这里只管映射。
+    if (start == null || end == null || end <= start) return raw;
+    const clipStart = toClipTime(start);
+    const clipEnd = toClipTime(end);
+    if (clipStart == null || clipEnd == null || clipEnd - clipStart < 0.05) {
+      error ??= `提示词中的时间段“${raw}”不在时间轴选中的重拍片段内，请调整选区或删除该时间码`;
+      return raw;
+    }
+    return `${formatClipReshootTime(clipStart)}-${formatClipReshootTime(clipEnd)}`;
+  });
+  if (error) return { error };
+  return { prompt: remapped };
+}
+
+/** 提示词里「时间码-时间码」的统一识别正则(校验与重映射共用同一来源,防止
+ *  两处规则漂移导致"校验通过但没被重映射"的缝隙)。/g 正则有状态,按次新建。 */
+const CLIP_TIMECODE_RANGE_SOURCE =
+  "(\\d+(?::\\d+){1,2}(?:\\.\\d+)?)\\s*(?:-|–|—|~|～|至|到)\\s*(\\d+(?::\\d+){1,2}(?:\\.\\d+)?)";
+const clipTimecodeRangePattern = () => new RegExp(CLIP_TIMECODE_RANGE_SOURCE, "g");
 
 export function extractClipReshootRanges(prompt: string): Array<ClipReshootRange | { raw: string; invalid: true }> {
   const ranges: Array<ClipReshootRange | { raw: string; invalid: true }> = [];
-  const pattern = /(\d+(?::\d+){1,2}(?:\.\d+)?)\s*(?:-|–|—|~|～|至|到)\s*(\d+(?::\d+){1,2}(?:\.\d+)?)/g;
+  const pattern = clipTimecodeRangePattern();
   for (const match of prompt.matchAll(pattern)) {
     const raw = match[0];
     const start = parseTimecode(match[1]);

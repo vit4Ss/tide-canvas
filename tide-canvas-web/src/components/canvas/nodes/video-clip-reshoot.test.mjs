@@ -4,12 +4,15 @@ import {
   addClipReshootRange,
   buildClipReshootRangeInstruction,
   buildClipReshootNode,
+  buildNativeClipReshootInstruction,
   clipReshootProviderDuration,
   extractClipReshootRanges,
   formatClipReshootTime,
   normalizeClipReshootRanges,
+  remapClipReshootPromptTimecodes,
   resizeClipReshootRange,
   selectClipReshootModel,
+  supportsTimestampVideoEdit,
   supportsVideoReference,
   validateClipReshootPrompt,
 } from "./video-clip-reshoot.ts";
@@ -134,13 +137,12 @@ test("clip reshoot normalizes and formats visual timeline ranges", () => {
   ], 6), [{ start: 0, end: 4 }, { start: 4, end: 6 }]);
   assert.equal(formatClipReshootTime(65.4), "01:05.4");
   assert.equal(formatClipReshootTime(59.96), "01:00");
-  assert.equal(
-    buildClipReshootRangeInstruction([{ start: 0, end: 5 }], 6),
-    "重拍参考视频中的全部画面。该参考视频已按时间轴裁出选中片段；输出仅包含这些片段，并按参考视频顺序连续生成。",
+  assert.ok(
+    buildClipReshootRangeInstruction([{ start: 0, end: 5 }], 6)
+      .startsWith("重拍参考视频中的全部画面。该参考视频已按时间轴裁出选中片段；输出仅包含这些片段，并按参考视频顺序连续生成。"),
   );
-  assert.equal(
-    buildClipReshootRangeInstruction([{ start: 0, end: 5 }], 6, "视频2"),
-    "重拍视频2中的全部画面。该参考视频已按时间轴裁出选中片段；输出仅包含这些片段，并按参考视频顺序连续生成。",
+  assert.ok(
+    buildClipReshootRangeInstruction([{ start: 0, end: 5 }], 6, "视频2").startsWith("重拍视频2中的全部画面。"),
   );
   assert.equal(clipReshootProviderDuration([{ start: 4, end: 7 }], 11), 3);
   assert.equal(clipReshootProviderDuration([{ start: 1, end: 2.2 }, { start: 8, end: 9.1 }], 11), 3);
@@ -179,4 +181,70 @@ test("clip reshoot validates structured time ranges against source duration", ()
   assert.equal(validateClipReshootPrompt("00:03-00:02 reverse", 6)?.includes("结束时间"), true);
   assert.equal(validateClipReshootPrompt("00:00-00:07 too long", 6)?.includes("超出原视频"), true);
   assert.equal(validateClipReshootPrompt("00:60-01:10 invalid", 80)?.includes("格式无效"), true);
+});
+
+test("clip reshoot instruction pins seam frames and effective duration", () => {
+  const base = buildClipReshootRangeInstruction([{ start: 2, end: 5 }], 10, "视频1");
+  // 首尾帧锚定始终存在:裁剪片段的首尾帧就是与原片的两个接缝画面。
+  assert.ok(base.includes("第一帧"));
+  assert.ok(base.includes("最后一帧"));
+  assert.ok(base.includes("无缝衔接"));
+  // 生成档位与选区等长:不需要有效时长提示。
+  assert.ok(!base.includes("秒内完整呈现"));
+  // 3 秒选区被吸附到 5 秒档:必须告知模型只有前 3.0 秒会被保留。
+  const snapped = buildClipReshootRangeInstruction([{ start: 2, end: 5 }], 10, "视频1", 5);
+  assert.ok(snapped.includes("前 3.0 秒内完整呈现"));
+});
+
+test("clip reshoot native instruction keeps original-timeline timecodes", () => {
+  const instruction = buildNativeClipReshootInstruction(
+    [{ start: 3, end: 7 }, { start: 10, end: 12 }],
+    20,
+    "视频1",
+  );
+  assert.ok(instruction.includes("00:03-00:07"));
+  assert.ok(instruction.includes("00:10-00:12"));
+  assert.ok(instruction.includes("仅重新生成视频1"));
+  assert.ok(instruction.includes("保持完全不变"));
+  assert.ok(instruction.includes("等长的完整视频"));
+  // 「修改要求:」标签由调用方在用户提示词非空时追加,指令本体不带悬空标签。
+  assert.ok(!instruction.includes("修改要求"));
+});
+
+test("timestamp video edit capability is a strict opt-in on top of video reference", () => {
+  const base = { id: "1", modelId: "m", name: "M", icon: "", type: "video", pointCost: 1 };
+  assert.equal(supportsTimestampVideoEdit({ ...base, config: "{}" }), false);
+  assert.equal(supportsTimestampVideoEdit({ ...base, config: JSON.stringify({ timestampVideoEdit: true }) }), true);
+  // 字符串 "true" 等松散值不算:必须是布尔 true。
+  assert.equal(supportsTimestampVideoEdit({ ...base, config: JSON.stringify({ timestampVideoEdit: "true" }) }), false);
+  // 视频参考被关掉的模型即使带标记也不可用(原生路径依赖全片作为视频参考下发)。
+  assert.equal(
+    supportsTimestampVideoEdit({
+      ...base,
+      config: JSON.stringify({ timestampVideoEdit: true, omniRefVideoEnabled: false }),
+    }),
+    false,
+  );
+  assert.equal(supportsTimestampVideoEdit({ ...base, config: "not-json" }), false);
+});
+
+test("clip reshoot remaps original-timeline prompt timecodes into the clipped timeline", () => {
+  // 选区 3-7 秒:原片 0:04-0:06 在裁剪片段里是 00:01-00:03。
+  const single = remapClipReshootPromptTimecodes("0:04-0:06 把伞改成透明", [{ start: 3, end: 7 }], 10);
+  assert.equal(single.prompt, "00:01-00:03 把伞改成透明");
+  // 跨越两个选区(缝隙被拼接移除):3-7 与 10-12 选区,0:05-0:11 → 00:02-00:05。
+  const spanning = remapClipReshootPromptTimecodes(
+    "0:05-0:11 加快节奏",
+    [{ start: 3, end: 7 }, { start: 10, end: 12 }],
+    20,
+  );
+  assert.equal(spanning.prompt, "00:02-00:05 加快节奏");
+  // 端点落在缝隙(8 秒不在任何选区)→ 明确报错。
+  const gapped = remapClipReshootPromptTimecodes("0:08-0:11 改颜色", [{ start: 3, end: 7 }, { start: 10, end: 12 }], 20);
+  assert.ok(gapped.error?.includes("不在时间轴选中的重拍片段内"));
+  // 没写时间码:原样通过。
+  assert.deepEqual(
+    remapClipReshootPromptTimecodes("把瞳孔改成红色", [{ start: 3, end: 7 }], 10),
+    { prompt: "把瞳孔改成红色" },
+  );
 });

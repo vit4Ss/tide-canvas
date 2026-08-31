@@ -103,6 +103,9 @@ export interface ModelConfig {
   pricePerSecondByResolution?: Record<string, number | string>;
   /** 视频模型：是否对随请求提交的参考视频按实际时长额外收费。 */
   referenceVideoBillingEnabled?: boolean;
+  /** 视频模型：原生时间戳级视频编辑(Seedance 2.5 一类)。开启后片段重拍全片
+      直发 + 原片时间码指令,跳过服务端裁剪/拼接;仅对实测支持的模型开启。 */
+  timestampVideoEdit?: boolean;
   /** raw upstream price modifiers, kept for reference */
   priceModifiers?: unknown;
   /** complete upstream params_schema, including modality-specific 3D options */

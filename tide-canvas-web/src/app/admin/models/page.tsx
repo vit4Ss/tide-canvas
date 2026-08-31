@@ -1392,6 +1392,22 @@ function ModelModal({
             </FormSection>
           )}
 
+          {isVideo && omniRefVideoSupported && (
+            <FormSection
+              label="原生时间戳编辑"
+              hint="Seedance 2.5 一类支持「按原片时间码局部重生成」的模型开启。开启后画布片段重拍不再走服务端裁剪拼接，而是全片直发 + 时间码指令，接缝一致性由模型保证；计费按参考视频与完整输出时长。仅对实测验证过的模型开启。"
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <SwitchToggle
+                  checked={cfg.timestampVideoEdit === true}
+                  onChange={(next) => setC({ timestampVideoEdit: next })}
+                  aria-label="原生时间戳编辑"
+                />
+                <span>{cfg.timestampVideoEdit ? "已开启（片段重拍走原生管线）" : "未开启（片段重拍走裁剪拼接管线）"}</span>
+              </div>
+            </FormSection>
+          )}
+
           {isImage && (
             <FormSection
               label="全局图片生成主模型"

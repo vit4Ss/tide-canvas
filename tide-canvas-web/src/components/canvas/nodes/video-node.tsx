@@ -34,10 +34,13 @@ import {
   CLIP_RESHOOT_DEFAULT_SECONDS,
   buildClipReshootRangeInstruction,
   buildClipReshootNode,
+  buildNativeClipReshootInstruction,
   clipReshootProviderDuration,
   formatClipReshootTime,
   normalizeClipReshootRanges,
+  remapClipReshootPromptTimecodes,
   selectClipReshootModel,
+  supportsTimestampVideoEdit,
   supportsVideoReference,
   validateClipReshootPrompt,
 } from "./video-clip-reshoot";
@@ -426,17 +429,37 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     () => normalizeClipReshootRanges(node.clipReshootRanges, clipSourceDuration),
     [clipSourceDuration, node.clipReshootRanges],
   );
+  // 原生时间戳编辑管线(Seedance 2.5 一类,模型 Config 显式 timestampVideoEdit):
+  // 全片直发 + 原片时间码指令,跳过服务端裁剪/拼接。两种情况自动降级回 ffmpeg
+  // 裁拼路径(功能不中断):① 原视频超出模型单次生成档位;② 源时长只剩兜底
+  // 默认值(元数据缺失)——裁拼路径的选区会被服务端 ffprobe 实测复核,原生路径
+  // 没有这道复核,错误时长会把钳错的时间码静默写进指令,必须以可信时长为前提。
+  const positiveMediaSeconds = (value: unknown) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0;
+  };
+  const clipSourceDurationTrusted = positiveMediaSeconds(clipSourceVideo?.mediaDuration)
+    || (!node.videoSrc && positiveMediaSeconds(duration))
+    || positiveMediaSeconds(clipSourceVideo?.generationConfig?.duration);
+  const nativeClipReshoot = isClipReshoot
+    && !!selectedModel
+    && supportsTimestampVideoEdit(selectedModel)
+    && clipSourceDurationTrusted
+    && (!formatConfig.durations?.length
+      || formatConfig.durations.some((candidate) => candidate >= Math.ceil(clipSourceDuration)));
   const generationDuration = isClipReshoot
-    ? clipReshootProviderDuration(clipRanges, clipSourceDuration)
+    ? nativeClipReshoot
+      ? Math.max(1, Math.ceil(clipSourceDuration))
+      : clipReshootProviderDuration(clipRanges, clipSourceDuration)
     : videoParam.duration;
   const providerGenerationDuration = isClipReshoot && formatConfig.durations?.length
     ? formatConfig.durations.find((candidate) => candidate >= generationDuration) ?? generationDuration
     : generationDuration;
   const clipReshootRequest = useMemo<ClipReshootRequest | undefined>(() => (
-    isClipReshoot && clipSourceVideo?.videoSrc
+    isClipReshoot && !nativeClipReshoot && clipSourceVideo?.videoSrc
       ? { sourceUrl: clipSourceVideo.videoSrc, ranges: clipRanges }
       : undefined
-  ), [clipRanges, clipSourceVideo?.videoSrc, isClipReshoot]);
+  ), [clipRanges, clipSourceVideo?.videoSrc, isClipReshoot, nativeClipReshoot]);
   // 积分显示与服务端 resolveCost 同口径：按次模式只按清晰度取价且完全
   // 忽略时长；按时长模式继续查「时长 × 清晰度」矩阵和旧 modifier。
   const referenceVideoUrls = useMemo(() => {
@@ -797,13 +820,32 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         ? sources.find((source) => source.id === node.clipReshootSourceId && source.type === "video" && source.videoSrc)
         : sources.find((source) => source.type === "video" && source.videoSrc)
       : undefined;
-    // 文本节点没有独立下发通道，正文只能落进 prompt——顺序与 refs 的「文本N」编号同源
-    const promptWithRange = isClipReshoot
-      ? `${buildClipReshootRangeInstruction(clipRanges, clipSourceDuration, `视频${clipSourceRefIndex}`)}\n${node.prompt || ""}`.trim()
-      : node.prompt || "";
-    const finalPrompt = inlineIncomingTextRefs(promptWithRange, sources);
+    // 文本节点没有独立下发通道，正文只能落进 prompt——顺序与 refs 的「文本N」编号同源。
+    // 先内联文本引用再做时间码处理,连进来的文本节点里写的时间码同样被覆盖。
+    let userPrompt = inlineIncomingTextRefs(node.prompt || "", sources);
+    if (isClipReshoot && !nativeClipReshoot) {
+      // ffmpeg 裁拼路径:模型看到的是裁剪后的短片,用户按原片时间轴写的时间码
+      // 必须重映射到裁剪时间轴;落在未选中区间的时间码直接拦下。
+      const remap = remapClipReshootPromptTimecodes(userPrompt, clipRanges, clipSourceDuration);
+      if (remap.error != null) {
+        toast.error(remap.error);
+        return;
+      }
+      userPrompt = remap.prompt ?? userPrompt;
+    }
+    const finalPrompt = isClipReshoot
+      ? nativeClipReshoot
+        ? `${buildNativeClipReshootInstruction(clipRanges, clipSourceDuration, `视频${clipSourceRefIndex}`)}${userPrompt.trim() ? `\n修改要求：${userPrompt}` : ""}`
+        : `${buildClipReshootRangeInstruction(clipRanges, clipSourceDuration, `视频${clipSourceRefIndex}`, providerGenerationDuration)}\n${userPrompt}`.trim()
+      : userPrompt;
     if (isClipReshoot) {
-      const rangeError = validateClipReshootPrompt(finalPrompt, sourceVideo?.mediaDuration);
+      // 校验参照系与下发内容一致:原生路径 = 原片时间轴;裁拼路径 = 重映射后的
+      // 裁剪时间轴(总长 = 选区之和)。
+      const clipSelectedSeconds = clipRanges.reduce((total, range) => total + range.end - range.start, 0);
+      const rangeError = validateClipReshootPrompt(
+        finalPrompt,
+        nativeClipReshoot ? (sourceVideo?.mediaDuration ?? clipSourceDuration) : clipSelectedSeconds,
+      );
       if (rangeError) {
         toast.error(rangeError);
         return;
@@ -861,7 +903,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         ...(imageUrls.length ? { references: imageUrls } : {}),
         ...(videoUrls.length ? { videoReferences: videoUrls } : {}),
         ...(audioUrls.length ? { audioReferences: audioUrls } : {}),
-        ...(isClipReshoot && sourceVideo?.videoSrc
+        // 原生时间戳编辑不携带 clipReshoot——服务端不裁不拼,全片作为普通视频参考
+        // 直发,计费走常规参考视频口径(与报价 useReferenceVideoQuote 同源一致)。
+        ...(isClipReshoot && !nativeClipReshoot && sourceVideo?.videoSrc
           ? { clipReshoot: { sourceUrl: sourceVideo.videoSrc, ranges: clipRanges } satisfies ClipReshootRequest }
           : {}),
       };
@@ -1197,6 +1241,20 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                         {formatClipReshootTime(range.start)}–{formatClipReshootTime(range.end)}
                       </span>
                     ))}
+                    {/* 裁拼路径多选区 = 一次生成再算术切分,每个接缝都可能截断动作;
+                        原生时间戳编辑无此弱点,不提示。 */}
+                    {clipRanges.length > 1 && !nativeClipReshoot && (
+                      <span className="text-xs text-neutral-400 dark:text-neutral-500">· 单个选区的重拍效果最佳</span>
+                    )}
+                    {/* 原生管线可见化:时长档与积分随之按完整原片计,给用户一个解释锚点。 */}
+                    {nativeClipReshoot && (
+                      <span
+                        className="text-xs text-neutral-400 dark:text-neutral-500"
+                        title="当前模型支持原生时间戳编辑：完整视频直发模型按时间码局部重生成，接缝一致性由模型保证；时长与积分按完整输出计"
+                      >
+                        · 原生时间戳编辑
+                      </span>
+                    )}
                   </div>
                 ) : undefined}
                 placeholder={isClipReshoot
@@ -1217,13 +1275,17 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
               <div className="mt-2 flex items-center justify-between gap-2">
                 <div className="flex min-w-0 flex-nowrap items-center gap-0.5 text-xs text-neutral-600 dark:text-neutral-400">
                   <ModelPicker models={selectableVideoModels} value={selectedModelId} onChange={setSelectedModelId} />
-                  <VideoModeDropdown
-                    tabs={visibleTabs}
-                    value={videoTab}
-                    onChange={setVideoTab}
-                    enabledOf={tabEnabled}
-                    hintOf={tabHint}
-                  />
+                  {/* 片段重拍的模式是节点固有属性(强制全能参考,538 行 effect 吸回),
+                      展示一个"点了会弹回"的下拉是撒谎 UI——直接隐藏。 */}
+                  {!isClipReshoot && (
+                    <VideoModeDropdown
+                      tabs={visibleTabs}
+                      value={videoTab}
+                      onChange={setVideoTab}
+                      enabledOf={tabEnabled}
+                      hintOf={tabHint}
+                    />
+                  )}
                   <VideoParamPicker
                     value={isClipReshoot ? { ...videoParam, duration: generationDuration } : videoParam}
                     onChange={setVideoParam}

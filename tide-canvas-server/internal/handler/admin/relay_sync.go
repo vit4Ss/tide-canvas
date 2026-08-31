@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -182,7 +183,7 @@ func SyncRelayModels(db *gorm.DB, baseURL, key string, newStatus int, authorID i
 			// Preserve fields edited in the admin form, while refreshing metadata
 			// owned by the relay. This also backfills metadata introduced after a
 			// model was first imported (notably the complete 3D params schema).
-			fields["config"] = mergeRelayConfig(existing.Config, cfg)
+			fields["config"] = seedTimestampVideoEditFlag(modelKey, typ, mergeRelayConfig(existing.Config, cfg))
 			if upErr := db.Model(&model.MarketModel{}).Where("id = ?", existing.ID).Updates(fields).Error; upErr != nil {
 				res.Failed++
 				continue
@@ -200,7 +201,7 @@ func SyncRelayModels(db *gorm.DB, baseURL, key string, newStatus int, authorID i
 			Name:     name,
 			ModelKey: modelKey,
 			Type:     typ,
-			Config:   cfg,
+			Config:   seedTimestampVideoEditFlag(modelKey, typ, cfg),
 			Price:    price,
 			Status:   newStatus,
 		}
@@ -217,6 +218,37 @@ func SyncRelayModels(db *gorm.DB, baseURL, key string, newStatus int, authorID i
 		res.Created++
 	}
 	return res, nil
+}
+
+// timestampVideoEditSeedPattern 识别官方文档确认支持「时间戳级视频编辑」的
+// Seedance 2.5 系模型 key(doubao-seedance-2-5-*、*seedance-2.5* 等)。2 与 5
+// 之间必须有分隔符:seedance-2.0、seedance-25 都不会误中。
+var timestampVideoEditSeedPattern = regexp.MustCompile(`(?i)seedance[-_.]?2[-._]5`)
+
+// seedTimestampVideoEditFlag 给 Seedance 2.5 系视频模型播种画布片段重拍的
+// 「原生时间戳编辑」标记(timestampVideoEdit,见 video-clip-reshoot.ts)。
+// set-if-absent:键已存在时绝不改写——true/false 都是管理员意志,运营在模型
+// 管理里关掉后,后续同步不会把它弹回来。非目标模型与无法解析的 config 原样
+// 返回,与 mergeRelayConfig 同样的"绝不破坏本地配置"底线。
+func seedTimestampVideoEditFlag(modelKey, modelType, cfg string) string {
+	if modelType != "video" || !timestampVideoEditSeedPattern.MatchString(modelKey) {
+		return cfg
+	}
+	obj := map[string]json.RawMessage{}
+	if strings.TrimSpace(cfg) != "" {
+		if err := json.Unmarshal([]byte(cfg), &obj); err != nil || obj == nil {
+			return cfg
+		}
+	}
+	if _, exists := obj["timestampVideoEdit"]; exists {
+		return cfg
+	}
+	obj["timestampVideoEdit"] = json.RawMessage("true")
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return cfg
+	}
+	return string(b)
 }
 
 // relayOwnedConfigFields are catalog metadata, not admin form settings. They
