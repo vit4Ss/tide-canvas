@@ -92,6 +92,45 @@ func TestStoredCanvasNodeFeaturesConfigPreservesV4PanoramaOptOut(t *testing.T) {
 	}
 }
 
+func TestStoredCanvasNodeFeaturesConfigMigratesV9AnnotateInPlace(t *testing.T) {
+	raw := `{"version":9,"nodeTypes":[{"key":"image","enabled":true,"sortOrder":5,"features":["media.preview","image.rotate","media.download"]},{"key":"character","enabled":true,"sortOrder":0,"features":["media.preview"]},{"key":"video","enabled":true,"sortOrder":6,"features":["media.preview"]}]}`
+
+	got := StoredCanvasNodeFeaturesConfig(raw)
+	if got.Version != CanvasNodeFeaturesVersion {
+		t.Fatalf("version = %d, want %d", got.Version, CanvasNodeFeaturesVersion)
+	}
+	byKey := canvasNodeConfigByKey(got.NodeTypes)
+	want := []string{"media.preview", "image.rotate", "image.annotate", "media.download"}
+	if !reflect.DeepEqual(byKey["image"].Features, want) {
+		t.Fatalf("migrated V9 image features = %#v, want %#v", byKey["image"].Features, want)
+	}
+	// 锚点(image.rotate)不存在 = 管理员退订了本地栅格编辑组:不插入。
+	if want := []string{"media.preview"}; !reflect.DeepEqual(byKey["character"].Features, want) {
+		t.Fatalf("V9 character without anchor = %#v, want untouched %#v", byKey["character"].Features, want)
+	}
+	if want := []string{"media.preview"}; !reflect.DeepEqual(byKey["video"].Features, want) {
+		t.Fatalf("V9 video (non-image renderer) = %#v, want untouched %#v", byKey["video"].Features, want)
+	}
+}
+
+func TestStoredCanvasNodeFeaturesConfigMigratesV8ThroughV9(t *testing.T) {
+	// V8 文档必须逐级走完 V8→V9→V10:3D 节点插入之外,image.rotate 锚点后也要
+	// 拿到手绘标注(此前 V8 迁移直接跳到最终版本,会绕过后续新增)。
+	raw := `{"version":8,"nodeTypes":[{"key":"image","enabled":true,"sortOrder":5,"features":["image.rotate"]},{"key":"scene_3d","enabled":true,"sortOrder":3,"features":[]}]}`
+
+	got := StoredCanvasNodeFeaturesConfig(raw)
+	if got.Version != CanvasNodeFeaturesVersion {
+		t.Fatalf("version = %d, want %d", got.Version, CanvasNodeFeaturesVersion)
+	}
+	byKey := canvasNodeConfigByKey(got.NodeTypes)
+	if want := []string{"image.rotate", "image.annotate"}; !reflect.DeepEqual(byKey["image"].Features, want) {
+		t.Fatalf("V8 chained migration image features = %#v, want %#v", byKey["image"].Features, want)
+	}
+	if _, ok := byKey["3d"]; !ok {
+		t.Fatal("V8 chained migration must still insert the 3d node")
+	}
+}
+
 func TestNormalizeCanvasNodeFeaturesConfigPreservesGranularPanoramaPolicyOrder(t *testing.T) {
 	input := CanvasNodeFeaturesConfig{
 		Version: CanvasNodeFeaturesVersion,

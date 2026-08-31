@@ -11,7 +11,7 @@ import {
   Images, Orbit, Sun, Table, Brush, FlipHorizontal2,
   Grid2x2, Hash, RotateCcw,
   ScanFace, UserRound, Mountain, Package, Film, Contrast, PersonStanding,
-  Smile, Crop, RotateCw, Gem, WandSparkles,
+  Smile, Crop, RotateCw, Gem, WandSparkles, PenLine,
 } from "lucide-react";
 import { QualityRatioPicker, parseRatio, RATIO_OPTIONS, QUALITY_OPTIONS, CLARITY_OPTIONS, type QualityRatioValue } from "./quality-ratio-picker";
 import { BatchCountDropdown } from "./components/batch-count-dropdown";
@@ -26,7 +26,8 @@ import { NodeChrome } from "./base/node-chrome";
 import { NodePorts } from "./base/node-ports";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { resolveModelReferenceCountLimit, resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
-import { sliceImageGrid, transformImageRaster, type RasterTransform } from "@/lib/image-slice";
+import { sliceImageGrid, transformImageRaster, type RasterTransform, type RasterTransformResult } from "@/lib/image-slice";
+import ImageAnnotateModal from "./image-annotate-modal";
 import { disableOssDisplayProcessing, fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
 import { matrixPrice, keyVariants } from "@/lib/price-matrix";
 import { getImageCardSizeForRatio } from "@/lib/image-card-size";
@@ -376,7 +377,7 @@ const PORTRAIT_PANEL_FEATURES = {
   texture: "image.portraitTexture",
 } as const;
 
-type LocalTransformKind = "mirror" | "crop" | "rotate";
+type LocalTransformKind = "mirror" | "crop" | "rotate" | "annotate";
 
 function swapRatio(ratio?: string | null): string | undefined {
   if (!ratio) return undefined;
@@ -1457,6 +1458,52 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   // 裁剪、旋转、镜像共用确定性本地变换链路：代理取图 → canvas → 上传 →
   // 新建右侧派生节点。三者都不走 AI、不耗积分，也不会覆盖源图。
   const [localTransforming, setLocalTransforming] = useState<LocalTransformKind | null>(null);
+
+  // 上传一份本地合成结果并创建连线派生节点(裁剪/旋转/镜像/手绘标注共用的尾段)。
+  // 返回是否成功——手绘标注弹层据此决定关闭还是保留笔画供重试。
+  const publishDerivedImage = useCallback(async (
+    result: RasterTransformResult,
+    { title, successMessage, outputRatio }: { title: string; successMessage: string; outputRatio?: string },
+  ): Promise<boolean> => {
+    const safeTitle = title.replace(/[\\/:*?"<>|]/g, "-");
+    const up = await uploadFileSmart(new File(
+      [result.blob],
+      `${node.title || "图片"}-${safeTitle}.${result.extension}`,
+      { type: result.mimeType },
+    ));
+    if (!up.success || !up.data?.fileUrl) {
+      toast.error(up.message || `${title}上传失败`);
+      return false;
+    }
+
+    const outputAspect = result.width / result.height;
+    const outputCard = fitCardSize(outputAspect, outputRatio);
+    const st = useCanvasStore.getState();
+    const nid = generateNodeId();
+    const { x: targetX, y: targetY } = findRightColumnSpot(st.nodes, node, cardW, outputCard.w);
+    st.addNode({
+      id: nid,
+      type: derivativeNodeType,
+      x: targetX,
+      y: targetY,
+      width: outputCard.w,
+      height: outputCard.h,
+      contentW: outputCard.w,
+      contentH: outputCard.h,
+      title,
+      imageSrc: up.data.fileUrl,
+      status: "success",
+      fileSize: up.data.fileSize,
+      fileType: up.data.fileType,
+      mimeType: up.data.mimeType,
+      ...(outputRatio ? { aspectRatio: outputRatio } : {}),
+    }, true);
+    st.addConnection({ id: `conn_${node.id}_${nid}`, sourceId: node.id, targetId: nid }, false);
+    st.selectNode(nid);
+    toast.success(successMessage);
+    return true;
+  }, [cardW, derivativeNodeType, node]);
+
   const handleLocalTransform = useCallback(async ({
     kind,
     transform,
@@ -1479,48 +1526,13 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     setLocalTransforming(kind);
     try {
       const result = await transformImageRaster(node.imageSrc, transform, node.mimeType);
-      const safeTitle = title.replace(/[\\/:*?"<>|]/g, "-");
-      const up = await uploadFileSmart(new File(
-        [result.blob],
-        `${node.title || "图片"}-${safeTitle}.${result.extension}`,
-        { type: result.mimeType },
-      ));
-      if (!up.success || !up.data?.fileUrl) {
-        toast.error(up.message || `${title}上传失败`);
-        return;
-      }
-
-      const outputAspect = result.width / result.height;
-      const outputCard = fitCardSize(outputAspect, outputRatio);
-      const st = useCanvasStore.getState();
-      const nid = generateNodeId();
-      const { x: targetX, y: targetY } = findRightColumnSpot(st.nodes, node, cardW, outputCard.w);
-      st.addNode({
-        id: nid,
-        type: derivativeNodeType,
-        x: targetX,
-        y: targetY,
-        width: outputCard.w,
-        height: outputCard.h,
-        contentW: outputCard.w,
-        contentH: outputCard.h,
-        title,
-        imageSrc: up.data.fileUrl,
-        status: "success",
-        fileSize: up.data.fileSize,
-        fileType: up.data.fileType,
-        mimeType: up.data.mimeType,
-        ...(outputRatio ? { aspectRatio: outputRatio } : {}),
-      }, true);
-      st.addConnection({ id: `conn_${node.id}_${nid}`, sourceId: node.id, targetId: nid }, false);
-      st.selectNode(nid);
-      toast.success(successMessage);
+      await publishDerivedImage(result, { title, successMessage, outputRatio });
     } catch {
       toast.error(`${title}失败，请重试`);
     } finally {
       setLocalTransforming(null);
     }
-  }, [cardW, derivativeNodeType, localTransforming, node]);
+  }, [localTransforming, node, publishDerivedImage]);
 
   const handleCrop = useCallback((ratio: string, aspect: number) => {
     void handleLocalTransform({
@@ -1546,6 +1558,24 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       outputRatio,
     });
   }, [cardAspect, handleLocalTransform, node.aspectRatio]);
+
+  // ===== 手绘标注:弹层里画完 → 上传合成图 → 创建连线派生节点(尺寸与源图一致) =====
+  const [annotateOpen, setAnnotateOpen] = useState(false);
+  const handleAnnotateSave = useCallback(async (result: RasterTransformResult): Promise<boolean> => {
+    setLocalTransforming("annotate");
+    try {
+      return await publishDerivedImage(result, {
+        title: "手绘标注",
+        successMessage: "已生成标注图节点",
+        outputRatio: isStandardRatio(node.aspectRatio) ? node.aspectRatio : undefined,
+      });
+    } catch {
+      toast.error("手绘标注保存失败，请重试");
+      return false;
+    } finally {
+      setLocalTransforming(null);
+    }
+  }, [node.aspectRatio, publishDerivedImage]);
 
   const handleMirror = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
@@ -1864,6 +1894,22 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           busy={localTransforming === "rotate"}
           onRotate={handleRotate}
         />
+      ),
+    },
+    {
+      key: "image.annotate",
+      group: "process",
+      content: (
+        <button
+          onMouseDown={stop}
+          onClick={(e) => { stop(e); setAnnotateOpen(true); }}
+          disabled={localTransforming === "annotate"}
+          title="在图上手绘圈选与标记，生成标注图节点"
+          className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800"
+        >
+          {localTransforming === "annotate" ? <Loader2 className="h-4 w-4 animate-spin" /> : <PenLine className="h-4 w-4" />}
+          手绘标注
+        </button>
       ),
     },
     {
@@ -2251,6 +2297,16 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         {/* 360° 全景查看器（展示 AI 生成的全景扩图） */}
         {panoramaOpen && panoramaSrc && (
           <PanoramaViewer src={panoramaSrc} title={node.title} onClose={() => setPanoramaOpen(false)} />
+        )}
+
+        {/* 手绘标注弹层：画完保存 → 上传 → 生成连线派生节点 */}
+        {annotateOpen && node.imageSrc && (
+          <ImageAnnotateModal
+            src={node.imageSrc}
+            sourceMimeType={node.mimeType}
+            onClose={() => setAnnotateOpen(false)}
+            onSave={handleAnnotateSave}
+          />
         )}
 
         {/* 多角度：跟随图片节点的内联控制面板 */}

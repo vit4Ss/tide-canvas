@@ -23,8 +23,10 @@ export interface RasterTransformResult {
   extension: "png" | "jpg";
 }
 
-/** 经后端下载代理加载图片为可读像素的 HTMLImageElement(返回的 objUrl 由调用方负责 revoke) */
-async function loadImageViaProxy(url: string): Promise<{ img: HTMLImageElement; objUrl: string; mimeType: string }> {
+/** 经后端下载代理加载图片为可读像素的 HTMLImageElement(返回的 objUrl 由调用方负责 revoke)。
+ *  导出给需要在源图上做自由合成的调用方(如手绘标注弹层),与本文件内的变换共用同一条
+ *  免 CORS 污染通道。 */
+export async function loadImageViaProxy(url: string): Promise<{ img: HTMLImageElement; objUrl: string; mimeType: string }> {
   let res: Response;
   if (url.startsWith("blob:") || url.startsWith("data:")) {
     // 本地 blob:/data: 已是同源可读像素，直接加载,无需(也无法)走后端下载代理。

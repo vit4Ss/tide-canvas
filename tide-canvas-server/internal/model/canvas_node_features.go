@@ -17,7 +17,7 @@ import (
 // registered features are enabled for each registered node type.
 const ConfigKeyCanvasNodeFeatures = "canvas.nodeFeatures.v1"
 
-const CanvasNodeFeaturesVersion = 9
+const CanvasNodeFeaturesVersion = 10
 
 const canvasNodeFeaturesV1 = 1
 
@@ -34,6 +34,8 @@ const canvasNodeFeaturesV6 = 6
 const canvasNodeFeaturesV7 = 7
 
 const canvasNodeFeaturesV8 = 8
+
+const canvasNodeFeaturesV9 = 9
 
 const canvasNodeFeaturesDescription = "Canvas node type and toolbar feature policy (versioned JSON)"
 
@@ -127,10 +129,19 @@ var panoramaNodeFeatures = []string{
 
 var canvasNodeV4ImageDefaultFeatures = append(cloneStrings(canvasNodeV3ImageDefaultFeatures), "skill.launcher")
 
+// annotateNodeFeatures is the V10 addition: freehand annotation on the node's
+// current image, producing a connected derivative node (标注 A/B 位置后再喂给
+// 生成模型引用,与裁剪/旋转同一条派生链路)。
+var annotateNodeFeatures = []string{"image.annotate"}
+
 var imageNodeDefaultFeatures = insertFeaturesAfter(
-	canvasNodeV3ImageDefaultFeatures,
-	"image.panorama",
-	panoramaNodeFeatures,
+	insertFeaturesAfter(
+		canvasNodeV3ImageDefaultFeatures,
+		"image.panorama",
+		panoramaNodeFeatures,
+	),
+	"image.rotate",
+	annotateNodeFeatures,
 )
 
 var canvasNodeV2CharacterFeatures = []string{
@@ -165,9 +176,13 @@ var canvasNodeV3CharacterDefaultFeatures = []string{
 var canvasNodeV4CharacterDefaultFeatures = append(cloneStrings(canvasNodeV3CharacterDefaultFeatures), "skill.launcher")
 
 var characterNodeDefaultFeatures = insertFeaturesAfter(
-	canvasNodeV3CharacterDefaultFeatures,
-	"image.panorama",
-	panoramaNodeFeatures,
+	insertFeaturesAfter(
+		canvasNodeV3CharacterDefaultFeatures,
+		"image.panorama",
+		panoramaNodeFeatures,
+	),
+	"image.rotate",
+	annotateNodeFeatures,
 )
 
 var canvasNodeV3VideoDefaultFeatures = []string{
@@ -311,6 +326,10 @@ var CanvasNodeFeatureCatalog = []CanvasNodeFeatureDefinition{
 	},
 	{
 		Key: "image.gridSplit", Title: "宫格切分", Description: "把宫格图片切分为独立素材",
+		Group: "image", SupportedRenderers: []string{"image"},
+	},
+	{
+		Key: "image.annotate", Title: "手绘标注", Description: "在当前图片上手绘圈选与标记,生成标注派生图",
 		Group: "image", SupportedRenderers: []string{"image"},
 	},
 	{
@@ -485,6 +504,9 @@ func StoredCanvasNodeFeaturesConfig(raw string) CanvasNodeFeaturesConfig {
 	if parsed.Version == canvasNodeFeaturesV8 {
 		parsed = migrateCanvasNodeFeaturesV8(parsed)
 	}
+	if parsed.Version == canvasNodeFeaturesV9 {
+		parsed = migrateCanvasNodeFeaturesV9(parsed)
+	}
 	normalized, err := NormalizeCanvasNodeFeaturesConfig(parsed)
 	if err != nil {
 		return DefaultCanvasNodeFeaturesConfig()
@@ -647,7 +669,7 @@ func migrateCanvasNodeFeaturesV7(input CanvasNodeFeaturesConfig) CanvasNodeFeatu
 // Moving the Director and later rows by one avoids a duplicate sortOrder in
 // persisted V8 documents, which did not know about the new node type.
 func migrateCanvasNodeFeaturesV8(input CanvasNodeFeaturesConfig) CanvasNodeFeaturesConfig {
-	input.Version = CanvasNodeFeaturesVersion
+	input.Version = canvasNodeFeaturesV9
 	for _, item := range input.NodeTypes {
 		if strings.TrimSpace(item.Key) == "3d" {
 			return input
@@ -673,6 +695,28 @@ func migrateCanvasNodeFeaturesV8(input CanvasNodeFeaturesConfig) CanvasNodeFeatu
 	input.NodeTypes = append(input.NodeTypes, CanvasNodeTypeConfig{
 		Key: "3d", Enabled: true, SortOrder: insertOrder, Features: []string{},
 	})
+	return input
+}
+
+// migrateCanvasNodeFeaturesV9 adds freehand annotation next to the other local
+// raster edits (anchored after image.rotate) on every image-renderer node whose
+// policy still carries that anchor. Customized orders survive; policies that
+// opted out of the raster edit group (anchor absent, including explicit empty
+// lists) stay untouched — the feature remains in the catalog for manual
+// assignment. Mirrors the V4 panorama-controls migration.
+func migrateCanvasNodeFeaturesV9(input CanvasNodeFeaturesConfig) CanvasNodeFeaturesConfig {
+	input.Version = CanvasNodeFeaturesVersion
+	for i := range input.NodeTypes {
+		def, ok := canonicalCanvasNodeTypeByKey[strings.TrimSpace(input.NodeTypes[i].Key)]
+		if !ok || def.Renderer != "image" {
+			continue
+		}
+		input.NodeTypes[i].Features = insertFeaturesAfter(
+			input.NodeTypes[i].Features,
+			"image.rotate",
+			annotateNodeFeatures,
+		)
+	}
 	return input
 }
 

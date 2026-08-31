@@ -32,6 +32,7 @@ export type CanvasNodeFeatureKey =
   | "tool.upscale"
   | "image.crop"
   | "image.rotate"
+  | "image.annotate"
   | "image.gridSplit"
   | "video.clipReshoot"
   | "video.frameBreakdown"
