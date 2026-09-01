@@ -64,6 +64,16 @@ test("frame aspect catalog matches the seven director choices", () => {
   assert.equal(frameAspect("invalid").key, "auto");
 });
 
+test("director can annotate the current framed view and publish a connected image node", () => {
+  assert.match(editorSource, /import ImageAnnotateModal from "\.\/image-annotate-modal"/);
+  assert.match(editorSource, /const \[annotationSource, setAnnotationSource\]/);
+  assert.match(editorSource, /apiRef\.current\.snapshot\(aspect\)/);
+  assert.match(editorSource, /setAnnotationSource\(\{ url: URL\.createObjectURL\(blob\) \}\)/);
+  assert.match(editorSource, /<ImageAnnotateModal[\s\S]*?src=\{annotationSource\.url\}[\s\S]*?onSave=\{handleAnnotationSave\}/);
+  assert.match(editorSource, /spawnShotNode\(up\.data, result\.width \/ result\.height, "导演台标注"\)/);
+  assert.match(editorSource, /title="截取当前导演视角[^\"]*"[\s\S]*?手绘标注\s*<\/button>/);
+});
+
 test("recognition parser strips fences, caps rows and clamps unsafe placement", () => {
   const rows = Array.from({ length: 25 }, (_, index) => ({
     name: `人物${index}`,
@@ -106,7 +116,7 @@ test("director rail uses panels instead of direct-add shortcuts", () => {
 });
 
 test("recognition modal owns focus while it is open", () => {
-  assert.match(editorSource, /useFocusTrap<HTMLDivElement>\(!recognitionOpen\)/);
+  assert.match(editorSource, /useFocusTrap<HTMLDivElement>\(!recognitionOpen && !annotationSource\)/);
   assert.match(editorSource, /useFocusTrap<HTMLElement>\(recognitionOpen\)/);
   assert.match(editorSource, /ref=\{recognitionDialogRef\}[\s\S]*?aria-label="AI识图导入"[\s\S]*?tabIndex=\{-1\}/);
   assert.match(editorSource, /event\.key === "Escape" && recognitionOpen[\s\S]*?input, textarea/);

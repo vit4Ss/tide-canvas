@@ -7,7 +7,7 @@ import {
   Move, RotateCw, Maximize2, Play, Pause, Route, SkipBack, Crosshair,
   Layers3, Search, GalleryHorizontal, ImagePlus, Upload, History, WandSparkles,
   ChevronLeft, ChevronRight, RefreshCw, Box, Circle, Cylinder,
-  RectangleHorizontal, Check,
+  RectangleHorizontal, Check, PenLine,
 } from "lucide-react";
 import type * as THREE_NS from "three";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
@@ -63,6 +63,8 @@ import {
 } from "./scene-3d-recognition";
 import { selectStoryboardAnalysisModel } from "./video-frame-breakdown";
 import { awaitStoryboardAnalysisTask } from "./storyboard-analysis-task";
+import ImageAnnotateModal from "./image-annotate-modal";
+import type { RasterTransformResult } from "@/lib/image-slice";
 
 interface Props {
   node: CanvasNode;
@@ -206,8 +208,9 @@ function SliderRow({ label, value, min, max, step = 1, onChange, labelClass = "w
 
 export function Scene3DEditor({ node, onClose }: Props) {
   const [recognitionOpen, setRecognitionOpen] = useState(false);
+  const [annotationSource, setAnnotationSource] = useState<{ url: string } | null>(null);
   const mountRef = useRef<HTMLDivElement>(null);
-  const dialogRef = useFocusTrap<HTMLDivElement>(!recognitionOpen);
+  const dialogRef = useFocusTrap<HTMLDivElement>(!recognitionOpen && !annotationSource);
   const recognitionDialogRef = useFocusTrap<HTMLElement>(recognitionOpen);
   const apiRef = useRef<EditorApi | null>(null);
   const editorAliveRef = useRef(true);
@@ -262,7 +265,8 @@ export function Scene3DEditor({ node, onClose }: Props) {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState<"shot" | "annotate" | null>(null);
+  const exportBusyRef = useRef(false);
   const [shotCount, setShotCount] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("scene");
@@ -312,6 +316,14 @@ export function Scene3DEditor({ node, onClose }: Props) {
   const [playing, setPlaying] = useState(false);
   const [piloting, setPiloting] = useState(false);
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
+
+  // 当前导演视角快照只在标注会话存活期间保留；关闭、换图或退出导演台都会释放内存。
+  useEffect(() => {
+    const url = annotationSource?.url;
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [annotationSource?.url]);
 
   const [light, setLightState] = useState(() =>
     initialState?.light ?? { preset: "自然光", azimuth: 0.7, elevation: 0.9, intensity: 1.15, ambient: 0.55 });
@@ -2336,6 +2348,8 @@ export function Scene3DEditor({ node, onClose }: Props) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const element = event.target as HTMLElement | null;
+      // 标注弹层自行处理 Escape（已有笔画时会阻止误关）；导演台不能穿透关闭。
+      if (annotationSource) return;
       // 模态分层:资产选择器开着时 Escape 只关它,不穿透到识图面板/编辑器。
       if (event.key === "Escape" && recognitionAssetPickerOpen) {
         setRecognitionAssetPickerOpen(false);
@@ -2371,10 +2385,14 @@ export function Scene3DEditor({ node, onClose }: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [handleClose, loading, motion.keyframes.length, motionOpen, piloting, playing, recognitionAssetPickerOpen, recognitionOpen, recordMotionFrame]);
+  }, [annotationSource, handleClose, loading, motion.keyframes.length, motionOpen, piloting, playing, recognitionAssetPickerOpen, recognitionOpen, recordMotionFrame]);
 
   /** 截图以图片节点形式落到导演台右侧（多张时向下排列）并自动连线，作为下游 AI 生成的参考素材 */
-  const spawnShotNode = (file: { fileUrl: string; fileSize: number; fileType: string; mimeType: string }, aspect: number) => {
+  const spawnShotNode = (
+    file: { fileUrl: string; fileSize: number; fileType: string; mimeType: string },
+    aspect: number,
+    titlePrefix = "导演台截图",
+  ) => {
     const st = useCanvasStore.getState();
     const nid = generateNodeId();
     const cw = SHOT_CARD_WIDTH;
@@ -2387,24 +2405,39 @@ export function Scene3DEditor({ node, onClose }: Props) {
     const targetY = colNodes.length
       ? Math.max(...colNodes.map((n) => n.y + (n.contentH ?? n.height ?? 0))) + 24
       : node.y;
-    const count = st.nodes.filter((n) => n.type === "image" && n.title?.startsWith("导演台截图")).length;
+    const count = st.nodes.filter((n) => n.type === "image" && n.title?.startsWith(titlePrefix)).length;
     st.addNode({
       id: nid, type: "image", x: targetX, y: targetY,
       width: cw, height: ch, contentW: cw, contentH: ch,
-      title: `导演台截图 ${count + 1}`, status: "success", imageSrc: file.fileUrl, fileSize: file.fileSize, fileType: file.fileType, mimeType: file.mimeType,
+      title: `${titlePrefix} ${count + 1}`, status: "success", imageSrc: file.fileUrl, fileSize: file.fileSize, fileType: file.fileType, mimeType: file.mimeType,
     }, true);
     st.addConnection({ id: `conn_${node.id}_${nid}`, sourceId: node.id, targetId: nid }, false);
   };
 
+  const resolvedShotAspect = () => {
+    const mount = mountRef.current;
+    return shotAspect > 0
+      ? shotAspect
+      : mount && mount.clientHeight > 0 ? mount.clientWidth / mount.clientHeight : 16 / 9;
+  };
+
+  const beginExport = (kind: "shot" | "annotate") => {
+    if (exportBusyRef.current) return false;
+    exportBusyRef.current = true;
+    setExportBusy(kind);
+    return true;
+  };
+
+  const finishExport = () => {
+    exportBusyRef.current = false;
+    if (editorAliveRef.current) setExportBusy(null);
+  };
+
   const handleShot = async () => {
-    if (busy || !apiRef.current) return;
-    setBusy(true);
+    if (!apiRef.current || !beginExport("shot")) return;
     try {
-      const mount = mountRef.current;
-      const resolvedShotAspect = shotAspect > 0
-        ? shotAspect
-        : mount && mount.clientHeight > 0 ? mount.clientWidth / mount.clientHeight : 16 / 9;
-      const blob = await apiRef.current.snapshot(resolvedShotAspect);
+      const aspect = resolvedShotAspect();
+      const blob = await apiRef.current.snapshot(aspect);
       if (!editorAliveRef.current) return;
       if (!blob) { toast.error("截图失败，请重试"); return; }
       const file = new File([blob], `director_${Date.now()}.png`, { type: "image/png" });
@@ -2414,14 +2447,63 @@ export function Scene3DEditor({ node, onClose }: Props) {
       const url = up.data.fileUrl;
       persist();
       updateNode(node.id, { imageSrc: url, fileSize: up.data.fileSize, fileType: up.data.fileType, mimeType: up.data.mimeType }); // 导演台预览 = 最近一次截图
-      spawnShotNode(up.data, resolvedShotAspect);
+      spawnShotNode(up.data, aspect);
       setShotCount((c) => c + 1);
       toast.success("已截图，图片节点已放入画布");
     } catch {
       // 快照/上传异常:反馈并避免未处理 rejection。
       if (editorAliveRef.current) toast.error("截图失败，请重试");
     } finally {
-      if (editorAliveRef.current) setBusy(false);
+      finishExport();
+    }
+  };
+
+  /** 抓取当前导演视角后进入标注；原始快照不上传，只有保存后的合成图进入资产存储。 */
+  const handleStartAnnotation = async () => {
+    if (!apiRef.current || !beginExport("annotate")) return;
+    try {
+      const aspect = resolvedShotAspect();
+      const blob = await apiRef.current.snapshot(aspect);
+      if (!editorAliveRef.current) return;
+      if (!blob) { toast.error("当前视角获取失败，请重试"); return; }
+      setAnnotationSource({ url: URL.createObjectURL(blob) });
+    } catch {
+      if (editorAliveRef.current) toast.error("当前视角获取失败，请重试");
+    } finally {
+      finishExport();
+    }
+  };
+
+  const handleAnnotationSave = async (result: RasterTransformResult): Promise<boolean> => {
+    if (!beginExport("annotate")) return false;
+    try {
+      const file = new File(
+        [result.blob],
+        `director_annotation_${Date.now()}.${result.extension}`,
+        { type: result.mimeType },
+      );
+      const up = await uploadFileSmart(file);
+      if (!editorAliveRef.current) return false;
+      if (!up.success || !up.data) {
+        toast.error(up.message || "标注图上传失败，请重试");
+        return false;
+      }
+      persist();
+      updateNode(node.id, {
+        imageSrc: up.data.fileUrl,
+        fileSize: up.data.fileSize,
+        fileType: up.data.fileType,
+        mimeType: up.data.mimeType,
+      });
+      spawnShotNode(up.data, result.width / result.height, "导演台标注");
+      setShotCount((count) => count + 1);
+      toast.success("已生成标注图，图片节点已放入画布");
+      return true;
+    } catch {
+      if (editorAliveRef.current) toast.error("标注图保存失败，请重试");
+      return false;
+    } finally {
+      finishExport();
     }
   };
 
@@ -3357,12 +3439,22 @@ export function Scene3DEditor({ node, onClose }: Props) {
             className="h-8 min-w-[96px] px-2.5 py-1.5 text-xs font-semibold tabular-nums"
           />
           <button
+            type="button"
+            onClick={() => void handleStartAnnotation()}
+            disabled={!!exportBusy || loading}
+            title="截取当前导演视角并手绘圈选、添加序号标记"
+            className={`${btn} flex shrink-0 items-center gap-1.5 bg-white/10 hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50`}
+          >
+            {exportBusy === "annotate" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PenLine className="h-3.5 w-3.5" />}
+            手绘标注
+          </button>
+          <button
             onClick={handleShot}
-            disabled={busy || loading}
+            disabled={!!exportBusy || loading}
             title={shotCount > 0 ? `截图到画布（已截 ${shotCount} 张）` : "截图到画布"}
             className="flex shrink-0 items-center gap-1.5 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition-colors hover:bg-neutral-200 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}
+            {exportBusy === "shot" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}
             截图到画布
           </button>
           {shotCount > 0 && <span className="mr-1.5 hidden shrink-0 text-xs tabular-nums text-white/60 xl:inline">已截 {shotCount} 张</span>}
@@ -3577,6 +3669,15 @@ export function Scene3DEditor({ node, onClose }: Props) {
           lockKind
           onPick={handleRecognitionAssetPick}
           onClose={() => setRecognitionAssetPickerOpen(false)}
+        />
+      )}
+
+      {annotationSource && (
+        <ImageAnnotateModal
+          src={annotationSource.url}
+          sourceMimeType="image/png"
+          onClose={() => setAnnotationSource(null)}
+          onSave={handleAnnotationSave}
         />
       )}
     </div>,
