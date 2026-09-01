@@ -33,12 +33,27 @@ func validateChannel(kind string, cfg ChannelConfig) error {
 		if err := validateWebhook(cfg.Webhook, "oapi.dingtalk.com", "api.dingtalk.com"); err != nil {
 			return fmt.Errorf("钉钉 Webhook 无效: %w", err)
 		}
+	case ChannelWeCom:
+		if err := validateWeComWebhook(cfg.Webhook); err != nil {
+			return fmt.Errorf("企业微信 Webhook 无效: %w", err)
+		}
 	case ChannelTelegram:
 		if strings.TrimSpace(cfg.BotToken) == "" || strings.TrimSpace(cfg.ChatID) == "" {
 			return errors.New("Telegram Bot Token 和 Chat ID 均不能为空")
 		}
 	default:
 		return errors.New("不支持的通知渠道")
+	}
+	return nil
+}
+
+func validateWeComWebhook(raw string) error {
+	if err := validateWebhook(raw, "qyapi.weixin.qq.com"); err != nil {
+		return err
+	}
+	u, _ := url.Parse(strings.TrimSpace(raw))
+	if u.Path != "/cgi-bin/webhook/send" || strings.TrimSpace(u.Query().Get("key")) == "" {
+		return errors.New("必须是包含 key 的群机器人 Webhook 地址")
 	}
 	return nil
 }
@@ -91,6 +106,12 @@ func (s *Service) send(ctx context.Context, kind string, cfg ChannelConfig, mess
 			endpoint += separator + "timestamp=" + timestamp + "&sign=" + sign
 		}
 		body = map[string]any{"msgtype": "text", "text": map[string]string{"content": truncateRunes(message, 3800)}}
+	case ChannelWeCom:
+		endpoint = cfg.Webhook
+		body = map[string]any{
+			"msgtype": "text",
+			"text":    map[string]string{"content": truncateUTF8Bytes(message, 2048)},
+		}
 	case ChannelTelegram:
 		endpoint = "https://api.telegram.org/bot" + strings.TrimSpace(cfg.BotToken) + "/sendMessage"
 		payload := map[string]any{
@@ -161,4 +182,27 @@ func truncateRunes(value string, max int) string {
 		return value
 	}
 	return string(r[:max-1]) + "…"
+}
+
+// 企业微信群机器人按 UTF-8 字节数限制文本内容。截断时保留完整 rune，
+// 避免在多字节中文字符中间切断并生成无效 JSON 文本。
+func truncateUTF8Bytes(value string, max int) string {
+	if len(value) <= max {
+		return value
+	}
+	suffix := "…"
+	budget := max - len(suffix)
+	if budget <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(max)
+	for _, r := range value {
+		n := len(string(r))
+		if b.Len()+n > budget {
+			return b.String() + suffix
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }

@@ -105,7 +105,7 @@ func TestValidateOfficialChannelHosts(t *testing.T) {
 	for _, tc := range []struct {
 		kind string
 		cfg  ChannelConfig
-	}{{ChannelFeishu, ChannelConfig{Webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/abc"}}, {ChannelDingTalk, ChannelConfig{Webhook: "https://oapi.dingtalk.com/robot/send?access_token=abc"}}, {ChannelTelegram, ChannelConfig{BotToken: "123:abc", ChatID: "-100123"}}} {
+	}{{ChannelFeishu, ChannelConfig{Webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/abc"}}, {ChannelDingTalk, ChannelConfig{Webhook: "https://oapi.dingtalk.com/robot/send?access_token=abc"}}, {ChannelWeCom, ChannelConfig{Webhook: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abc"}}, {ChannelTelegram, ChannelConfig{BotToken: "123:abc", ChatID: "-100123"}}} {
 		if err := validateChannel(tc.kind, tc.cfg); err != nil {
 			t.Fatalf("valid channel rejected: %v", err)
 		}
@@ -113,7 +113,7 @@ func TestValidateOfficialChannelHosts(t *testing.T) {
 	for _, tc := range []struct {
 		kind string
 		cfg  ChannelConfig
-	}{{ChannelFeishu, ChannelConfig{Webhook: "http://open.feishu.cn/hook"}}, {ChannelDingTalk, ChannelConfig{Webhook: "https://example.com/hook"}}} {
+	}{{ChannelFeishu, ChannelConfig{Webhook: "http://open.feishu.cn/hook"}}, {ChannelDingTalk, ChannelConfig{Webhook: "https://example.com/hook"}}, {ChannelWeCom, ChannelConfig{Webhook: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send"}}, {ChannelWeCom, ChannelConfig{Webhook: "https://example.com/cgi-bin/webhook/send?key=abc"}}} {
 		if validateChannel(tc.kind, tc.cfg) == nil {
 			t.Fatal("invalid channel accepted")
 		}

@@ -8,6 +8,7 @@ import "time"
 const (
 	ChannelFeishu   = "feishu"
 	ChannelDingTalk = "dingtalk"
+	ChannelWeCom    = "wecom"
 	ChannelTelegram = "telegram"
 
 	SeverityInfo     = "info"

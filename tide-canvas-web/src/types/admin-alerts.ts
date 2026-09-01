@@ -1,4 +1,4 @@
-export type AlertChannelType = "feishu" | "dingtalk" | "telegram";
+export type AlertChannelType = "feishu" | "dingtalk" | "wecom" | "telegram";
 export type AlertSeverity = "info" | "warning" | "error" | "critical";
 
 export interface AlertChannelConfig {
