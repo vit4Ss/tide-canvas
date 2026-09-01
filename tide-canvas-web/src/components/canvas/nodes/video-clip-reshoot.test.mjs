@@ -183,6 +183,42 @@ test("clip reshoot validates structured time ranges against source duration", ()
   assert.equal(validateClipReshootPrompt("00:60-01:10 invalid", 80)?.includes("格式无效"), true);
 });
 
+test("aspect-ratio text like 16:9到9:16 is not mistaken for a timecode range", () => {
+  // 画幅比例与时间码同形:两端都是裸 M:S 且都超过原片时长+60s → 按普通文本放行。
+  assert.equal(validateClipReshootPrompt("把画幅从16:9到9:16", 6), null);
+  assert.equal(validateClipReshootPrompt("竖屏改横屏 9:16到16:9", 6), null);
+  assert.deepEqual(extractClipReshootRanges("画幅 16:9到9:16", 6), []);
+  // 重映射同样原样放行(顺序递增的 9:16到16:9 曾被误判为"落在缝隙里")。
+  assert.deepEqual(
+    remapClipReshootPromptTimecodes("画幅从9:16到16:9", [{ start: 3, end: 7 }], 10),
+    { prompt: "画幅从9:16到16:9" },
+  );
+  // 倒序画幅(16:9到9:16)先过同形判别再查顺序:按普通文本放行,不报"顺序错误"。
+  assert.deepEqual(
+    remapClipReshootPromptTimecodes("把画幅从16:9到9:16", [{ start: 3, end: 7 }], 10),
+    { prompt: "把画幅从16:9到9:16" },
+  );
+  // 真实时间码的顺序错误由 remap 持原片时长语境直接报出:长片(180s)选 10s 区间,
+  // 倒序 2:30到2:10 若漏到下游 validate,会因选区总长阈值被误判成画幅文本而静默放行。
+  assert.equal(
+    remapClipReshootPromptTimecodes("画面从2:30到2:10 倒放", [{ start: 100, end: 110 }], 180)
+      .error?.includes("结束时间必须晚于开始时间"),
+    true,
+  );
+  assert.equal(
+    remapClipReshootPromptTimecodes("0:06-0:04 倒序", [{ start: 3, end: 7 }], 10)
+      .error?.includes("结束时间必须晚于开始时间"),
+    true,
+  );
+  // 与真实时间码共存:时间码照常重映射,画幅文本不动。
+  const mixed = remapClipReshootPromptTimecodes("0:04-0:06 转场,画幅 9:16到16:9", [{ start: 3, end: 7 }], 10);
+  assert.equal(mixed.prompt, "00:01-00:03 转场,画幅 9:16到16:9");
+  // 判别依赖时长兜底:接近时长的越界时间码仍按时间码报错,不被误放行。
+  assert.equal(validateClipReshootPrompt("00:00-00:07 too long", 6)?.includes("超出原视频"), true);
+  // 小时格式(0:01:30)不是画幅形态,仍走时间码语义。
+  assert.equal(validateClipReshootPrompt("0:01:30-0:01:40 后段", 6)?.includes("超出原视频"), true);
+});
+
 test("clip reshoot instruction pins seam frames and effective duration", () => {
   const base = buildClipReshootRangeInstruction([{ start: 2, end: 5 }], 10, "视频1");
   // 首尾帧锚定始终存在:裁剪片段的首尾帧就是与原片的两个接缝画面。

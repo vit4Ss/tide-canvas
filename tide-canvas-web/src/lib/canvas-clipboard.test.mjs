@@ -34,6 +34,29 @@ test("pasting a derived node preserves its surviving incoming references", () =>
   }]);
 });
 
+test("copying strips volatile blob media so pasted clones never hold dead links", () => {
+  // blob: 是上传中的本地临时地址,原节点上传完成后 revoke——克隆体拿不到回写,
+  // 快照必须剥掉,粘贴出诚实的空内容而不是几秒后必然破图的节点。
+  const uploading = {
+    id: "up",
+    type: "image",
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 80,
+    imageSrc: "blob:http://localhost/abc",
+    images: ["blob:http://localhost/abc", "https://cdn.example.com/kept.png"],
+    audioTracks: [{ url: "blob:http://localhost/track" }],
+  };
+  const snapshot = captureCanvasNodeClipboard(uploading, []);
+  assert.equal(snapshot.node.imageSrc, undefined);
+  assert.deepEqual(snapshot.node.images, ["https://cdn.example.com/kept.png"]);
+  assert.equal(snapshot.node.audioTracks, undefined);
+  // 远端地址原样保留,不受剥离影响。
+  const settled = { ...uploading, imageSrc: "https://cdn.example.com/a.png", images: undefined, audioTracks: undefined };
+  assert.equal(captureCanvasNodeClipboard(settled, []).node.imageSrc, "https://cdn.example.com/a.png");
+});
+
 test("pasting drops references whose source node no longer exists", () => {
   const snapshot = captureCanvasNodeClipboard(reshoot, [
     { id: "source-reshoot", sourceId: "source", targetId: "reshoot" },

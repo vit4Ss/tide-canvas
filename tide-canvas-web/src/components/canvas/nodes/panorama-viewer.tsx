@@ -359,7 +359,7 @@ export function PanoramaViewer({ src, title, onClose }: Props) {
   const ctrlBtn = "flex h-8 w-8 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/15 hover:text-white";
 
   return createPortal(
-    <div ref={rootRef} className="fixed inset-0 z-[200] bg-black/90" onMouseDown={(e) => e.stopPropagation()}>
+    <div ref={rootRef} className="fixed inset-0 z-[200] bg-black/90" data-canvas-modal="true" onMouseDown={(e) => e.stopPropagation()}>
       <div ref={mountRef} className="h-full w-full cursor-grab active:cursor-grabbing" />
       {loading && !error && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-white">

@@ -87,7 +87,7 @@ export function AssetPickerModal({
   }, [multi, remaining, submitAssets]);
 
   return (
-    <div className={`ws-srcmask${className ? ` ${className}` : ""}`} onClick={onClose}>
+    <div className={`ws-srcmask${className ? ` ${className}` : ""}`} data-canvas-modal="true" onClick={onClose}>
       <div className="ws-assetbox" onClick={(e) => e.stopPropagation()}>
         <div className="ws-assetbox-h">
           <span>从资产库选取{multi ? " · 可多选" : ""}</span>

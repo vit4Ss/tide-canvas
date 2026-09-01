@@ -201,7 +201,7 @@ async function sliceGridAndApply(nodeId: string, gridUrl: string) {
   // 否则丢弃——不能用旧一轮的切片覆盖新结果。
   const fresh = () => {
     const n = useCanvasStore.getState().nodes.find((x) => x.id === nodeId);
-    return !!n && (n.imageSrc === gridUrl || (blobUrls.length > 0 && n.imageSrc === blobUrls[0]));
+    return !!n && n.imageSrc === gridUrl;
   };
   try {
     const slices = await sliceImageGrid(gridUrl, 2, 2);
@@ -211,7 +211,11 @@ async function sliceGridAndApply(nodeId: string, gridUrl: string) {
       blobUrls.forEach((u) => URL.revokeObjectURL(u));
       return;
     }
-    useCanvasStore.getState().updateNode(nodeId, { images: blobUrls, imageSrc: blobUrls[0] });
+    // 主图保持远端宫格地址不动、blob 只作为组图占位(主卡此期间显示宫格合图
+    // 与「4 张」徽标,展开被闸住直到远端写回):上传窗口内若用户保存/关页,
+    // sanitizeForSave 剥掉 blob 组图后仍存有远端主图,付费结果不丢;
+    // 若换成 blob 主图,窗口期落盘会把整个结果剥成空节点。
+    useCanvasStore.getState().updateNode(nodeId, { images: blobUrls });
 
     const remote: string[] = [];
     let firstFile: { fileSize: number; fileType: string; mimeType: string } | null = null;

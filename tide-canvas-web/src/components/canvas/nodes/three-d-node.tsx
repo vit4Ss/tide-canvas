@@ -108,9 +108,16 @@ export const ThreeDNode = memo(function ThreeDNode({
   const [panoAutoDetected, setPanoAutoDetected] = useState(false);
   // 手动勾选持久化在节点配置里：组件态在面板收起/重开时会整个丢失，之前
   // 用户勾了框、重开面板后静默弹回，生成又跑成透视模式。
-  const panoOverride = node.generationConfig?.isPano ?? null;
+  // 勾选时同步记录源图地址(isPanoFor):换图后旧选择自动失效回自动识别,
+  // 不让上一张图的手动纠正静默套在新图上。旧数据没有 isPanoFor,按原行为生效。
+  const storedPanoOverride = node.generationConfig?.isPano ?? null;
+  const panoOverrideSource = node.generationConfig?.isPanoFor;
+  const panoOverride = storedPanoOverride !== null
+    && (panoOverrideSource === undefined || panoOverrideSource === i2SourceUrl)
+    ? storedPanoOverride
+    : null;
   const setPanoOverride = (next: boolean) => {
-    updateNode(node.id, { generationConfig: { ...node.generationConfig, isPano: next } });
+    updateNode(node.id, { generationConfig: { ...node.generationConfig, isPano: next, isPanoFor: i2SourceUrl } });
   };
   useEffect(() => {
     setPanoAutoDetected(false);

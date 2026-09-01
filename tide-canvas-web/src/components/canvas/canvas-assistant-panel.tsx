@@ -544,6 +544,9 @@ export function CanvasAssistantPanel({
   const [messages, setMessages] = useState<AssistantChatMessage[]>([]);
   const [sessions, setSessions] = useState<AssistantStoredSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
+  // 真正的会话切换手势(选历史会话/新建会话)计数;上传守卫据此区分"切换"
+  // 与"首次发送给空会话原地生成 id"——后者是同一逻辑会话,不该丢弃上传。
+  const sessionSwitchEpochRef = useRef(0);
   const [sending, setSending] = useState(false);
   const [models, setModels] = useState<AiModelVO[]>([]);
   const [selectedModelId, setSelectedModelId] = useState("");
@@ -958,6 +961,7 @@ export function CanvasAssistantPanel({
   const selectSession = (session: AssistantStoredSession) => {
     if (sendLockRef.current) return;
     pendingSkillRetryRef.current = null;
+    sessionSwitchEpochRef.current += 1;
     setActiveSessionId(session.id);
     setMessages(session.messages);
     setMessage("");
@@ -973,6 +977,7 @@ export function CanvasAssistantPanel({
   const startNewSession = () => {
     if (sendLockRef.current) return;
     pendingSkillRetryRef.current = null;
+    sessionSwitchEpochRef.current += 1;
     const sessionId = createSessionId();
     setActiveSessionId(sessionId);
     setMessage("");
@@ -999,6 +1004,13 @@ export function CanvasAssistantPanel({
     setUploading(true);
     setUploadProgress(0);
     toast.info(files.length > 1 ? `正在上传 ${files.length} 个文件...` : "正在上传文件...");
+    // 上传是多秒级异步,期间用户可能切画布(作用域重载)或切会话——那些路径都会
+    // 清空 attachments,完成后原样追加会把素材漏进新会话。记录起点身份,写回前比对。
+    // 会话切换用显式纪元而非 id 比较:首次发送会原地给空会话生成 id(同一逻辑
+    // 会话的延续,不算切换),而从空会话选中历史会话/新建会话同样是 ""→非空,
+    // id 比较区分不了这两种情形,纪元只在真正的切换手势上递增。
+    const scopeAtStart = sessionScopeRef.current;
+    const epochAtStart = sessionSwitchEpochRef.current;
     const uploaded: FileVO[] = [];
 
     for (const file of files) {
@@ -1018,9 +1030,13 @@ export function CanvasAssistantPanel({
       }
     }
 
-    if (uploaded.length) {
+    const stale = sessionScopeRef.current !== scopeAtStart
+      || sessionSwitchEpochRef.current !== epochAtStart;
+    if (uploaded.length && !stale) {
       setAttachments((current) => [...current, ...uploaded]);
       toast.success(uploaded.length > 1 ? `已上传 ${uploaded.length} 个文件` : "文件已上传");
+    } else if (uploaded.length) {
+      toast.info("会话已切换，本次上传的参考素材未加入当前会话");
     }
     setUploading(false);
     setUploadProgress(0);

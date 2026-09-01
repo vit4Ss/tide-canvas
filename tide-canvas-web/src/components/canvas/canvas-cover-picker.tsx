@@ -38,6 +38,7 @@ export function CanvasCoverPicker({ open, currentUrl, images: propImages, onClos
   return createPortal(
     <div
       className="dark fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm"
+      data-canvas-modal="true"
       onMouseDown={onClose}
       onKeyDown={(e) => {
         if (e.key !== "Escape") return;

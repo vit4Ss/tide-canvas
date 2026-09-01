@@ -249,7 +249,16 @@ export function Scene3DEditor({ node, onClose }: Props) {
       .find((candidate) => candidate?.type === "3d" && !!canvasThreeDSceneAssetFromNode(candidate));
     return canvasThreeDSceneAssetFromNode(source);
   }, [node.id]);
-  const initialSceneAsset = connectedSceneAsset ?? initialState?.sceneAsset ?? null;
+  // 连接推导的资产恒为 materialMode:"solid"(canvasThreeDSceneAssetFromNode 写死);
+  // 用户上次在导演台切的「白模/原贴图」持久化在 scene3d.sceneAsset 里——同一
+  // 资产(url 相同)时以持久化的材质模式为准,重开不丢选择。
+  const initialSceneAsset = useMemo(() => {
+    if (!connectedSceneAsset) return initialState?.sceneAsset ?? null;
+    const persisted = initialState?.sceneAsset;
+    return persisted?.url === connectedSceneAsset.url && persisted.materialMode
+      ? { ...connectedSceneAsset, materialMode: persisted.materialMode }
+      : connectedSceneAsset;
+  }, [connectedSceneAsset, initialState]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1086,6 +1095,10 @@ export function Scene3DEditor({ node, onClose }: Props) {
         const enterRigViewInternal = (id: string) => {
           const r = rigsM.get(id);
           if (!r) return;
+          // 与驾驶模式互斥:反向(开驾驶时退机位视图)已有处理,这里补正向——
+          // 驾驶中切机位视图必须先退出驾驶,否则指针锁/键盘掌镜仍驱动导演相机,
+          // 而画面已是机位相机,两套控制叠加互相打架。
+          if (pilotActive) setPilotModeInternal(false);
           if (!activeRigId) {
             savedDir = { pos: dirCam.position.clone(), target: orbit.target.clone() };
           } else {
@@ -1217,6 +1230,9 @@ export function Scene3DEditor({ node, onClose }: Props) {
         const raycaster = new THREE.Raycaster();
         const ndc = new THREE.Vector2();
         const onPointerDown = (ev: PointerEvent) => {
+          // 只响应主键:右键属于 OrbitControls 平移、中键属于缩放,
+          // 若也走选中/取消会在调整视角时把当前选中悄悄清掉。
+          if (ev.button !== 0) return;
           if (tcDragging || pilotActive || motionPlaybackActive) return;
           const rect = renderer.domElement.getBoundingClientRect();
           ndc.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
@@ -2440,6 +2456,7 @@ export function Scene3DEditor({ node, onClose }: Props) {
       aria-modal="true"
       aria-label="3D 导演台"
       tabIndex={-1}
+      data-canvas-modal="true"
       className="fixed inset-0 z-[200] bg-slate-950 outline-none"
       onMouseDown={(e) => e.stopPropagation()}
     >

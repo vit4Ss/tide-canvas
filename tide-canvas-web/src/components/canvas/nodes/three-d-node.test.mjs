@@ -20,6 +20,10 @@ test("canvas 3D node uses the standalone model catalog, pricing and generation p
   assert.match(source, /ratio >= 1\.9 && ratio <= 2\.1/);
   assert.match(source, /panoOverride \?\? \(i2SourceFlagged \|\| panoAutoDetected\)/);
   assert.match(source, /node\.generationConfig\?\.isPano \?\? null/);
+  // The persisted override is scoped to the image it was made for: swapping
+  // the connected image invalidates it back to auto detection.
+  assert.match(source, /panoOverrideSource === undefined \|\| panoOverrideSource === i2SourceUrl/);
+  assert.match(source, /isPano: next, isPanoFor: i2SourceUrl/);
   assert.match(source, /\{ isPano: panoOverride \}/);
   assert.match(source, /\{ isPano: true \}/);
   assert.match(source, /resolveUploadLimitBytes\(configuredMaxBytes\)/);

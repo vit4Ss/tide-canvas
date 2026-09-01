@@ -262,8 +262,17 @@ export function remapClipReshootPromptTimecodes(
   const remapped = prompt.replace(clipTimecodeRangePattern(), (raw, startText: string, endText: string) => {
     const start = parseTimecode(startText);
     const end = parseTimecode(endText);
-    // 格式/顺序问题留给 validateClipReshootPrompt 产出统一报错,这里只管映射。
-    if (start == null || end == null || end <= start) return raw;
+    // 格式问题(秒数≥60 等)与时长无关,留给 validateClipReshootPrompt 统一报错。
+    if (start == null || end == null) return raw;
+    // 画幅比例等同形文本(与校验同一判别)原样放行,不误判为"落在缝隙里"。
+    if (looksLikeNonTimecodeRange(startText, endText, start, end, sourceDuration)) return raw;
+    // 顺序错误必须在这里报:本函数持有原片时长语境,能确认它是时间码;放给
+    // 下游 validate 的话,其判别基于裁剪后的选区总长,远超选区的倒序真实时间码
+    // (如 180s 片选 10s,写"2:30到2:10")会被误判成画幅文本静默放行。
+    if (end <= start) {
+      error ??= `提示词中的时间段“${raw}”结束时间必须晚于开始时间`;
+      return raw;
+    }
     const clipStart = toClipTime(start);
     const clipEnd = toClipTime(end);
     if (clipStart == null || clipEnd == null || clipEnd - clipStart < 0.05) {
@@ -282,21 +291,45 @@ const CLIP_TIMECODE_RANGE_SOURCE =
   "(\\d+(?::\\d+){1,2}(?:\\.\\d+)?)\\s*(?:-|–|—|~|～|至|到)\\s*(\\d+(?::\\d+){1,2}(?:\\.\\d+)?)";
 const clipTimecodeRangePattern = () => new RegExp(CLIP_TIMECODE_RANGE_SOURCE, "g");
 
-export function extractClipReshootRanges(prompt: string): Array<ClipReshootRange | { raw: string; invalid: true }> {
+/** 「16:9到9:16」这类画幅比例文本与时间码同形。判别依据:重拍原片只有十几秒,
+ *  真实时间码不可能两端都越界一分钟以上——两端都是裸 M:S 且都超过时长+60s 时,
+ *  按普通文本放行(校验不拦、重映射不动),不当时间码处理。 */
+function looksLikeNonTimecodeRange(
+  rawStart: string,
+  rawEnd: string,
+  start: number,
+  end: number,
+  sourceDuration?: number,
+): boolean {
+  if (!sourceDuration || !Number.isFinite(sourceDuration)) return false;
+  const bareMinuteSecond = /^\d{1,2}:\d{1,2}$/;
+  return bareMinuteSecond.test(rawStart.trim()) && bareMinuteSecond.test(rawEnd.trim())
+    && start > sourceDuration + 60 && end > sourceDuration + 60;
+}
+
+export function extractClipReshootRanges(
+  prompt: string,
+  sourceDuration?: number,
+): Array<ClipReshootRange | { raw: string; invalid: true }> {
   const ranges: Array<ClipReshootRange | { raw: string; invalid: true }> = [];
   const pattern = clipTimecodeRangePattern();
   for (const match of prompt.matchAll(pattern)) {
     const raw = match[0];
     const start = parseTimecode(match[1]);
     const end = parseTimecode(match[2]);
-    ranges.push(start == null || end == null ? { raw, invalid: true } : { raw, start, end });
+    if (start == null || end == null) {
+      ranges.push({ raw, invalid: true });
+      continue;
+    }
+    if (looksLikeNonTimecodeRange(match[1], match[2], start, end, sourceDuration)) continue;
+    ranges.push({ raw, start, end });
   }
   return ranges;
 }
 
 /** 没写时间段时允许按普通提示词提交；一旦写了时间段，就要求格式、顺序和视频边界都有效。 */
 export function validateClipReshootPrompt(prompt: string, sourceDuration?: number): string | null {
-  const ranges = extractClipReshootRanges(prompt);
+  const ranges = extractClipReshootRanges(prompt, sourceDuration);
   for (const range of ranges) {
     if ("invalid" in range) return `时间段“${range.raw}”格式无效，秒数需小于 60`;
     if (range.end <= range.start) return `时间段“${range.raw}”的结束时间必须晚于开始时间`;

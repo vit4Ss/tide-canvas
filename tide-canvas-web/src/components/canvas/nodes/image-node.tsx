@@ -1593,6 +1593,12 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   // 子节点用确定性 ID(${源id}_g${i})，已存在则跳过 —— 保证幂等：重复点击不再叠加覆盖，删掉某张还能补建。
   const handleExpandGroup = useCallback(() => {
     if (!groupImages) return;
+    // 宫格切片上传窗口期组图还是 blob 临时地址:此时拆出的子节点在上传完成
+    // revoke 后必然破图,落盘还会被剥成空节点——等远端地址写回后再展开。
+    if (groupImages.some((url) => url.startsWith("blob:"))) {
+      toast.info("组图切片还在上传中，请稍后再展开");
+      return;
+    }
     const store = useCanvasStore.getState();
     const existing = new Set(store.nodes.map((n) => n.id));
     const cols = groupImages.length <= 3 ? groupImages.length : 2;

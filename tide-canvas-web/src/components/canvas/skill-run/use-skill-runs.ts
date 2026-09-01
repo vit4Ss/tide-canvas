@@ -254,7 +254,23 @@ function refreshSession(session: PollSession): Promise<void> {
           pendingRecoveryIds.delete(runId);
         } else if (!shouldRetry(response.code)) {
           // 404/403 等永久失败不能让画布永远轮询；ID 仍保存在 canvasData 供后续人工排查。
+          // 同时必须给 UI 一个终态:引用该 runId 的会话消息还在等它,只删轮询集合
+          // 会让消息永远停在"运行中"。查无记录就合成失败终态,已有记录则原地落败。
           pendingRecoveryIds.delete(runId);
+          const existing = runs[runId];
+          const errorMessage = response.message || "技能运行记录已不存在或不可访问，无法恢复结果";
+          recovered.push(existing
+            ? { ...existing, status: "failed", errorMessage }
+            : {
+                id: runId,
+                skillId: "",
+                entryPoint: "canvas",
+                projectId: session.projectId,
+                status: "failed",
+                progress: 0,
+                revision: 0,
+                errorMessage,
+              });
         }
       }
       runs = mergeRuns(runs, recovered);

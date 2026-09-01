@@ -420,10 +420,17 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     durations: rawConfig.durations ? normalizeDurations(rawConfig.durations) : undefined,
   };
   const clipTimelineVisible = isClipReshoot && !!clipSourceVideo?.videoSrc;
-  const clipSourceDuration = clipSourceVideo?.mediaDuration
-    ?? (node.videoSrc ? undefined : duration)
-    ?? clipSourceVideo?.generationConfig?.duration
-    ?? node.generationConfig?.duration
+  // 逐级回退必须过"正数"闸:播放器 duration 在元数据加载前是 0,mediaDuration
+  // 也可能存到 0——0 不是 nullish,裸 ?? 链会在 0 处停住,把后面的真实时长全部
+  // 挡掉(选区被钳到默认 5 秒)。
+  const positiveSecondsOf = (value: unknown): number | undefined => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  };
+  const clipSourceDuration = positiveSecondsOf(clipSourceVideo?.mediaDuration)
+    ?? (node.videoSrc ? undefined : positiveSecondsOf(duration))
+    ?? positiveSecondsOf(clipSourceVideo?.generationConfig?.duration)
+    ?? positiveSecondsOf(node.generationConfig?.duration)
     ?? CLIP_RESHOOT_DEFAULT_SECONDS;
   const clipRanges = useMemo(
     () => normalizeClipReshootRanges(node.clipReshootRanges, clipSourceDuration),
@@ -842,9 +849,11 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       // 校验参照系与下发内容一致:原生路径 = 原片时间轴;裁拼路径 = 重映射后的
       // 裁剪时间轴(总长 = 选区之和)。
       const clipSelectedSeconds = clipRanges.reduce((total, range) => total + range.end - range.start, 0);
+      // mediaDuration 与顶部时长链同口径过"正数"闸:存到 0 时裸 ?? 不会落穿,
+      // 会把 0 当时长传给校验——判别与越界检查双双短路失效。
       const rangeError = validateClipReshootPrompt(
         finalPrompt,
-        nativeClipReshoot ? (sourceVideo?.mediaDuration ?? clipSourceDuration) : clipSelectedSeconds,
+        nativeClipReshoot ? (positiveSecondsOf(sourceVideo?.mediaDuration) ?? clipSourceDuration) : clipSelectedSeconds,
       );
       if (rangeError) {
         toast.error(rangeError);

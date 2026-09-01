@@ -278,10 +278,11 @@ export function PromptRefEditor({
       setMentionOpen(false);
       return;
     }
-    // 回车发送 / Shift+回车换行；中文输入法组合输入时（isComposing）回车确认候选词，不触发发送
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+    // 回车发送 / Shift+回车换行；中文输入法组合输入时（isComposing）回车确认候选词，不触发发送。
+    // 没接 onSubmit 的使用方(如放大编辑弹层)不拦截——否则 Enter 成死键,连换行都插不进。
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && onSubmit) {
       e.preventDefault();
-      onSubmit?.();
+      onSubmit();
     }
   };
 
@@ -549,6 +550,7 @@ export function PromptEditorModal({
   return createPortal(
     <div
       className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 p-6 backdrop-blur-sm"
+      data-canvas-modal="true"
       onMouseDown={onClose}
     >
       <div

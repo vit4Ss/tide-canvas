@@ -238,6 +238,9 @@ export default function ImageAnnotateModal({
     activeStrokeRef.current = null;
     activePointerRef.current = null;
     ghostRef.current = null;
+    // MIME 与源图同步复位:换图后残留上一张的类型会让透明保留/压缩格式判断错位
+    // (如上一张是 PNG、这张是 JPEG,导出仍按 PNG 走)。
+    mimeRef.current = sourceMimeType || "";
     void (async () => {
       try {
         const loaded = await loadImageViaProxy(src);
@@ -265,7 +268,7 @@ export default function ImageAnnotateModal({
       if (objUrl) URL.revokeObjectURL(objUrl);
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [redrawBase, src]);
+  }, [redrawBase, sourceMimeType, src]);
 
   const undoItem = useCallback(() => {
     if (saving || !itemsRef.current.length) return;
@@ -426,6 +429,7 @@ export default function ImageAnnotateModal({
   return createPortal(
     <div
       className="fixed inset-0 z-[200] flex items-center justify-center bg-black/85 p-6"
+      data-canvas-modal="true"
       onMouseDown={(e) => e.stopPropagation()}
       onWheel={(e) => e.stopPropagation()}
       role="dialog"

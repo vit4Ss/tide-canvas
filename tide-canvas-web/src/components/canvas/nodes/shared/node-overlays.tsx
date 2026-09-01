@@ -87,6 +87,7 @@ export function NodeMediaLightbox({ onClose, title, children }: { onClose: () =>
   return createPortal(
     <div
       className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 p-6 backdrop-blur-sm"
+      data-canvas-modal="true"
       onMouseDown={(e) => e.stopPropagation()}
       onClick={onClose}
     >

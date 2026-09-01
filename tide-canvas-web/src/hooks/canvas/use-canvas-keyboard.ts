@@ -21,6 +21,10 @@ function isEditableTarget(target: EventTarget | null): boolean {
 export function useCanvasKeyboard({ onEscape, onCopyNode, onPaste, canPaste = false }: Options = {}) {
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (isEditableTarget(e.target)) return;
+    // 画布级弹窗(标注/资产库/放大编辑等)打开时键盘归弹窗:弹窗内点击空白后
+    // 焦点常落在 body,isEditableTarget 挡不住,快捷键会穿透误伤画布
+    // (Ctrl+Z 双撤销、Delete 删掉弹窗背后正在编辑的节点、Esc 清选中)。
+    if (document.querySelector("[data-canvas-modal]")) return;
 
     const store = useCanvasStore.getState();
     const ctrl = e.ctrlKey || e.metaKey;

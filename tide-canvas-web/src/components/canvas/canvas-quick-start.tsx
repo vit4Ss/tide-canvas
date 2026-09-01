@@ -190,6 +190,13 @@ function pushQuickRef(
   target.push({ ...ref, index: counters[ref.kind] });
 }
 
+/** 附件按文件 id 保序去重:引用 id(upload:{id})与哨兵替换 Map 要求唯一,
+ *  重复项会造成哨兵串泄漏进提示词、删除时连删两条。 */
+function dedupeAttachmentsById(files: FileVO[]): FileVO[] {
+  const seen = new Set<string>();
+  return files.filter((file) => !seen.has(file.id) && (seen.add(file.id), true));
+}
+
 function buildQuickRefs(nodes: CanvasNode[], attachments: FileVO[]): QuickRef[] {
   const refs: QuickRef[] = [];
   const counters: Record<RefKind, number> = { image: 0, video: 0, audio: 0, text: 0 };
@@ -800,7 +807,7 @@ export function CanvasQuickStart({
       launchRetryCountRef.current = 0;
       setMode(launchJournal.mode);
       setPrompt(launchJournal.prompt);
-      setAttachments(launchJournal.attachments);
+      setAttachments(dedupeAttachmentsById(launchJournal.attachments));
       setSelectedSkill(launchJournal.selectedSkill);
       setSelectedModelId(launchJournal.modelId);
       setCanvasMode(launchJournal.canvasMode);
@@ -827,7 +834,7 @@ export function CanvasQuickStart({
       const initialMode = initialPlan.selectedSkill ? initialPlan.mode : "video";
       setMode(initialMode);
       setPrompt(initialPlan.prompt);
-      setAttachments(initialPlan.attachments);
+      setAttachments(dedupeAttachmentsById(initialPlan.attachments));
       setSelectedSkill(initialPlan.selectedSkill);
       setSelectedModelId(initialMode === initialPlan.mode ? initialPlan.modelId : "");
       setCanvasMode(initialPlan.canvasMode);
@@ -1200,16 +1207,32 @@ export function CanvasQuickStart({
       }
     }
     if (isCurrent() && uploaded.length) {
-      if (!skillHandoff && uploadMode !== mode) {
-        setMode(uploadMode);
-        cancelOptimization();
+      // 服务端按内容去重:同一文件再传返回同一个 FileVO.id。引用 id(upload:{id})
+      // 与哨兵替换 Map 都以它为键,重复入列会导致哨兵串泄漏进提示词、删除时连删
+      // 两条——这里按 id 去重,重复选择视为"已在列表中"。
+      const batchSeen = new Set<string>();
+      const uniqueUploaded = uploaded.filter((file) => !batchSeen.has(file.id) && (batchSeen.add(file.id), true));
+      const existingIds = new Set(attachments.map((file) => file.id));
+      const freshCount = uniqueUploaded.filter((file) => !existingIds.has(file.id)).length;
+      // 模式/模型/技能切换只在确有新增时执行:全量重复时什么都没添加,
+      // 不能留下"模式被翻、技能被清"的孤立副作用。
+      if (freshCount > 0) {
+        if (!skillHandoff && uploadMode !== mode) {
+          setMode(uploadMode);
+          cancelOptimization();
+        }
+        if (!skillHandoff && uploadModel && uploadModel.modelId !== selectedModelId) setSelectedModelId(uploadModel.modelId);
+        if (!skillHandoff && uploadMode !== mode) {
+          setSelectedSkill(null);
+        }
       }
-      if (!skillHandoff && uploadModel && uploadModel.modelId !== selectedModelId) setSelectedModelId(uploadModel.modelId);
-      if (!skillHandoff && uploadMode !== mode) {
-        setSelectedSkill(null);
-      }
-      setAttachments((current) => [...current, ...uploaded]);
-      toast.success(uploaded.length > 1 ? `已添加 ${uploaded.length} 个参考素材` : "参考素材已添加");
+      setAttachments((current) => {
+        const currentIds = new Set(current.map((file) => file.id));
+        const fresh = uniqueUploaded.filter((file) => !currentIds.has(file.id));
+        return fresh.length ? [...current, ...fresh] : current;
+      });
+      if (freshCount === 0) toast.info("所选文件已在参考素材中");
+      else toast.success(freshCount > 1 ? `已添加 ${freshCount} 个参考素材` : "参考素材已添加");
     }
     if (isCurrent()) {
       setUploading(false);

@@ -306,7 +306,7 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
       </button>
 
       {open && typeof document !== "undefined" && createPortal(
-        <div className="fixed inset-0 z-[240] flex items-center justify-center bg-black/50 p-6 backdrop-blur-[2px]" onMouseDown={() => setOpen(false)}>
+        <div className="fixed inset-0 z-[240] flex items-center justify-center bg-black/50 p-6 backdrop-blur-[2px]" data-canvas-modal="true" onMouseDown={() => setOpen(false)}>
           <section
             role="dialog"
             aria-modal="true"
