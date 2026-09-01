@@ -7,6 +7,8 @@
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { fileApi, uploadFileSmart } from "@/lib/api";
 import { validateKnownFileSize } from "@/lib/upload-limits";
+import { measureImageSize, videoReferenceImageAspectIssue } from "@/lib/aspect-ratio";
+import { ossDisplayUrl } from "@/lib/oss-display";
 import type { ModelConfig } from "@/types/admin-models";
 import type { PickedAsset } from "@/components/studio/assets-browser";
 import { toast } from "@/components/shared/toast";
@@ -111,12 +113,31 @@ export function useUploadSlots({
     setSrcMenu(k);
   };
 
-  type RealFile = { url: string; name?: string; size?: string; sizeBytes?: number };
+  type RealFile = {
+    url: string;
+    name?: string;
+    size?: string;
+    sizeBytes?: number;
+    width?: number;
+    height?: number;
+  };
 
   const toUploadFile = (slot: SlotDef, file: RealFile): UploadFile =>
     slot.type === "image"
-      ? { g: file.url, url: file.url, n: file.name || "参考图", s: file.size || "", sizeBytes: file.sizeBytes }
+      ? {
+          g: file.url,
+          url: file.url,
+          n: file.name || "参考图",
+          s: file.size || "",
+          sizeBytes: file.sizeBytes,
+          width: file.width,
+          height: file.height,
+        }
       : { n: file.name || (slot.type === "video" ? "video.mp4" : "audio.mp3"), d: "", url: file.url };
+
+  /** 只有视频生成的图片参考槽位使用供应商 0.4–2.5 比例限制。 */
+  const needsVideoImageAspect = (slot: SlotDef) =>
+    slot.type === "image" && (tool === "i2v" || tool === "flf" || tool === "ref");
 
   /** 槽位还能再放几个：本槽上限与（多视图的）总上限取小。 */
   const roomFor = (data: SlotData, slot: SlotDef): number => {
@@ -235,15 +256,37 @@ export function useUploadSlots({
         toast.info(sizeIssue);
         continue;
       }
-      currentSlotCount++;
-      currentTotalCount++;
       const sizeLabel = (file.size / 1024 / 1024).toFixed(1) + " MB";
       const blobUrl = isImg ? URL.createObjectURL(file) : "";
+      let dimensions: { width: number; height: number } | null = null;
+      if (isImg && needsVideoImageAspect(slot)) {
+        dimensions = await measureImageSize(blobUrl);
+        const aspectIssue = dimensions
+          ? videoReferenceImageAspectIssue(dimensions.width, dimensions.height, file.name || "参考图")
+          : `${file.name || "参考图"}：无法读取有效尺寸，请重新选择图片`;
+        if (aspectIssue) {
+          if (blobUrl) URL.revokeObjectURL(blobUrl);
+          toast.error(aspectIssue);
+          continue;
+        }
+      }
+      currentSlotCount++;
+      currentTotalCount++;
       const tkey = `up_${uploadSeqRef.current++}`;
       // 立刻插入「上传中」占位:图片带本地预览,让用户马上有反馈,不再以为没传上
       setSlotData((prev) => {
         const uf: UploadFile = isImg
-          ? { key: tkey, g: blobUrl, n: file.name, s: sizeLabel, sizeBytes: file.size, uploading: true, progress: 0 }
+          ? {
+              key: tkey,
+              g: blobUrl,
+              n: file.name,
+              s: sizeLabel,
+              sizeBytes: file.size,
+              width: dimensions?.width,
+              height: dimensions?.height,
+              uploading: true,
+              progress: 0,
+            }
           : { key: tkey, n: file.name, d: "", uploading: true, progress: 0 };
         return { ...prev, [k]: [...(prev[k] || []), uf] };
       });
@@ -293,21 +336,46 @@ export function useUploadSlots({
   const chooseAssets = async (assets: PickedAsset[]) => {
     const k = assetPick;
     if (!k || assets.length === 0) return;
+    const slot = slots?.find((candidate) => candidate.k === k);
+    if (!slot) return;
     // 先收起弹窗再做 3D 素材大小查询。网络查询可能需要数秒，不能让用户
     // 留在仍可点击的选择器里误以为卡死、反复提交同一批素材。
     setAssetPick(null);
     const files = await Promise.all(
-      assets.map(async (a) => {
+      assets.map(async (a, index) => {
         let sizeBytes = a.sizeBytes;
-        if (needsKnownSize && (!Number.isFinite(sizeBytes) || !sizeBytes || sizeBytes <= 0)) {
-          const res = await fileApi.assetSize(a.url).catch(() => null);
-          const resolved = res?.success ? res.data?.sizeBytes : undefined;
-          if (Number.isFinite(resolved) && (resolved ?? 0) > 0) sizeBytes = resolved;
-        }
-        return { url: a.url, name: a.name, sizeBytes };
+        const [sizeResult, dimensions] = await Promise.all([
+          needsKnownSize && (!Number.isFinite(sizeBytes) || !sizeBytes || sizeBytes <= 0)
+            ? fileApi.assetSize(a.url).catch(() => null)
+            : Promise.resolve(null),
+          needsVideoImageAspect(slot)
+            ? measureImageSize(ossDisplayUrl(a.url, 96) ?? a.url)
+            : Promise.resolve(null),
+        ]);
+        const resolved = sizeResult?.success ? sizeResult.data?.sizeBytes : undefined;
+        if (Number.isFinite(resolved) && (resolved ?? 0) > 0) sizeBytes = resolved;
+        const label = assets.length > 1 ? `第 ${index + 1} 张参考图（${a.name || "未命名"}）` : (a.name || "参考图");
+        const aspectIssue = needsVideoImageAspect(slot)
+          ? dimensions
+            ? videoReferenceImageAspectIssue(dimensions.width, dimensions.height, label)
+            : `${label}：无法读取有效尺寸，请重新选择图片`
+          : null;
+        return {
+          url: a.url,
+          name: a.name,
+          sizeBytes,
+          width: dimensions?.width,
+          height: dimensions?.height,
+          aspectIssue,
+        };
       }),
     );
-    addRealFiles(k, files);
+    const rejected = files.filter((file) => file.aspectIssue);
+    if (rejected.length > 0) {
+      const first = rejected[0].aspectIssue!;
+      toast.error(rejected.length > 1 ? `${first}；另有 ${rejected.length - 1} 张图片比例不符合要求` : first);
+    }
+    addRealFiles(k, files.filter((file) => !file.aspectIssue));
   };
 
   /** 弹窗需要的槽位余量与去重信息（当前打开的槽位；未打开时为空）。

@@ -26,6 +26,27 @@ export function measureImageSize(url: string): Promise<{ width: number; height: 
   });
 }
 
+/** 视频供应商对参考图片的统一长宽比硬限制。边界值允许通过。 */
+export const VIDEO_REFERENCE_IMAGE_ASPECT = { min: 0.4, max: 2.5 } as const;
+
+/**
+ * 返回可直接展示给用户的参考图比例错误；null 表示尺寸有效且在供应商范围内。
+ * 像素尺寸一并展示，用户无需等生成失败后再猜是哪张图有问题。
+ */
+export function videoReferenceImageAspectIssue(
+  width: number,
+  height: number,
+  label = "参考图",
+): string | null {
+  const safeLabel = label.trim() || "参考图";
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return `${safeLabel}：无法读取有效尺寸，请重新选择图片`;
+  }
+  const ratio = width / height;
+  if (ratio >= VIDEO_REFERENCE_IMAGE_ASPECT.min && ratio <= VIDEO_REFERENCE_IMAGE_ASPECT.max) return null;
+  return `${safeLabel}：图片长宽比必须在 ${VIDEO_REFERENCE_IMAGE_ASPECT.min} 到 ${VIDEO_REFERENCE_IMAGE_ASPECT.max} 之间，当前为 ${ratio.toFixed(3)}（${Math.round(width)}×${Math.round(height)}）`;
+}
+
 /** 把真实像素宽高吸附到候选比例档位（"16:9" 等）里最接近的一档。
  *  用对数距离比较，横竖对称（2:1→16:9 与 1:2→9:16 偏差等价）；
  *  宽高非法或候选全不合法时返回 null，调用方维持"不传比例"的原行为。 */

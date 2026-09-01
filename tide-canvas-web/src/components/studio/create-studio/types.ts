@@ -44,6 +44,8 @@ export interface UploadFile {
   n: string; // name
   s?: string; // size label (image)
   sizeBytes?: number; // exact size for authoritative revalidation after switching models
+  width?: number; // 图片真实像素宽度（视频参考图上传时用于比例预检）
+  height?: number; // 图片真实像素高度
   d?: string; // duration label (video/audio)
   url?: string; // real asset URL (local upload / 资产库) sent to the backend as a reference
   key?: string; // 稳定标识:上传中占位→完成/失败的定位;缺省回退 url/name

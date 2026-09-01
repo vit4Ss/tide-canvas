@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { measureImageSize, nearestAspectRatio } from "./aspect-ratio.ts";
+import {
+  measureImageSize,
+  nearestAspectRatio,
+  videoReferenceImageAspectIssue,
+} from "./aspect-ratio.ts";
 
 const POOL = ["1:1", "3:4", "4:3", "16:9", "9:16"];
 
@@ -22,6 +26,21 @@ test("portrait and square sources snap symmetrically", () => {
 test("measureImageSize degrades to null outside the browser (caller keeps old behavior)", async () => {
   assert.equal(await measureImageSize("https://cdn.example.com/a.png"), null);
   assert.equal(await measureImageSize(""), null);
+});
+
+test("video reference image aspect validation accepts inclusive boundaries", () => {
+  assert.equal(videoReferenceImageAspectIssue(400, 1000), null);
+  assert.equal(videoReferenceImageAspectIssue(2500, 1000), null);
+  assert.equal(videoReferenceImageAspectIssue(1920, 1080), null);
+});
+
+test("video reference image aspect validation reports the actual ratio and pixels", () => {
+  assert.equal(
+    videoReferenceImageAspectIssue(2693, 1000, "参考图 1"),
+    "参考图 1：图片长宽比必须在 0.4 到 2.5 之间，当前为 2.693（2693×1000）",
+  );
+  assert.match(videoReferenceImageAspectIssue(399, 1000, "竖图") ?? "", /当前为 0\.399/);
+  assert.match(videoReferenceImageAspectIssue(0, 1000, "坏图") ?? "", /无法读取有效尺寸/);
 });
 
 test("invalid input or candidates fall back to null (caller omits the ratio)", () => {

@@ -22,7 +22,8 @@ import { toast } from "@/components/shared/toast";
 import { markRequiredField } from "@/lib/require-field";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { supportsOmniReference } from "@/lib/omni-reference";
-import { measureImageSize, nearestAspectRatio } from "@/lib/aspect-ratio";
+import { measureImageSize, nearestAspectRatio, videoReferenceImageAspectIssue } from "@/lib/aspect-ratio";
+import { ossDisplayUrl } from "@/lib/oss-display";
 import {
   ACTIVE_RUN_KEY,
   activeRunStorageKey,
@@ -278,6 +279,7 @@ export function useGeneration(p: GenerationParams) {
   const [runMeta, setRunMeta] = useState<RunMeta | null>(null);
   const [inflightRuns, setInflightRuns] = useState<InflightRun[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [validatingReferences, setValidatingReferences] = useState(false);
   const [recoveringRuns, setRecoveringRuns] = useState(true);
   // full settings of the last started run (for 重新编辑 / 再次生成) + a one-shot
   // flag that fires generate() after those settings are restored to the panel.
@@ -289,7 +291,37 @@ export function useGeneration(p: GenerationParams) {
   const submissionGateRef = useRef<SubmissionGate | null>(null);
   if (!submissionGateRef.current) submissionGateRef.current = createSubmissionGate();
   const submissionReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const referenceValidationRef = useRef(false);
   const mountedRef = useRef(true);
+  // 异步量旧素材尺寸期间，模型或素材发生变化就放弃这次提交，不能把旧闭包发出去。
+  const generationValidationSignature = JSON.stringify({
+    prompt,
+    count,
+    model,
+    tool,
+    ratio,
+    res,
+    dur,
+    imgRes,
+    quality,
+    musicMode,
+    sourceClipId,
+    continueAt,
+    lyrics,
+    songStyle,
+    songTitle,
+    instrumental,
+    enablePbr,
+    faceCount,
+    generateType,
+    resultFormat,
+    slots: Object.fromEntries(Object.entries(slotData).map(([key, files]) => [
+      key,
+      files.map((file) => [file.url ?? "", file.width ?? 0, file.height ?? 0, !!file.uploading]),
+    ])),
+  });
+  const generationValidationSignatureRef = useRef(generationValidationSignature);
+  generationValidationSignatureRef.current = generationValidationSignature;
 
   // 图生 3D 场景的全景识别：上传的照片没有任何全景标记，上传完成后在后台
   // 探测真实像素比例（equirectangular ≈ 2:1），提交时同步读取。不带 is_pano
@@ -871,7 +903,7 @@ export function useGeneration(p: GenerationParams) {
      real studio model is selected; falls back to the design-preview simulation
      only when no backend model is available (studioList empty). */
 
-  const generate = useCallback((options?: { requireBackendModel?: boolean; expectedModelId?: string }) => {
+  const generate = useCallback(async (options?: { requireBackendModel?: boolean; expectedModelId?: string }) => {
     if (recoveringRuns) {
       toast.info("正在恢复生成任务，请稍候…");
       return;
@@ -986,6 +1018,67 @@ export function useGeneration(p: GenerationParams) {
       toast.info(countIssue);
       markRequiredField("#dropFiles");
       return;
+    }
+    // 上传/资产选择时已校验；这里兜底历史恢复、旧草稿和跨模型保留的素材。
+    // 已记录宽高的素材同步复检，旧素材才异步读取，不给正常新上传增加等待。
+    const videoReferenceFiles = tool === "i2v"
+      ? (slotData.first ?? []).map((file) => ({ file, label: "首帧参考图" }))
+      : tool === "flf"
+        ? [
+            ...(slotData.first ?? []).map((file) => ({ file, label: "首帧参考图" })),
+            ...(slotData.last ?? []).map((file) => ({ file, label: "尾帧参考图" })),
+          ]
+        : tool === "ref" && supportsOmniReference(selectedStudio?.config, "image")
+          ? (slotData.img ?? []).map((file, index) => ({ file, label: `参考图 ${index + 1}` }))
+          : [];
+    const usableVideoReferenceFiles = videoReferenceFiles.filter(({ file }) => !!file.url?.trim() && !file.uploading);
+    for (const { file, label } of usableVideoReferenceFiles) {
+      if (!file.width || !file.height) continue;
+      const aspectIssue = videoReferenceImageAspectIssue(file.width, file.height, file.n || label);
+      if (aspectIssue) {
+        toast.error(aspectIssue);
+        markRequiredField("#dropFiles");
+        return;
+      }
+    }
+    const unknownVideoReferenceFiles = usableVideoReferenceFiles.filter(({ file }) => !file.width || !file.height);
+    if (unknownVideoReferenceFiles.length > 0) {
+      if (referenceValidationRef.current) {
+        toast.info("正在检查参考图片，请稍候…");
+        return;
+      }
+      referenceValidationRef.current = true;
+      setValidatingReferences(true);
+      const validationSignature = generationValidationSignature;
+      let measured: Array<{ width: number; height: number } | null> = [];
+      try {
+        measured = await Promise.all(
+          unknownVideoReferenceFiles.map(({ file }) => {
+            const source = file.url!.trim();
+            return measureImageSize(ossDisplayUrl(source, 96) ?? source);
+          }),
+        );
+      } finally {
+        referenceValidationRef.current = false;
+        if (mountedRef.current) setValidatingReferences(false);
+      }
+      if (!mountedRef.current) return;
+      if (generationValidationSignatureRef.current !== validationSignature) {
+        toast.info("生成参数已变化，请重新点击生成");
+        return;
+      }
+      for (let index = 0; index < unknownVideoReferenceFiles.length; index++) {
+        const { file, label } = unknownVideoReferenceFiles[index];
+        const dimensions = measured[index];
+        const aspectIssue = dimensions
+          ? videoReferenceImageAspectIssue(dimensions.width, dimensions.height, file.n || label)
+          : `${file.n || label}：无法读取有效尺寸，请重新选择图片`;
+        if (aspectIssue) {
+          toast.error(aspectIssue);
+          markRequiredField("#dropFiles");
+          return;
+        }
+      }
     }
     const needsRef = activeSlots.length > 0;
     const hasAnyRef =
@@ -1423,6 +1516,7 @@ export function useGeneration(p: GenerationParams) {
   return {
     busy,
     submitting,
+    validatingReferences,
     recoveringRuns,
     cells,
     progs,

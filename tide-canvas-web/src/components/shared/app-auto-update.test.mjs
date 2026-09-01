@@ -37,7 +37,7 @@ test("付费提交期间阻止重载并在重载前保存草稿", () => {
   assert.match(chat, /saved\.targetVersion === CURRENT_APP_VERSION/);
   assert.match(chat, /model: models\.model,[\s\S]*?music: cfg\.music,[\s\S]*?toolSkill,/);
   assert.match(chat, /restoreReferencesIfEmpty\(saved\.references\)/);
-  assert.match(studio, /const updateBlocked = submitting \|\| optimizing/);
+  assert.match(studio, /const updateBlocked = submitting \|\| validatingReferences \|\| optimizing/);
   assert.match(studio, /STUDIO_AUTO_UPDATE_DRAFT_KEY[\s\S]*?slotData,[\s\S]*?skill,/);
   assert.match(studio, /isFreshUpdateSnapshot\(saved\.savedAt\)/);
   assert.match(studio, /saved\.targetVersion === CURRENT_APP_VERSION/);

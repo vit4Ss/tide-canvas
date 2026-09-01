@@ -5,6 +5,7 @@ import test from "node:test";
 const read = (relative) => readFileSync(new URL(relative, import.meta.url), "utf8");
 const modal = read("./asset-picker-modal.tsx");
 const slots = read("./use-upload-slots.ts");
+const generation = read("./use-generation.ts");
 const browser = read("../assets-browser.tsx");
 const styles = read("../../../styles/liuguang/studio.css");
 const nextConfig = read("../../../../next.config.ts");
@@ -42,4 +43,16 @@ test("创作台资产确认有防重复状态并在异步检查前关闭弹窗",
   assert.match(modal, /aria-busy={confirming}/);
   assert.match(modal, /已达到上限，请取消一项后再选/);
   assert.match(slots, /const k = assetPick;[\s\S]*?setAssetPick\(null\);[\s\S]*?await Promise\.all/);
+});
+
+test("视频参考图在本地上传和资产库选取时都提前校验长宽比", () => {
+  assert.match(slots, /tool === "i2v" \|\| tool === "flf" \|\| tool === "ref"/);
+  assert.match(slots, /measureImageSize\(blobUrl\)/);
+  assert.match(slots, /measureImageSize\(ossDisplayUrl\(a\.url, 96\) \?\? a\.url\)/);
+  assert.match(slots, /videoReferenceImageAspectIssue/);
+  assert.match(slots, /files\.filter\(\(file\) => !file\.aspectIssue\)/);
+  assert.match(generation, /const unknownVideoReferenceFiles =/);
+  assert.match(generation, /await Promise\.all\([\s\S]*?measureImageSize\(ossDisplayUrl\(source, 96\) \?\? source\)/);
+  assert.match(generation, /generationValidationSignatureRef\.current !== validationSignature/);
+  assert.match(generation, /markRequiredField\("#dropFiles"\)/);
 });

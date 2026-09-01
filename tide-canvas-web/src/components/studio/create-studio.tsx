@@ -449,6 +449,7 @@ export default function CreateStudio() {
   const {
     busy,
     submitting,
+    validatingReferences,
     recoveringRuns,
     inflightRuns,
     setCells,
@@ -497,7 +498,7 @@ export default function CreateStudio() {
     promptRef,
   });
 
-  const updateBlocked = submitting || optimizing || restoringRun || recoveringRuns ||
+  const updateBlocked = submitting || validatingReferences || optimizing || restoringRun || recoveringRuns ||
     referenceVideoQuote.loading || !!assetPick || !!srcMenu || skillPickerOpen ||
     !!clip.clipUploadStage || clip.clipPickOpen ||
     Object.values(slotData).some((files) => files.some((file) => file.uploading));
@@ -1451,11 +1452,11 @@ export default function CreateStudio() {
           {/* footer */}
           <div className="ws-panel-foot">
             <button
-              className={`ws-gen${restoringRun || recoveringRuns || submitting || referenceVideoQuote.loading ? " busy" : ""}`}
+              className={`ws-gen${restoringRun || recoveringRuns || submitting || validatingReferences || referenceVideoQuote.loading ? " busy" : ""}`}
               id="gen"
               type="button"
-              disabled={restoringRun || recoveringRuns || submitting || referenceVideoQuote.loading}
-              aria-busy={recoveringRuns || submitting || referenceVideoQuote.loading}
+              disabled={restoringRun || recoveringRuns || submitting || validatingReferences || referenceVideoQuote.loading}
+              aria-busy={recoveringRuns || submitting || validatingReferences || referenceVideoQuote.loading}
               onClick={() => generate()}
             >
               <span className="spark">✦</span>{" "}
@@ -1463,6 +1464,8 @@ export default function CreateStudio() {
                 ? "正在恢复历史参数…"
                 : recoveringRuns
                   ? "正在恢复生成任务…"
+                  : validatingReferences
+                    ? "正在检查参考图…"
                   : submitting
                     ? "正在提交…"
                     : referenceVideoQuote.loading
