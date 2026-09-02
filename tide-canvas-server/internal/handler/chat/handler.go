@@ -254,6 +254,8 @@ func (h *handler) streamMessage(c *gin.Context) {
 		case errors.Is(err, errContextFull):
 			// distinct code so the frontend can surface the 开启新会话 prompt.
 			frame(map[string]string{"error": contextFullMsg, "code": "CONTEXT_LIMIT"})
+		case errors.Is(err, errModelMaintenance):
+			frame(map[string]string{"error": modelMaintenanceMessage, "code": "MODEL_MAINTENANCE"})
 		case errors.Is(err, errInsufficientPoints):
 			frame(map[string]string{"error": "积分不足，请充值后再试", "code": "INSUFFICIENT_POINTS"})
 		case errors.Is(err, errInvalidTextAttachments):
@@ -370,6 +372,8 @@ func (h *handler) fail(c *gin.Context, err error, fallbackMsg string) {
 		response.Fail(c, response.CodeConflict, "当前对话正在生成，请完成后再试")
 	case errors.Is(err, errContextFull):
 		response.Fail(c, response.CodeContextLimit, contextFullMsg)
+	case errors.Is(err, errModelMaintenance):
+		response.Fail(c, response.CodeBadRequest, modelMaintenanceMessage)
 	case errors.Is(err, errInsufficientPoints):
 		response.Fail(c, response.CodeQuotaInsufficient, "积分不足，请充值后再试")
 	case errors.Is(err, errInvalidTextAttachments):

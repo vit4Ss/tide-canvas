@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import type { StudioModelVO } from "@/lib/market-api";
 import { resolveModelSwatch } from "@/lib/model-brand";
 import { ModelBadges } from "@/components/studio/model-badges";
+import { modelDisplayBadges } from "@/lib/model-availability";
 import type { ModelBadge } from "@/types/admin-models";
 import type { ModelMeta } from "./types";
 import { metaOf, metaOfStudio } from "./utils";
@@ -32,7 +33,7 @@ export function ModelPicker({
   const badgesByName = useMemo(() => {
     const map: Record<string, ModelBadge[]> = {};
     for (const m of studioList) {
-      const list = m.config?.badges;
+      const list = modelDisplayBadges(m.config);
       if (list?.length) map[m.name] = list;
     }
     return map;

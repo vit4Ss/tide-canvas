@@ -255,6 +255,7 @@ export default function CreateStudio() {
   const cfg = TOOLS[tool];
   const isVideo = curType === "video";
   const isAudio = curType === "audio";
+  const isImage = curType === "image";
   const is3D = curType === "3d";
 
   /* ── hooks ─────────────────────────────────────────────────────────────── */
@@ -373,8 +374,13 @@ export default function CreateStudio() {
   );
   const qualOpts = mCfg?.qualities ?? [];
   const ideaOpts = mCfg?.ideas?.length ? mCfg.ideas : noBackend && !is3D ? [...IDEAS] : [];
-  const batchOpts =
-    mCfg?.batchOptions && mCfg.batchOptions.length ? mCfg.batchOptions : [1, 2, 3, 4];
+  const hideBatchCount = isImage && mCfg?.hideBatchCount === true;
+  // 隐藏不只是视觉行为：所有计价、提交和恢复路径都必须固定为单张，不能沿用
+  // 用户切换模型前残留的 count=2/3/4。
+  const effectiveCount = hideBatchCount ? 1 : count;
+  const batchOpts = hideBatchCount
+    ? [1]
+    : mCfg?.batchOptions && mCfg.batchOptions.length ? mCfg.batchOptions : [1, 2, 3, 4];
   const batchMin = Math.min(...batchOpts);
   const batchMax = Math.max(...batchOpts);
 
@@ -424,12 +430,12 @@ export default function CreateStudio() {
       keyVariants(col),
     );
     if (per != null) {
-      base = Math.ceil(per * count);
+      base = Math.ceil(per * effectiveCount);
       return base + referenceVideoQuote.quote.pointCost;
     }
 
     if (flat > 0) {
-      base = Math.ceil(flat * count);
+      base = Math.ceil(flat * effectiveCount);
       return base + referenceVideoQuote.quote.pointCost;
     }
 
@@ -442,9 +448,9 @@ export default function CreateStudio() {
       m[k] ?? m[k.toUpperCase()] ?? m[k.toLowerCase()] ?? d;
     base = isVideo
       ? Math.round((fb(RES_COST, res, 50) * (DUR_SEC[dur] || 5)) / 5)
-      : fb(IMG_RES_COST, imgRes, 14) * count;
+      : fb(IMG_RES_COST, imgRes, 14) * effectiveCount;
     return base + referenceVideoQuote.quote.pointCost;
-  }, [mCfg, selModel, isVideo, isAudio, is3D, noBackend, dur, res, imgRes, quality, count, referenceVideoQuote.quote.pointCost]);
+  }, [mCfg, selModel, isVideo, isAudio, is3D, noBackend, dur, res, imgRes, quality, effectiveCount, referenceVideoQuote.quote.pointCost]);
 
   const {
     busy,
@@ -460,7 +466,7 @@ export default function CreateStudio() {
     lastRunRef,
   } = useGeneration({
     prompt,
-    count,
+    count: effectiveCount,
     tool,
     curType,
     ratio,
@@ -512,7 +518,7 @@ export default function CreateStudio() {
       model,
       prompt,
       ratio,
-      count,
+      count: effectiveCount,
       imgRes,
       res,
       dur,
@@ -830,12 +836,14 @@ export default function CreateStudio() {
     setQuality((v) =>
       mCfg.qualities?.length ? (mCfg.qualities.includes(v) ? v : mCfg.qualities[0]) : "",
     );
-    if (mCfg.batchOptions?.length) {
+    if (isImage && mCfg.hideBatchCount === true) {
+      setCount(1);
+    } else if (mCfg.batchOptions?.length) {
       const mn = Math.min(...mCfg.batchOptions);
       const mx = Math.max(...mCfg.batchOptions);
       setCount((c) => Math.min(Math.max(c, mn), mx));
     }
-  }, [mCfg, curType]);
+  }, [mCfg, curType, isImage]);
 
   // 入口 binding 不随 VO 暴露完整矩阵。切换具体 target 后必须重新从
   // picker 校验，不能仅凭 outputTypes 猜测新 target 也已启用。
@@ -1436,7 +1444,8 @@ export default function CreateStudio() {
                 qualOpts={qualOpts}
                 quality={quality}
                 onQualityChange={setQuality}
-                count={count}
+                showCount={!hideBatchCount}
+                count={effectiveCount}
                 onCountChange={setCount}
                 batchMin={batchMin}
                 batchMax={batchMax}

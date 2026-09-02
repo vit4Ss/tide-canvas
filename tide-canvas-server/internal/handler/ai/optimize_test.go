@@ -13,6 +13,7 @@ func TestOptimizeUnusableIsDistinguishable(t *testing.T) {
 		"请先输入提示词",
 		"AI 优化未启用：未配置中转站密钥",
 		"AI 优化未启用：请在模型管理添加文本模型并设为「AI 优化主模型」",
+		modelMaintenanceMessage,
 	}
 	for _, msg := range cases {
 		err := optimizeUnusable(msg)

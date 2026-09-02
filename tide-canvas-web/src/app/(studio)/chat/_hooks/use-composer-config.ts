@@ -41,7 +41,7 @@ export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | nul
   // 技能以内联 chip 附着到输入框；执行模板由服务端按 skillId 解析并保持粘性。
   const [skill, setSkill] = useState<SkillVO | null>(null);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
-  const [batch, setBatch] = useState(1);
+  const [batchState, setBatch] = useState(1);
   const [openSel, setOpenSel] = useState<string | null>(null);
   // 音乐四创作模式（Suno，仅音频音乐模型时生效）——字段与请求口径对齐创作台。
   const [music, setMusic] = useState<MusicParams>(DEFAULT_MUSIC_PARAMS);
@@ -60,8 +60,12 @@ export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | nul
   // 查表，视频走 [duration][resolution]，音频按次计费。
   const qualOpts = selModel?.type === "image" ? mCfg?.qualities ?? [] : [];
   const durOpts = isVid ? mCfg?.durations ?? [] : [];
-  const countOpts = mCfg?.batchOptions?.length ? mCfg.batchOptions : [1, 2, 3, 4];
+  const hideBatchCount = selModel?.type === "image" && mCfg?.hideBatchCount === true;
+  const countOpts = hideBatchCount
+    ? [1]
+    : mCfg?.batchOptions?.length ? mCfg.batchOptions : [1, 2, 3, 4];
   const batchMax = Math.max(...countOpts);
+  const batch = hideBatchCount ? 1 : batchState;
   const toggleSel = (k: string) => setOpenSel((cur) => (cur === k ? null : k));
   const toolModelSupport = useMemo(
     () => skillModelSupport(toolSkill, selModel),
@@ -176,6 +180,12 @@ export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | nul
     };
   }, [openSel]);
 
+  useEffect(() => {
+    if (!hideBatchCount || openSel !== "count") return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 模型能力变化后关闭已失效的数量菜单
+    setOpenSel(null);
+  }, [hideBatchCount, openSel]);
+
   // snap chip selections to values the selected model actually supports.
   useEffect(() => {
     if (!mCfg) return;
@@ -188,9 +198,9 @@ export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | nul
     );
     setQuality((q) => (qualOpts.length ? (qualOpts.includes(q) ? q : qualOpts[0]) : ""));
     setDur((d) => (durOpts.length ? (durOpts.includes(d) ? d : durOpts[0]) : ""));
-    setBatch((b) => Math.min(Math.max(1, b), batchMax));
+    setBatch((b) => hideBatchCount ? 1 : Math.min(Math.max(1, b), batchMax));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mCfg, isVid]);
+  }, [mCfg, isVid, hideBatchCount]);
 
   // 模态就是 chat binding 的 target。切换 target 后重新选择，确保目录
   // 过滤和实际 create/generate 使用的是同一条绑定。

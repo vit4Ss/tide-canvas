@@ -840,6 +840,7 @@ function ModelModal({
     costUsd: c0.costUsd ?? "",
     estSeconds: c0.estSeconds ?? 0,
     badges: c0.badges ?? [],
+    availabilityStatus: c0.availabilityStatus === "maintenance" ? "maintenance" : "normal",
     defaultPrompt: c0.defaultPrompt ?? "",
     ideas: c0.ideas ?? [],
     maxRefImages: c0.maxRefImages ?? 0,
@@ -861,6 +862,7 @@ function ModelModal({
     qualities: c0.qualities ?? [],
     durations: c0.durations ?? [],
     batchOptions: c0.batchOptions ?? [],
+    hideBatchCount: c0.hideBatchCount ?? false,
     gridOutput: c0.gridOutput ?? false,
     priceMatrix: c0.priceMatrix && Object.keys(c0.priceMatrix).length
       ? c0.priceMatrix
@@ -1487,6 +1489,22 @@ function ModelModal({
               }}
             />
           </FormSection>
+
+          {isImage && (
+            <FormSection
+              label="隐藏生成数量"
+              hint="默认显示。开启后创作台不展示生成数量滑块，并固定为单张生成；关闭后恢复原来的数量配置。"
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <SwitchToggle
+                  checked={cfg.hideBatchCount === true}
+                  onChange={(next) => setC({ hideBatchCount: next })}
+                  aria-label="隐藏创作台生成数量"
+                />
+                <span>{cfg.hideBatchCount ? "已隐藏（固定生成 1 张）" : "默认显示"}</span>
+              </div>
+            </FormSection>
+          )}
         </FormCard>
       )}
 
@@ -1933,6 +1951,19 @@ function ModelModal({
               <option value={1}>已上架</option>
               <option value={2}>已下架</option>
               <option value={0}>待审核</option>
+            </select>
+          </Field>
+          <Field
+            label="运行状态"
+            span={2}
+            hint="异常时模型仍在前台展示“异常”标记，但所有新提交会在扣积分前被拒绝"
+          >
+            <select
+              value={cfg.availabilityStatus ?? "normal"}
+              onChange={(e) => setC({ availabilityStatus: e.target.value === "maintenance" ? "maintenance" : "normal" })}
+            >
+              <option value="normal">正常</option>
+              <option value="maintenance">异常（维护中）</option>
             </select>
           </Field>
         </FormGrid>

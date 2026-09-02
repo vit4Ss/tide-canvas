@@ -178,7 +178,7 @@ func TestErrorHintSnapshotIsSafeForConcurrentMatch(t *testing.T) {
 func TestPublicModelConfigStripsErrorHints(t *testing.T) {
 	m := &model.AiModel{
 		ID: 1, Name: "M", Type: "video",
-		Config: `{"refLimits":{"omniRef.imageCount":9},"errorHints":[{"contains":"vip-Dimensio","message":"文案"}]}`,
+		Config: `{"refLimits":{"omniRef.imageCount":9},"hideBatchCount":true,"availabilityStatus":"maintenance","errorHints":[{"contains":"vip-Dimensio","message":"文案"}]}`,
 	}
 	vo := toModelVO(m)
 	if strings.Contains(vo.Config, "errorHints") || strings.Contains(vo.Config, "Dimensio") {
@@ -186,6 +186,12 @@ func TestPublicModelConfigStripsErrorHints(t *testing.T) {
 	}
 	if !strings.Contains(vo.Config, "refLimits") {
 		t.Fatalf("public config lost unrelated keys: %s", vo.Config)
+	}
+	if !strings.Contains(vo.Config, `"hideBatchCount":true`) {
+		t.Fatalf("public config lost batch count visibility: %s", vo.Config)
+	}
+	if !strings.Contains(vo.Config, `"availabilityStatus":"maintenance"`) {
+		t.Fatalf("public config lost availability status: %s", vo.Config)
 	}
 	// 无 errorHints 的配置原样透传(包括非对象/空串),不做无谓的重排。
 	for _, raw := range []string{"", "not-json", `{"modes":["t2v"]}`} {

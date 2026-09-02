@@ -70,6 +70,18 @@ var errForbidden = errors.New("chat: not owner")
 // reached the configured cap; the user must start a new conversation.
 var errContextFull = errors.New("chat: context token limit reached")
 
+var errModelMaintenance = errors.New("chat: model under maintenance")
+
+const modelMaintenanceMessage = "该渠道维护中，暂不可用"
+
+func (s *service) validateTextModelAvailability(requested string) error {
+	selected := s.repo.resolveTextModel(requested)
+	if selected != nil && model.ModelConfigUnderMaintenance(selected.Config) {
+		return errModelMaintenance
+	}
+	return nil
+}
+
 var errInvalidSkill = errors.New("chat: invalid skill")
 
 var errInvalidClientRequestID = errors.New("chat: invalid client request id")
@@ -629,6 +641,9 @@ func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen
 	if preset != nil {
 		dto.Model = presetModel(preset, dto.Model)
 	}
+	if err := s.validateTextModelAvailability(dto.Model); err != nil {
+		return nil, err
+	}
 	skillPrompt, err := presetPrompt(preset, content)
 	if err != nil {
 		return nil, errInvalidSkill
@@ -805,6 +820,11 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 		skillPrompt, err = presetPrompt(preset, content)
 		if err != nil {
 			return nil, errInvalidSkill
+		}
+	}
+	if !resuming {
+		if err := s.validateTextModelAvailability(requestedModel); err != nil {
+			return nil, err
 		}
 	}
 	if !resuming {

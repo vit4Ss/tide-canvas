@@ -15,6 +15,7 @@ import {
 } from "@/components/studio/mention-prompt-editor";
 import { ClipPicker } from "@/components/studio/clip-picker";
 import { ModelBadges } from "@/components/studio/model-badges";
+import { modelDisplayBadges } from "@/lib/model-availability";
 import { resolutionLabel } from "@/components/studio/create-studio/utils";
 import {
   AUDIO_STYLES,
@@ -441,7 +442,12 @@ export function Composer({
                   {selSwatch.glyph}
                 </span>
               }
-              label={model || "选择模型"}
+              label={
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate">{model || "选择模型"}</span>
+                  <ModelBadges badges={modelDisplayBadges(mCfg)} />
+                </span>
+              }
             >
               {genModels.map((m) => {
                 const est = m.config?.estSeconds ?? 0;
@@ -483,7 +489,7 @@ export function Composer({
                     <span className="nfo">
                       <span className="nm">
                         <span className="nm-t">{m.name}</span>
-                        <ModelBadges badges={m.config?.badges} />
+                        <ModelBadges badges={modelDisplayBadges(m.config)} />
                         <i>{tag}</i>
                       </span>
                       <span className="ds">{desc}</span>
@@ -691,7 +697,7 @@ export function Composer({
 
           {/* 数量仅图片批量适用（batchCount 只随图片请求发出，与创作台同口径）：
               音频一次即整曲、文本按条对话、视频单段生成 */}
-          {!toolSkill && selModel?.type === "image" && (
+          {!toolSkill && selModel?.type === "image" && mCfg?.hideBatchCount !== true && (
           <CmSelect
             open={openSel === "count"}
             onToggle={() => toggleSel("count")}

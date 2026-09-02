@@ -17,6 +17,7 @@ export function OptionFields({
   qualOpts,
   quality,
   onQualityChange,
+  showCount,
   count,
   onCountChange,
   batchMin,
@@ -38,6 +39,7 @@ export function OptionFields({
   qualOpts: string[];
   quality: string;
   onQualityChange: (v: string) => void;
+  showCount: boolean;
   count: number;
   onCountChange: (v: number) => void;
   batchMin: number;
@@ -126,8 +128,8 @@ export function OptionFields({
         </div>
       )}
 
-      {/* 生成数量 (image). 始终显示；仅 1 个可选数量时滑块固定且禁用。 */}
-      {!isVideo && !isAudio && (
+      {/* 生成数量（图片）：默认显示；模型可在后台显式隐藏。 */}
+      {showCount && !isVideo && !isAudio && (
         <div className="ws-field col" id="fieldCount">
           <label>
             生成数量 · <span id="countVal">{count}</span>

@@ -21,6 +21,7 @@ import { buildMusicInput, validateMusicParams, type MusicParams } from "@/lib/mu
 import type { AiGenerateDTO } from "@/types/ai";
 import type { StudioModelVO } from "@/lib/market-api";
 import { skillKindOf, skillSupportsOutput, type SkillVO } from "@/types/skill";
+import { MODEL_MAINTENANCE_MESSAGE, modelUnderMaintenance } from "@/lib/model-availability";
 import type { SkillRunInput } from "@/types/skill-run";
 import type { ContextUsageVO, ConversationVO, MessageAttachment, MessageVO } from "@/types/chat";
 import { musicTurnSummary, type RefItem, type RefPolicy } from "../_components/chat-utils";
@@ -1071,6 +1072,10 @@ export function useSendMessage({
           : "历史输入或技能已变化，请确认后手动发送");
         return;
       }
+    }
+    if (modelUnderMaintenance(selModel?.config)) {
+      toast.error(MODEL_MAINTENANCE_MESSAGE);
+      return;
     }
     const v = draft.trim();
     if (busy || textRecovering || uploadSendWaitRef.current) {

@@ -24,6 +24,7 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import { supportsOmniReference } from "@/lib/omni-reference";
 import { measureImageSize, nearestAspectRatio, videoReferenceImageAspectIssue } from "@/lib/aspect-ratio";
 import { ossDisplayUrl } from "@/lib/oss-display";
+import { MODEL_MAINTENANCE_MESSAGE, modelUnderMaintenance } from "@/lib/model-availability";
 import {
   ACTIVE_RUN_KEY,
   activeRunStorageKey,
@@ -911,6 +912,10 @@ export function useGeneration(p: GenerationParams) {
     const selectedStudio = studioList.find((item) => item.name === model) ?? null;
     if (options?.expectedModelId && selectedStudio?.id !== options.expectedModelId) {
       toast.info("历史模型目录已变化，请确认当前模型后重新生成");
+      return;
+    }
+    if (modelUnderMaintenance(selectedStudio?.config)) {
+      toast.error(MODEL_MAINTENANCE_MESSAGE);
       return;
     }
     const selectedBackendModelId = selectedStudio?.modelKey || selectedStudio?.id || "";

@@ -20,6 +20,7 @@ import (
 
 	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/middleware"
+	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
@@ -99,6 +100,9 @@ func (s *service) optimizeCost(ctx context.Context, userID idgen.ID) int {
 	if mm == nil {
 		return 0
 	}
+	if model.ModelConfigUnderMaintenance(mm.Config) {
+		return 0
+	}
 	am := marketToAiModel(mm)
 	return resolveCost(&am, nil)
 }
@@ -117,6 +121,9 @@ func (s *service) optimizePrompt(ctx context.Context, userID idgen.ID, prompt st
 	mm := s.repo.textModel()
 	if mm == nil {
 		return "", optimizeUnusable("AI 优化未启用：请在模型管理添加文本模型并设为「AI 优化主模型」")
+	}
+	if model.ModelConfigUnderMaintenance(mm.Config) {
+		return "", optimizeUnusable(modelMaintenanceMessage)
 	}
 
 	// Same pricing path as /generate (creditCost override → catalog price),

@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState, type MouseEvent as ReactMouseEvent 
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Sparkles } from "lucide-react";
 import { resolveModelSwatch } from "@/lib/model-brand";
+import { modelUnderMaintenance } from "@/lib/model-availability";
 import type { AiModelVO } from "@/types/ai";
 
 interface Props {
@@ -24,6 +25,7 @@ interface ModelMeta {
   estSeconds?: number;
   isNew: boolean;
   badges: string[];
+  maintenance: boolean;
 }
 
 function stringList(value: unknown): string[] {
@@ -51,7 +53,7 @@ function hasPositiveNumber(record: Record<string, unknown>, keys: string[]) {
 }
 
 function parseMeta(model: AiModelVO): ModelMeta {
-  if (!model.config) return { isNew: false, badges: [model.type] };
+  if (!model.config) return { isNew: false, badges: [model.type], maintenance: false };
   try {
     const c = JSON.parse(model.config) as Record<string, unknown>;
     const clarities = stringList(c.clarities);
@@ -78,9 +80,10 @@ function parseMeta(model: AiModelVO): ModelMeta {
       estSeconds: pickPositiveNumber(c, ["estSeconds", "estimatedSeconds", "durationSeconds", "seconds", "timeSeconds"]),
       isNew: c.isNew === true || c.new === true || tags.some((tag) => tag.toLowerCase() === "new"),
       badges: [...badges, ...tags.filter((tag) => tag.toLowerCase() !== "new")].slice(0, 4),
+      maintenance: modelUnderMaintenance(c),
     };
   } catch {
-    return { isNew: false, badges: [model.type] };
+    return { isNew: false, badges: [model.type], maintenance: false };
   }
 }
 
@@ -113,7 +116,8 @@ function modelTypeLabel(type: string) {
   return type;
 }
 
-function primaryBadge(isNew: boolean, badges: string[]) {
+function primaryBadge(maintenance: boolean, isNew: boolean, badges: string[]) {
+  if (maintenance) return "异常";
   return badges.find((badge) => badge.includes("风格") || badge.includes("上新")) || (isNew ? "NEW" : undefined);
 }
 
@@ -260,6 +264,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
   }
 
   const selected = models.find((model) => model.modelId === value) || models[0];
+  const selectedMaintenance = parseMeta(selected).maintenance;
 
   if (models.length === 1) {
     if (value !== selected.modelId) {
@@ -277,6 +282,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
         >
           <ModelGlyph model={selected} className="h-3.5 w-3.5 rounded text-[9px]" />
           <span className="min-w-0 max-w-[134px] truncate font-normal">{selected.name || triggerLabel || "选择模型"}</span>
+          {selectedMaintenance && <span className="shrink-0 rounded bg-red-500 px-1 py-0.5 text-[9px] font-medium leading-none text-white">异常</span>}
         </button>
       );
     }
@@ -288,6 +294,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
       >
         <ModelGlyph model={selected} className="h-3.5 w-3.5 rounded text-[9px]" />
         <span className="min-w-0 max-w-[134px] truncate font-normal">{selected?.name || triggerLabel || "选择模型"}</span>
+        {selectedMaintenance && <span className="shrink-0 rounded bg-red-500 px-1 py-0.5 text-[9px] font-medium leading-none text-white">异常</span>}
         <span className="sr-only">当前模型：{selected?.name || "未选择"}</span>
       </span>
     );
@@ -308,6 +315,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
       >
         <ModelGlyph model={selected} className="h-3.5 w-3.5 rounded text-[9px]" />
         <span className="min-w-0 max-w-[134px] truncate font-normal">{selected?.name || triggerLabel || "选择模型"}</span>
+        {selectedMaintenance && <span className="shrink-0 rounded bg-red-500 px-1 py-0.5 text-[9px] font-medium leading-none text-white">异常</span>}
         <ChevronDown className={`h-3 w-3 shrink-0 text-neutral-400 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
 
@@ -332,8 +340,8 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
           >
             {models.map((model) => {
               const isSelected = model.modelId === selected.modelId;
-              const { description, estSeconds, isNew, badges } = parseMeta(model);
-              const badge = primaryBadge(isNew, badges);
+              const { description, estSeconds, isNew, badges, maintenance } = parseMeta(model);
+              const badge = primaryBadge(maintenance, isNew, badges);
               return (
                 <button
                   key={model.modelId}
@@ -359,7 +367,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
                     <span className="flex min-w-0 items-center gap-1.5">
                       <span className="truncate text-[13px] font-semibold leading-5">{model.name}</span>
                       {showType && <span className="shrink-0 text-[10px] font-medium text-neutral-500 dark:text-neutral-400">{modelTypeLabel(model.type)}</span>}
-                      {badge && <span className="shrink-0 rounded-md bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium leading-none text-neutral-600 dark:bg-white/10 dark:text-neutral-300">{badge}</span>}
+                      {badge && <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium leading-none ${maintenance ? "bg-red-500 text-white" : "bg-neutral-100 text-neutral-600 dark:bg-white/10 dark:text-neutral-300"}`}>{badge}</span>}
                     </span>
                     {description && (
                       <span className="block truncate text-[12px] leading-4 text-neutral-500 dark:text-neutral-400">

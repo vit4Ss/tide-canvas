@@ -114,6 +114,8 @@ func TestMergeRelayConfigRefreshesMetadataAndPreservesAdminSettings(t *testing.T
 		"modes":["manual-mode"],
 		"durations":["8s"],
 		"futureLocalSetting":true,
+		"hideBatchCount":true,
+		"availabilityStatus":"maintenance",
 		"capabilities":["stale"],
 		"operations":["stale"],
 		"priceModifiers":{"stale":true},
@@ -135,7 +137,7 @@ func TestMergeRelayConfigRefreshesMetadataAndPreservesAdminSettings(t *testing.T
 	if err := json.Unmarshal([]byte(mergeRelayConfig(existing, fresh)), &got); err != nil {
 		t.Fatalf("unmarshal merged config: %v", err)
 	}
-	if got["icon"] != "cube" || got["futureLocalSetting"] != true {
+	if got["icon"] != "cube" || got["futureLocalSetting"] != true || got["hideBatchCount"] != true || got["availabilityStatus"] != "maintenance" {
 		t.Fatalf("admin settings were not preserved: %v", got)
 	}
 	modes, _ := got["modes"].([]any)

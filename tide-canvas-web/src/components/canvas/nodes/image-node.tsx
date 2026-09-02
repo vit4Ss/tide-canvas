@@ -593,13 +593,16 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     node.generationConfig?.modelId,
   );
   const formatConfig = useMemo(
-    () => parseModelConfig<{ qualities?: string[]; clarities?: string[]; resolutions?: string[]; ratios?: string[]; batchSizes?: number[]; gridOutput?: boolean; maxRefImages?: number; pricing?: Record<string, Record<string, number>> }>(selectedModel),
+    () => parseModelConfig<{ qualities?: string[]; clarities?: string[]; resolutions?: string[]; ratios?: string[]; batchSizes?: number[]; hideBatchCount?: boolean; gridOutput?: boolean; maxRefImages?: number; pricing?: Record<string, Record<string, number>> }>(selectedModel),
     [selectedModel],
   );
   // A model may remove an option that the previous model allowed. Derive a
   // valid selection immediately during render instead of mutating state in an
   // effect (which caused one stale request/render after every model switch).
-  const batchOptions = formatConfig.batchSizes?.length ? formatConfig.batchSizes : DEFAULT_BATCH_OPTIONS;
+  const hideBatchCount = formatConfig.hideBatchCount === true;
+  const batchOptions = hideBatchCount
+    ? [1]
+    : formatConfig.batchSizes?.length ? formatConfig.batchSizes : DEFAULT_BATCH_OPTIONS;
   const qualityValues = formatConfig.qualities ?? DEFAULT_QUALITY_VALUES;
   const clarityValues = formatConfig.clarities ?? formatConfig.resolutions ?? DEFAULT_CLARITY_VALUES;
   const ratioValues = formatConfig.ratios;
@@ -692,6 +695,11 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const [batchCountState, setBatchCount] = useState(node.generationConfig?.batchCount ?? 1);
   const batchCount = batchOptions.includes(batchCountState) ? batchCountState : batchOptions[0];
   const [batchOpen, setBatchOpen] = useState(false);
+  useEffect(() => {
+    if (!hideBatchCount || !batchOpen) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 切换到隐藏数量的模型后关闭失效菜单
+    setBatchOpen(false);
+  }, [batchOpen, hideBatchCount]);
   // 组图：展示主图+堆叠徽标，点徽标「展开」拆成多个独立图片节点
   const groupImages = node.images && node.images.length > 1 ? node.images : null;
   // 已展开的子节点 id（${node.id}_g{n}），响应式 —— 徽标据此在「展开 / 收起」间切换
@@ -2945,15 +2953,17 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                   />
                 </div>
                 <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
-                  <BatchCountDropdown
-                    value={batchCount}
-                    options={batchOptions}
-                    open={batchOpen}
-                    onOpenChange={setBatchOpen}
-                    onChange={setBatchCount}
-                    variant="ghost"
-                    align="right"
-                  />
+                  {!hideBatchCount && (
+                    <BatchCountDropdown
+                      value={batchCount}
+                      options={batchOptions}
+                      open={batchOpen}
+                      onOpenChange={setBatchOpen}
+                      onChange={setBatchCount}
+                      variant="ghost"
+                      align="right"
+                    />
+                  )}
                   <span className="flex items-center gap-0.5 text-xs text-neutral-500">
                     <Zap className="h-3 w-3 text-neutral-900 dark:text-neutral-100" fill="currentColor" />
                     {Math.ceil(pointCost * batchCount)}

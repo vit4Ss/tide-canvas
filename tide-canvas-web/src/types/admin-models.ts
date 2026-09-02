@@ -28,6 +28,8 @@ export interface ModelBadge {
 export interface ModelConfig {
   /** 模型选择列表名称旁的标签（热门/新品/权益说明等）；空/未设 = 不显示 */
   badges?: ModelBadge[];
+  /** 运行状态：缺省/normal 正常；maintenance 保持展示但禁止新提交。 */
+  availabilityStatus?: "normal" | "maintenance";
   provider?: string;
   icon?: string;
   costUsd?: string;
@@ -86,6 +88,8 @@ export interface ModelConfig {
   qualities?: string[];
   durations?: string[];
   batchOptions?: number[];
+  /** 图片模型：创作台是否隐藏“生成数量”控件；缺省/false 保持默认显示。 */
+  hideBatchCount?: boolean;
   gridOutput?: boolean;
   capabilities?: string[];
   operations?: string[];

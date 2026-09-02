@@ -262,8 +262,14 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	if m == nil || !m.Enabled {
 		return nil, errNoModel
 	}
+	if err := validateModelAvailability(m); err != nil {
+		return nil, err
+	}
 	if !modelSupportsHandler(m, dto.Handler) {
 		return nil, skillPlacementError{message: "所选模型不支持当前生成方式，请切换模型或生成模式"}
+	}
+	if err := validateHiddenBatchCountInput(&dto, m); err != nil {
+		return nil, err
 	}
 	if err := validateAssistantChatInput(&dto, m); err != nil {
 		return nil, err
