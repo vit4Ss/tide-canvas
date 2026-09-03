@@ -62,6 +62,7 @@ import {
   tracksFromMeta,
 } from "./utils";
 import { createSubmissionGate, type SubmissionGate } from "./submission-gate";
+import { resolvedResultCells } from "./resolved-result-cells";
 import { studioReferenceIssue, uploadedFileUrls } from "./required-reference";
 import {
   isStudioTaskNewerOrEqual,
@@ -456,17 +457,15 @@ export function useGeneration(p: GenerationParams) {
       const finish = (urls: string[], tracks: MetaTrack[] = [], assets: ThreeDAsset[] = []) => {
         if (!isActive()) return;
         const foreground = isForeground();
-        // Suno 一次返回两首：结果多于占位格时按结果数展开。
-        const outCells =
-          kind === "audio" && urls.length > newCells.length
-            ? urls.map(
-                (_, i) => newCells[i] ?? { i, hues: newCells[0]?.hues ?? ([0, 80, 200] as MeshHues) },
-              )
-            : newCells;
+        // 终态结果数量以服务端 URL 为准：Midjourney 一次请求可返回四张，
+        // 部分成功的批量任务也可能少于请求数。3D 的多个 URL 是同一模型的
+        // 不同文件格式，仍保持单卡。禁止用 urls[0] 填满占位格，否则实时
+        // 页面会出现重复图，并在刷新后突然变成另一组结果。
+        const outCells = resolvedResultCells(newCells, urls, kind);
         clearActive();
         if (foreground) {
           setProgs(new Array(outCells.length).fill(100));
-          setCells(outCells.map((cell) => ({ ...cell, url: urls[cell.i] ?? urls[0] })));
+          setCells(outCells);
           setBusy(hasOngoingRuns());
         }
         const runKey = `task-${taskId}`;
@@ -483,7 +482,7 @@ export function useGeneration(p: GenerationParams) {
           title: tracks[cell.i]?.title || p || mdl,
           prompt: p,
           model: mdl,
-          url: urls[cell.i] ?? urls[0],
+          url: cell.url,
           status: "success" as const,
           ...(kind === "3d"
             ? {
