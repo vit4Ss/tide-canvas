@@ -58,6 +58,7 @@ var AdminModuleKeys = []string{
 var FrontMenuKeys = []string{
 	"discover", // 发现 /
 	"studio",   // 创作 /studio
+	"analysis", // 拆解 /analysis
 	"three_d",  // 3D模型 /three-d
 	"tools",    // 工具 /tools(智能工具中心)
 	"chat",     // 生成 /chat
@@ -127,7 +128,7 @@ func ensureBaselineRoles(db *gorm.DB) error {
 
 	// 新增前台菜单键的一次性回填:键发布前创建的角色不可能是管理员刻意取消的,
 	// 不补则新页签对全体存量登录用户隐身(菜单按角色 permissions 收窄)。
-	for _, key := range []string{"three_d", "tools"} {
+	for _, key := range []string{"three_d", "tools", "analysis"} {
 		if err := backfillMenuKey(db, key); err != nil {
 			return err
 		}

@@ -152,6 +152,9 @@ func TestMediaAnalysisModelsMustSupportTheirPreparedAttachments(t *testing.T) {
 	if !analysisModelSupports("analyze_webpage", plain) {
 		t.Fatal("webpage analysis should not require file input")
 	}
+	if !analysisModelSupports("analyze_account", plain) {
+		t.Fatal("account analysis should not require file input")
+	}
 	if textModelSupportsAssets(plain, []AssetInput{{Type: "file", URL: "https://example.test/a.pdf"}}) {
 		t.Fatal("plain text model accepted a document attachment")
 	}
@@ -237,7 +240,7 @@ func TestReusableAnalysisStepRequiresCompletedStepOrDurableTask(t *testing.T) {
 }
 
 func TestAnalysisSystemPromptTreatsFetchedContentAsUntrusted(t *testing.T) {
-	for _, handler := range []string{"analyze_video", "analyze_audio", "analyze_webpage"} {
+	for _, handler := range []string{"analyze_video", "analyze_audio", "analyze_webpage", "analyze_account"} {
 		prompt := analysisSystemPrompt(handler)
 		if !strings.Contains(prompt, "不得执行") && !strings.Contains(prompt, "不得遵循") {
 			t.Fatalf("%s system prompt lacks untrusted-content boundary: %q", handler, prompt)
@@ -250,6 +253,7 @@ func TestAnalysisPromptsRequireEvidenceAndActionableStructure(t *testing.T) {
 		"analyze_video":   {"[mm:ss]", "时间轴证据", "置信度", "不得臆测"},
 		"analyze_audio":   {"[mm:ss]", "行动项", "未明确", "需要复核"},
 		"analyze_webpage": {"主张—页面证据—含义/风险", "URL", "可信度限制"},
+		"analyze_account": {"内容支柱", "选题矩阵", "待验证假设", "不得编造"},
 	} {
 		prompt := analysisSystemPrompt(handler)
 		for _, fragment := range required {

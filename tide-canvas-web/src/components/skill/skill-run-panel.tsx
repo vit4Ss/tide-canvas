@@ -35,6 +35,8 @@ export interface SkillRunPanelProps {
   inputSelectTone?: PopoverSelectTone;
   onArtifact?: (artifact: SkillRunArtifactVO) => void;
   artifactActionLabel?: string | ((artifact: SkillRunArtifactVO) => string);
+  /** Optional surface-specific renderer for text artifacts (for example Markdown). */
+  textRenderer?: (text: string, artifact: SkillRunArtifactVO) => React.ReactNode;
   actionBusy?: boolean;
   /** Restore the original skill request into its composer for editing. */
   onReEdit?: () => void | Promise<unknown>;
@@ -63,6 +65,7 @@ export function SkillRunPanel({
   inputSelectTone = "default",
   onArtifact,
   artifactActionLabel = "使用",
+  textRenderer,
   actionBusy = false,
   onReEdit,
   onDismiss,
@@ -237,7 +240,7 @@ export function SkillRunPanel({
                     <span><strong>文件已生成</strong><small>可下载并继续编辑</small></span>
                   </div>
                 ) : text ? (
-                  <p>{text}</p>
+                  textRenderer ? textRenderer(text, artifact) : <p>{text}</p>
                 ) : (
                   <p>产物已生成</p>
                 )}

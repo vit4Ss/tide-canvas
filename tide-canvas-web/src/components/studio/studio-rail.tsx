@@ -59,6 +59,18 @@ const NAV_TOP: NavItem[] = [
     ),
   },
   {
+    href: "/analysis",
+    label: "拆解",
+    key: "analysis",
+    // 分层时间轴：既表示逐帧拆解，也区别于画布的取景框图标。
+    icon: (
+      <svg viewBox="0 0 24 24">
+        <path d="M4 6h5M4 12h8M4 18h5" />
+        <path d="M15 5.5 20 8v8l-5 2.5z" />
+      </svg>
+    ),
+  },
+  {
     href: "/three-d",
     label: "3D模型",
     key: "three_d",

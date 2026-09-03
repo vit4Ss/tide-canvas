@@ -312,6 +312,7 @@ func ensureBaselineConfig(db *gorm.DB) error {
 		},
 	}
 	baseline = append(baseline, SupplierBalanceBaselineConfigs()...)
+	baseline = append(baseline, SocialAnalysisBaselineConfigs()...)
 	for i := range baseline {
 		var row SysConfig
 		if err := db.Where(SysConfig{ConfigKey: baseline[i].ConfigKey}).

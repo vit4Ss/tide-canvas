@@ -97,6 +97,40 @@ func TestSupplierBalanceTokenIsMaskedAndMaskPreservesStoredValue(t *testing.T) {
 	}
 }
 
+func TestSocialTikHubAPIKeyIsMaskedAndPreserved(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&model.SysConfig{}); err != nil {
+		t.Fatalf("migrate sys_config: %v", err)
+	}
+	row := model.SysConfig{
+		ConfigKey: model.ConfigKeySocialTikHubAPIKey, ConfigValue: "tikhub-secret",
+		Group: model.ConfigGroupSocialAnalysis, Description: "TikHub token",
+	}
+	if err := db.Create(&row).Error; err != nil {
+		t.Fatalf("seed TikHub token: %v", err)
+	}
+	router := gin.New()
+	RegisterConfig(router.Group(""), &app.Deps{DB: db})
+
+	get := httptest.NewRecorder()
+	router.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/config", nil))
+	if get.Code != http.StatusOK || bytes.Contains(get.Body.Bytes(), []byte("tikhub-secret")) || !bytes.Contains(get.Body.Bytes(), []byte(supplierConfigSecretMask)) {
+		t.Fatalf("GET exposed or failed to mask TikHub token: status=%d body=%s", get.Code, get.Body.String())
+	}
+	putConfigValue(t, router, model.ConfigKeySocialTikHubAPIKey, supplierConfigSecretMask)
+	var stored model.SysConfig
+	if err := db.Where("config_key = ?", model.ConfigKeySocialTikHubAPIKey).First(&stored).Error; err != nil {
+		t.Fatalf("reload TikHub token: %v", err)
+	}
+	if stored.ConfigValue != "tikhub-secret" {
+		t.Fatalf("masked save replaced TikHub token with %q", stored.ConfigValue)
+	}
+}
+
 func putConfigValue(t *testing.T, router http.Handler, key, value string) {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{"items": []map[string]string{{
@@ -178,5 +212,43 @@ func TestSupplierBalanceMonetaryConfigValidation(t *testing.T) {
 				t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestSocialTikHubConfigValidation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&model.SysConfig{}); err != nil {
+		t.Fatalf("migrate sys_config: %v", err)
+	}
+	if err := db.Create(&model.SysConfig{ConfigKey: model.ConfigKeySocialTikHubEnabled, ConfigValue: "1", Group: model.ConfigGroupSocialAnalysis}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.SysConfig{ConfigKey: model.ConfigKeySocialTikHubBaseURL, ConfigValue: model.DefaultSocialTikHubBaseURL, Group: model.ConfigGroupSocialAnalysis}).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	RegisterConfig(router.Group(""), &app.Deps{DB: db})
+
+	for _, test := range []struct{ key, value string }{
+		{model.ConfigKeySocialTikHubEnabled, "yes"},
+		{model.ConfigKeySocialTikHubBaseURL, "not-a-url"},
+		{model.ConfigKeySocialTikHubBaseURL, "https://user:pass@api.tikhub.io"},
+		{model.ConfigKeySocialTikHubBaseURL, "https://api.tikhub.io?token=bad"},
+		{model.ConfigKeySocialTikHubAPIKey, "bad\nheader"},
+	} {
+		body, _ := json.Marshal(map[string]any{"items": []map[string]string{{
+			"configKey": test.key, "configValue": test.value, "group": model.ConfigGroupSocialAnalysis,
+		}}})
+		result := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPut, "/config", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(result, request)
+		if result.Code != http.StatusBadRequest {
+			t.Errorf("%s=%q status = %d, body=%s", test.key, test.value, result.Code, result.Body.String())
+		}
 	}
 }

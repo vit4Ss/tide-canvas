@@ -34,6 +34,52 @@ func TestEnsureBaselineConfigSeedsSupplierBalancesWithoutTokens(t *testing.T) {
 	}
 }
 
+func TestEnsureBaselineConfigSeedsSocialAnalysisWithoutCredential(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&SysConfig{}); err != nil {
+		t.Fatalf("migrate sys_config: %v", err)
+	}
+	if err := ensureBaselineConfig(db); err != nil {
+		t.Fatalf("ensure baseline config: %v", err)
+	}
+	var rows []SysConfig
+	if err := db.Where("config_group = ?", ConfigGroupSocialAnalysis).Find(&rows).Error; err != nil {
+		t.Fatalf("load social analysis config: %v", err)
+	}
+	if len(rows) != len(SocialAnalysisConfigKeys) {
+		t.Fatalf("social config rows = %d, want %d", len(rows), len(SocialAnalysisConfigKeys))
+	}
+	for i := range rows {
+		if rows[i].ConfigKey == ConfigKeySocialTikHubAPIKey && rows[i].ConfigValue != "" {
+			t.Fatal("TikHub API key must be blank when seeded")
+		}
+	}
+	if !IsSecretConfigKey(ConfigKeySocialTikHubAPIKey) {
+		t.Fatal("TikHub API key was not classified as a secret")
+	}
+	if err := db.Model(&SysConfig{}).Where("config_key = ?", ConfigKeySocialTikHubAPIKey).Update("config_value", "operator-secret").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&SysConfig{}).Where("config_key = ?", ConfigKeySocialTikHubEnabled).Update("config_value", "0").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureBaselineConfig(db); err != nil {
+		t.Fatalf("second ensure baseline config: %v", err)
+	}
+	for key, want := range map[string]string{ConfigKeySocialTikHubAPIKey: "operator-secret", ConfigKeySocialTikHubEnabled: "0"} {
+		var stored SysConfig
+		if err := db.Where("config_key = ?", key).First(&stored).Error; err != nil {
+			t.Fatal(err)
+		}
+		if stored.ConfigValue != want {
+			t.Errorf("%s was overwritten on restart: got %q want %q", key, stored.ConfigValue, want)
+		}
+	}
+}
+
 func TestSupplierBalanceCurrencyMigrationConvertsOnlyNativeNonCNYThresholds(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

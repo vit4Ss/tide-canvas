@@ -55,6 +55,7 @@ const GROUP_LABEL: Record<string, string> = {
   pricing: "定价页",
   points: "积分",
   供应商余额: "供应商余额",
+  内容拆解: "内容拆解",
   存储配置: "存储配置",
 };
 const GROUP_ORDER = [
@@ -67,6 +68,7 @@ const GROUP_ORDER = [
   "pricing",
   "points",
   "供应商余额",
+  "内容拆解",
   "存储配置",
 ];
 const GROUP_DESCRIPTION: Record<string, string> = {
@@ -79,6 +81,7 @@ const GROUP_DESCRIPTION: Record<string, string> = {
   pricing: "公开定价页的基础信息",
   points: "积分规则与默认额度",
   供应商余额: "供应商接入已收纳到余额监控页，按供应商就地配置开关、凭证与预警线",
+  内容拆解: "TikHub 多平台解析服务，用于作品拆解与账号洞察",
   存储配置: "文件存储与访问地址",
 };
 const groupLabel = (g: string) => GROUP_LABEL[g] ?? g;
@@ -120,6 +123,7 @@ const BOOL_KEYS: Record<string, { on: string; off: string }> = {
   "balance.uniart.enabled": { on: "已启用 Uniart 余额监控", off: "已停用 Uniart 余额监控" },
   "balance.wxart.enabled": { on: "已启用 wxart 余额监控", off: "已停用 wxart 余额监控" },
   "balance.secureskill.enabled": { on: "已启用 secure-skill 余额监控", off: "已停用 secure-skill 余额监控" },
+  "social.tikhub.enabled": { on: "已启用多平台内容拆解", off: "已停用多平台内容拆解" },
 };
 
 const NUMBER_KEYS: Record<string, { min: number; max?: number; step?: number | "any" }> = {
@@ -144,6 +148,7 @@ const SUPPLIER_BALANCE_SECRET_KEYS = new Set([
   "balance.uniart.accessToken",
   "balance.wxart.accessToken",
   "balance.secureskill.accessToken",
+  "social.tikhub.apiKey",
 ]);
 
 /* 基线键（页面/策略消费方仍在读，后端同样拒绝删除）——不展示删除入口。
@@ -163,6 +168,9 @@ const BASELINE_KEYS = new Set([
   "points.inviteReward",
   "points.signupBonus",
   "storage.ossAccelerateEnabled",
+  "social.tikhub.enabled",
+  "social.tikhub.baseUrl",
+  "social.tikhub.apiKey",
   "balance.dlapi.enabled",
   "balance.dlapi.userId",
   "balance.dlapi.accessToken",

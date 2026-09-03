@@ -3,6 +3,7 @@ package admin
 import (
 	"errors"
 	"math"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -33,7 +34,7 @@ type ConfigVO struct {
 
 func toConfigVO(m *model.SysConfig) ConfigVO {
 	value := m.ConfigValue
-	if model.IsSupplierBalanceSecretConfigKey(m.ConfigKey) && strings.TrimSpace(value) != "" {
+	if model.IsSecretConfigKey(m.ConfigKey) && strings.TrimSpace(value) != "" {
 		value = supplierConfigSecretMask
 	}
 	return ConfigVO{
@@ -81,6 +82,9 @@ var baselineConfigKeys = func() map[string]struct{} {
 		"storage.ossAccelerateEnabled":       {},
 	}
 	for _, key := range model.SupplierBalanceConfigKeys {
+		keys[key] = struct{}{}
+	}
+	for _, key := range model.SocialAnalysisConfigKeys {
 		keys[key] = struct{}{}
 	}
 	return keys
@@ -143,6 +147,30 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 			if key == "storage.ossAccelerateEnabled" && items[i].ConfigValue != "0" && items[i].ConfigValue != "1" {
 				response.Fail(c, response.CodeBadRequest, "OSS 传输加速开关必须是 0 或 1")
 				return
+			}
+			if key == model.ConfigKeySocialTikHubEnabled && items[i].ConfigValue != "0" && items[i].ConfigValue != "1" {
+				response.Fail(c, response.CodeBadRequest, "内容拆解开关必须是 0 或 1")
+				return
+			}
+			if key == model.ConfigKeySocialTikHubBaseURL {
+				raw := strings.TrimSpace(items[i].ConfigValue)
+				parsed, parseErr := url.Parse(raw)
+				if parseErr != nil || len(raw) > 512 || parsed.Hostname() == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+					response.Fail(c, response.CodeBadRequest, "TikHub API 地址必须是有效的 HTTP(S) 基础地址，且不能包含账号、查询参数或片段")
+					return
+				}
+				items[i].ConfigValue = strings.TrimRight(raw, "/")
+			}
+			if key == model.ConfigKeySocialTikHubAPIKey {
+				value := strings.TrimSpace(items[i].ConfigValue)
+				if len(value) > 4096 {
+					response.Fail(c, response.CodeBadRequest, "TikHub API Key 长度不能超过 4096 个字符")
+					return
+				}
+				if strings.IndexFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+					response.Fail(c, response.CodeBadRequest, "TikHub API Key 不能包含换行或控制字符")
+					return
+				}
 			}
 			if isSupplierBalanceEnabledKey(key) && items[i].ConfigValue != "0" && items[i].ConfigValue != "1" {
 				response.Fail(c, response.CodeBadRequest, "供应商余额监控开关必须是 0 或 1")
@@ -215,7 +243,7 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 					continue
 				}
 				value := it.ConfigValue
-				secret := model.IsSupplierBalanceSecretConfigKey(key)
+				secret := model.IsSecretConfigKey(key)
 				if secret && value == supplierConfigSecretMask {
 					var storedValue string
 					result := tx.Model(&model.SysConfig{}).Where("config_key = ?", key).

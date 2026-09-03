@@ -2,6 +2,7 @@ package skill
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,8 +13,8 @@ import (
 )
 
 func TestBaselineToolSkillsAreCompleteAndValidJSON(t *testing.T) {
-	if len(baselineToolSkills) != 7 {
-		t.Fatalf("tool seed count = %d, want 7", len(baselineToolSkills))
+	if len(baselineToolSkills) != 8 {
+		t.Fatalf("tool seed count = %d, want 8", len(baselineToolSkills))
 	}
 	seen := map[string]bool{}
 	for _, definition := range baselineToolSkills {
@@ -59,14 +60,19 @@ func TestBaselineToolSkillsAreCompleteAndValidJSON(t *testing.T) {
 }
 
 func TestEnsureBaselineToolSkillsRepairsLegacyPresetBackfill(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "-")+"?mode=memory&cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "skill-seed.db")), &gorm.Config{})
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "cgo") {
 			t.Skip("sqlite driver requires CGO in this environment")
 		}
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.Skill{}, &model.SkillVersion{}, &model.SkillFile{}, &model.SkillSurfaceBinding{}); err != nil {
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(&model.Skill{}, &model.SkillVersion{}, &model.SkillFile{}, &model.SkillSurfaceBinding{}, &model.SysConfig{}); err != nil {
 		t.Fatal(err)
 	}
 	legacy := model.Skill{
@@ -130,6 +136,39 @@ func TestEnsureBaselineToolSkillsRepairsLegacyPresetBackfill(t *testing.T) {
 	}
 }
 
+func TestEnsureBaselineToolSkillsSeedsExactlyOnce(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "skill-seed.db")), &gorm.Config{})
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "cgo") {
+			t.Skip("sqlite driver requires CGO in this environment")
+		}
+		t.Fatal(err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.AutoMigrate(&model.Skill{}, &model.SkillVersion{}, &model.SkillFile{}, &model.SkillSurfaceBinding{}, &model.SysConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureBaselineToolSkills(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureBaselineToolSkills(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, definition := range baselineToolSkills {
+		var count int64
+		if err := db.Model(&model.Skill{}).Where("seed_key = ?", definition.key).Count(&count).Error; err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Errorf("%s seed count = %d, want 1", definition.key, count)
+		}
+	}
+}
+
 func TestPublicInputSchemaKeepsReservedRequirements(t *testing.T) {
 	raw := `{"type":"object","x-asset-types":["video"],"required":["prompt","assets","focus"],"properties":{"prompt":{"type":"string"},"assets":{"type":"array"},"focus":{"type":"string"}}}`
 	var schema map[string]any
@@ -177,12 +216,13 @@ func TestOtherToolSeedsUseReviewedV2Workflows(t *testing.T) {
 		}
 	}
 	checks := map[string][]string{
-		"tool-xlsx":           {"audit", "formula", "freezeRows", "autoFilter"},
-		"tool-docx":           {"edit", "numbered", "callout", "table"},
-		"tool-markdown":       {"edit", "标题层级", "代码围栏"},
-		"tool-video-analysis": {"analyze_video"},
-		"tool-audio-analysis": {"analyze_audio"},
-		"tool-web-analysis":   {"analyze_webpage"},
+		"tool-xlsx":             {"audit", "formula", "freezeRows", "autoFilter"},
+		"tool-docx":             {"edit", "numbered", "callout", "table"},
+		"tool-markdown":         {"edit", "标题层级", "代码围栏"},
+		"tool-video-analysis":   {"analyze_video"},
+		"tool-audio-analysis":   {"analyze_audio"},
+		"tool-account-analysis": {"analyze_account", "不可信", "不得编造"},
+		"tool-web-analysis":     {"analyze_webpage"},
 	}
 	for _, definition := range baselineToolSkills {
 		for _, required := range checks[definition.key] {

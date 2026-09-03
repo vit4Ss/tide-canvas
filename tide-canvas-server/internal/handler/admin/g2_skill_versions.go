@@ -1465,11 +1465,11 @@ func validateSkillManifest(
 		"image_to_video": true, "start_end_to_video": true, "reference_to_video": true,
 		"text_to_audio": true,
 		"render_pptx":   true, "render_xlsx": true, "render_docx": true, "render_markdown": true,
-		"analyze_video": true, "analyze_audio": true, "analyze_webpage": true,
+		"analyze_video": true, "analyze_audio": true, "analyze_webpage": true, "analyze_account": true,
 	}
 	toolHandlers := map[string]bool{
 		"render_pptx": true, "render_xlsx": true, "render_docx": true, "render_markdown": true,
-		"analyze_video": true, "analyze_audio": true, "analyze_webpage": true,
+		"analyze_video": true, "analyze_audio": true, "analyze_webpage": true, "analyze_account": true,
 	}
 	seen := map[string]bool{}
 	finalOutputTypes := map[string]bool{}
