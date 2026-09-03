@@ -11,6 +11,7 @@ import {
   ChevronRight,
   CircleAlert,
   Clock3,
+  Download,
   Eye,
   Film,
   Heart,
@@ -19,6 +20,7 @@ import {
   Loader2,
   MessageCircle,
   ScanSearch,
+  ShieldCheck,
   Share2,
   Sparkles,
   UserRoundSearch,
@@ -33,7 +35,11 @@ import {
   type SocialInspectVO,
   type SocialPlatform,
   type SocialWorkVO,
+  type VideoDownloaderCapabilitiesVO,
+  type VideoDownloadQuality,
+  type VideoDownloadResolveVO,
 } from "@/lib/social-analysis-api";
+import { apiUrl } from "@/lib/http";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { useSkillRun } from "@/components/skill/use-skill-run";
@@ -41,6 +47,7 @@ import { SkillRunPanel, type SkillRunPanelActionPayload } from "@/components/ski
 import type { SkillRunAction } from "@/types/skill-run";
 import { FileCategory } from "@/types/file";
 import type { SkillVO } from "@/types/skill";
+import { toast } from "@/components/shared/toast";
 import styles from "./analysis.module.css";
 
 const PLATFORMS: Array<{ key: SocialPlatform; label: string; mark: string; color: string; hint: string }> = [
@@ -54,6 +61,21 @@ const PLATFORMS: Array<{ key: SocialPlatform; label: string; mark: string; color
 
 const DEFAULT_FOCUS = "完整转写视频文案，并拆解开头 3 秒钩子、叙事结构、镜头节奏、情绪变化、核心爆点和可复用的创作方法。所有判断请附时间码证据。";
 const ACCOUNT_DEFAULT_FOCUS = "分析账号定位、目标受众、内容支柱和近期作品表现差异，提炼可复用的标题与开场模式，并给出未来两周可执行的选题矩阵和测试建议。";
+
+const DOWNLOAD_QUALITY: Array<{ key: VideoDownloadQuality; label: string; detail: string }> = [
+  { key: "compat", label: "兼容", detail: "最高 1080P · H.264 MP4" },
+  { key: "quality", label: "高清", detail: "最高可用画质" },
+  { key: "speed", label: "极速", detail: "最高 480P" },
+];
+
+const DOWNLOAD_PLATFORM_LABEL: Record<string, string> = {
+  pinterest: "Pinterest",
+  bilibili: "哔哩哔哩",
+  kuaishou: "快手",
+  tiktok: "TikTok",
+  instagram: "Instagram",
+  youtube: "YouTube",
+};
 
 function displayCount(value?: string): string {
   if (!value) return "—";
@@ -74,6 +96,52 @@ function displayDate(value?: string): string {
   return date && !Number.isNaN(date.valueOf())
     ? new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "short", day: "numeric" }).format(date)
     : value;
+}
+
+function displayBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "大小待下载时确认";
+  const units = ["B", "KB", "MB", "GB"];
+  let size = value;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size >= 100 || unit === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unit]}`;
+}
+
+function displayDurationSeconds(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "时长未知";
+  const seconds = Math.round(value);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = seconds % 60;
+  return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}` : `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
+function displayTokenTTL(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "以解析结果为准";
+  if (seconds < 60) return `${Math.floor(seconds)} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.floor(seconds % 60);
+  return remainingSeconds ? `${minutes} 分 ${remainingSeconds} 秒` : `${minutes} 分钟`;
+}
+
+function extractDownloadURL(value: string): string {
+  const match = value.trim().match(/https:\/\/[^\s<>"']+/i);
+  return match?.[0]?.replace(/[.,;!?，。；！？、）)\]}》】]+$/, "") || "";
+}
+
+function startNativeDownload(downloadUrl: string) {
+  const frame = document.createElement("iframe");
+  frame.hidden = true;
+  frame.referrerPolicy = "no-referrer";
+  frame.src = apiUrl(downloadUrl);
+  document.body.appendChild(frame);
+  // Keep the navigation context alive for the server's full one-hour stream
+  // window. Removing it after the short resolve-token TTL can cancel a slow,
+  // already-authorized large-file download in some browsers.
+  window.setTimeout(() => frame.remove(), 65 * 60 * 1_000);
 }
 
 function titleOf(work: SocialWorkVO): string {
@@ -204,6 +272,14 @@ export default function AnalysisWorkbench() {
   const [statusRefresh, setStatusRefresh] = useState(0);
   const [statusChecking, setStatusChecking] = useState(false);
   const [statusError, setStatusError] = useState(false);
+  const [downloaderCapabilities, setDownloaderCapabilities] = useState<VideoDownloaderCapabilitiesVO | null>(null);
+  const [downloaderStatusError, setDownloaderStatusError] = useState(false);
+  const [downloaderRefresh, setDownloaderRefresh] = useState(0);
+  const [downloadSource, setDownloadSource] = useState("");
+  const [downloadQuality, setDownloadQuality] = useState<VideoDownloadQuality>("compat");
+  const [downloadResult, setDownloadResult] = useState<VideoDownloadResolveVO | null>(null);
+  const [downloadError, setDownloadError] = useState("");
+  const [downloadBusy, setDownloadBusy] = useState(false);
   const [result, setResult] = useState<SocialInspectVO | null>(null);
   const [selectedWork, setSelectedWork] = useState<SocialWorkVO | null>(null);
   const [loading, setLoading] = useState(false);
@@ -215,6 +291,8 @@ export default function AnalysisWorkbench() {
   const analysisBusyRef = useRef(false);
   const inspectEpochRef = useRef(0);
   const analysisEpochRef = useRef(0);
+  const downloadBusyRef = useRef(false);
+  const downloadEpochRef = useRef(0);
   const ownerUserId = user?.id ?? "";
   const previousOwnerRef = useRef(ownerUserId);
   const skillRun = useSkillRun({
@@ -228,6 +306,7 @@ export default function AnalysisWorkbench() {
     previousOwnerRef.current = ownerUserId;
     inspectEpochRef.current += 1;
     analysisEpochRef.current += 1;
+    downloadEpochRef.current += 1;
     inspectBusyRef.current = false;
     analysisBusyRef.current = false;
     setLoading(false);
@@ -235,6 +314,12 @@ export default function AnalysisWorkbench() {
     setStatus(null);
     setStatusChecking(false);
     setStatusError(false);
+    setDownloaderCapabilities(null);
+    setDownloaderStatusError(false);
+    setDownloadResult(null);
+    setDownloadError("");
+    setDownloadBusy(false);
+    downloadBusyRef.current = false;
     setResult(null);
     setSelectedWork(null);
     setError("");
@@ -243,6 +328,22 @@ export default function AnalysisWorkbench() {
     // boundary should trigger this cleanup.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownerUserId, statusRefresh]);
+
+  useEffect(() => {
+    if (!ownerUserId) return;
+    let cancelled = false;
+    void socialAnalysisApi.downloaderPlatforms().then((response) => {
+      if (cancelled) return;
+      if (response.success && response.data) {
+        setDownloaderCapabilities(response.data);
+        setDownloaderStatusError(false);
+      } else {
+        setDownloaderCapabilities(null);
+        setDownloaderStatusError(true);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [downloaderRefresh, ownerUserId]);
 
   useEffect(() => {
     if (!ownerUserId) return;
@@ -280,6 +381,15 @@ export default function AnalysisWorkbench() {
       : status.configured
         ? "解析服务已配置"
         : "等待管理员配置";
+  const downloaderPlatforms = downloaderCapabilities?.platforms ?? [];
+  const downloaderReady = downloaderCapabilities?.enabled === true;
+  const downloaderStateLabel = initialized && !user
+    ? "登录后可用"
+    : downloaderStatusError
+      ? "检查失败"
+      : downloaderCapabilities
+        ? downloaderReady ? "下载器可用" : "下载器未启用"
+        : "正在检查";
 
   const inspect = async () => {
     if (inspectBusyRef.current || !url.trim()) return;
@@ -416,6 +526,46 @@ export default function AnalysisWorkbench() {
       ...(payload?.input ? { input: payload.input } : {}),
     });
     if (!updated) setError(skillRun.error || "操作失败，请稍后重试");
+  };
+
+  const resolveVideoDownload = async () => {
+    if (downloadBusyRef.current || !downloadSource.trim()) return;
+    const sourceURL = extractDownloadURL(downloadSource);
+    if (!sourceURL) {
+      setDownloadError("请输入有效的公开视频 HTTPS 链接");
+      return;
+    }
+    downloadBusyRef.current = true;
+    const epoch = ++downloadEpochRef.current;
+    setDownloadBusy(true);
+    setDownloadError("");
+    setDownloadResult(null);
+    try {
+      if (!await ensureSession()) return;
+      const response = await socialAnalysisApi.resolveDownload({ url: sourceURL, quality: downloadQuality });
+      if (epoch !== downloadEpochRef.current) return;
+      if (!response.success || !response.data) {
+        setDownloadError(response.code === 429 ? "请求过于频繁，请稍后再试" : response.message || "视频解析失败，请检查链接后重试");
+        return;
+      }
+      setDownloadResult(response.data);
+    } finally {
+      if (epoch === downloadEpochRef.current) {
+        downloadBusyRef.current = false;
+        setDownloadBusy(false);
+      }
+    }
+  };
+
+  const downloadResolvedVideo = () => {
+    if (!downloadResult) return;
+    if (downloadResult.expiresAt * 1000 <= Date.now()) {
+      setDownloadResult(null);
+      setDownloadError("下载地址已经过期，请重新解析视频");
+      return;
+    }
+    startNativeDownload(downloadResult.downloadUrl);
+    toast.success("已交给浏览器下载，请查看默认下载目录");
   };
 
   const reEditRun = () => {
@@ -568,6 +718,118 @@ export default function AnalysisWorkbench() {
               <span><b>{item.label}</b><small>{item.hint}</small></span>
             </div>
           ))}
+        </section>
+
+        <section className={styles.downloadSection}>
+          <header className={styles.downloadHeader}>
+            <div className={styles.downloadTitle}>
+              <span className={styles.downloadIcon}><Download aria-hidden /></span>
+              <div><small>PUBLIC VIDEO / RELAY</small><h2>公开视频下载</h2></div>
+            </div>
+            <button
+              type="button"
+              className={styles.downloadState}
+              data-ready={downloaderReady ? "true" : "false"}
+              disabled={!user || downloadBusy || (!downloaderCapabilities && !downloaderStatusError)}
+              title={downloaderStatusError ? "重新检查下载服务" : downloaderStateLabel}
+              aria-live="polite"
+              onClick={() => {
+                setDownloaderCapabilities(null);
+                setDownloaderStatusError(false);
+                setDownloaderRefresh((value) => value + 1);
+              }}
+            ><i /> {downloaderStateLabel}</button>
+          </header>
+
+          <div className={styles.downloadBody}>
+            <div className={styles.downloadComposer}>
+              <div className={styles.downloadPlatforms} aria-label="下载器支持的平台">
+                {downloaderPlatforms.length > 0
+                  ? downloaderPlatforms.map((platform) => <span key={platform}>{DOWNLOAD_PLATFORM_LABEL[platform] || platform}</span>)
+                  : <span>{downloaderStatusError ? "平台列表读取失败" : downloaderCapabilities ? "暂无已启用平台" : "正在读取已启用平台"}</span>}
+              </div>
+              <label className={styles.downloadUrlField}>
+                <span>公开视频链接</span>
+                <div>
+                  <Link2 aria-hidden />
+                  <input
+                    value={downloadSource}
+                    onChange={(event) => { setDownloadSource(event.target.value); setDownloadResult(null); setDownloadError(""); }}
+                    onKeyDown={(event) => { if (event.key === "Enter") void resolveVideoDownload(); }}
+                    disabled={downloadBusy}
+                    maxLength={4096}
+                    placeholder={downloaderPlatforms.length > 0
+                      ? `${downloaderPlatforms.map((platform) => DOWNLOAD_PLATFORM_LABEL[platform] || platform).join("、")}公开视频链接`
+                      : "粘贴公开视频链接"}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  {!!url.trim() && <button type="button" disabled={downloadBusy} onClick={() => { setDownloadSource(url.trim()); setDownloadResult(null); setDownloadError(""); }}>使用上方链接</button>}
+                </div>
+              </label>
+              <div className={styles.qualityRow}>
+                <span>下载质量</span>
+                <div>
+                  {DOWNLOAD_QUALITY.map((option) => (
+                    <button
+                      type="button"
+                      key={option.key}
+                      aria-pressed={downloadQuality === option.key}
+                      className={downloadQuality === option.key ? styles.qualityActive : ""}
+                      disabled={downloadBusy}
+                      title={option.detail}
+                      onClick={() => { setDownloadQuality(option.key); setDownloadResult(null); setDownloadError(""); }}
+                    ><b>{option.label}</b><small>{option.detail}</small></button>
+                  ))}
+                </div>
+              </div>
+              <div className={styles.downloadComposerFooter}>
+                <span><ShieldCheck aria-hidden /> 仅处理公开且已获授权的内容 · 单文件上限 {displayBytes(downloaderCapabilities?.maxFileBytes || 0)} · 下载票据有效 {displayTokenTTL(downloaderCapabilities?.tokenTtlSeconds || 0)}</span>
+                {initialized && !user ? (
+                  <Link className={styles.downloadPrimary} href="/login">登录后下载 <ChevronRight aria-hidden /></Link>
+                ) : (
+                  <button className={styles.downloadPrimary} type="button" disabled={!downloadSource.trim() || !downloaderReady || downloadBusy} onClick={() => void resolveVideoDownload()}>
+                    {downloadBusy ? <Loader2 className={styles.spin} aria-hidden /> : <ScanSearch aria-hidden />}
+                    {downloadBusy ? "正在解析视频" : "解析视频"}
+                  </button>
+                )}
+              </div>
+              {user && downloaderCapabilities && !downloaderReady && (
+                <div className={styles.notice}><CircleAlert aria-hidden /> 视频下载服务当前未启用，请联系管理员检查 Relay API Key 与下载器开关。</div>
+              )}
+              {user && downloaderStatusError && (
+                <div className={styles.notice}><CircleAlert aria-hidden /> 暂时无法读取下载器能力，可点击右上角状态重新检查。</div>
+              )}
+              {downloadError && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{downloadError}</span></div>}
+            </div>
+
+            <aside className={styles.downloadResult} data-empty={downloadResult ? "false" : "true"}>
+              {downloadResult ? (
+                <>
+                  <div className={styles.downloadResultTop}>
+                    <span>{DOWNLOAD_PLATFORM_LABEL[downloadResult.platform] || downloadResult.platform}</span>
+                    <small>{DOWNLOAD_QUALITY.find((item) => item.key === downloadResult.quality)?.label || downloadResult.quality}</small>
+                  </div>
+                  <h3>{downloadResult.title || "公开视频"}</h3>
+                  <div className={styles.downloadMeta}>
+                    <span><b>{displayDurationSeconds(downloadResult.durationSeconds)}</b><small>视频时长</small></span>
+                    <span><b>{downloadResult.width && downloadResult.height ? `${downloadResult.width} × ${downloadResult.height}` : "待确认"}</b><small>画面尺寸</small></span>
+                    <span><b>{displayBytes(downloadResult.estimatedBytes)}</b><small>预计大小</small></span>
+                  </div>
+                  <button type="button" className={styles.downloadNow} onClick={downloadResolvedVideo}>
+                    <Download aria-hidden /> 下载 MP4
+                  </button>
+                  <small className={styles.downloadExpiry}>临时地址将在 {new Date(downloadResult.expiresAt * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 前有效</small>
+                </>
+              ) : (
+                <div className={styles.downloadEmpty}>
+                  <Download aria-hidden />
+                  <strong>解析后在这里确认文件</strong>
+                  <p>确认标题、分辨率和预计大小后，再交给浏览器下载到默认目录。</p>
+                </div>
+              )}
+            </aside>
+          </div>
         </section>
 
         {result ? (

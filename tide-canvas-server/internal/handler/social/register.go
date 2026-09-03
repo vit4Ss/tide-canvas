@@ -134,8 +134,9 @@ type settings struct {
 }
 
 type handler struct {
-	db      *gorm.DB
-	httpcli *http.Client
+	db         *gorm.DB
+	httpcli    *http.Client
+	downloader *relayVideoDownloader
 }
 
 type upstreamError struct{ message string }
@@ -144,13 +145,21 @@ func (e *upstreamError) Error() string { return e.message }
 
 // Register mounts the social-analysis workbench API.
 func Register(api *gin.RouterGroup, d *app.Deps) {
-	h := &handler{
-		db:      d.DB,
-		httpcli: newTikHubHTTPClient(),
+	downloader := (*relayVideoDownloader)(nil)
+	if d != nil && d.Cfg != nil {
+		downloader = newRelayVideoDownloader(d.Cfg.Relay.BaseURL, d.Cfg.Relay.APIKey)
 	}
+	h := &handler{
+		db:         d.DB,
+		httpcli:    newTikHubHTTPClient(),
+		downloader: downloader,
+	}
+	api.GET("/social-analysis/downloader/download/:token", videoDownloadTicketAuth(), h.downloadVideo)
 	g := api.Group("/social-analysis")
 	g.Use(middleware.JWTAuth(d))
 	g.GET("/status", h.status)
+	g.GET("/downloader/platforms", h.downloaderPlatforms)
+	g.POST("/downloader/resolve", middleware.RateLimit(d, 15, time.Minute), h.resolveVideoDownload)
 	g.POST("/inspect", middleware.RateLimit(d, 20, time.Minute), h.inspect)
 }
 

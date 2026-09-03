@@ -69,8 +69,35 @@ export interface SocialInspectVO {
   fetchedAt: number;
 }
 
+export type VideoDownloadQuality = "quality" | "compat" | "speed";
+
+export interface VideoDownloaderCapabilitiesVO {
+  enabled: boolean;
+  platforms: string[];
+  maxFileBytes: number;
+  tokenTtlSeconds: number;
+}
+
+export interface VideoDownloadResolveVO {
+  id: string;
+  platform: string;
+  title: string;
+  durationSeconds: number;
+  width: number;
+  height: number;
+  estimatedBytes: number;
+  quality: VideoDownloadQuality;
+  expiresAt: number;
+  fileName: string;
+  downloadUrl: string;
+}
+
 export const socialAnalysisApi = {
   status: () => http.get<SocialAnalysisStatusVO>("/api/social-analysis/status"),
   inspect: (data: { url: string; kind: SocialAnalysisKind }) =>
     http.post<SocialInspectVO>("/api/social-analysis/inspect", data),
+  downloaderPlatforms: () =>
+    http.get<VideoDownloaderCapabilitiesVO>("/api/social-analysis/downloader/platforms"),
+  resolveDownload: (data: { url: string; quality: VideoDownloadQuality }) =>
+    http.post<VideoDownloadResolveVO>("/api/social-analysis/downloader/resolve", data),
 };

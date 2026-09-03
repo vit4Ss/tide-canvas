@@ -56,3 +56,20 @@ test("browser API exposes no TikHub credential field", () => {
   assert.match(api, /\/api\/social-analysis\/inspect/);
   assert.doesNotMatch(api, /apiKey|accessToken|Authorization/);
 });
+
+test("public video downloader uses Relay capability discovery and a native hidden-frame download", () => {
+  assert.match(api, /\/api\/social-analysis\/downloader\/platforms/);
+  assert.match(api, /\/api\/social-analysis\/downloader\/resolve/);
+  assert.match(workbench, /pinterest: "Pinterest"/);
+  assert.match(workbench, /instagram: "Instagram"/);
+  for (const quality of ["quality", "compat", "speed"]) {
+    assert.match(workbench, new RegExp(`key: "${quality}"`));
+  }
+  assert.match(workbench, /function startNativeDownload/);
+  assert.match(workbench, /document\.createElement\("iframe"\)/);
+  assert.match(workbench, /frame\.src = apiUrl\(downloadUrl\)/);
+  assert.doesNotMatch(workbench, /anchor\.rel = "noopener"/);
+  assert.match(workbench, /已交给浏览器下载，请查看默认下载目录/);
+  assert.match(workbench, /const downloaderPlatforms = downloaderCapabilities\?\.platforms \?\? \[\]/);
+  assert.match(workbench, /下载票据有效/);
+});

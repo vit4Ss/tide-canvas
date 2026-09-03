@@ -6,6 +6,7 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -121,8 +122,8 @@ func Recovery(deps ...*app.Deps) gin.HandlerFunc {
 func ZapLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
-		path := c.Request.URL.Path
-		raw := c.Request.URL.RawQuery
+		path := redactPathForLogs(c.Request.URL.Path)
+		raw := redactQueryForLogs(c.Request.URL.RawQuery)
 		c.Next()
 		latency := time.Since(start)
 		if raw != "" {
@@ -147,7 +148,7 @@ func ZapLogger() gin.HandlerFunc {
 func AccessLog() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
-		path := c.Request.URL.Path
+		path := redactPathForLogs(c.Request.URL.Path)
 		method := c.Request.Method
 		c.Next()
 
@@ -158,7 +159,7 @@ func AccessLog() gin.HandlerFunc {
 			UserID:    CurrentUserID(c),
 			Method:    method,
 			Path:      eventlog.Truncate(path, 512),
-			Query:     eventlog.Truncate(c.Request.URL.RawQuery, 1024),
+			Query:     eventlog.Truncate(redactQueryForLogs(c.Request.URL.RawQuery), 1024),
 			Status:    c.Writer.Status(),
 			LatencyMs: time.Since(start).Milliseconds(),
 			IP:        c.ClientIP(),
@@ -166,6 +167,50 @@ func AccessLog() gin.HandlerFunc {
 			RequestID: c.GetString(CtxRequestID),
 		})
 	}
+}
+
+func redactQueryForLogs(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	values, err := url.ParseQuery(raw)
+	if err != nil {
+		return "[invalid-query-redacted]"
+	}
+	sensitive := map[string]bool{
+		"ticket": true, "token": true, "access_token": true, "refresh_token": true,
+		"authorization": true, "signature": true, "sign": true, "api_key": true, "apikey": true,
+	}
+	for key, entries := range values {
+		normalized := strings.ToLower(strings.ReplaceAll(key, "-", "_"))
+		if sensitive[normalized] {
+			values[key] = []string{"[REDACTED]"}
+			continue
+		}
+		if normalized != "url" {
+			continue
+		}
+		for index, entry := range entries {
+			parsed, parseErr := url.Parse(entry)
+			if parseErr != nil || parsed.Hostname() == "" {
+				entries[index] = "[REDACTED]"
+				continue
+			}
+			parsed.RawQuery = ""
+			parsed.Fragment = ""
+			entries[index] = parsed.String()
+		}
+		values[key] = entries
+	}
+	return values.Encode()
+}
+
+func redactPathForLogs(raw string) string {
+	const videoDownloadPrefix = "/api/social-analysis/downloader/download/"
+	if strings.HasPrefix(raw, videoDownloadPrefix) {
+		return videoDownloadPrefix + "[REDACTED]"
+	}
+	return raw
 }
 
 // shouldLogAccess keeps the access log to meaningful API traffic: only /api/*,
