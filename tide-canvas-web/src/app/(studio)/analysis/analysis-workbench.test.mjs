@@ -175,8 +175,9 @@ test("both tabs show a result-shaped skeleton while a request is in flight", () 
   assert.match(workbench, /function ResultSkeleton/);
   assert.match(workbench, /\) : loading \? \(/);
   assert.match(workbench, /\) : downloadBusy \? \(/);
-  assert.match(workbench, /<ResultSkeleton columns=\{2\} \/>/);
-  assert.match(workbench, /<ResultSkeleton columns=\{1\} \/>/);
+  // 拆解页用双栏骨架;下载页用封面形状的骨架,两者版式不同不强行复用。
+  assert.match(workbench, /<ResultSkeleton \/>/);
+  assert.match(workbench, /styles\.posterLoading/);
   assert.equal(workbench.match(/aria-busy="true"/g)?.length, 2);
   // 骨架是纯装饰,不该被读屏逐条念出来;进度由 role="status" 的一行文字承担。
   assert.match(workbench, /<div className=\{styles\.skeleton\} aria-hidden>/);
@@ -202,8 +203,9 @@ test("stylesheet stays inside the project design system", () => {
   const offGrid = [...new Set(spacing.filter((value) => value > 2 && value % 4 !== 0))];
   assert.deepEqual(offGrid, [], `off-grid spacing: ${offGrid.join(", ")}px`);
 
-  // 字阶:12(说明) / 14(正文) / 16(小标题) / 20(区块标题) / 24(窄屏页标题) / 32(页标题)。
-  const scale = new Set([12, 14, 16, 20, 24, 32]);
+  // 字阶:12(说明) / 14(正文) / 16(块级标题与数据值) / 20(区块标题与关键数值) /
+  // 28(窄屏页标题) / 40(页标题)。
+  const scale = new Set([12, 14, 16, 20, 28, 40]);
   const sizes = [...new Set([...rules.matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)].map((match) => parseFloat(match[1])))];
   const offScale = sizes.filter((value) => !scale.has(value));
   assert.deepEqual(offScale, [], `off-scale font sizes: ${offScale.join(", ")}px`);
@@ -213,11 +215,23 @@ test("stylesheet stays inside the project design system", () => {
   const offTempo = durations.filter((value) => ![120, 160, 200].includes(value));
   assert.deepEqual(offTempo, [], `off-tempo transitions: ${offTempo.join(", ")}ms`);
 
-  // 「减少 Card」:抬起的表面只给输入区、来源栏、AI 拆解/下载确认、运行面板。
-  const surfaces = (rules.match(/border-radius: var\(--r-lg\)/g) ?? []).length;
-  assert.ok(surfaces <= 5, `too many card surfaces: ${surfaces}`);
+  // 「减少 Card」:真正抬起的表面只有输入区、来源栏、AI 拆解、下载结果与运行面板。
+  // 虚线占位与加载骨架共用同一圆角但不是卡片,按语义排除,免得阈值被它们占满。
+  const raised = [...rules.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+    .filter(([, , body]) => /border-radius: var\(--r-lg\)/.test(body))
+    .map(([, selector, body]) => ({ selector: selector.trim(), body }))
+    .filter(({ selector, body }) => !/dashed/.test(body) && !/skeleton/i.test(selector));
+  assert.ok(raised.length <= 5, `too many card surfaces: ${raised.map((rule) => rule.selector).join(" | ")}`);
 
   // 触屏目标:主题的 pointer:coarse 规则不覆盖 CSS Module,本页自己声明。
   assert.match(rules, /@media \(pointer: coarse\)/);
   assert.match(rules, /min-height: 44px/);
+
+  // 张力路线的边界(用户 2026-09-04 定稿,见 AGENTS.md):彩色只能来自内容本身,
+  // 因此品牌色一律经 --platform 注入,不在样式里写死任何品牌十六进制;
+  // 玻璃层只允许压在真实图像上;渐变只用于表面材质,绝不用于文字。
+  assert.doesNotMatch(rules, /#(?:00aeec|fe2c55|ff0033|e60023|e1306c|ff5000)/i);
+  const glass = [...rules.matchAll(/([^{}]+)\{([^}]*backdrop-filter[^}]*)\}/g)].map((match) => match[1].trim());
+  assert.deepEqual(glass, [".posterChip"], `glass may only sit on media overlays: ${glass.join(" | ")}`);
+  assert.doesNotMatch(rules, /background-clip:\s*text|-webkit-background-clip:\s*text/);
 });

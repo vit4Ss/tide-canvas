@@ -77,6 +77,17 @@ const DOWNLOAD_QUALITY: Array<{ key: VideoDownloadQuality; label: string; detail
   { key: "speed", label: "极速", detail: "最高 480P" },
 ];
 
+/* 下载器支持的平台与拆解侧不完全重合(多了 Pinterest / Instagram),
+   品牌色单独列一份:它是这张结果卡唯一的强调色来源。 */
+const DOWNLOAD_PLATFORM_COLOR: Record<string, string> = {
+  pinterest: "#e60023",
+  bilibili: "#00aeec",
+  kuaishou: "#ff5000",
+  tiktok: "#fe2c55",
+  instagram: "#e1306c",
+  youtube: "#ff0033",
+};
+
 const DOWNLOAD_PLATFORM_LABEL: Record<string, string> = {
   pinterest: "Pinterest",
   bilibili: "哔哩哔哩",
@@ -271,24 +282,48 @@ function renderAnalysisMarkdown(text: string) {
   );
 }
 
-/* 结果版式的占位骨架。列数与卡片轮廓和真实结果一致,返回时不跳版。 */
-function ResultSkeleton({ columns }: { columns: 1 | 2 }) {
-  const bar = (width: string) => <span className={styles.skeletonBar} style={{ width }} />;
-  const left = (
-    <div className={styles.skeletonCard}>
-      <span className={styles.skeletonMedia} />
-      {bar("72%")}
-      {bar("46%")}
-      <div className={styles.skeletonRow}>
-        {bar("100%")}{bar("100%")}{bar("100%")}{bar("100%")}
-      </div>
+/* 下载结果的封面主体。上游给了封面就用真图,没给就用平台品牌色铺一层色调场——
+   比一块灰盒子诚实,也让这张卡有真正的主体。品牌色同时是这张卡唯一的强调色。 */
+function DownloadPoster({ result }: { result: VideoDownloadResolveVO }) {
+  const [failed, setFailed] = useState(false);
+  const cover = failed ? "" : result.coverUrl?.trim() || "";
+  const tint = DOWNLOAD_PLATFORM_COLOR[result.platform] || "#8b8b93";
+  const platformLabel = DOWNLOAD_PLATFORM_LABEL[result.platform] || result.platform;
+  const qualityLabel = DOWNLOAD_QUALITY.find((item) => item.key === result.quality)?.label || result.quality;
+  return (
+    <div className={styles.posterMedia} style={{ "--platform": tint } as React.CSSProperties}>
+      {cover ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={cover} alt="" loading="lazy" onError={() => setFailed(true)} />
+      ) : (
+        <span className={styles.posterFallback} aria-hidden><Film /></span>
+      )}
+      <span className={`${styles.posterChip} ${styles.posterChipPlatform}`}>{platformLabel}</span>
+      <span className={`${styles.posterChip} ${styles.posterChipQuality}`}>{qualityLabel}</span>
+      {result.durationSeconds > 0 && (
+        <span className={`${styles.posterChip} ${styles.posterChipDuration}`}>
+          <Clock3 aria-hidden />{displayDurationSeconds(result.durationSeconds)}
+        </span>
+      )}
     </div>
   );
-  if (columns === 1) return <div className={styles.skeleton} aria-hidden>{left}</div>;
+}
+
+/* 拆解结果版式的占位骨架:双栏轮廓与真实结果一致,返回时不跳版。
+   下载页有自己的封面形状骨架,不复用这个。 */
+function ResultSkeleton() {
+  const bar = (width: string) => <span className={styles.skeletonBar} style={{ width }} />;
   return (
     <div className={styles.skeleton} aria-hidden>
       <div className={styles.skeletonGrid}>
-        {left}
+        <div className={styles.skeletonCard}>
+          <span className={styles.skeletonMedia} />
+          {bar("72%")}
+          {bar("46%")}
+          <div className={styles.skeletonRow}>
+            {bar("100%")}{bar("100%")}{bar("100%")}{bar("100%")}
+          </div>
+        </div>
         <div className={styles.skeletonCard}>
           {bar("40%")}{bar("88%")}{bar("64%")}{bar("76%")}
         </div>
@@ -940,7 +975,7 @@ export default function AnalysisWorkbench() {
             ) : loading ? (
               <section className={styles.resultSection} aria-busy="true">
                 <p className={styles.loadingNote} role="status">正在读取平台数据…</p>
-                <ResultSkeleton columns={2} />
+                <ResultSkeleton />
               </section>
             ) : (
               <div className={styles.empty}>
@@ -952,6 +987,9 @@ export default function AnalysisWorkbench() {
           </div>
         ) : (
           <div className={styles.panel} role="tabpanel" id="analysis-panel-download" aria-labelledby="analysis-tab-download">
+            {/* 双栏:输入在左、结果在右。此前是单列铺满 1240px,结果卡之后留下
+                大片空白,页面既没有主体也没有收尾。 */}
+            <div className={styles.downloadLayout}>
             <section className={styles.composer}>
               <label className={styles.urlField}>
                 <span>公开视频链接</span>
@@ -1019,42 +1057,41 @@ export default function AnalysisWorkbench() {
             </section>
 
             {downloadResult ? (
-              <section className={styles.resultSection}>
-                <header className={styles.sectionHeader}>
-                  <h2>确认后下载</h2>
-                  <span className={styles.resultTag}>
-                    {DOWNLOAD_PLATFORM_LABEL[downloadResult.platform] || downloadResult.platform}
-                    <i />
-                    {DOWNLOAD_QUALITY.find((item) => item.key === downloadResult.quality)?.label || downloadResult.quality}
-                  </span>
-                </header>
-                <article className={styles.downloadCard}>
+              <article className={styles.downloadCard}>
+                <DownloadPoster result={downloadResult} />
+                <div className={styles.downloadBody}>
                   <h3>{downloadResult.title || "公开视频"}</h3>
                   <div className={styles.downloadMeta}>
-                    <span><small>视频时长</small><b>{displayDurationSeconds(downloadResult.durationSeconds)}</b></span>
-                    <span><small>画面尺寸</small><b>{downloadResult.width && downloadResult.height ? `${downloadResult.width} × ${downloadResult.height}` : "待确认"}</b></span>
+                    <span><small>画面尺寸</small><b>{downloadResult.width && downloadResult.height ? `${downloadResult.width}×${downloadResult.height}` : "待确认"}</b></span>
                     <span><small>预计大小</small><b>{displayBytes(downloadResult.estimatedBytes)}</b></span>
+                    <span><small>时长</small><b>{displayDurationSeconds(downloadResult.durationSeconds)}</b></span>
                   </div>
                   <div className={styles.downloadActions}>
                     <button type="button" className={styles.primaryButton} onClick={downloadResolvedVideo}>
                       <Download aria-hidden /> 下载 MP4
                     </button>
-                    <small>临时地址将在 {new Date(downloadResult.expiresAt * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 前有效</small>
+                    <small>临时地址在 {new Date(downloadResult.expiresAt * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 前有效</small>
                   </div>
-                </article>
-              </section>
+                </div>
+              </article>
             ) : downloadBusy ? (
-              <section className={styles.resultSection} aria-busy="true">
-                <p className={styles.loadingNote} role="status">正在解析视频…</p>
-                <ResultSkeleton columns={1} />
-              </section>
+              <article className={styles.downloadCard} aria-busy="true">
+                <div className={`${styles.posterMedia} ${styles.posterLoading}`} />
+                <div className={styles.downloadBody}>
+                  <p className={styles.loadingNote} role="status">正在解析视频…</p>
+                  <div className={styles.downloadMeta}>
+                    <span className={styles.skeletonBar} /><span className={styles.skeletonBar} /><span className={styles.skeletonBar} />
+                  </div>
+                </div>
+              </article>
             ) : (
-              <div className={styles.empty}>
-                <Download aria-hidden />
-                <strong>解析后在这里确认文件</strong>
-                <p>确认标题、分辨率和预计大小后，再交给浏览器下载到默认目录；下载不消耗积分。</p>
+              <div className={styles.downloadPlaceholder}>
+                <span><Download aria-hidden /></span>
+                <strong>解析后在这里预览并下载</strong>
+                <p>先确认画面、分辨率与预计大小，再交给浏览器保存到默认目录。下载不消耗积分。</p>
               </div>
             )}
+            </div>
           </div>
         )}
       </div>

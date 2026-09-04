@@ -62,6 +62,9 @@ type videoDownloadResolveVO struct {
 	ExpiresAt       int64  `json:"expiresAt"`
 	FileName        string `json:"fileName"`
 	DownloadURL     string `json:"downloadUrl"`
+	// CoverURL 是上游可能附带的封面直链,仅用于前端展示确认。上游不给就是空串,
+	// 前端有兜底版式,不影响下载本身。
+	CoverURL string `json:"coverUrl,omitempty"`
 }
 
 type relayVideoDownloader struct {
@@ -256,6 +259,14 @@ func (d *relayVideoDownloader) resolve(ctx context.Context, sourceURL, quality s
 		EstimatedBytes  int64  `json:"estimated_bytes"`
 		Quality         string `json:"quality"`
 		ExpiresAt       int64  `json:"expires_at"`
+		// 封面不在文档化契约里,但各平台的解析结果常带一个。列出常见键名择一取用:
+		// 拿到就让用户在下载前看见画面确认是这条视频,拿不到不影响任何功能。
+		Cover        string `json:"cover"`
+		CoverURL     string `json:"cover_url"`
+		Thumbnail    string `json:"thumbnail"`
+		ThumbnailURL string `json:"thumbnail_url"`
+		Poster       string `json:"poster"`
+		ImageURL     string `json:"image_url"`
 	}
 	// 这几处严格校验此前都抛裸 error,最终被 response.Fail 的 500 统一话术抹成
 	// 「请联系客服」——用户看不出是自己链接的问题还是服务的问题,排查也只能靠猜。
@@ -300,7 +311,28 @@ func (d *relayVideoDownloader) resolve(ctx context.Context, sourceURL, quality s
 		DurationSeconds: payload.DurationSeconds, Width: payload.Width, Height: payload.Height,
 		EstimatedBytes: payload.EstimatedBytes, Quality: resolvedQuality,
 		ExpiresAt: payload.ExpiresAt,
+		CoverURL: displayImageURL(payload.Cover, payload.CoverURL, payload.Thumbnail,
+			payload.ThumbnailURL, payload.Poster, payload.ImageURL),
 	}, nil
+}
+
+// displayImageURL 从若干候选里挑第一个可以安全交给浏览器 <img> 的地址。
+// 只放行 https、无凭证、无自定义端口、长度受限的地址:这个值会原样进页面,
+// 拿不到就返回空串让前端走兜底版式。
+func displayImageURL(candidates ...string) string {
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || len(candidate) > 2048 {
+			continue
+		}
+		parsed, err := url.ParseRequestURI(candidate)
+		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" ||
+			parsed.User != nil || parsed.Port() != "" || parsed.Fragment != "" {
+			continue
+		}
+		return parsed.String()
+	}
+	return ""
 }
 
 func (d *relayVideoDownloader) download(ctx context.Context, id string) (*http.Response, error) {

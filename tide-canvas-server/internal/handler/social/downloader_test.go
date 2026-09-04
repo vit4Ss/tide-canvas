@@ -407,3 +407,42 @@ func TestAuthoredMessagesSurviveTheStatusDispatch(t *testing.T) {
 		t.Fatalf("raw upstream 5xx text leaked or hint missing: %s", body)
 	}
 }
+
+// 封面不在文档化契约里,但拿到就能让用户在下载前确认画面。取值必须容忍键名差异,
+// 同时挡住任何不能安全进 <img> 的地址。
+func TestResolveTakesCoverFromCommonKeysAndRejectsUnsafeOnes(t *testing.T) {
+	cases := []struct {
+		name  string
+		extra string
+		want  string
+	}{
+		{"documented absence stays empty", ``, ""},
+		{"cover", `,"cover":"https://img.example/a.jpg"`, "https://img.example/a.jpg"},
+		{"snake case cover_url", `,"cover_url":"https://img.example/b.jpg"`, "https://img.example/b.jpg"},
+		{"thumbnail", `,"thumbnail":"https://img.example/c.jpg"`, "https://img.example/c.jpg"},
+		{"poster", `,"poster":"https://img.example/d.jpg"`, "https://img.example/d.jpg"},
+		{"http is refused", `,"cover":"http://img.example/e.jpg"`, ""},
+		{"credentials are refused", `,"cover":"https://user:pw@img.example/f.jpg"`, ""},
+		{"custom port is refused", `,"cover":"https://img.example:8443/g.jpg"`, ""},
+		{"javascript scheme is refused", `,"cover":"javascript:alert(1)"`, ""},
+		{"first usable candidate wins", `,"cover":"http://bad/x.jpg","thumbnail":"https://img.example/h.jpg"`, "https://img.example/h.jpg"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"tok","platform":"bilibili","title":"v","duration_seconds":10,"width":1280,"height":720,"estimated_bytes":1024,"quality":"compat","expires_at":` +
+					strconv.FormatInt(time.Now().Add(10*time.Minute).Unix(), 10) + tc.extra + `}`))
+			}))
+			defer server.Close()
+			resolved, err := newRelayVideoDownloader(server.URL, "relay-key").
+				resolve(context.Background(), "https://www.bilibili.com/video/BV1xx", "compat")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resolved.CoverURL != tc.want {
+				t.Fatalf("cover = %q, want %q", resolved.CoverURL, tc.want)
+			}
+		})
+	}
+}

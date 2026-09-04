@@ -45,10 +45,10 @@
 
 .pageHeader h1 {
   margin: 0;
-  font-size: 32px;
-  line-height: 1.2;
+  font-size: 40px;
+  line-height: 1.1;
   font-weight: 650;
-  letter-spacing: -.02em;
+  letter-spacing: -.028em;
 }
 
 .pageHeader p {
@@ -147,13 +147,25 @@
 
 /* ── 输入区(两个页签共用一套控件词汇) ──────────────────────────────── */
 
+/* 抬起表面的材质:极弱的纵向色调差 + 顶沿一道发丝高光。深色界面的「厚度」
+   来自材质本身,不是来自渐变色块——这也是本页唯一使用渐变的地方。 */
+.composer,
+.sourceColumn,
+.aiCard,
+.downloadCard {
+  background:
+    linear-gradient(180deg,
+      color-mix(in oklab, var(--text) 4%, var(--surface)) 0%,
+      var(--surface) 42%);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, var(--text) 8%, transparent);
+}
+
 .composer {
   display: grid;
   gap: 20px;
   padding: 20px;
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  background: var(--surface);
 }
 
 .modeSwitch {
@@ -445,21 +457,6 @@
 .sectionHeader a:hover { color: var(--text); }
 .sectionHeader a svg { width: 16px; height: 16px; }
 
-.resultTag {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-faint);
-  font-size: 12px;
-}
-
-.resultTag i {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
 .resultGrid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -475,7 +472,6 @@
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  background: var(--surface);
 }
 
 .analysisColumn {
@@ -704,18 +700,16 @@
 
 /* ── AI 拆解与下载确认 ─────────────────────────────────────────────── */
 
-.aiCard,
-.downloadCard {
+.aiCard {
   display: grid;
   gap: 16px;
   padding: 20px;
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  background: var(--surface);
 }
 
 .aiCard h3,
-.downloadCard h3 {
+.downloadBody h3 {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
@@ -756,6 +750,83 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ── 下载页:双栏 + 封面主体 ────────────────────────────────────────── */
+
+.downloadLayout {
+  display: grid;
+  grid-template-columns: minmax(360px, 460px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.downloadCard {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  /* 结果卡是这一屏唯一抬起的对象,给它主题的投影建立层级;其余表面只靠边框。 */
+  box-shadow: var(--shadow), inset 0 1px 0 color-mix(in oklab, var(--text) 8%, transparent);
+}
+
+/* 封面:平台品牌色是这张卡唯一的强调色,也是唯一的彩色来源。 */
+.posterMedia {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background:
+    radial-gradient(72% 88% at 50% 0%,
+      color-mix(in oklab, var(--platform, var(--text-faint)) 24%, transparent) 0%,
+      transparent 72%),
+    var(--surface-2);
+}
+
+.posterMedia img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.posterFallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: color-mix(in oklab, var(--platform, var(--text-faint)) 60%, var(--text-faint));
+}
+
+.posterFallback svg { width: 32px; height: 32px; }
+
+.posterLoading {
+  animation: skeletonPulse 1200ms var(--ease) infinite;
+}
+
+/* 浮在画面上的信息用玻璃层:这是玻璃唯一站得住的用法——底下真有一张图。 */
+.posterChip {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in oklab, var(--text) 12%, transparent);
+  border-radius: var(--pill);
+  background: color-mix(in oklab, var(--bg) 56%, transparent);
+  backdrop-filter: blur(12px) saturate(140%);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.posterChip svg { width: 12px; height: 12px; }
+.posterChipPlatform { top: 12px; left: 12px; color: color-mix(in oklab, var(--platform, var(--text)) 72%, var(--text)); }
+.posterChipQuality { top: 12px; right: 12px; }
+.posterChipDuration { bottom: 12px; right: 12px; font-variant-numeric: tabular-nums; }
+
+.downloadBody {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+}
+
 .downloadMeta {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -768,7 +839,7 @@
 .downloadMeta span { display: grid; gap: 4px; }
 .downloadMeta small { color: var(--text-faint); font-size: 12px; }
 .downloadMeta b {
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: -.02em;
@@ -782,6 +853,39 @@
 }
 
 .downloadActions small { color: var(--text-faint); font-size: 12px; }
+
+/* 未解析时右栏的占位:保持与结果卡相同的比例与轮廓,解析完成不跳版。 */
+.downloadPlaceholder {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 12px;
+  min-height: 320px;
+  padding: 32px 24px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-lg);
+  text-align: center;
+}
+
+.downloadPlaceholder > span {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text-quiet);
+}
+
+.downloadPlaceholder svg { width: 20px; height: 20px; }
+.downloadPlaceholder strong { font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
+.downloadPlaceholder p {
+  max-width: 40ch;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1.6;
+}
 
 /* ── 空态(不用虚线盒子,靠留白与字重成组) ──────────────────────────── */
 
@@ -988,13 +1092,13 @@
 
 @media (max-width: 1080px) {
   .resultGrid,
-  .skeletonGrid { grid-template-columns: minmax(0, 1fr); }
+  .skeletonGrid,
+  .downloadLayout { grid-template-columns: minmax(0, 1fr); }
   .profileNumbers { gap: 24px; }
 }
 
 @media (max-width: 720px) {
   .canvas { width: calc(100% - 32px); padding: 24px 0 48px; }
-  .pageHeader h1 { font-size: 24px; }
   .tabBar { align-items: stretch; flex-direction: column; gap: 12px; }
   .serviceState { align-self: flex-start; margin-bottom: 0; order: -1; }
   .tabs { gap: 20px; }
@@ -1005,7 +1109,10 @@
   .composerFooter .primaryButton,
   .aiActionRow .primaryButton { justify-content: center; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 16px; }
-  .downloadMeta { grid-template-columns: minmax(0, 1fr); }
+  .downloadMeta { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .downloadMeta b { font-size: 16px; }
+  .downloadBody { padding: 16px; }
+  .pageHeader h1 { font-size: 28px; }
   .profileNumbers { gap: 20px; }
   .empty { padding: 48px 20px; }
 }

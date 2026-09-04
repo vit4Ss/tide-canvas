@@ -90,6 +90,8 @@ export interface VideoDownloadResolveVO {
   expiresAt: number;
   fileName: string;
   downloadUrl: string;
+  /** 上游可能附带的封面直链;拿不到就是 undefined,前端走兜底版式。 */
+  coverUrl?: string;
 }
 
 export const socialAnalysisApi = {
