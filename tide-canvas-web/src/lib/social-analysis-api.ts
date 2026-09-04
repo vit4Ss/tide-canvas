@@ -19,6 +19,7 @@ export interface SocialAnalysisStatusVO {
   enabled: boolean;
   configured: boolean;
   videoAnalysisSkillId?: string;
+  imageAnalysisSkillId?: string;
   accountAnalysisSkillId?: string;
   platforms: SocialPlatformVO[];
 }
@@ -48,6 +49,7 @@ export interface SocialWorkVO {
   title?: string;
   description?: string;
   coverUrl?: string;
+  imageUrls?: string[];
   mediaUrl?: string;
   mediaUrls?: string[];
   pageUrl?: string;

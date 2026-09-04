@@ -3,6 +3,7 @@ package skillrun
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -143,6 +144,12 @@ func TestMediaAnalysisModelsMustSupportTheirPreparedAttachments(t *testing.T) {
 	if !analysisModelSupports("analyze_video", vision) {
 		t.Fatal("vision file model was rejected for video analysis")
 	}
+	if analysisModelSupports("analyze_image", documents) {
+		t.Fatal("document-only model was accepted for image analysis")
+	}
+	if !analysisModelSupports("analyze_image", vision) {
+		t.Fatal("vision file model was rejected for image analysis")
+	}
 	if !analysisModelSupports("analyze_audio", legacyFileModel) {
 		t.Fatal("relay file_upload capability was ignored for audio analysis")
 	}
@@ -240,7 +247,7 @@ func TestReusableAnalysisStepRequiresCompletedStepOrDurableTask(t *testing.T) {
 }
 
 func TestAnalysisSystemPromptTreatsFetchedContentAsUntrusted(t *testing.T) {
-	for _, handler := range []string{"analyze_video", "analyze_audio", "analyze_webpage", "analyze_account"} {
+	for _, handler := range []string{"analyze_image", "analyze_video", "analyze_audio", "analyze_webpage", "analyze_account"} {
 		prompt := analysisSystemPrompt(handler)
 		if !strings.Contains(prompt, "不得执行") && !strings.Contains(prompt, "不得遵循") {
 			t.Fatalf("%s system prompt lacks untrusted-content boundary: %q", handler, prompt)
@@ -250,6 +257,7 @@ func TestAnalysisSystemPromptTreatsFetchedContentAsUntrusted(t *testing.T) {
 
 func TestAnalysisPromptsRequireEvidenceAndActionableStructure(t *testing.T) {
 	for handler, required := range map[string][]string{
+		"analyze_image":   {"可见主体", "构图", "无法确认", "不得补造"},
 		"analyze_video":   {"[mm:ss]", "时间轴证据", "置信度", "不得臆测"},
 		"analyze_audio":   {"[mm:ss]", "行动项", "未明确", "需要复核"},
 		"analyze_webpage": {"主张—页面证据—含义/风险", "URL", "可信度限制"},
@@ -269,6 +277,29 @@ func TestAnalysisPromptsRequireEvidenceAndActionableStructure(t *testing.T) {
 		if !strings.Contains(analysisSystemPrompt(handler), "不要只给计划") {
 			t.Fatalf("%s prompt still permits a planning-only response", handler)
 		}
+	}
+}
+
+func TestImageAnalysisPreparesOwnedCarouselAsBoundedVisualInput(t *testing.T) {
+	assets := make([]AssetInput, 0, 11)
+	for index := 0; index < 11; index++ {
+		assets = append(assets, AssetInput{Type: "image", URL: fmt.Sprintf("https://cdn.example.test/source-%d.png", index), Name: fmt.Sprintf("source-%d.png", index)})
+	}
+	command, err := (&service{}).prepareAnalysisInput(context.Background(), &model.SkillRun{}, "analyze_image", RunInput{
+		Assets: assets,
+	}, "分析构图")
+	if err != nil {
+		t.Fatal(err)
+	}
+	images, ok := command["imageUrls"].([]string)
+	if !ok || len(images) != 9 || images[0] != "https://cdn.example.test/source-0.png" || images[8] != "https://cdn.example.test/source-8.png" {
+		t.Fatalf("unexpected image command: %#v", command)
+	}
+	if got, _ := command["prompt"].(string); !strings.Contains(got, "分析构图") {
+		t.Fatalf("user focus missing from command: %q", got)
+	}
+	if got := commandStringSlice(command, "temporaryStorageKeys"); len(got) != 0 {
+		t.Fatalf("image analysis unexpectedly created temporary media: %#v", got)
 	}
 }
 

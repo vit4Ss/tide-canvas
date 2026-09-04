@@ -1,25 +1,7 @@
 import type { SocialInspectVO, SocialWorkVO } from "@/lib/social-analysis-api";
+import { parseMetricNumber } from "./metric-number.js";
 
-/* 平台指标在不同数据源里可能是纯数字、带千分位，或已经压缩成 1.2万 / 3.4M。
-   样本统计只使用能可靠还原的值；无法解析时宁可缺省，不把脏字符串当成 0。 */
-export function parseMetricNumber(value?: string): number | null {
-  const normalized = value?.trim().replace(/[,_\s]/g, "").toLowerCase();
-  if (!normalized) return null;
-  const match = /^(-?\d+(?:\.\d+)?)(万|亿|千|k|m|b)?$/.exec(normalized);
-  if (!match) return null;
-  const base = Number(match[1]);
-  if (!Number.isFinite(base) || base < 0) return null;
-  const multiplier: Record<string, number> = {
-    "": 1,
-    千: 1_000,
-    k: 1_000,
-    万: 10_000,
-    m: 1_000_000,
-    亿: 100_000_000,
-    b: 1_000_000_000,
-  };
-  return base * (multiplier[match[2] || ""] ?? 1);
-}
+export { parseMetricNumber } from "./metric-number.js";
 
 function publishedTimestamp(value?: string): number | null {
   if (!value) return null;

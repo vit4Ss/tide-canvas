@@ -50,6 +50,13 @@ test("skill runs remain account-partitioned, restorable and re-editable", () => 
   assert.match(workbench, /kind === "account"[\s\S]*\? result\.sourceUrl/);
   assert.match(workbench, /textRenderer=\{renderAnalysisMarkdown\}/);
   assert.match(workbench, /img: \(\) => null/);
+  assert.match(workbench, /status\?\.imageAnalysisSkillId/);
+  assert.match(workbench, /type: contentSkillMode/);
+  assert.match(workbench, /role: contentSkillMode === "video" \? "source-video" : `source-image-/);
+  assert.match(workbench, /analysisMode: skillMode/);
+  assert.match(workbench, /storedMode === "account"/);
+  assert.doesNotMatch(workbench, /accountRun =[^;]*prompt\.includes\("<platform_data"\)/);
+  assert.match(api, /imageAnalysisSkillId\?: string/);
 });
 
 test("browser API exposes no TikHub credential field", () => {
@@ -167,7 +174,7 @@ test("cross-tab bridge only appears for platforms the downloader actually serves
   // 拆解支持抖音/小红书,下载器支持 Pinterest/Instagram——两侧平台集合不同。
   // 不设闸的话,拆完抖音点「取原片」跳过去必然解析失败。
   assert.match(workbench, /downloaderPlatforms\.includes\(result\.platform\) && \(/);
-  assert.match(workbench, /到「视频下载」取这条原片/);
+  assert.match(workbench, /下载原片/);
 });
 
 test("both tabs show a result-shaped skeleton while a request is in flight", () => {
@@ -224,7 +231,7 @@ test("stylesheet stays inside the project design system", () => {
     .filter(({ selector, body }) => !/dashed/.test(body) && !/skeleton/i.test(selector))
     .map(({ selector }) => selector);
   const perTab = {
-    breakdownContent: [".composer", ".sourceColumn", ".aiCard", ".runPanel"],
+    breakdownContent: [".composer", ".contentHero", ".contentSignals", ".contentStrategy", ".runPanel"],
     breakdownAccount: [".composer", ".accountHero", ".accountStage", ".accountSignals", ".accountStrategy", ".runPanel"],
     download: [".getter", ".posterCard", ".formatCard", ".infoCard", ".runPanel"],
   };
@@ -299,6 +306,21 @@ test("account mode renders a real intelligence board instead of a source-and-tex
   // No historical series is returned by the API. A line chart or invented
   // growth percentage would be visually impressive but analytically false.
   assert.doesNotMatch(workbench, /粉丝增长曲线|近30天增长|行业平均|同比|环比/);
+});
+
+test("single-work mode has a factual dashboard and a dedicated timecode report workspace", () => {
+  assert.match(workbench, /function ContentDashboard/);
+  assert.match(workbench, /result=\{result\}[\s\S]*work=\{currentWork\}[\s\S]*canDownload=/);
+  for (const section of ["互动结构", "作品数据口径", "AI 视频深度拆解", "时间码报告将在这里展开"]) {
+    assert.ok(workbench.includes(section), `work dashboard misses ${section}`);
+  }
+  assert.match(workbench, /buildWorkSnapshot\(work\)/);
+  assert.match(workbench, /缺失字段不会按 0 处理/);
+  assert.match(workbench, /function workImageSources/);
+  assert.match(workbench, /contentImageURLs/);
+  assert.match(workbench, /开始图文拆解/);
+  assert.match(workbench, /source-image-/);
+  assert.match(css, /\.contentDashboard \{[\s\S]*container-type: inline-size/);
 });
 
 test("a restored AI report is shown only beside the account or work that created it", () => {

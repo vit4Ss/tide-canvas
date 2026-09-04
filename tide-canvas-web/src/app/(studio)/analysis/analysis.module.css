@@ -149,8 +149,9 @@
 /* 抬起表面的材质:极弱的纵向色调差 + 顶沿一道发丝高光。深色界面的「厚度」
    来自材质本身,不是来自渐变色块——这也是本页唯一使用渐变的地方。 */
 .composer,
-.sourceColumn,
-.aiCard,
+.contentHero,
+.contentSignals,
+.contentStrategy,
 .accountHero,
 .accountStage,
 .accountSignals,
@@ -174,7 +175,7 @@
   border-radius: var(--r-lg);
 }
 
-/* 账号数据已返回后，输入区退成一条可再次查询的命令栏，把首屏还给情报大屏。 */
+/* 解析开始后，输入区退成一条可再次查询的命令栏，把首屏还给分析结果。 */
 .composer.composerWithDashboard {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: end;
@@ -281,8 +282,7 @@
 
 /* ── 动作行与按钮 ──────────────────────────────────────────────────── */
 
-.composerFooter,
-.aiActionRow {
+.composerFooter {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -319,24 +319,6 @@
 .primaryButton svg { width: 16px; height: 16px; }
 .primaryButton:hover:not(:disabled) { filter: brightness(.92); }
 .primaryButton:disabled { cursor: default; opacity: .38; }
-
-.bridgeButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  height: 40px;
-  border: 1px solid var(--border);
-  border-radius: var(--btn-r);
-  color: var(--text-dim);
-  font-size: 14px;
-  font-weight: 500;
-  transition: color 160ms var(--ease), border-color 160ms var(--ease);
-}
-
-.bridgeButton svg { width: 16px; height: 16px; }
-.bridgeButton:hover { border-color: var(--border-strong); color: var(--text); }
 
 /* ── 平台说明行 ────────────────────────────────────────────────────── */
 
@@ -447,106 +429,6 @@
 .sectionHeader a:hover { color: var(--text); }
 .sectionHeader a svg { width: 16px; height: 16px; }
 
-.resultGrid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 20px;
-  align-items: start;
-}
-
-/* 左栏整体是一个表面,作品与近期列表是它的两节,靠分隔线分组——
-   此前是两个独立卡片上下堆叠,读起来像两件不相干的东西。 */
-.sourceColumn {
-  /* 内部作品列表自带 overflow:auto,不裁剪的话它的滚动条与末行悬停底色
-     会从下方两个圆角处戳出来。栏内没有需要外溢的浮层,可以安全裁剪。 */
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-}
-
-.analysisColumn {
-  display: grid;
-  gap: 20px;
-  align-content: start;
-}
-
-/* 账号资料:标题块而非卡片,用分隔线收尾。 */
-.profileCard {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  flex-wrap: wrap;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--border);
-}
-
-.profileIdentity {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  min-width: 0;
-}
-
-.profileIdentity > img,
-.profileIdentity > .platformMark {
-  flex: none;
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  object-fit: cover;
-}
-
-.profileIdentity > div { min-width: 0; }
-.profileIdentity span { color: var(--text-faint); font-size: 12px; }
-.profileIdentity h3 { margin: 4px 0; font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
-.profileIdentity p {
-  max-width: 52ch;
-  margin: 0;
-  color: var(--text-dim);
-  font-size: 12px;
-  line-height: 1.5;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.profileNumbers {
-  display: flex;
-  gap: 32px;
-  flex: none;
-}
-
-.profileNumbers small { display: block; color: var(--text-faint); font-size: 12px; }
-.profileNumbers strong {
-  display: block;
-  margin-top: 4px;
-  font-size: 16px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -.02em;
-}
-
-/* 作品事实(左栏第一节,不再自带边框) */
-
-.selectedWork {
-  display: grid;
-  gap: 16px;
-  padding: 16px;
-}
-
-.selectedMedia {
-  position: relative;
-  aspect-ratio: 16 / 10;
-  overflow: hidden;
-  border-radius: var(--r);
-  background: var(--surface-2);
-}
-
-.selectedMedia .workCoverImage,
-.selectedMedia .workCoverFallback { width: 100%; height: 100%; }
-
 .sourceBadge,
 .duration {
   position: absolute;
@@ -566,115 +448,6 @@
 .duration { right: 8px; font-variant-numeric: tabular-nums; }
 .duration svg { width: 16px; height: 16px; }
 
-.selectedBody h3 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.5;
-  letter-spacing: -.01em;
-}
-
-.selectedBody p {
-  margin: 8px 0 0;
-  color: var(--text-dim);
-  font-size: 12px;
-  line-height: 1.6;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.selectedBody time { display: block; margin-top: 8px; color: var(--text-faint); font-size: 12px; }
-
-.metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
-}
-
-.metric { display: grid; gap: 4px; }
-.metric > span { color: var(--text-faint); }
-.metric svg { width: 16px; height: 16px; }
-.metric small { color: var(--text-faint); font-size: 12px; }
-.metric strong {
-  font-size: 16px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -.02em;
-}
-
-/* 近期作品(左栏第二节) */
-
-.workList {
-  max-height: 400px;
-  overflow: auto;
-  padding: 16px;
-  border-top: 1px solid var(--border);
-}
-
-.workListHead {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 12px;
-}
-
-.workListHead span { color: var(--text-dim); font-size: 14px; font-weight: 600; }
-.workListHead small { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
-
-.workList > button {
-  display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) 16px;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  padding: 8px;
-  border-radius: var(--r-sm);
-  text-align: left;
-  transition: background 120ms var(--ease);
-}
-
-.workList > button:hover:not(:disabled) { background: var(--panel); }
-.workList > button:disabled { cursor: default; opacity: .55; }
-.workList > button > svg { width: 16px; height: 16px; color: var(--text-faint); }
-
-.workList > button.workRowActive,
-.workList > button.workRowActive:hover { background: var(--panel-hover); }
-
-.workThumb {
-  overflow: hidden;
-  width: 48px;
-  height: 48px;
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
-}
-
-.workThumb .workCoverImage,
-.workThumb .workCoverFallback { width: 100%; height: 100%; }
-
-.workInfo { min-width: 0; }
-.workInfo b {
-  display: block;
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.5;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.workInfo small {
-  display: block;
-  margin-top: 2px;
-  color: var(--text-faint);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
 .workCoverImage,
 .workCoverFallback { display: block; object-fit: cover; }
 
@@ -687,6 +460,255 @@
 
 .workCoverFallback > .platformMark { position: absolute; top: 8px; left: 8px; }
 .workCoverFallback > svg { width: 20px; height: 20px; }
+
+/* ── 单作品分析 ────────────────────────────────────────────────────── */
+
+.contentDashboard {
+  display: grid;
+  gap: 24px;
+  container-type: inline-size;
+}
+
+.contentHero,
+.contentSignals,
+.contentStrategy {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+
+.contentHero {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, .8fr);
+}
+
+.contentHero::before {
+  position: absolute;
+  z-index: 1;
+  inset: 0 0 auto;
+  height: 2px;
+  background: var(--platform);
+  content: "";
+}
+
+.contentMedia {
+  position: relative;
+  min-width: 0;
+  min-height: 320px;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.contentMedia .workCoverImage,
+.contentMedia .workCoverFallback { width: 100%; height: 100%; }
+.contentMedia[data-kind="image"] .workCoverImage { object-fit: contain; }
+.contentMedia[data-kind="image"] .sourceBadge { top: 12px; bottom: auto; }
+
+.contentImageRail {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  display: flex;
+  gap: 4px;
+  max-width: calc(100% - 24px);
+  overflow-x: auto;
+  padding: 4px;
+  border: 1px solid color-mix(in oklab, var(--text) 12%, transparent);
+  border-radius: var(--r);
+  background: var(--scrim);
+  transform: translateX(-50%);
+}
+
+.contentImageRail > button {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  opacity: .64;
+  transition: border-color 160ms var(--ease), opacity 160ms var(--ease);
+}
+
+.contentImageRail > button:hover { opacity: 1; }
+.contentImageRail > button[aria-pressed="true"] { border-color: var(--text); opacity: 1; }
+.contentImageRail .workCoverImage,
+.contentImageRail .workCoverFallback { width: 100%; height: 100%; }
+.contentMedia[data-kind="image"] .contentImageRail .workCoverImage { object-fit: cover; }
+
+.contentBrief {
+  display: flex;
+  align-items: stretch;
+  flex-direction: column;
+  min-width: 0;
+  padding: 24px;
+}
+
+.contentAuthor {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.contentAuthorAvatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--surface-2);
+}
+
+.contentAuthorAvatar > img,
+.contentAuthorAvatar > .platformMark { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+.contentAuthorAvatar > .platformMark { font-size: 14px; }
+.contentAuthor > span:last-child { display: grid; gap: 2px; min-width: 0; }
+.contentAuthor small { overflow: hidden; color: var(--text); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.contentAuthor b { color: var(--text-faint); font-size: 12px; font-weight: 500; }
+
+.contentBrief h2 {
+  margin: 24px 0 0;
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: -.02em;
+  text-wrap: balance;
+}
+
+.contentBrief > p {
+  margin: 12px 0 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  display: -webkit-box;
+  font-size: 14px;
+  line-height: 1.7;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+}
+
+.contentMeta {
+  display: flex;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.contentMeta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.contentMeta svg { width: 16px; height: 16px; }
+
+.contentActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 20px;
+}
+
+.contentActions a,
+.contentActions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px;
+  color: var(--text-dim);
+  font-size: 12px;
+  transition: color 160ms var(--ease);
+}
+
+.contentActions a:hover,
+.contentActions button:hover { color: var(--text); }
+.contentActions svg { width: 16px; height: 16px; }
+
+.contentKpiRail {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  border-top: 1px solid var(--border);
+}
+
+.contentKpiRail > div {
+  min-width: 0;
+  padding: 16px 20px 20px;
+  border-left: 1px solid var(--border);
+}
+
+.contentKpiRail > div:first-child { border-left: none; }
+.contentKpiRail small { display: block; color: var(--text-faint); font-size: 12px; }
+.contentKpiRail strong {
+  display: block;
+  margin-top: 8px;
+  overflow: hidden;
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.025em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contentSignals {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, .8fr);
+}
+
+.contentInteraction,
+.contentFacts { min-width: 0; padding: 20px; }
+.contentFacts { border-left: 1px solid var(--border); }
+
+.contentFacts dl { margin: 0; }
+.contentFacts dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+.contentFacts dl > div:first-child { border-top: none; }
+.contentFacts dt { color: var(--text-faint); font-size: 12px; }
+.contentFacts dd { margin: 0; color: var(--text-dim); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
+.contentFacts > p { margin: 16px 0 0; color: var(--text-faint); font-size: 12px; line-height: 1.6; }
+
+.contentStrategy > .sectionHeader { padding: 20px; border-bottom: 1px solid var(--border); }
+
+@container (max-width: 1100px) {
+  .contentKpiRail { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .contentKpiRail > div:nth-child(4) { border-left: none; }
+  .contentKpiRail > div:nth-child(n + 4) { border-top: 1px solid var(--border); }
+}
+
+@container (max-width: 820px) {
+  .contentHero,
+  .contentSignals,
+  .contentStrategy .strategyGrid { grid-template-columns: minmax(0, 1fr); }
+  .contentMedia { min-height: 280px; border-right: none; border-bottom: 1px solid var(--border); }
+  .contentFacts { border-top: 1px solid var(--border); border-left: none; }
+}
+
+@container (max-width: 520px) {
+  .contentBrief,
+  .contentInteraction,
+  .contentFacts,
+  .contentStrategy .strategyControl,
+  .contentStrategy .strategyOutput { padding: 16px; }
+  .contentKpiRail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .contentKpiRail > div:nth-child(odd) { border-left: none; }
+  .contentKpiRail > div:nth-child(n + 3) { border-top: 1px solid var(--border); }
+  .contentStrategy > .sectionHeader { padding: 16px; }
+}
 
 /* ── 账号情报大屏 ────────────────────────────────────────────────────
    成熟账号分析产品的共同结构不是「左素材、右长文本」，而是先给账号总览，
@@ -1236,32 +1258,6 @@
   .strategyScope { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* ── AI 拆解与下载确认 ─────────────────────────────────────────────── */
-
-.aiCard {
-  display: grid;
-  gap: 16px;
-  padding: 20px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-}
-
-.aiCard h3 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.5;
-  letter-spacing: -.01em;
-}
-
-.aiCard > p {
-  /* 说明与标题是紧配对:抵掉一半的 16px 栅格间距,让它贴住标题。 */
-  margin: -8px 0 0;
-  color: var(--text-dim);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
 .focusField { display: grid; gap: 8px; }
 
 .focusField textarea {
@@ -1396,18 +1392,6 @@
   line-height: 1.6;
 }
 
-.emptyResult {
-  display: grid;
-  place-items: center;
-  min-height: 200px;
-  padding: 24px;
-  color: var(--text-quiet);
-  text-align: center;
-}
-
-.emptyResult svg { width: 20px; height: 20px; }
-.emptyResult p { max-width: 32ch; margin: 12px 0 0; font-size: 12px; line-height: 1.6; }
-
 /* ── 技能运行面板与 Markdown ───────────────────────────────────────── */
 
 .runPanel {
@@ -1495,18 +1479,14 @@
 .markdown pre code { padding: 0; background: transparent; }
 
 /* 浏览器默认件也归入设计系统:滚动条与主题同色,不留出厂灰。 */
-.markdown,
-.workList {
+.markdown {
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
 
-.markdown::-webkit-scrollbar,
-.workList::-webkit-scrollbar { width: 8px; height: 8px; }
-.markdown::-webkit-scrollbar-track,
-.workList::-webkit-scrollbar-track { background: transparent; }
-.markdown::-webkit-scrollbar-thumb,
-.workList::-webkit-scrollbar-thumb {
+.markdown::-webkit-scrollbar { width: 8px; height: 8px; }
+.markdown::-webkit-scrollbar-track { background: transparent; }
+.markdown::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: var(--pill);
   background-clip: content-box;
@@ -1592,10 +1572,8 @@
   .tabs { gap: 20px; }
   .composer { padding: 16px; gap: 16px; }
   .composer.composerWithDashboard { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
-  .composerFooter,
-  .aiActionRow { align-items: stretch; flex-direction: column; }
-  .composerFooter .primaryButton,
-  .aiActionRow .primaryButton { justify-content: center; }
+  .composerFooter { align-items: stretch; flex-direction: column; }
+  .composerFooter .primaryButton { justify-content: center; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 16px; }
   .pageHeader h1 { font-size: 28px; }
   .profileNumbers { gap: 20px; }
@@ -1613,13 +1591,14 @@
   .modeSwitch button,
   .platformChip { min-height: 44px; }
   .modeSwitch { padding: 0; }
-  .primaryButton,
-  .bridgeButton { height: 44px; }
+  .primaryButton { height: 44px; }
   .tabs button { padding: 12px 0 16px; }
   .performanceRows > button,
   .accountWorkGrid > button,
+  .contentImageRail > button,
   .focusActions a,
   .focusActions button { min-height: 44px; }
+  .contentImageRail > button { width: 44px; height: 44px; }
 }
 
 /* ── 下载页:居中窄栏,逐块堆叠 ──────────────────────────────────────────

@@ -72,6 +72,7 @@ type statusVO struct {
 	Enabled                bool         `json:"enabled"`
 	Configured             bool         `json:"configured"`
 	VideoAnalysisSkillID   string       `json:"videoAnalysisSkillId"`
+	ImageAnalysisSkillID   string       `json:"imageAnalysisSkillId"`
 	AccountAnalysisSkillID string       `json:"accountAnalysisSkillId"`
 	Platforms              []platformVO `json:"platforms"`
 }
@@ -106,6 +107,7 @@ type workVO struct {
 	Title       string   `json:"title,omitempty"`
 	Description string   `json:"description,omitempty"`
 	CoverURL    string   `json:"coverUrl,omitempty"`
+	ImageURLs   []string `json:"imageUrls"`
 	MediaURL    string   `json:"mediaUrl,omitempty"`
 	MediaURLs   []string `json:"mediaUrls"`
 	PageURL     string   `json:"pageUrl,omitempty"`
@@ -221,17 +223,22 @@ func (h *handler) status(c *gin.Context) {
 		return
 	}
 	var videoAnalysisSkillID idgen.ID
+	var imageAnalysisSkillID idgen.ID
 	var accountAnalysisSkillID idgen.ID
 	h.db.Model(&model.Skill{}).
 		Where("seed_key = ? AND status = 1", "tool-video-analysis").
 		Limit(1).Pluck("id", &videoAnalysisSkillID)
 	h.db.Model(&model.Skill{}).
+		Where("seed_key = ? AND status = 1", "tool-image-analysis").
+		Limit(1).Pluck("id", &imageAnalysisSkillID)
+	h.db.Model(&model.Skill{}).
 		Where("seed_key = ? AND status = 1", "tool-account-analysis").
 		Limit(1).Pluck("id", &accountAnalysisSkillID)
 	response.OK(c, statusVO{
 		Enabled: cfg.enabled, Configured: cfg.apiKey != "",
-		VideoAnalysisSkillID: skillIDString(videoAnalysisSkillID), AccountAnalysisSkillID: skillIDString(accountAnalysisSkillID),
-		Platforms: supportedPlatforms(),
+		VideoAnalysisSkillID: skillIDString(videoAnalysisSkillID), ImageAnalysisSkillID: skillIDString(imageAnalysisSkillID),
+		AccountAnalysisSkillID: skillIDString(accountAnalysisSkillID),
+		Platforms:              supportedPlatforms(),
 	})
 }
 

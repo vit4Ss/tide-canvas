@@ -26,17 +26,12 @@ import {
   Copy,
   Download,
   FileVideo,
-  Eye,
   Film,
   Gauge,
-  Heart,
-  Library,
   Link2,
   Loader2,
-  MessageCircle,
   ScanSearch,
   ShieldCheck,
-  Share2,
   Sparkles,
   Target,
   Trophy,
@@ -65,6 +60,7 @@ import { FileCategory } from "@/types/file";
 import type { SkillVO } from "@/types/skill";
 import { toast } from "@/components/shared/toast";
 import { buildAccountSnapshot } from "./account-insights";
+import { buildWorkSnapshot } from "./work-insights";
 import styles from "./analysis.module.css";
 
 type WorkbenchTab = "breakdown" | "download";
@@ -79,6 +75,7 @@ const PLATFORMS: Array<{ key: SocialPlatform; label: string; mark: string; color
 ];
 
 const DEFAULT_FOCUS = "完整转写视频文案，并拆解开头 3 秒钩子、叙事结构、镜头节奏、情绪变化、核心爆点和可复用的创作方法。所有判断请附时间码证据。";
+const IMAGE_DEFAULT_FOCUS = "分析画面主体、视觉层级、构图与视线动线、色彩光线、可读文案和传播钩子，提炼可复用的封面与图文创作方法，并明确区分可见事实和推断。";
 const ACCOUNT_DEFAULT_FOCUS = "分析账号定位、目标受众、内容支柱和近期作品表现差异，提炼可复用的标题与开场模式，并给出未来两周可执行的选题矩阵和测试建议。";
 
 const DOWNLOAD_QUALITY: Array<{ key: VideoDownloadQuality; label: string; detail: string }> = [
@@ -192,6 +189,16 @@ function titleOf(work: SocialWorkVO): string {
   return work.title?.trim() || work.description?.trim() || "未命名作品";
 }
 
+function isVideoWork(work: SocialWorkVO): boolean {
+  return work.mediaType?.toLowerCase().includes("video") === true || !!work.mediaUrl;
+}
+
+function workImageSources(work: SocialWorkVO): string[] {
+  const images = [...new Set((work.imageUrls ?? []).map((value) => value.trim()).filter(Boolean))].slice(0, 9);
+  if (images.length > 0) return images;
+  return work.coverUrl?.trim() ? [work.coverUrl.trim()] : [];
+}
+
 function safeFileName(title: string, mediaUrl: string): string {
   const cleaned = title.replace(/[\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim().slice(0, 64);
   let extension = ".mp4";
@@ -204,11 +211,24 @@ function safeFileName(title: string, mediaUrl: string): string {
   return `${cleaned || "平台视频"}${extension}`;
 }
 
+function safeImageFileName(title: string, imageUrl: string): string {
+  const cleaned = title.replace(/[\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim().slice(0, 64);
+  let extension = ".jpg";
+  try {
+    const match = /\.(jpe?g|png|webp|gif)$/i.exec(new URL(imageUrl).pathname);
+    if (match) extension = `.${match[1].toLowerCase()}`;
+  } catch {
+    // saveFromUrl validates the URL; the display filename keeps a safe fallback.
+  }
+  return `${cleaned || "平台图片"}${extension}`;
+}
+
 function byteLength(value: string): number {
   return typeof TextEncoder !== "undefined" ? new TextEncoder().encode(value).length : value.length * 3;
 }
 
 function accountPrompt(result: SocialInspectVO, focus: string): string {
+  const snapshot = buildAccountSnapshot(result);
   const profile = result.profile ? {
     id: result.profile.id,
     name: result.profile.name?.slice(0, 160),
@@ -228,12 +248,26 @@ function accountPrompt(result: SocialInspectVO, focus: string): string {
     mediaType: work.mediaType,
     stats: work.stats,
   }));
+  const sampleSummary = {
+    sampleCount: snapshot.sampleCount,
+    measuredViewSamples: snapshot.measuredViews,
+    totalSampleViews: snapshot.totalViews,
+    averageSampleViews: snapshot.averageViews,
+    medianSampleViews: snapshot.medianViews,
+    measuredInteractionSamples: snapshot.measuredInteractions,
+    visibleInteractions: snapshot.measuredInteractions ? snapshot.totalInteractions : null,
+    visibleEngagementRate: snapshot.engagementRate,
+    averageViewsToFollowersRate: snapshot.viewToFollowerRate,
+    topWorkViewConcentration: snapshot.topConcentration,
+    timedSamples: snapshot.measuredPublished,
+    samplePostsPerWeek: snapshot.postsPerWeek,
+  };
   const render = () => [
     "<user_request>",
     focus.trim() || ACCOUNT_DEFAULT_FOCUS,
     "</user_request>",
     "<platform_data untrusted=\"true\">",
-    JSON.stringify({ platform: result.platformName, sourceUrl: result.sourceUrl, profile, recentWorks }),
+    JSON.stringify({ platform: result.platformName, sourceUrl: result.sourceUrl, profile, sampleSummary, recentWorks }),
     "</platform_data>",
   ].join("\n");
   let prompt = render();
@@ -244,6 +278,26 @@ function accountPrompt(result: SocialInspectVO, focus: string): string {
     prompt = render();
   }
   return prompt;
+}
+
+function contentPrompt(result: SocialInspectVO, work: SocialWorkVO, focus: string, videoWork: boolean): string {
+  return [
+    "<user_request>",
+    focus.trim() || (videoWork ? DEFAULT_FOCUS : IMAGE_DEFAULT_FOCUS),
+    "</user_request>",
+    "<platform_data untrusted=\"true\">",
+    JSON.stringify({
+      platform: result.platformName,
+      sourceUrl: work.pageUrl || result.sourceUrl,
+      title: work.title?.slice(0, 300),
+      description: work.description?.slice(0, 1000),
+      publishedAt: work.publishedAt,
+      duration: work.duration,
+      mediaType: work.mediaType,
+      stats: work.stats,
+    }),
+    "</platform_data>",
+  ].join("\n");
 }
 
 function analysisRunContext(input: unknown): { sourceUrl: string; sourceFetchedAt: number | null } {
@@ -272,23 +326,13 @@ function PlatformMark({ platform, small = false }: { platform: SocialPlatform; s
   );
 }
 
-function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; value?: string }) {
-  return (
-    <div className={styles.metric}>
-      <span>{icon}</span>
-      <small>{label}</small>
-      <strong>{displayCount(value)}</strong>
-    </div>
-  );
-}
-
-function WorkCover({ work, platform }: { work: SocialWorkVO; platform: SocialPlatform }) {
+function WorkCover({ work, platform, alt = "" }: { work: SocialWorkVO; platform: SocialPlatform; alt?: string }) {
   const [failedUrl, setFailedUrl] = useState("");
   if (work.coverUrl && failedUrl !== work.coverUrl) {
     // 平台图床按 Referer 防盗链(实测 i0.hdslb.com:无 Referer 200 / 跨站 Referer 403),
     // 浏览器默认会带上本站地址,必须显式声明不发送,否则封面一律加载失败。
     // eslint-disable-next-line @next/next/no-img-element
-    return <img className={styles.workCoverImage} src={work.coverUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailedUrl(work.coverUrl || "")} />;
+    return <img className={styles.workCoverImage} src={work.coverUrl} alt={alt} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailedUrl(work.coverUrl || "")} />;
   }
   return (
     <span className={styles.workCoverFallback}>
@@ -540,7 +584,7 @@ function AccountDashboard({
               {currentDatum.work.pageUrl && (
                 <div className={styles.focusActions}>
                   <a href={currentDatum.work.pageUrl} target="_blank" rel="noopener noreferrer">查看作品 <ArrowUpRight aria-hidden /></a>
-                  {downloaderPlatforms.includes(result.platform) && (
+                  {isVideoWork(currentDatum.work) && downloaderPlatforms.includes(result.platform) && (
                     <button type="button" onClick={() => onDownloadWork(currentDatum.work)}><Download aria-hidden /> 下载原片</button>
                   )}
                 </div>
@@ -663,6 +707,177 @@ function AccountDashboard({
   );
 }
 
+interface ContentDashboardProps {
+  result: SocialInspectVO;
+  work: SocialWorkVO;
+  focus: string;
+  busy: boolean;
+  runDetails: React.ReactNode;
+  skillError: string;
+  canDownload: boolean;
+  onFocusChange: (value: string) => void;
+  onRun: () => void;
+  onDownload: () => void;
+}
+
+function ContentDashboard({
+  result,
+  work,
+  focus,
+  busy,
+  runDetails,
+  skillError,
+  canDownload,
+  onFocusChange,
+  onRun,
+  onDownload,
+}: ContentDashboardProps) {
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  const snapshot = buildWorkSnapshot(work);
+  const meta = platformMeta(result.platform);
+  const interactionTotal = snapshot.interactions ?? 0;
+  const author = result.profile;
+  const videoWork = isVideoWork(work);
+  const imageURLs = videoWork ? [] : workImageSources(work);
+  const mediaLabel = work.mediaType === "image" || imageURLs.length > 0 ? "图文作品" : videoWork ? "视频作品" : "公开作品";
+  const selectedImageURL = imageURLs[Math.min(selectedImageIndex, Math.max(0, imageURLs.length - 1))] || work.coverUrl;
+  const analysisAssetAvailable = videoWork ? !!work.mediaUrl : imageURLs.length > 0;
+  const sourceURL = work.pageUrl || result.sourceUrl;
+
+  return (
+    <div className={styles.contentDashboard} style={{ "--platform": meta.color } as React.CSSProperties}>
+      <header className={styles.contentHero}>
+        <div className={styles.contentMedia} data-kind={videoWork ? "video" : "image"}>
+          <WorkCover work={selectedImageURL && !videoWork ? { ...work, coverUrl: selectedImageURL } : work} platform={result.platform} alt={`作品画面：${titleOf(work)}`} />
+          <span className={styles.sourceBadge}><PlatformMark platform={result.platform} small /> {result.platformName}</span>
+          {work.duration && <span className={styles.duration}><Clock3 aria-hidden /> {work.duration}</span>}
+          {imageURLs.length > 1 && (
+            <div className={styles.contentImageRail} role="group" aria-label={`作品图片，共 ${imageURLs.length} 张`}>
+              {imageURLs.map((imageURL, index) => (
+                <button type="button" key={imageURL} aria-label={`查看第 ${index + 1} 张图片`} aria-pressed={selectedImageIndex === index} onClick={() => setSelectedImageIndex(index)}>
+                  <WorkCover work={{ ...work, coverUrl: imageURL }} platform={result.platform} />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className={styles.contentBrief}>
+          <div className={styles.contentAuthor}>
+            <span className={styles.contentAuthorAvatar}><ProfileAvatar url={author?.avatarUrl} platform={result.platform} /></span>
+            <span><small>{author?.name || author?.handle || result.platformName}</small><b>{mediaLabel}{imageURLs.length > 1 ? ` · ${imageURLs.length} 张` : ""}</b></span>
+          </div>
+          <h2>{titleOf(work)}</h2>
+          <p>{work.description && work.description !== work.title ? work.description : "平台暂未返回独立作品文案"}</p>
+          <div className={styles.contentMeta}>
+            <span><CalendarDays aria-hidden />{displayDate(work.publishedAt) || "发布时间未知"}</span>
+            <span>{videoWork ? <FileVideo aria-hidden /> : <Film aria-hidden />}{videoWork ? work.duration || "时长未知" : imageURLs.length ? `${imageURLs.length} 张图片` : "图片未返回"}</span>
+            <span><Activity aria-hidden />{snapshot.measuredFields + (snapshot.views !== null ? 1 : 0)} / 5 项数据可用</span>
+          </div>
+          <div className={styles.contentActions}>
+            <a href={sourceURL} target="_blank" rel="noopener noreferrer">查看原作品 <ArrowUpRight aria-hidden /></a>
+            {canDownload && <button type="button" onClick={onDownload}><Download aria-hidden /> 下载原片</button>}
+          </div>
+        </div>
+        <div className={styles.contentKpiRail} role="list" aria-label="作品关键指标">
+          <div role="listitem"><small>播放</small><strong>{displayCompactMetric(snapshot.views)}</strong></div>
+          {snapshot.interactionParts.map((item) => (
+            <div role="listitem" key={item.key}><small>{item.label}</small><strong>{displayCompactMetric(item.value)}</strong></div>
+          ))}
+          <div role="listitem"><small>可见互动率</small><strong>{displayPercent(snapshot.engagementRate)}</strong></div>
+        </div>
+      </header>
+
+      {!!result.warnings?.length && (
+        <div className={styles.warningList} role="status">
+          {result.warnings.map((warning) => (
+            <div className={styles.notice} key={warning}><CircleAlert aria-hidden /> {warning}</div>
+          ))}
+        </div>
+      )}
+
+      <div className={styles.contentSignals}>
+        <section className={styles.contentInteraction}>
+          <header className={styles.dataPanelHeader}>
+            <div><BarChart3 aria-hidden /><span><strong>互动结构</strong><small>仅汇总平台已返回的公开指标</small></span></div>
+            <span>{displayCompactMetric(snapshot.interactions)} 次可见互动</span>
+          </header>
+          {snapshot.measuredFields > 0 && interactionTotal > 0 ? (
+            <>
+              <div className={styles.interactionTrack} role="img" aria-label={snapshot.interactionParts.map((item) => `${item.label}${displayCompactMetric(item.value)}`).join("，")}>
+                {snapshot.interactionParts.filter((item) => (item.value ?? 0) > 0).map((item) => (
+                  <i key={item.key} data-part={item.key} style={{ flexGrow: item.value ?? 0 }} />
+                ))}
+              </div>
+              <div className={styles.interactionLegend}>
+                {snapshot.interactionParts.map((item) => (
+                  <span key={item.key} data-part={item.key}>
+                    <i />{item.label}<strong>{displayCompactMetric(item.value)}{item.rate !== null ? ` · ${displayPercent(item.rate)}` : ""}</strong>
+                  </span>
+                ))}
+              </div>
+            </>
+          ) : snapshot.measuredFields > 0 ? (
+            <div className={styles.dataEmpty}>平台返回的互动指标均为 0。</div>
+          ) : (
+            <div className={styles.dataEmpty}>平台没有返回点赞、评论、分享或收藏数据。</div>
+          )}
+        </section>
+        <section className={styles.contentFacts}>
+          <header className={styles.dataPanelHeader}>
+            <div><Gauge aria-hidden /><span><strong>作品数据口径</strong><small>当前公开快照</small></span></div>
+          </header>
+          <dl>
+            <div><dt>作品类型</dt><dd>{mediaLabel}</dd></div>
+            <div><dt>发布时间</dt><dd>{displayDate(work.publishedAt) || "未返回"}</dd></div>
+            <div><dt>{videoWork ? "作品时长" : "图片数量"}</dt><dd>{videoWork ? work.duration || "未返回" : imageURLs.length ? `${imageURLs.length} 张` : "未返回"}</dd></div>
+            <div><dt>可见互动</dt><dd>{displayCompactMetric(snapshot.interactions)}</dd></div>
+            <div><dt>可见互动率</dt><dd>{displayPercent(snapshot.engagementRate)}</dd></div>
+          </dl>
+          <p>互动率 = 平台已返回的点赞、评论、分享、收藏之和 ÷ 播放量；缺失字段不会按 0 处理。</p>
+        </section>
+      </div>
+
+      <section className={styles.contentStrategy}>
+        <header className={styles.sectionHeader}>
+          <div><h2>{videoWork ? "AI 视频深度拆解" : "AI 图文深度拆解"}</h2><p>{videoWork ? "归档原片后提取音轨与关键帧，所有判断要求附带时间码证据。" : "基于真实图片分析主体、构图、文案、情绪和传播钩子，区分可见事实与推断。"}</p></div>
+          <span>页面关闭后仍可恢复</span>
+        </header>
+        <div className={styles.strategyGrid}>
+          <article className={styles.strategyControl}>
+            <label className={styles.focusField}>
+              <span>你希望重点分析什么</span>
+              <textarea rows={7} value={focus} onChange={(event) => onFocusChange(event.target.value)} maxLength={4000} />
+              <small>{focus.length} / 4000</small>
+            </label>
+            <div className={styles.strategyScope}>
+              <span><Target aria-hidden />{videoWork ? "开头钩子" : "视觉主体"}</span>
+              <span><Film aria-hidden />{videoWork ? "叙事结构" : "构图层级"}</span>
+              <span><Activity aria-hidden />{videoWork ? "镜头节奏" : "色彩文案"}</span>
+              <span><Sparkles aria-hidden />复用方法</span>
+            </div>
+            <button type="button" className={styles.primaryButton} disabled={!analysisAssetAvailable || busy || !!runDetails} onClick={onRun}>
+              {busy ? <Loader2 className={styles.spin} aria-hidden /> : <ScanSearch aria-hidden />}
+              {busy ? "正在归档并启动" : videoWork ? "开始视频拆解" : "开始图文拆解"}
+            </button>
+            {!analysisAssetAvailable && (
+              <div className={styles.notice}><CircleAlert aria-hidden /> 当前平台只返回了作品信息，没有可归档的{videoWork ? "视频直链" : "图片"}；可以查看数据，但暂时无法运行 AI 分析。</div>
+            )}
+          </article>
+          <div className={styles.strategyOutput}>
+            {skillError && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{skillError}</span></div>}
+            {runDetails || (
+              <div className={styles.strategyEmpty}>
+                <ScanSearch aria-hidden />
+                <div><strong>{videoWork ? "时间码报告将在这里展开" : "视觉分析报告将在这里展开"}</strong><p>{videoWork ? "报告将覆盖转写、开头钩子、叙事结构、镜头节奏、情绪变化与可复用方法。" : "报告将覆盖可见主体、视觉层级、构图、色彩光线、文案、情绪与可复用方法。"}</p></div>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function AnalysisWorkbench() {
   const { user, initialized } = useAuth();
   const ensureSession = useAuthStore((state) => state.ensureSession);
@@ -688,6 +903,7 @@ export default function AnalysisWorkbench() {
   const [archiving, setArchiving] = useState(false);
   const [error, setError] = useState("");
   const videoSkillRef = useRef<SkillVO | null>(null);
+  const imageSkillRef = useRef<SkillVO | null>(null);
   const accountSkillRef = useRef<SkillVO | null>(null);
   const inspectBusyRef = useRef(false);
   const analysisBusyRef = useRef(false);
@@ -769,7 +985,6 @@ export default function AnalysisWorkbench() {
 
   const currentWork = selectedWork ?? result?.content ?? null;
   const currentPlatform = result?.platform;
-  const metrics = currentWork?.stats ?? {};
   const statusLabel = initialized && !user
     ? "登录后检查服务"
     : statusChecking
@@ -831,6 +1046,21 @@ export default function AnalysisWorkbench() {
       }
       setResult(response.data);
       setSelectedWork(response.data.content ?? response.data.works[0] ?? null);
+      if (
+        response.data.kind === "content" &&
+        response.data.content &&
+        !isVideoWork(response.data.content) &&
+        focus === DEFAULT_FOCUS
+      ) {
+        setFocus(IMAGE_DEFAULT_FOCUS);
+      } else if (
+        response.data.kind === "content" &&
+        response.data.content &&
+        isVideoWork(response.data.content) &&
+        focus === IMAGE_DEFAULT_FOCUS
+      ) {
+        setFocus(DEFAULT_FOCUS);
+      }
     } finally {
       if (epoch === inspectEpochRef.current) {
         inspectBusyRef.current = false;
@@ -839,11 +1069,15 @@ export default function AnalysisWorkbench() {
     }
   };
 
-  const loadAnalysisSkill = async (mode: SocialAnalysisKind): Promise<SkillVO | null> => {
-    const cache = mode === "account" ? accountSkillRef : videoSkillRef;
+  const loadAnalysisSkill = async (mode: "account" | "video" | "image"): Promise<SkillVO | null> => {
+    const cache = mode === "account" ? accountSkillRef : mode === "image" ? imageSkillRef : videoSkillRef;
     if (cache.current) return cache.current;
-    const stableId = mode === "account" ? status?.accountAnalysisSkillId : status?.videoAnalysisSkillId;
-    const title = mode === "account" ? "账号拆解" : "视频分析";
+    const stableId = mode === "account"
+      ? status?.accountAnalysisSkillId
+      : mode === "image"
+        ? status?.imageAnalysisSkillId
+        : status?.videoAnalysisSkillId;
+    const title = mode === "account" ? "账号拆解" : mode === "image" ? "图片分析" : "视频分析";
     if (stableId) {
       const exact = await skillApi.get(stableId, "studio");
       if (exact.success && exact.data) {
@@ -865,56 +1099,72 @@ export default function AnalysisWorkbench() {
 
   const startDeepAnalysis = async () => {
     if (!result || !currentPlatform || analysisBusyRef.current || skillRun.loading) return;
-    if (kind === "content" && !currentWork?.mediaUrl) return;
+    const contentSkillMode = currentWork && isVideoWork(currentWork) ? "video" : "image";
+    const contentImageURLs = currentWork ? workImageSources(currentWork) : [];
+    const contentAssetURL = contentSkillMode === "video" ? currentWork?.mediaUrl : contentImageURLs[0];
+    if (kind === "content" && !contentAssetURL) return;
+    const skillMode = kind === "account" ? "account" : contentSkillMode;
+    const skillLabel = skillMode === "account" ? "账号拆解" : skillMode === "image" ? "图片分析" : "视频分析";
     analysisBusyRef.current = true;
     const epoch = ++analysisEpochRef.current;
     setArchiving(true);
     setError("");
     try {
       if (!await ensureSession()) return;
-      const skill = await loadAnalysisSkill(kind);
+      const skill = await loadAnalysisSkill(skillMode);
       if (epoch !== analysisEpochRef.current) return;
       if (!skill) {
-        setError(`${kind === "account" ? "账号拆解" : "视频分析"}技能未上架，请联系管理员检查技能配置`);
+        setError(`${skillLabel}技能未上架，请联系管理员检查技能配置`);
         return;
       }
-      let assets: Array<{ id?: string; type: "video"; url?: string; name?: string; role?: string; metadata?: Record<string, unknown> }> = [];
+      let assets: Array<{ id?: string; type: "video" | "image"; url?: string; name?: string; role?: string; metadata?: Record<string, unknown> }> = [];
       let prompt = "";
       const sourceURL = kind === "account"
         ? result.sourceUrl
         : currentWork?.pageUrl || result.sourceUrl || "";
-      if (kind === "content" && currentWork?.mediaUrl) {
-        const mediaCandidates = [...new Set([currentWork.mediaUrl, ...(currentWork.mediaUrls ?? [])].filter(Boolean))].slice(0, 5);
-        let archived = null as Awaited<ReturnType<typeof fileApi.saveFromUrl>> | null;
+      if (kind === "content" && currentWork && contentAssetURL) {
+        const mediaCandidates = contentSkillMode === "video"
+          ? [...new Set([contentAssetURL, ...(currentWork.mediaUrls ?? [])].filter(Boolean))].slice(0, 5)
+          : contentImageURLs;
+        const archivedAssets: typeof assets = [];
+        const archivedIDs = new Set<string>();
+        let lastArchive = null as Awaited<ReturnType<typeof fileApi.saveFromUrl>> | null;
         for (const candidate of mediaCandidates) {
-          archived = await fileApi.saveFromUrl({
+          const archived = await fileApi.saveFromUrl({
             url: candidate,
-            fileType: "video",
+            fileType: contentSkillMode,
             category: FileCategory.GENERAL,
-            originalName: safeFileName(titleOf(currentWork), candidate),
+            originalName: contentSkillMode === "video"
+              ? safeFileName(titleOf(currentWork), candidate)
+              : safeImageFileName(titleOf(currentWork), candidate),
           });
           if (epoch !== analysisEpochRef.current) return;
-          if (archived.success && archived.data) break;
-          if (archived.code !== 0 && archived.code !== 400 && archived.code !== 408) break;
+          lastArchive = archived;
+          if (archived.success && archived.data) {
+            if (archivedIDs.has(archived.data.id)) continue;
+            archivedIDs.add(archived.data.id);
+            archivedAssets.push({
+              id: archived.data.id,
+              type: contentSkillMode,
+              url: archived.data.fileUrl,
+              name: archived.data.originalName,
+              role: contentSkillMode === "video" ? "source-video" : `source-image-${archivedAssets.length + 1}`,
+              metadata: { platform: currentPlatform, sourceUrl: sourceURL },
+            });
+            if (contentSkillMode === "video") break;
+            continue;
+          }
+          if (contentSkillMode === "video" && archived.code !== 0 && archived.code !== 400 && archived.code !== 408) break;
         }
-        if (!archived?.success || !archived.data) {
-          setError(`视频归档失败：${archived?.message || "暂时无法读取视频"}。已尝试可用镜像；如果页面已打开较久，请重新解析作品以刷新临时地址。`);
+        if (archivedAssets.length === 0) {
+          setError(`${contentSkillMode === "video" ? "视频" : "图片"}归档失败：${lastArchive?.message || "暂时无法读取素材"}。${contentSkillMode === "video" ? "已尝试可用镜像；" : ""}如果页面已打开较久，请重新解析作品以刷新临时地址。`);
           return;
         }
-        assets = [{
-          id: archived.data.id,
-          type: "video",
-          url: archived.data.fileUrl,
-          name: archived.data.originalName,
-          role: "source-video",
-          metadata: { platform: currentPlatform, sourceUrl: sourceURL },
-        }];
-        prompt = [
-          focus.trim() || DEFAULT_FOCUS,
-          `平台：${result.platformName}`,
-          `作品：${titleOf(currentWork)}`,
-          sourceURL ? `来源：${sourceURL}` : "",
-        ].filter(Boolean).join("\n");
+        if (contentSkillMode === "image" && archivedAssets.length < mediaCandidates.length) {
+          toast.info(`已读取 ${archivedAssets.length}/${mediaCandidates.length} 张图片，将使用可用图片继续分析`);
+        }
+        assets = archivedAssets;
+        prompt = contentPrompt(result, currentWork, focus, contentSkillMode === "video");
       } else {
         prompt = accountPrompt(result, focus);
       }
@@ -925,12 +1175,12 @@ export default function AnalysisWorkbench() {
           prompt,
           assets,
           sourceNodeIds: [],
-          parameters: { platform: currentPlatform, sourceUrl: sourceURL, sourceFetchedAt: result.fetchedAt },
+          parameters: { platform: currentPlatform, sourceUrl: sourceURL, sourceFetchedAt: result.fetchedAt, analysisMode: skillMode },
         },
       });
       if (epoch !== analysisEpochRef.current) return;
       if (!started) {
-        setError(skillRun.error || `${kind === "account" ? "账号拆解" : "视频分析"}技能启动失败，请稍后重试`);
+        setError(skillRun.error || `${skillLabel}技能启动失败，请稍后重试`);
         return;
       }
       void skillApi.recordUse(skill.id);
@@ -1004,15 +1254,18 @@ export default function AnalysisWorkbench() {
         ? stored.parameters as Record<string, unknown>
         : {};
       const sourceUrl = typeof parameters.sourceUrl === "string" ? parameters.sourceUrl.trim() : "";
-      const accountRun = skillRun.run?.skillId === status?.accountAnalysisSkillId || prompt.includes("<platform_data");
+      const storedMode = parameters.analysisMode === "account" || parameters.analysisMode === "image" || parameters.analysisMode === "video"
+        ? parameters.analysisMode
+        : "";
+      const accountRun = storedMode === "account" || (!storedMode && (
+        skillRun.run?.skillId === status?.accountAnalysisSkillId || prompt.includes('"recentWorks"')
+      ));
+      const imageRun = storedMode === "image" || (!storedMode && skillRun.run?.skillId === status?.imageAnalysisSkillId);
       if (sourceUrl) setURL(sourceUrl);
       setKind(accountRun ? "account" : "content");
-      if (accountRun) {
-        const match = /<user_request>\s*([\s\S]*?)\s*<\/user_request>/.exec(prompt);
-        setFocus(match?.[1]?.trim() || ACCOUNT_DEFAULT_FOCUS);
-      } else {
-        setFocus(prompt.split("\n平台：", 1)[0]?.trim() || DEFAULT_FOCUS);
-      }
+      const wrappedRequest = /<user_request>\s*([\s\S]*?)\s*<\/user_request>/.exec(prompt)?.[1]?.trim();
+      if (accountRun) setFocus(wrappedRequest || ACCOUNT_DEFAULT_FOCUS);
+      else setFocus(wrappedRequest || prompt.split("\n平台：", 1)[0]?.trim() || (imageRun ? IMAGE_DEFAULT_FOCUS : DEFAULT_FOCUS));
     }
     // 重新编辑始终回到拆解页签:运行面板只属于拆解,留在下载页会失去上下文。
     setTab("breakdown");
@@ -1132,7 +1385,7 @@ export default function AnalysisWorkbench() {
 
         {tab === "breakdown" ? (
           <div className={styles.panel} role="tabpanel" id="analysis-panel-breakdown" aria-labelledby="analysis-tab-breakdown">
-            <section className={`${styles.composer}${kind === "account" && (result || loading) ? ` ${styles.composerWithDashboard}` : ""}`}>
+            <section className={`${styles.composer}${result || loading ? ` ${styles.composerWithDashboard}` : ""}`}>
               <div className={styles.modeSwitch} aria-label="拆解对象">
                 <button type="button" aria-pressed={kind === "content"} disabled={loading || archiving} className={kind === "content" ? styles.modeActive : ""} onClick={() => { setKind("content"); setFocus(DEFAULT_FOCUS); setResult(null); setSelectedWork(null); setError(""); }}>
                   <Film aria-hidden /> 单个作品
@@ -1216,134 +1469,27 @@ export default function AnalysisWorkbench() {
                     }}
                   />
                 ) : (
-                  <>
-                <header className={styles.sectionHeader}>
-                  <h2>作品事实卡</h2>
-                  <a href={result.sourceUrl} target="_blank" rel="noopener noreferrer">查看原链接 <ArrowUpRight aria-hidden /></a>
-                </header>
-
-                {!!result.warnings?.length && (
-                  <div className={styles.warningList} role="status">
-                    {result.warnings.map((warning) => (
-                      <div className={styles.notice} key={warning}><CircleAlert aria-hidden /> {warning}</div>
-                    ))}
-                  </div>
-                )}
-
-                {result.profile && (
-                  <article className={styles.profileCard}>
-                    <div className={styles.profileIdentity}>
-                      <ProfileAvatar url={result.profile.avatarUrl} platform={result.platform} />
-                      <div><span>{result.platformName}</span><h3>{result.profile.name || result.profile.handle || "未命名账号"}</h3><p>{result.profile.bio || "平台暂未返回账号简介"}</p></div>
-                    </div>
-                    <div className={styles.profileNumbers}>
-                      <div><small>粉丝</small><strong>{displayCount(result.profile.followers)}</strong></div>
-                      <div><small>关注</small><strong>{displayCount(result.profile.following)}</strong></div>
-                      <div><small>获赞</small><strong>{displayCount(result.profile.likes)}</strong></div>
-                      <div><small>作品</small><strong>{displayCount(result.profile.works)}</strong></div>
-                    </div>
-                  </article>
-                )}
-
-                <div className={styles.resultGrid}>
-                  <div className={styles.sourceColumn}>
-                    {currentWork ? (
-                      <article className={styles.selectedWork}>
-                        <div className={styles.selectedMedia}>
-                          <WorkCover work={currentWork} platform={result.platform} />
-                          <span className={styles.sourceBadge}><PlatformMark platform={result.platform} small /> {result.platformName}</span>
-                          {currentWork.duration && <span className={styles.duration}><Clock3 aria-hidden /> {currentWork.duration}</span>}
-                        </div>
-                        <div className={styles.selectedBody}>
-                          <h3>{titleOf(currentWork)}</h3>
-                          {currentWork.description && currentWork.description !== currentWork.title && <p>{currentWork.description}</p>}
-                          {currentWork.publishedAt && <time>{displayDate(currentWork.publishedAt)}</time>}
-                        </div>
-                        <div className={styles.metrics}>
-                          <Metric icon={<Eye aria-hidden />} label="播放" value={metrics.play} />
-                          <Metric icon={<Heart aria-hidden />} label="点赞" value={metrics.like} />
-                          <Metric icon={<MessageCircle aria-hidden />} label="评论" value={metrics.comment} />
-                          <Metric icon={<Share2 aria-hidden />} label="分享" value={metrics.share} />
-                        </div>
-                        {/* 两侧平台集合并不相同(拆解有抖音/小红书,下载器有
-                            Pinterest/Instagram)。只在这条来源确实可下载时才给入口,
-                            否则用户跳过去必然解析失败。 */}
-                        {downloaderPlatforms.includes(result.platform) && (
-                          <button
-                            type="button"
-                            className={styles.bridgeButton}
-                            onClick={() => {
-                              setDownloadSource(currentWork.pageUrl || result.sourceUrl || "");
-                              setDownloadResult(null);
-                              setDownloadError("");
-                              setTab("download");
-                            }}
-                          >
-                            <Download aria-hidden /> 到「视频下载」取这条原片
-                          </button>
-                        )}
-                      </article>
-                    ) : (
-                      <div className={styles.emptyResult}><Film aria-hidden /><p>平台返回了账号信息，但暂时没有可展示的公开作品。</p></div>
-                    )}
-
-                    {result.works.length > 0 && (
-                      <div className={styles.workList}>
-                        <div className={styles.workListHead}><span>近期作品</span><small>{result.works.length} 个样本</small></div>
-                        {result.works.map((work, index) => (
-                          <button
-                            type="button"
-                            key={work.id || `${work.pageUrl}-${index}`}
-                            className={currentWork === work ? styles.workRowActive : ""}
-                            aria-pressed={currentWork === work}
-                            disabled={archiving || skillRun.loading}
-                            onClick={() => setSelectedWork(work)}
-                          >
-                            <span className={styles.workThumb}><WorkCover work={work} platform={result.platform} /></span>
-                            <span className={styles.workInfo}><b>{titleOf(work)}</b><small>{displayCount(work.stats.play)} 播放 · {displayCount(work.stats.like)} 点赞</small></span>
-                            <ChevronRight aria-hidden />
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className={styles.analysisColumn}>
-                    <article className={styles.aiCard}>
-                      <h3>{kind === "account" ? "AI 账号策略拆解" : "AI 视频深度拆解"}</h3>
-                      <p>{kind === "account"
-                        ? "基于账号资料与近期作品样本，分析定位、内容支柱和表现差异，并给出可执行的选题与测试建议。"
-                        : "视频会先安全归档到你的资产库，再交给视频分析技能提取音轨与关键帧。页面关闭后任务仍可恢复。"}</p>
-                      <label className={styles.focusField}>
-                        <span>你希望重点分析什么</span>
-                        <textarea rows={5} value={focus} onChange={(event) => setFocus(event.target.value)} maxLength={4000} />
-                        <small>{focus.length} / 4000</small>
-                      </label>
-                      <div className={styles.aiActionRow}>
-                        <span className={styles.footNote}><Library aria-hidden /> {kind === "account" ? "仅使用当前公开样本" : "分析素材自动进入资产库"}</span>
-                        <button
-                          type="button"
-                          className={styles.primaryButton}
-                          disabled={!currentWork?.mediaUrl || archiving || skillRun.loading || !!contextualRunDetails}
-                          onClick={() => void startDeepAnalysis()}
-                        >
-                          {archiving || skillRun.loading ? <Loader2 className={styles.spin} aria-hidden /> : <ScanSearch aria-hidden />}
-                          {archiving
-                            ? kind === "account" ? "正在启动分析" : "正在归档视频"
-                            : skillRun.loading ? "正在启动技能"
-                              : kind === "account" ? "生成账号拆解" : "开始深度拆解"}
-                        </button>
-                      </div>
-                      {kind === "content" && !currentWork?.mediaUrl && currentWork && (
-                        <div className={styles.notice}><CircleAlert aria-hidden /> 当前平台只返回了作品信息，没有可归档的视频直链；可先查看数据，或换一个公开视频链接。</div>
-                      )}
-                    </article>
-
-                    {contextualSkillError && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{contextualSkillError}</span></div>}
-                    {contextualRunDetails}
-                  </div>
-                </div>
-                  </>
+                  currentWork ? (
+                    <ContentDashboard
+                      key={currentWork.id || currentWork.pageUrl || result.fetchedAt}
+                      result={result}
+                      work={currentWork}
+                      focus={focus}
+                      busy={archiving || skillRun.loading}
+                      runDetails={contextualRunDetails}
+                      skillError={contextualSkillError}
+                      canDownload={!!currentWork.pageUrl && isVideoWork(currentWork) && downloaderPlatforms.includes(result.platform)}
+                      onFocusChange={setFocus}
+                      onRun={() => void startDeepAnalysis()}
+                      onDownload={() => {
+                        if (!currentWork.pageUrl) return;
+                        setDownloadSource(currentWork.pageUrl);
+                        setDownloadResult(null);
+                        setDownloadError("");
+                        setTab("download");
+                      }}
+                    />
+                  ) : <div className={styles.dataEmpty}>平台没有返回可展示的作品信息。</div>
                 )}
               </section>
             ) : runDetails ? (

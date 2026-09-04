@@ -26,6 +26,7 @@ const BUILTIN_TOOL_ASSETS: Readonly<Record<string, Omit<ToolAssetRequirement, "b
   "生成 XLSX": { kinds: ["image", "file"], required: false },
   "生成 Word": { kinds: ["image", "file"], required: false },
   "生成 Markdown": { kinds: ["image", "file"], required: false },
+  "图片分析": { kinds: ["image"], required: true },
   "视频分析": { kinds: ["video"], required: true },
   "音频分析": { kinds: ["audio"], required: true },
   "网页分析": { kinds: [], required: false },
@@ -96,13 +97,14 @@ export function skillModelSupport(
 
   const acceptsFiles = modelSupportsFileInput(model);
   const needsVideoFrames = kinds.includes("video");
-  const acceptsAssets = acceptsFiles && (!needsVideoFrames || supportsMediaAnalysis(model, true));
+  const needsVisualInput = needsVideoFrames || (requiresAssets && kinds.length === 1 && kinds[0] === "image");
+  const acceptsAssets = acceptsFiles && (!needsVisualInput || supportsMediaAnalysis(model, true));
   if (requiresAssets && !acceptsAssets) {
     return {
       supported: false,
       acceptsAssets: false,
       reason: acceptsFiles
-        ? "当前模型不支持此技能所需的关键帧图片输入"
+        ? `当前模型不支持此技能所需的${needsVideoFrames ? "关键帧图片" : "图片"}输入`
         : "当前模型未开启文件上传，不支持此技能",
     };
   }

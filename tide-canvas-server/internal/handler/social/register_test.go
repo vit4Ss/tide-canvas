@@ -86,6 +86,30 @@ func TestNormalizeNestedDouyinWork(t *testing.T) {
 	}
 }
 
+func TestNormalizeImagePostKeepsOrderedCarouselWithoutBorrowingAuthorAvatar(t *testing.T) {
+	input := map[string]any{"note_card": map[string]any{
+		"note_id": "note-1", "title": "轮播作品", "type": "normal",
+		"cover": map[string]any{"url": "https://cdn.example/cover-thumb.jpg"},
+		"image_list": []any{
+			map[string]any{"url_default": "https://cdn.example/page-1.jpg"},
+			map[string]any{"url_default": "https://cdn.example/page-2.jpg"},
+		},
+		"user": map[string]any{"avatar": "https://cdn.example/avatar.jpg"},
+	}}
+	got := normalizeWork(input, "https://www.xiaohongshu.com/explore/note-1")
+	if len(got.ImageURLs) != 2 || got.ImageURLs[0] != "https://cdn.example/page-1.jpg" || got.ImageURLs[1] != "https://cdn.example/page-2.jpg" {
+		t.Fatalf("carousel image order was not preserved: %+v", got.ImageURLs)
+	}
+	if got.CoverURL != "https://cdn.example/cover-thumb.jpg" {
+		t.Fatalf("cover changed unexpectedly: %q", got.CoverURL)
+	}
+	for _, imageURL := range got.ImageURLs {
+		if strings.Contains(imageURL, "avatar") {
+			t.Fatalf("author avatar leaked into carousel: %+v", got.ImageURLs)
+		}
+	}
+}
+
 func TestNormalizeTikTokPluralAwemeDetails(t *testing.T) {
 	input := map[string]any{"aweme_details": []any{map[string]any{
 		"aweme_id": "7339393672959757570", "desc": "TikTok sample",

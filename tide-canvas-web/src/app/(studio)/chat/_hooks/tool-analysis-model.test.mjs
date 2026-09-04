@@ -50,8 +50,12 @@ test("a required-asset skill is unavailable on an incompatible selected model", 
 
 test("official media-analysis tools remain strict when a legacy public schema is incomplete", () => {
   const text = model("DeepSeek", false);
+  const documentOnly = model("Documents", true, ["pdf", "docx"]);
+  const legacyImage = { title: "图片分析", inputSchema: { type: "object" } };
   const legacyVideo = { title: "视频分析", inputSchema: { type: "object" } };
   const legacyAudio = { title: "音频分析", inputSchema: null };
+  assert.equal(skillModelSupport(legacyImage, text).supported, false);
+  assert.equal(skillModelSupport(legacyImage, documentOnly).supported, false);
   assert.equal(toolNeedsMediaAnalysisModel(legacyVideo), true);
   assert.equal(skillModelSupport(legacyVideo, text).supported, false);
   assert.equal(skillModelSupport(legacyAudio, text).supported, false);

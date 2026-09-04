@@ -82,6 +82,29 @@ func directString(root any, keys ...string) string {
 	return ""
 }
 
+func directValue(root any, keys ...string) any {
+	if rows, ok := root.([]any); ok {
+		for _, row := range rows {
+			if value := directValue(row, keys...); value != nil {
+				return value
+			}
+		}
+		return nil
+	}
+	values, ok := root.(map[string]any)
+	if !ok {
+		return nil
+	}
+	for _, wanted := range keys {
+		for key, value := range values {
+			if normalizeKey(key) == normalizeKey(wanted) {
+				return value
+			}
+		}
+	}
+	return nil
+}
+
 func scalarString(value any) string {
 	switch typed := value.(type) {
 	case string:
@@ -184,7 +207,10 @@ func urlFromValue(value any, depth int) string {
 			}
 		}
 	case map[string]any:
-		for _, key := range []string{"url", "uri", "src", "url_list", "urlList", "download_url", "play_url"} {
+		for _, key := range []string{
+			"url_default", "urlDefault", "original_url", "originalUrl", "origin_url", "originUrl",
+			"url", "uri", "src", "url_list", "urlList", "download_url", "play_url",
+		} {
 			if nested, exists := typed[key]; exists {
 				if found := urlFromValue(nested, depth+1); found != "" {
 					return found
@@ -388,6 +414,37 @@ func collectImageURLs(root any, limit int) []string {
 	return result
 }
 
+func workImageURLs(itemRoot any, coverURL string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	result := make([]string, 0, limit)
+	seen := map[string]bool{}
+	appendURL := func(value any) {
+		if len(result) >= limit {
+			return
+		}
+		candidate := archiveableMediaURL(urlFromValue(value, 0))
+		if candidate != "" && !seen[candidate] {
+			seen[candidate] = true
+			result = append(result, candidate)
+		}
+	}
+	raw := directValue(itemRoot, "image_list", "imageList", "images", "pictures", "pics")
+	switch values := raw.(type) {
+	case []any:
+		for _, value := range values {
+			appendURL(value)
+		}
+	default:
+		appendURL(values)
+	}
+	if len(result) == 0 {
+		appendURL(coverURL)
+	}
+	return result
+}
+
 func isVideoTree(root any) bool {
 	value := strings.ToLower(firstString(root, "media_type", "mediaType", "note_type", "noteType", "type", "aweme_type"))
 	return strings.Contains(value, "video") || value == "0" || findMediaURL(root) != ""
@@ -426,15 +483,19 @@ func normalizeWork(root any, fallbackPageURL string) workVO {
 		mediaURL = mediaURLs[0]
 	}
 	coverURL := firstURL(itemRoot, "cover", "cover_url", "coverUrl", "coverUrls", "origin_cover", "dynamic_cover", "thumbnail", "thumbnail_url", "image_url", "imageUrl")
+	imageURLs := workImageURLs(itemRoot, coverURL, 9)
 	if coverURL == "" {
-		if images := collectImageURLs(root, 1); len(images) > 0 {
+		if len(imageURLs) > 0 {
+			coverURL = imageURLs[0]
+		} else if images := collectImageURLs(root, 1); len(images) > 0 {
 			coverURL = images[0]
+			imageURLs = images
 		}
 	}
 	mediaType := strings.ToLower(firstString(itemRoot, "media_type", "mediaType", "note_type", "noteType", "photoType", "type"))
 	if mediaURL != "" {
 		mediaType = "video"
-	} else if mediaType == "" && coverURL != "" {
+	} else if len(imageURLs) > 0 || (mediaType == "" && coverURL != "") {
 		mediaType = "image"
 	}
 	pageURL := firstURL(itemRoot, "share_url", "shareUrl", "web_url", "webUrl", "canonical_url", "canonicalUrl", "page_url", "pageUrl")
@@ -466,6 +527,7 @@ func normalizeWork(root any, fallbackPageURL string) workVO {
 		Title:       truncateText(title, 300),
 		Description: truncateText(description, 4000),
 		CoverURL:    coverURL,
+		ImageURLs:   imageURLs,
 		MediaURL:    mediaURL,
 		MediaURLs:   mediaURLs,
 		PageURL:     pageURL,

@@ -13,8 +13,11 @@ import (
 )
 
 func TestBaselineToolSkillsAreCompleteAndValidJSON(t *testing.T) {
-	if len(baselineToolSkills) != 8 {
-		t.Fatalf("tool seed count = %d, want 8", len(baselineToolSkills))
+	if len(baselineToolSkills) != 9 {
+		t.Fatalf("tool seed count = %d, want 9", len(baselineToolSkills))
+	}
+	if baselineToolSkills[len(baselineToolSkills)-1].key != "tool-image-analysis" {
+		t.Fatal("new tool must append after existing production sort positions")
 	}
 	seen := map[string]bool{}
 	for _, definition := range baselineToolSkills {
@@ -219,6 +222,7 @@ func TestOtherToolSeedsUseReviewedV2Workflows(t *testing.T) {
 		"tool-xlsx":             {"audit", "formula", "freezeRows", "autoFilter"},
 		"tool-docx":             {"edit", "numbered", "callout", "table"},
 		"tool-markdown":         {"edit", "标题层级", "代码围栏"},
+		"tool-image-analysis":   {"analyze_image", "可见事实", "不得臆造"},
 		"tool-video-analysis":   {"analyze_video"},
 		"tool-audio-analysis":   {"analyze_audio"},
 		"tool-account-analysis": {"analyze_account", "不可信", "不得编造"},
