@@ -83,7 +83,9 @@
 
 .tabs button:hover { color: var(--text-dim); }
 
-.tabActive,
+/* 选中态必须与基础规则同级:裸 .tabActive 只有 (0,1,0),会被上面的
+   `.tabs button` (0,1,1) 压过,下划线与提亮都不生效。 */
+.tabs button.tabActive,
 .tabs button.tabActive:hover {
   color: var(--text);
   border-bottom-color: var(--text);
@@ -175,7 +177,9 @@
 .modeSwitch button:hover:not(:disabled):not(.modeActive) { color: var(--text-dim); }
 .modeSwitch button:disabled { cursor: default; opacity: .5; }
 
-.modeActive {
+/* 同上:裸 .modeActive 会被 `.modeSwitch button` 的 color 压过,
+   结果是浅色药丸上印 45% 白字——几乎看不见。 */
+.modeSwitch button.modeActive {
   color: var(--bg);
   background: var(--accent);
 }
@@ -266,12 +270,13 @@
 .qualityRow button:hover:not(:disabled) { border-color: var(--border-strong); }
 .qualityRow button:disabled { cursor: default; opacity: .55; }
 
-.qualityActive {
+/* 同上:基础规则用的是 border 简写,裸类的 border-color 排不上。 */
+.qualityRow button.qualityActive {
   border-color: var(--border-strong);
   background: var(--panel);
 }
 
-.qualityActive b { color: var(--text); }
+.qualityRow button.qualityActive b { color: var(--text); }
 
 .composerFooter,
 .aiActionRow {
@@ -654,7 +659,7 @@
 .workList > button:disabled { cursor: default; opacity: .55; }
 .workList > button > svg { width: 14px; height: 14px; color: var(--text-faint); }
 
-.workRowActive,
+.workList > button.workRowActive,
 .workList > button.workRowActive:hover { background: var(--panel-hover); }
 
 .workThumb {
@@ -950,4 +955,73 @@
   .downloadMeta { grid-template-columns: minmax(0, 1fr); }
   .profileNumbers { gap: 18px; }
   .empty { padding: 48px 20px; }
+}
+
+/* ── 加载骨架 ──────────────────────────────────────────────────────────
+   点下按钮到结果返回之间有数秒空窗。此前这段时间下方仍停在空态,页面看不出
+   在做事;骨架按结果的真实版式占位,返回时不产生跳版。 */
+
+.skeleton {
+  display: grid;
+  gap: 16px;
+}
+
+.skeletonGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.skeletonCard {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.skeletonMedia {
+  aspect-ratio: 16 / 10;
+  border-radius: var(--r);
+}
+
+.skeletonRow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.skeletonBar {
+  height: 10px;
+  border-radius: var(--r-sm);
+}
+
+.skeletonMedia,
+.skeletonBar {
+  background: var(--panel-hover);
+  animation: skeletonPulse 1400ms var(--ease) infinite;
+}
+
+@keyframes skeletonPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeletonMedia,
+  .skeletonBar { animation: none; }
+}
+
+@media (max-width: 1080px) {
+  .skeletonGrid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.loadingNote {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
 }

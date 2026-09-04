@@ -138,3 +138,54 @@ test("weak text sitting on the page background clears the 4.5:1 floor", () => {
   const tabRule = css.slice(css.indexOf(".tabs button {"), css.indexOf(".tabs button:hover"));
   assert.match(tabRule, /color: var\(--text-quiet\)/);
 });
+
+test("selected-state rules outrank the base rules they must override", () => {
+  // 真机截图暴露过一次:裸 `.modeActive` 只有 (0,1,0),被 `.modeSwitch button`
+  // (0,1,1) 的 color 压过,选中的药丸变成浅底印 45% 白字,几乎看不见;页签的
+  // 选中下划线同样静默失效。状态类必须写成复合选择器(基础选择器 + 状态类),
+  // 否则加一条基础规则就会把状态样式悄悄压掉,而类型检查与 lint 都发现不了。
+  const rules = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const selectors = [...rules.matchAll(/([^{}]+)\{[^}]*\}/g)]
+    .flatMap((match) => match[1].split(",").map((part) => part.trim()))
+    // `:not(.xActive)` 是排除条件,不是状态规则。
+    .filter((selector) => /Active/.test(selector.replace(/:not\([^)]*\)/g, "")));
+  assert.ok(selectors.length >= 4, "expected the four selected-state rules");
+  const bare = selectors.filter((selector) => {
+    const compound = selector
+      .replace(/:not\([^)]*\)/g, "")
+      .split(/[\s>+~]+/)
+      .filter(Boolean)
+      .find((part) => /Active/.test(part)) ?? "";
+    const stripped = compound.replace(/:[a-zA-Z-]+(\([^)]*\))?/g, "");
+    // 合格写法:元素名 + 状态类(button.xActive),或两个类叠加。
+    return !/^[a-z]+\./.test(stripped) && (stripped.match(/\./g) ?? []).length < 2;
+  });
+  assert.deepEqual(bare, [], `state classes need a compound selector: ${bare.join(", ")}`);
+});
+
+test("cross-tab bridge only appears for platforms the downloader actually serves", () => {
+  // 拆解支持抖音/小红书,下载器支持 Pinterest/Instagram——两侧平台集合不同。
+  // 不设闸的话,拆完抖音点「取原片」跳过去必然解析失败。
+  assert.match(workbench, /downloaderPlatforms\.includes\(result\.platform\) && \(/);
+  assert.match(workbench, /到「视频下载」取这条原片/);
+});
+
+test("both tabs show a result-shaped skeleton while a request is in flight", () => {
+  // 请求期间此前仍停在空态,页面看不出在做事。
+  assert.match(workbench, /function ResultSkeleton/);
+  assert.match(workbench, /\) : loading \? \(/);
+  assert.match(workbench, /\) : downloadBusy \? \(/);
+  assert.match(workbench, /<ResultSkeleton columns=\{2\} \/>/);
+  assert.match(workbench, /<ResultSkeleton columns=\{1\} \/>/);
+  assert.equal(workbench.match(/aria-busy="true"/g)?.length, 2);
+  // 骨架是纯装饰,不该被读屏逐条念出来;进度由 role="status" 的一行文字承担。
+  assert.match(workbench, /<div className=\{styles\.skeleton\} aria-hidden>/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.skeletonMedia,/);
+});
+
+test("both tabs explain a disabled service instead of only greying the button", () => {
+  // 下载页早有说明,拆解页此前只置灰按钮,两侧对不齐。
+  assert.match(workbench, /内容拆解服务当前已停用/);
+  assert.match(workbench, /内容拆解服务尚未配置/);
+  assert.match(workbench, /视频下载服务当前未启用/);
+});

@@ -271,6 +271,32 @@ function renderAnalysisMarkdown(text: string) {
   );
 }
 
+/* 结果版式的占位骨架。列数与卡片轮廓和真实结果一致,返回时不跳版。 */
+function ResultSkeleton({ columns }: { columns: 1 | 2 }) {
+  const bar = (width: string) => <span className={styles.skeletonBar} style={{ width }} />;
+  const left = (
+    <div className={styles.skeletonCard}>
+      <span className={styles.skeletonMedia} />
+      {bar("72%")}
+      {bar("46%")}
+      <div className={styles.skeletonRow}>
+        {bar("100%")}{bar("100%")}{bar("100%")}{bar("100%")}
+      </div>
+    </div>
+  );
+  if (columns === 1) return <div className={styles.skeleton} aria-hidden>{left}</div>;
+  return (
+    <div className={styles.skeleton} aria-hidden>
+      <div className={styles.skeletonGrid}>
+        {left}
+        <div className={styles.skeletonCard}>
+          {bar("40%")}{bar("88%")}{bar("64%")}{bar("76%")}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AnalysisWorkbench() {
   const { user, initialized } = useAuth();
   const ensureSession = useAuthStore((state) => state.ensureSession);
@@ -762,6 +788,14 @@ export default function AnalysisWorkbench() {
                   </span>
                 ))}
               </div>
+              {/* 服务未就绪时按钮会置灰。下载页早已给出原因说明,拆解页此前
+                  只是置灰,用户无从判断是自己链接不对还是服务没开。 */}
+              {user && status && !status.enabled && (
+                <div className={styles.notice}><CircleAlert aria-hidden /> 内容拆解服务当前已停用，请联系管理员在系统配置中开启。</div>
+              )}
+              {user && status?.enabled && !status.configured && (
+                <div className={styles.notice}><CircleAlert aria-hidden /> 内容拆解服务尚未配置，请联系管理员在系统配置中填写 TikHub 令牌。</div>
+              )}
               {error && (
                 <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{error}</span></div>
               )}
@@ -817,18 +851,23 @@ export default function AnalysisWorkbench() {
                           <Metric icon={<MessageCircle aria-hidden />} label="评论" value={metrics.comment} />
                           <Metric icon={<Share2 aria-hidden />} label="分享" value={metrics.share} />
                         </div>
-                        <button
-                          type="button"
-                          className={styles.bridgeButton}
-                          onClick={() => {
-                            setDownloadSource(currentWork.pageUrl || result.sourceUrl || "");
-                            setDownloadResult(null);
-                            setDownloadError("");
-                            setTab("download");
-                          }}
-                        >
-                          <Download aria-hidden /> 到「视频下载」取这条原片
-                        </button>
+                        {/* 两侧平台集合并不相同(拆解有抖音/小红书,下载器有
+                            Pinterest/Instagram)。只在这条来源确实可下载时才给入口,
+                            否则用户跳过去必然解析失败。 */}
+                        {downloaderPlatforms.includes(result.platform) && (
+                          <button
+                            type="button"
+                            className={styles.bridgeButton}
+                            onClick={() => {
+                              setDownloadSource(currentWork.pageUrl || result.sourceUrl || "");
+                              setDownloadResult(null);
+                              setDownloadError("");
+                              setTab("download");
+                            }}
+                          >
+                            <Download aria-hidden /> 到「视频下载」取这条原片
+                          </button>
+                        )}
                       </article>
                     ) : (
                       <div className={styles.emptyResult}><Film aria-hidden /><p>平台返回了账号信息，但暂时没有可展示的公开作品。</p></div>
@@ -897,6 +936,11 @@ export default function AnalysisWorkbench() {
                   <h2>{skillRun.run?.skillTitle || "拆解任务"}</h2>
                 </header>
                 {runDetails}
+              </section>
+            ) : loading ? (
+              <section className={styles.resultSection} aria-busy="true">
+                <p className={styles.loadingNote} role="status">正在读取平台数据…</p>
+                <ResultSkeleton columns={2} />
               </section>
             ) : (
               <div className={styles.empty}>
@@ -998,6 +1042,11 @@ export default function AnalysisWorkbench() {
                     <small>临时地址将在 {new Date(downloadResult.expiresAt * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 前有效</small>
                   </div>
                 </article>
+              </section>
+            ) : downloadBusy ? (
+              <section className={styles.resultSection} aria-busy="true">
+                <p className={styles.loadingNote} role="status">正在解析视频…</p>
+                <ResultSkeleton columns={1} />
               </section>
             ) : (
               <div className={styles.empty}>
