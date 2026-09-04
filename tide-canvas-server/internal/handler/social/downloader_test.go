@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -285,5 +286,124 @@ func TestResolveVideoDownloadRejectsMetadataOverCurrentLimit(t *testing.T) {
 	h.resolveVideoDownload(c)
 	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "超过当前单文件下载上限") || strings.Contains(recorder.Body.String(), "downloadUrl") {
 		t.Fatalf("oversized metadata status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// 用户实测:B 站链接点「解析视频」只回一句「请联系客服」。根因是凡是不落在
+// 400/404/429 的上游失败都被扔进 500,而 response.Fail 对 500 会强制抹成统一
+// 话术——传进去的 upstream.message 是死代码。下面逐种失败核对用户看到的话。
+func TestRelayDownloaderFailuresStayActionableForUsers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		name     string
+		err      *relayDownloaderError
+		wantCode int
+		contains string
+	}{
+		{
+			name:     "upstream 5xx invites a retry instead of a support ticket",
+			err:      &relayDownloaderError{status: http.StatusBadGateway, code: "upstream_error", message: "extractor crashed"},
+			wantCode: response.CodeToolDisabled,
+			contains: "请稍后重试",
+		},
+		{
+			name:     "relay auth failure points at the administrator",
+			err:      &relayDownloaderError{status: http.StatusUnauthorized, code: "unauthorized", message: "bad key"},
+			wantCode: response.CodeToolDisabled,
+			contains: "Relay API Key",
+		},
+		{
+			name:     "other 4xx keeps the upstream reason",
+			err:      &relayDownloaderError{status: http.StatusUnprocessableEntity, code: "unsupported", message: "unsupported url scheme"},
+			wantCode: response.CodeBadRequest,
+			contains: "unsupported url scheme",
+		},
+		{
+			name:     "oversized video states the actual size",
+			err:      &relayDownloaderError{status: http.StatusBadRequest, code: "too_large", message: "视频体积约 3.0 GB，超过本站 2.0 GB 的下载上限"},
+			wantCode: response.CodeBadRequest,
+			contains: "超过本站",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			writeRelayDownloaderError(c, tc.err)
+			body := recorder.Body.String()
+			if strings.Contains(body, "请联系客服") {
+				t.Fatalf("user was told to contact support instead of what to do: %s", body)
+			}
+			if !strings.Contains(body, tc.contains) {
+				t.Fatalf("missing %q in %s", tc.contains, body)
+			}
+			if !strings.Contains(body, fmt.Sprintf(`"code":%d`, tc.wantCode)) {
+				t.Fatalf("want business code %d, got %s", tc.wantCode, body)
+			}
+		})
+	}
+}
+
+// resolve 的严格校验此前一律抛裸 error,同样落进 500 的统一话术。
+func TestRelayResolveRejectionsCarryReadableReasons(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		name     string
+		payload  string
+		contains string
+	}{
+		{"unusable token", `{"id":"has spaces","platform":"bilibili","expires_at":9999999999}`, "下载凭证"},
+		{"undecodable payload", `not json at all`, "无法识别"},
+		{"out-of-range metadata", `{"id":"ok-token","platform":"","expires_at":9999999999}`, "解析结果异常"},
+		{"oversized estimate", `{"id":"ok-token","platform":"bilibili","estimated_bytes":9999999999999,"expires_at":9999999999}`, "下载上限"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.payload))
+			}))
+			defer upstream.Close()
+			downloader := newRelayVideoDownloader(upstream.URL, "relay-key")
+			_, err := downloader.resolve(context.Background(), "https://www.bilibili.com/video/BV1xx", "compat")
+			if err == nil {
+				t.Fatal("expected the strict validation to reject this payload")
+			}
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			writeRelayDownloaderError(c, err)
+			body := recorder.Body.String()
+			if strings.Contains(body, "请联系客服") {
+				t.Fatalf("opaque support message survived: %s", body)
+			}
+			if !strings.Contains(body, tc.contains) {
+				t.Fatalf("missing %q in %s", tc.contains, body)
+			}
+		})
+	}
+}
+
+// authored 标记本身也要有测试兜住:漏标的话自撰文案会被通用话术静默盖掉,
+// 而这正是本轮修复要根除的「文案是死代码」问题。
+func TestAuthoredMessagesSurviveTheStatusDispatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	writeRelayDownloaderError(c, &relayDownloaderError{
+		status: http.StatusBadGateway, code: "invalid_token",
+		message: "视频解析服务返回了无法使用的下载凭证，请稍后重试或更换链接", authored: true,
+	})
+	if !strings.Contains(recorder.Body.String(), "下载凭证") {
+		t.Fatalf("authored copy was overwritten: %s", recorder.Body.String())
+	}
+	// 未标记 authored 的上游原文不得直接透出,改用我们的通用话术。
+	recorder = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(recorder)
+	writeRelayDownloaderError(c, &relayDownloaderError{
+		status: http.StatusBadGateway, code: "upstream_error", message: "panic in extractor goroutine 42",
+	})
+	body := recorder.Body.String()
+	if strings.Contains(body, "goroutine") || !strings.Contains(body, "请稍后重试") {
+		t.Fatalf("raw upstream 5xx text leaked or hint missing: %s", body)
 	}
 }

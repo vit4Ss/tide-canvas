@@ -19,8 +19,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	"tidecanvas/internal/middleware"
+	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/response"
 	"tidecanvas/internal/pkg/safefetch"
 	"tidecanvas/internal/pkg/token"
@@ -76,6 +78,10 @@ type relayDownloaderError struct {
 	status  int
 	code    string
 	message string
+	// authored 标记 message 是我们自己写给用户看的中文文案(而非上游原文),
+	// 因此可以原样展示。不加这个标记的话,自撰文案会被下面按状态码分派的
+	// 通用话术盖掉,又变成一处死代码。
+	authored bool
 }
 
 func (e *relayDownloaderError) Error() string { return e.message }
@@ -121,7 +127,7 @@ func sameOrigin(left, right *url.URL) bool {
 
 func (d *relayVideoDownloader) request(ctx context.Context, method, endpoint string, body any, client *http.Client) (*http.Response, error) {
 	if d == nil {
-		return nil, &relayDownloaderError{status: http.StatusServiceUnavailable, code: "disabled", message: "视频下载服务尚未配置"}
+		return nil, &relayDownloaderError{status: http.StatusServiceUnavailable, code: "disabled", message: "视频下载服务尚未配置，请联系管理员配置 Relay API Key", authored: true}
 	}
 	base, err := url.Parse(d.baseURL)
 	if err != nil || base.Hostname() == "" || base.User != nil || (base.Scheme != "http" && base.Scheme != "https") || base.RawQuery != "" || base.Fragment != "" {
@@ -251,17 +257,36 @@ func (d *relayVideoDownloader) resolve(ctx context.Context, sourceURL, quality s
 		Quality         string `json:"quality"`
 		ExpiresAt       int64  `json:"expires_at"`
 	}
+	// 这几处严格校验此前都抛裸 error,最终被 response.Fail 的 500 统一话术抹成
+	// 「请联系客服」——用户看不出是自己链接的问题还是服务的问题,排查也只能靠猜。
+	// 现在一律带上可读原因与足够的日志字段。
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxDownloaderJSONBody)).Decode(&payload); err != nil {
-		return videoDownloadResolveVO{}, errors.New("invalid relay downloader response")
+		logger.L().Warn("relay downloader returned an undecodable payload", zap.Error(err))
+		return videoDownloadResolveVO{}, &relayDownloaderError{status: http.StatusBadGateway, code: "invalid_response", message: "视频解析服务返回了无法识别的结果，请稍后重试或更换链接", authored: true}
 	}
 	payload.ID = strings.TrimSpace(payload.ID)
 	if !relayDownloadTokenPattern.MatchString(payload.ID) {
-		return videoDownloadResolveVO{}, errors.New("relay returned an invalid download token")
+		logger.L().Warn("relay downloader returned an unusable download token",
+			zap.String("token", truncateText(payload.ID, 64)), zap.Int("length", len(payload.ID)))
+		return videoDownloadResolveVO{}, &relayDownloaderError{status: http.StatusBadGateway, code: "invalid_token", message: "视频解析服务返回了无法使用的下载凭证，请稍后重试或更换链接", authored: true}
 	}
 	payload.Platform = strings.ToLower(strings.TrimSpace(payload.Platform))
 	payload.Title = truncateText(payload.Title, 200)
-	if payload.Platform == "" || len(payload.Platform) > 32 || payload.DurationSeconds < 0 || payload.DurationSeconds > 7*24*60*60 || payload.Width < 0 || payload.Width > 100000 || payload.Height < 0 || payload.Height > 100000 || payload.EstimatedBytes < 0 || payload.EstimatedBytes > maxRelayVideoBytes {
-		return videoDownloadResolveVO{}, errors.New("relay returned invalid video metadata")
+	// 体积超限单独拎出来:这是关于这条视频的事实,用户换个短一点的视频就能解决,
+	// 与「上游返回了怪数据」不是一回事,不该共用同一句提示。
+	if payload.EstimatedBytes > maxRelayVideoBytes {
+		return videoDownloadResolveVO{}, &relayDownloaderError{
+			status: http.StatusBadRequest, code: "too_large",
+			message: fmt.Sprintf("视频体积约 %s，超过本站 %s 的下载上限", humanBytes(payload.EstimatedBytes), humanBytes(maxRelayVideoBytes)),
+		}
+	}
+	if payload.Platform == "" || len(payload.Platform) > 32 || payload.DurationSeconds < 0 || payload.DurationSeconds > 7*24*60*60 || payload.Width < 0 || payload.Width > 100000 || payload.Height < 0 || payload.Height > 100000 || payload.EstimatedBytes < 0 {
+		logger.L().Warn("relay downloader returned out-of-range metadata",
+			zap.String("platform", truncateText(payload.Platform, 64)),
+			zap.Int("durationSeconds", payload.DurationSeconds),
+			zap.Int("width", payload.Width), zap.Int("height", payload.Height),
+			zap.Int64("estimatedBytes", payload.EstimatedBytes))
+		return videoDownloadResolveVO{}, &relayDownloaderError{status: http.StatusBadGateway, code: "invalid_metadata", message: "视频解析结果异常，该视频可能暂不支持解析", authored: true}
 	}
 	if payload.ExpiresAt <= time.Now().Unix() {
 		return videoDownloadResolveVO{}, &relayDownloaderError{status: http.StatusBadRequest, code: "expired", message: "视频解析令牌已过期，请重新解析"}
@@ -298,21 +323,62 @@ func (h *handler) downloaderPlatforms(c *gin.Context) {
 	response.OK(c, capabilities)
 }
 
+// writeRelayDownloaderError 把上游下载器的失败翻译成用户看得懂、且能据此行动的
+// 提示。注意 response.Fail 对 CodeServerError 会强制抹成统一话术「请联系客服」
+// (见 response.Fail 的注释),所以凡是我们已经有像样文案的情形都不能走 500——
+// 否则文案是死代码,用户面对一句无从下手的话。只有真正的内部错误才留给 500。
+// humanBytes 把字节数写成用户读得懂的量级,只用于面向用户的提示文案。
+func humanBytes(value int64) string {
+	const unit = 1024
+	if value < unit {
+		return fmt.Sprintf("%d B", value)
+	}
+	div, exp := int64(unit), 0
+	for n := value / unit; n >= unit && exp < 3; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %s", float64(value)/float64(div), [...]string{"KB", "MB", "GB", "TB"}[exp])
+}
+
 func writeRelayDownloaderError(c *gin.Context, err error) {
 	var upstream *relayDownloaderError
 	if errors.As(err, &upstream) {
-		switch upstream.status {
-		case http.StatusBadRequest:
+		switch {
+		case upstream.status == http.StatusBadRequest:
 			message := safeMessage(upstream.message)
 			if upstream.code == "bad_request" || strings.Contains(strings.ToLower(upstream.message), "not publicly accessible") {
 				message = "视频无法公开访问：可能已删除、受地区限制、需要登录，或链接类型不受支持"
 			}
 			response.Fail(c, response.CodeBadRequest, message)
-		case http.StatusNotFound:
+		case upstream.status == http.StatusNotFound:
 			response.Fail(c, response.CodeNotFound, "下载令牌不存在或已过期，请重新解析")
-		case http.StatusTooManyRequests:
+		case upstream.status == http.StatusTooManyRequests:
 			response.Fail(c, response.CodeRateLimited, "视频下载请求过于频繁，请稍后重试")
+		case upstream.status == http.StatusUnauthorized || upstream.status == http.StatusForbidden:
+			// 我方凭证问题,用户重试多少次都没用,直接指向管理员。
+			logger.L().Warn("relay downloader rejected our credentials",
+				zap.Int("status", upstream.status), zap.String("code", upstream.code), zap.String("message", upstream.message))
+			response.Fail(c, response.CodeToolDisabled, "视频下载服务鉴权失败，请联系管理员检查 Relay API Key")
+		case upstream.status >= http.StatusInternalServerError:
+			// 上游 5xx 与网络故障:用户稍后重试或换个链接就可能成功,这是明确的
+			// 下一步,不是「联系客服」。真实原因照旧落日志供排查。
+			logger.L().Warn("relay downloader upstream failure",
+				zap.Int("status", upstream.status), zap.String("code", upstream.code), zap.String("message", upstream.message))
+			message := "视频解析服务暂时不可用，请稍后重试；若同一链接持续失败，多半是该视频暂不支持解析"
+			if upstream.authored && upstream.message != "" {
+				message = upstream.message
+			}
+			response.Fail(c, response.CodeToolDisabled, message)
+		case upstream.status >= http.StatusBadRequest:
+			// 其余 4xx(如 402/415/422)基本都在说这条链接本身的问题,原文比兜底话术有用。
+			logger.L().Warn("relay downloader rejected the source",
+				zap.Int("status", upstream.status), zap.String("code", upstream.code), zap.String("message", upstream.message))
+			response.Fail(c, response.CodeBadRequest, safeMessage(upstream.message))
 		default:
+			// 2xx/3xx 却带着错误体:上游违反了自己的契约,不是用户能处理的情形,
+			// 保持 500(真实原因由 response.Fail 落日志)。下载流的 JSON 冒充视频
+			// 走的正是这一支,不能降级成 4xx。
 			response.Fail(c, response.CodeServerError, upstream.message)
 		}
 		return
