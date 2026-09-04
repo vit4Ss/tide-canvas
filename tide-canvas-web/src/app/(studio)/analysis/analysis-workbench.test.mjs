@@ -334,6 +334,18 @@ test("account mode renders a real intelligence board instead of a source-and-tex
   assert.doesNotMatch(accountHeroRule, /::before|background: var\(--platform\)/, "account header regained a decorative accent stripe");
 });
 
+test("account strategy uses a reader-facing report instead of the workflow inspector", () => {
+  const report = workbench.slice(workbench.indexOf("function AccountStrategyReport"), workbench.indexOf("function DownloadPoster"));
+  assert.match(report, /账号策略报告/);
+  assert.match(report, /正在整理账号洞察/);
+  assert.match(report, /生成于/);
+  assert.match(report, /使用 \$\{run\.pointCost\} 积分/);
+  assert.doesNotMatch(report, /run\.steps\.map|最终产物|中间产物|收起运行详情/);
+  assert.match(workbench, /analysisRunMode\(skillRun\.run\?\.input\) === "account"/);
+  assert.match(workbench, /<AccountStrategyReport/);
+  assert.match(css, /\.accountReportContent \.markdown \{[\s\S]*max-height: none;[\s\S]*overflow: visible;/);
+});
+
 test("account inspection automatically starts one strategy run without a second click", () => {
   assert.match(workbench, /pendingAccountAutoRunRef\.current = response\.data/);
   assert.match(workbench, /pendingAccountAutoRunRef\.current !== result/);
@@ -341,6 +353,7 @@ test("account inspection automatically starts one strategy run without a second 
   assert.match(workbench, /正在自动生成账号策略/);
   assert.match(workbench, /无需再次点击，结果会直接显示在右侧/);
   assert.match(workbench, /activityRecordId: result\.recordId/);
+  assert.match(workbench, /response\.data\.kind === "account" && \(focus === DEFAULT_FOCUS \|\| focus === IMAGE_DEFAULT_FOCUS\)/);
   assert.doesNotMatch(workbench, /busy \? "正在启动分析" : "生成账号策略"/);
 });
 

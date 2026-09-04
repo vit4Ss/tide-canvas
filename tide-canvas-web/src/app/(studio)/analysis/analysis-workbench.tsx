@@ -31,6 +31,8 @@ import {
   History,
   Link2,
   Loader2,
+  Pencil,
+  RotateCcw,
   ScanSearch,
   ShieldCheck,
   Sparkles,
@@ -58,7 +60,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { useSkillRun } from "@/components/skill/use-skill-run";
 import { SkillRunPanel, type SkillRunPanelActionPayload } from "@/components/skill/skill-run-panel";
-import type { SkillRunAction } from "@/types/skill-run";
+import { skillRunError, type SkillRunAction, type SkillRunVO } from "@/types/skill-run";
 import { FileCategory } from "@/types/file";
 import type { SkillVO } from "@/types/skill";
 import { toast } from "@/components/shared/toast";
@@ -363,6 +365,14 @@ function analysisRunContext(input: unknown): { sourceUrl: string; sourceFetchedA
   };
 }
 
+function analysisRunMode(input: unknown): "account" | "image" | "video" | "" {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return "";
+  const parameters = (input as { parameters?: unknown }).parameters;
+  if (!parameters || typeof parameters !== "object" || Array.isArray(parameters)) return "";
+  const value = (parameters as { analysisMode?: unknown }).analysisMode;
+  return value === "account" || value === "image" || value === "video" ? value : "";
+}
+
 function platformMeta(key?: SocialPlatform) {
   return PLATFORMS.find((item) => item.key === key) ?? PLATFORMS[0];
 }
@@ -413,6 +423,66 @@ function renderAnalysisMarkdown(text: string) {
         {text}
       </ReactMarkdown>
     </div>
+  );
+}
+
+function accountReportText(run: SkillRunVO): string {
+  const artifacts = [...(run.artifacts ?? []), ...(run.steps ?? []).flatMap((step) => step.artifacts ?? [])];
+  const final = artifacts.find((artifact) => artifact.isFinal && (artifact.text?.trim() || artifact.content?.trim()));
+  const fallback = [...artifacts].reverse().find((artifact) => artifact.text?.trim() || artifact.content?.trim());
+  return final?.text?.trim() || final?.content?.trim() || fallback?.text?.trim() || fallback?.content?.trim() || "";
+}
+
+interface AccountStrategyReportProps {
+  run: SkillRunVO;
+  busy: boolean;
+  onAction: (action: SkillRunAction) => void | Promise<unknown>;
+  onReEdit: () => void | Promise<unknown>;
+  onDismiss: () => void;
+}
+
+function AccountStrategyReport({ run, busy, onAction, onReEdit, onDismiss }: AccountStrategyReportProps) {
+  const active = run.status === "queued" || run.status === "running";
+  const succeeded = run.status === "succeeded";
+  const failed = run.status === "failed";
+  const progress = Math.max(0, Math.min(100, Number.isFinite(run.progress) ? run.progress : 0));
+  const text = accountReportText(run);
+  const reportTime = run.completeTime || run.updateTime || run.createTime || "";
+
+  return (
+    <article className={styles.accountReport} data-status={run.status} aria-live="polite">
+      <header className={styles.accountReportHeader}>
+        <div><h3>账号策略报告</h3><small>根据本次公开样本生成</small></div>
+        <span>{active ? `正在生成 · ${Math.round(progress)}%` : succeeded ? "已生成" : failed ? "生成失败" : "已停止"}</span>
+      </header>
+
+      {active ? (
+        <div className={styles.accountReportPending}>
+          <Loader2 className={styles.spin} aria-hidden />
+          <div><strong>正在整理账号洞察</strong><p>AI 正在对照账号资料和近期作品，报告完成后会直接显示在这里。</p></div>
+          <div className={styles.accountReportProgress} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}><i style={{ transform: `scaleX(${Math.max(.02, progress / 100)})` }} /></div>
+        </div>
+      ) : succeeded ? (
+        <div className={styles.accountReportContent}>
+          {text ? renderAnalysisMarkdown(text) : <p className={styles.accountReportEmpty}>报告已经完成，但暂时没有可展示的正文。</p>}
+        </div>
+      ) : (
+        <div className={styles.accountReportFailure}>
+          <CircleAlert aria-hidden />
+          <div><strong>{failed ? "这次报告没有生成成功" : "报告生成已停止"}</strong><p>{failed ? skillRunError(run) || "服务暂时不可用，请稍后重试。" : "你可以重新运行这次账号策略分析。"}</p></div>
+        </div>
+      )}
+
+      <footer className={styles.accountReportFooter}>
+        <span>{reportTime ? `${succeeded ? "生成于" : "开始于"} ${displaySnapshotTime(reportTime)}` : ""}{run.pointCost && run.pointCost > 0 ? ` · 使用 ${run.pointCost} 积分` : ""}</span>
+        <div>
+          {active ? <button type="button" disabled={busy} onClick={() => void onAction("cancel")}>停止生成</button> : null}
+          {failed || run.status === "cancelled" ? <button type="button" disabled={busy} onClick={() => void onAction("retry")}><RotateCcw aria-hidden />重新生成</button> : null}
+          {succeeded ? <button type="button" disabled={busy} onClick={() => void onReEdit()}><Pencil aria-hidden />重新编辑</button> : null}
+          {!active ? <button type="button" disabled={busy} onClick={onDismiss}>关闭报告</button> : null}
+        </div>
+      </footer>
+    </article>
   );
 }
 
@@ -1156,7 +1226,9 @@ export default function AnalysisWorkbench() {
       if (response.data.kind === "account") pendingAccountAutoRunRef.current = response.data;
       setResult(response.data);
       setSelectedWork(response.data.content ?? response.data.works[0] ?? null);
-      if (
+      if (response.data.kind === "account" && (focus === DEFAULT_FOCUS || focus === IMAGE_DEFAULT_FOCUS)) {
+        setFocus(ACCOUNT_DEFAULT_FOCUS);
+      } else if (
         response.data.kind === "content" &&
         response.data.content &&
         !isVideoWork(response.data.content) &&
@@ -1442,7 +1514,17 @@ export default function AnalysisWorkbench() {
   // 分别计算容易两边漂移。
   const recognizedSource = extractDownloadURL(downloadSource);
 
-  const runDetails = skillRun.run ? (
+  const accountRunPresentation = analysisRunMode(skillRun.run?.input) === "account" ||
+    (!!skillRun.run && skillRun.run.skillId === status?.accountAnalysisSkillId);
+  const runDetails = skillRun.run ? accountRunPresentation ? (
+    <AccountStrategyReport
+      run={skillRun.run}
+      busy={skillRun.actionBusy}
+      onAction={performRunAction}
+      onReEdit={reEditRun}
+      onDismiss={() => skillRun.clear()}
+    />
+  ) : (
     <div className={styles.runPanel}>
       <SkillRunPanel
         run={skillRun.run}

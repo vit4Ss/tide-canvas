@@ -912,6 +912,91 @@
 .strategyOutput { min-width: 0; padding: 20px; background: color-mix(in oklab, var(--bg) 42%, transparent); }
 .strategyOutput .runPanel { border: 1px solid var(--border); }
 .strategyOutput .markdown { max-height: 720px; }
+
+.accountReport { min-width: 0; }
+.accountReportHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 4px 0 20px;
+  border-bottom: 1px solid var(--border);
+}
+.accountReportHeader h3 { margin: 0; color: var(--text); font-size: 20px; font-weight: 650; letter-spacing: -.02em; }
+.accountReportHeader small { display: block; margin-top: 8px; color: var(--text-faint); font-size: 12px; }
+.accountReportHeader > span { color: var(--text-dim); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.accountReportPending,
+.accountReportFailure {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 16px;
+  align-content: center;
+  min-height: 280px;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 40px 24px;
+}
+.accountReportPending > svg,
+.accountReportFailure > svg { width: 20px; height: 20px; color: var(--tech); }
+.accountReportPending strong,
+.accountReportFailure strong { color: var(--text); font-size: 16px; font-weight: 600; }
+.accountReportPending p,
+.accountReportFailure p { max-width: 56ch; margin: 8px 0 0; color: var(--text-dim); font-size: 14px; line-height: 1.7; }
+.accountReportFailure > svg { color: var(--danger-text); }
+
+.accountReportProgress {
+  grid-column: 1 / -1;
+  height: 2px;
+  overflow: hidden;
+  margin-top: 8px;
+  background: var(--border);
+}
+.accountReportProgress i { display: block; width: 100%; height: 100%; transform-origin: left; background: var(--tech); transition: transform 200ms var(--ease); }
+
+.accountReportContent { padding: 32px 0 40px; }
+.accountReportContent .markdown {
+  width: min(100%, 72ch);
+  max-height: none;
+  margin: 0 auto;
+  overflow: visible;
+  padding: 0 24px;
+  font-size: 14px;
+  line-height: 1.8;
+}
+.accountReportContent .markdown h1 { margin-top: 40px; font-size: 28px; line-height: 1.25; }
+.accountReportContent .markdown h2 { margin-top: 32px; padding-bottom: 12px; font-size: 20px; }
+.accountReportContent .markdown h3 { margin-top: 24px; font-size: 16px; }
+.accountReportContent .markdown p { margin: 12px 0; }
+.accountReportEmpty { min-height: 240px; margin: 0; padding: 64px 24px; color: var(--text-dim); font-size: 14px; text-align: center; }
+
+.accountReportFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.accountReportFooter > span { color: var(--text-faint); font-size: 12px; }
+.accountReportFooter > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.accountReportFooter button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--text-dim);
+  background: transparent;
+  font-size: 12px;
+  transition: color 160ms var(--ease), border-color 160ms var(--ease);
+}
+.accountReportFooter button:hover:not(:disabled) { border-color: var(--border-strong); color: var(--text); }
+.accountReportFooter button:disabled { opacity: .48; cursor: default; }
+.accountReportFooter button svg { width: 14px; height: 14px; }
 .strategyEmpty { display: flex; align-items: center; justify-content: center; gap: 16px; min-height: 360px; color: var(--text-faint); }
 .strategyEmpty > svg { flex: none; width: 20px; height: 20px; color: color-mix(in oklab, var(--platform) 72%, var(--text)); }
 .strategyEmpty strong { color: var(--text); font-size: 14px; font-weight: 600; }
@@ -964,6 +1049,10 @@
   .accountStrategy > .sectionHeader,
   .strategyControl,
   .strategyOutput { padding: 16px; }
+  .accountReportHeader,
+  .accountReportFooter { align-items: flex-start; flex-direction: column; }
+  .accountReportFooter > div { width: 100%; justify-content: flex-start; }
+  .accountReportContent .markdown { padding: 0; }
   .trendCanvas svg { height: 200px; }
   .trendAxis { grid-template-columns: 1fr 1fr; }
   .trendAxis span:nth-child(2) { display: none; }
