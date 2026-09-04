@@ -3,9 +3,9 @@
 /* /analysis — 拆解工作台。
 
    两件事共用一个入口:「内容拆解」把公开链接还原成平台事实再交给 AI 拆方法,
-   「视频下载」把公开视频取回本地；第三个页签集中回看当前账号的使用记录。
+   「视频下载」把公开视频取回本地；左侧栏集中回看当前账号的使用记录。
    两项操作各自依赖不同的后端服务(TikHub 解析 / Relay 下载器),因此并列为
-   顶层页签而不是上下堆叠——一次只做一件事,各自占满整幅宽度。
+   顶层操作页签——一次只做一件事，历史快照在右侧原位复现。
 
    配色全部走 imini 主题 token(--bg/--surface/--border/--text/--accent),
    不再手抄十六进制:主题调整时本页跟随,不会落单。 */
@@ -28,6 +28,7 @@ import {
   FileVideo,
   Film,
   Gauge,
+  History,
   Link2,
   Loader2,
   ScanSearch,
@@ -42,6 +43,7 @@ import { fileApi } from "@/lib/api";
 import { skillApi } from "@/lib/skill-api";
 import {
   socialAnalysisApi,
+  type SocialActivityRecordDetailVO,
   type SocialAnalysisKind,
   type SocialAnalysisStatusVO,
   type SocialInspectVO,
@@ -62,10 +64,10 @@ import type { SkillVO } from "@/types/skill";
 import { toast } from "@/components/shared/toast";
 import { buildAccountSnapshot, type AccountWorkDatum } from "./account-insights";
 import { buildWorkSnapshot } from "./work-insights";
-import { ActivityHistoryPanel } from "./activity-history";
+import { ActivityHistorySidebar } from "./activity-history";
 import styles from "./analysis.module.css";
 
-type WorkbenchTab = "breakdown" | "download" | "history";
+type WorkbenchTab = "breakdown" | "download";
 
 const PLATFORMS: Array<{ key: SocialPlatform; label: string; mark: string; color: string; hint: string }> = [
   { key: "douyin", label: "抖音", mark: "抖", color: "#25f4ee", hint: "视频 · 账号" },
@@ -106,6 +108,15 @@ const DOWNLOAD_PLATFORM_LABEL: Record<string, string> = {
   youtube: "YouTube",
 };
 
+const ACTIVITY_STATUS_LABEL: Record<string, string> = {
+  processing: "处理中",
+  ready: "待下载",
+  downloading: "下载中",
+  succeeded: "下载成功",
+  failed: "失败",
+  expired: "已过期",
+};
+
 function displayCount(value?: string): string {
   if (!value) return "—";
   const number = Number(value);
@@ -144,6 +155,22 @@ function displayDate(value?: string): string {
   return date
     ? new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "short", day: "numeric" }).format(date)
     : value || "";
+}
+
+function displaySnapshotTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return value || "时间未知";
+  return date.toLocaleString("zh-CN", { hour12: false });
+}
+
+function isSocialInspectSnapshot(value: unknown): value is SocialInspectVO {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const snapshot = value as Partial<SocialInspectVO>;
+  return (snapshot.kind === "account" || snapshot.kind === "content") &&
+    typeof snapshot.sourceUrl === "string" && !!snapshot.sourceUrl.trim() &&
+    typeof snapshot.platform === "string" &&
+    typeof snapshot.fetchedAt === "number" && Number.isFinite(snapshot.fetchedAt) &&
+    Array.isArray(snapshot.works) && Array.isArray(snapshot.warnings);
 }
 
 function displayDateTime(value?: string): string {
@@ -582,8 +609,8 @@ interface AccountDashboardProps {
   busy: boolean;
   runDetails: React.ReactNode;
   skillError: string;
+  historical: boolean;
   downloaderPlatforms: string[];
-  onFocusChange: (value: string) => void;
   onRun: () => void;
   onDownloadWork: (work: SocialWorkVO) => void;
 }
@@ -594,8 +621,8 @@ function AccountDashboard({
   busy,
   runDetails,
   skillError,
+  historical,
   downloaderPlatforms,
-  onFocusChange,
   onRun,
   onDownloadWork,
 }: AccountDashboardProps) {
@@ -722,8 +749,8 @@ function AccountDashboard({
         <div className={styles.strategyGrid}>
           <article className={styles.strategyControl}>
             <label className={styles.focusField}>
-              <span>你希望重点分析什么</span>
-              <textarea rows={7} value={focus} onChange={(event) => onFocusChange(event.target.value)} maxLength={4000} />
+              <span>本次自动分析重点</span>
+              <textarea rows={7} value={focus} readOnly aria-readonly="true" />
               <small>{focus.length} / 4000</small>
             </label>
             <div className={styles.strategyScope}>
@@ -732,15 +759,20 @@ function AccountDashboard({
               <span><BarChart3 aria-hidden />内容支柱</span>
               <span><CalendarDays aria-hidden />发布节奏</span>
             </div>
-            <button
-              type="button"
-              className={styles.primaryButton}
-              disabled={(!profile && result.works.length === 0) || busy || !!runDetails}
-              onClick={onRun}
-            >
-              {busy ? <Loader2 className={styles.spin} aria-hidden /> : <ScanSearch aria-hidden />}
-              {busy ? "正在启动分析" : "生成账号策略"}
-            </button>
+            {skillError ? (
+              <button type="button" className={styles.primaryButton} disabled={busy} onClick={onRun}>
+                {busy ? <Loader2 className={styles.spin} aria-hidden /> : <ScanSearch aria-hidden />}
+                {busy ? "正在重新启动" : "重新生成账号策略"}
+              </button>
+            ) : (
+              <div className={styles.autoAnalysisState} role="status" aria-live="polite">
+                {busy ? <Loader2 className={styles.spin} aria-hidden /> : runDetails ? <Check aria-hidden /> : <Sparkles aria-hidden />}
+                <span>
+                  <strong>{busy ? historical ? "正在恢复当时的策略报告" : "正在自动生成账号策略" : runDetails ? historical ? "已恢复当时的策略报告" : "账号策略已自动启动" : historical ? "这条历史记录没有关联策略报告" : "解析完成后自动生成"}</strong>
+                  <small>{historical ? "当前展示历史快照，不会重新调用平台或扣除积分。" : "无需再次点击，结果会直接显示在右侧。"}</small>
+                </span>
+              </div>
+            )}
           </article>
           <div className={styles.strategyOutput}>
             {skillError && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{skillError}</span></div>}
@@ -961,6 +993,10 @@ export default function AnalysisWorkbench() {
   const [loading, setLoading] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [error, setError] = useState("");
+  const [strategyError, setStrategyError] = useState("");
+  const [historicalRecord, setHistoricalRecord] = useState<SocialActivityRecordDetailVO | null>(null);
+  const [historyRefresh, setHistoryRefresh] = useState(0);
+  const [watchedDownloadRecordId, setWatchedDownloadRecordId] = useState("");
   const videoSkillRef = useRef<SkillVO | null>(null);
   const imageSkillRef = useRef<SkillVO | null>(null);
   const accountSkillRef = useRef<SkillVO | null>(null);
@@ -968,6 +1004,7 @@ export default function AnalysisWorkbench() {
   const analysisBusyRef = useRef(false);
   const inspectEpochRef = useRef(0);
   const analysisEpochRef = useRef(0);
+  const pendingAccountAutoRunRef = useRef<SocialInspectVO | null>(null);
   const downloadBusyRef = useRef(false);
   const downloadEpochRef = useRef(0);
   const ownerUserId = user?.id ?? "";
@@ -983,6 +1020,7 @@ export default function AnalysisWorkbench() {
     previousOwnerRef.current = ownerUserId;
     inspectEpochRef.current += 1;
     analysisEpochRef.current += 1;
+    pendingAccountAutoRunRef.current = null;
     downloadEpochRef.current += 1;
     inspectBusyRef.current = false;
     analysisBusyRef.current = false;
@@ -994,12 +1032,15 @@ export default function AnalysisWorkbench() {
     setDownloaderCapabilities(null);
     setDownloaderStatusError(false);
     setDownloadResult(null);
+    setWatchedDownloadRecordId("");
     setDownloadError("");
     setDownloadBusy(false);
     downloadBusyRef.current = false;
     setResult(null);
     setSelectedWork(null);
     setError("");
+    setStrategyError("");
+    setHistoricalRecord(null);
     skillRun.clear();
     // skillRun controller identity changes with polling state; only the owner
     // boundary should trigger this cleanup.
@@ -1068,13 +1109,12 @@ export default function AnalysisWorkbench() {
         : "正在检查";
   // 两个页签共用同一套状态词汇,值随当前页签背后的服务切换:拆解看 TikHub
   // 解析,下载看 Relay 下载器。此前两块各写一遍状态,是重复与错位的来源。
-  const serviceReady = tab === "history" ? true : tab === "breakdown" ? !!status?.enabled && !!status?.configured : downloaderReady;
-  const serviceLabel = tab === "history" ? "仅自己可见" : tab === "breakdown" ? statusLabel : downloaderStateLabel;
-  const serviceBusy = tab === "history" ? true : tab === "breakdown"
+  const serviceReady = tab === "breakdown" ? !!status?.enabled && !!status?.configured : downloaderReady;
+  const serviceLabel = tab === "breakdown" ? statusLabel : downloaderStateLabel;
+  const serviceBusy = tab === "breakdown"
     ? !user || statusChecking
     : !user || downloadBusy || (!downloaderCapabilities && !downloaderStatusError);
   const recheckService = () => {
-    if (tab === "history") return;
     if (tab === "breakdown") {
       setStatus(null);
       setStatusError(false);
@@ -1087,23 +1127,33 @@ export default function AnalysisWorkbench() {
     setDownloaderRefresh((value) => value + 1);
   };
 
+  const clearHistoricalView = () => {
+    if (historicalRecord?.type === "analysis" && historicalRecord.analysisRunId) skillRun.clear();
+    setHistoricalRecord(null);
+  };
+
   const inspect = async () => {
     if (inspectBusyRef.current || !url.trim()) return;
+    clearHistoricalView();
     if (!skillRun.run && skillRun.error) skillRun.clear();
     inspectBusyRef.current = true;
     const epoch = ++inspectEpochRef.current;
     setLoading(true);
     setError("");
+    setStrategyError("");
+    pendingAccountAutoRunRef.current = null;
     setResult(null);
     setSelectedWork(null);
     try {
       if (!await ensureSession()) return;
       const response = await socialAnalysisApi.inspect({ url: url.trim(), kind });
       if (epoch !== inspectEpochRef.current) return;
+      setHistoryRefresh((value) => value + 1);
       if (!response.success || !response.data) {
         setError(response.code === 429 ? "请求过于频繁，请稍后再试" : response.message || "链接解析失败，请检查后重试");
         return;
       }
+      if (response.data.kind === "account") pendingAccountAutoRunRef.current = response.data;
       setResult(response.data);
       setSelectedWork(response.data.content ?? response.data.works[0] ?? null);
       if (
@@ -1159,30 +1209,36 @@ export default function AnalysisWorkbench() {
 
   const startDeepAnalysis = async () => {
     if (!result || !currentPlatform || analysisBusyRef.current || skillRun.loading) return;
+    clearHistoricalView();
     const contentSkillMode = currentWork && isVideoWork(currentWork) ? "video" : "image";
     const contentImageURLs = currentWork ? workImageSources(currentWork) : [];
     const contentAssetURL = contentSkillMode === "video" ? currentWork?.mediaUrl : contentImageURLs[0];
-    if (kind === "content" && !contentAssetURL) return;
-    const skillMode = kind === "account" ? "account" : contentSkillMode;
+    if (result.kind === "content" && !contentAssetURL) return;
+    const skillMode = result.kind === "account" ? "account" : contentSkillMode;
     const skillLabel = skillMode === "account" ? "账号拆解" : skillMode === "image" ? "图片分析" : "视频分析";
     analysisBusyRef.current = true;
     const epoch = ++analysisEpochRef.current;
     setArchiving(true);
     setError("");
+    setStrategyError("");
+    const reportStartError = (message: string) => {
+      if (result.kind === "account") setStrategyError(message);
+      else setError(message);
+    };
     try {
       if (!await ensureSession()) return;
       const skill = await loadAnalysisSkill(skillMode);
       if (epoch !== analysisEpochRef.current) return;
       if (!skill) {
-        setError(`${skillLabel}技能未上架，请联系管理员检查技能配置`);
+        reportStartError(`${skillLabel}技能未上架，请联系管理员检查技能配置`);
         return;
       }
       let assets: Array<{ id?: string; type: "video" | "image"; url?: string; name?: string; role?: string; metadata?: Record<string, unknown> }> = [];
       let prompt = "";
-      const sourceURL = kind === "account"
+      const sourceURL = result.kind === "account"
         ? result.sourceUrl
         : currentWork?.pageUrl || result.sourceUrl || "";
-      if (kind === "content" && currentWork && contentAssetURL) {
+      if (result.kind === "content" && currentWork && contentAssetURL) {
         const mediaCandidates = contentSkillMode === "video"
           ? [...new Set([contentAssetURL, ...(currentWork.mediaUrls ?? [])].filter(Boolean))].slice(0, 5)
           : contentImageURLs;
@@ -1217,7 +1273,7 @@ export default function AnalysisWorkbench() {
           if (contentSkillMode === "video" && archived.code !== 0 && archived.code !== 400 && archived.code !== 408) break;
         }
         if (archivedAssets.length === 0) {
-          setError(`${contentSkillMode === "video" ? "视频" : "图片"}归档失败：${lastArchive?.message || "暂时无法读取素材"}。${contentSkillMode === "video" ? "已尝试可用镜像；" : ""}如果页面已打开较久，请重新解析作品以刷新临时地址。`);
+          reportStartError(`${contentSkillMode === "video" ? "视频" : "图片"}归档失败：${lastArchive?.message || "暂时无法读取素材"}。${contentSkillMode === "video" ? "已尝试可用镜像；" : ""}如果页面已打开较久，请重新解析作品以刷新临时地址。`);
           return;
         }
         if (contentSkillMode === "image" && archivedAssets.length < mediaCandidates.length) {
@@ -1235,12 +1291,18 @@ export default function AnalysisWorkbench() {
           prompt,
           assets,
           sourceNodeIds: [],
-          parameters: { platform: currentPlatform, sourceUrl: sourceURL, sourceFetchedAt: result.fetchedAt, analysisMode: skillMode },
+          parameters: {
+            platform: currentPlatform,
+            sourceUrl: sourceURL,
+            sourceFetchedAt: result.fetchedAt,
+            analysisMode: skillMode,
+            ...(result.recordId ? { activityRecordId: result.recordId } : {}),
+          },
         },
       });
       if (epoch !== analysisEpochRef.current) return;
       if (!started) {
-        setError(skillRun.error || `${skillLabel}技能启动失败，请稍后重试`);
+        reportStartError(skillRun.error || `${skillLabel}技能启动失败，请稍后重试`);
         return;
       }
       void skillApi.recordUse(skill.id);
@@ -1252,6 +1314,18 @@ export default function AnalysisWorkbench() {
     }
   };
 
+  useEffect(() => {
+    if (!result || result.kind !== "account" || pendingAccountAutoRunRef.current !== result) return;
+    pendingAccountAutoRunRef.current = null;
+    if (!result.profile && result.works.length === 0) return;
+    queueMicrotask(() => { void startDeepAnalysis(); });
+    // The pending ref is set only by a fresh successful account inspection and
+    // cleared synchronously before launch. Depending on result alone prevents
+    // controller polling renders or Strict Mode replay from starting a second
+    // paid run for the same snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result]);
+
   const performRunAction = async (action: SkillRunAction, payload?: SkillRunPanelActionPayload) => {
     const updated = await skillRun.performAction(action, {
       ...(payload?.feedback ? { feedback: payload.feedback } : {}),
@@ -1262,6 +1336,8 @@ export default function AnalysisWorkbench() {
 
   const resolveVideoDownload = async (qualityOverride?: VideoDownloadQuality) => {
     if (downloadBusyRef.current || !downloadSource.trim()) return;
+    clearHistoricalView();
+    setWatchedDownloadRecordId("");
     // 结果面板里切换画质会立即重解析,此时 state 尚未更新,必须用传入值。
     const targetQuality = qualityOverride ?? downloadQuality;
     // 切换画质是在已有结果上换一档,保留当前结果原地更新;清空会让结果区卸载、
@@ -1281,6 +1357,7 @@ export default function AnalysisWorkbench() {
       if (!await ensureSession()) return;
       const response = await socialAnalysisApi.resolveDownload({ url: sourceURL, quality: targetQuality });
       if (epoch !== downloadEpochRef.current) return;
+      setHistoryRefresh((value) => value + 1);
       if (!response.success || !response.data) {
         setDownloadError(response.code === 429 ? "请求过于频繁，请稍后再试" : response.message || "视频解析失败，请检查链接后重试");
         return;
@@ -1301,6 +1378,7 @@ export default function AnalysisWorkbench() {
       setDownloadError("下载地址已经过期，请重新解析视频");
       return;
     }
+    setWatchedDownloadRecordId(downloadResult.recordId || "");
     startNativeDownload(downloadResult.downloadUrl);
     toast.success("已交给浏览器下载，请查看默认下载目录");
   };
@@ -1330,6 +1408,7 @@ export default function AnalysisWorkbench() {
     // 重新编辑始终回到拆解页签:运行面板只属于拆解,留在下载页会失去上下文。
     setTab("breakdown");
     setError("");
+    clearHistoricalView();
     setResult(null);
     setSelectedWork(null);
     skillRun.clear();
@@ -1340,11 +1419,14 @@ export default function AnalysisWorkbench() {
   // 键盘用户会被困在当前页签上,永远到不了另一个。
   const tabRefs = useRef<Partial<Record<WorkbenchTab, HTMLButtonElement | null>>>({});
   const focusTab = (next: WorkbenchTab) => {
+    if ((next === "download" && historicalRecord?.type === "analysis") || (next === "breakdown" && historicalRecord?.type === "download")) {
+      clearHistoricalView();
+    }
     setTab(next);
     tabRefs.current[next]?.focus();
   };
   const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    const order: WorkbenchTab[] = ["breakdown", "download", "history"];
+    const order: WorkbenchTab[] = ["breakdown", "download"];
     const index = order.indexOf(tab);
     if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
       event.preventDefault();
@@ -1390,10 +1472,75 @@ export default function AnalysisWorkbench() {
       activeRunContext.sourceFetchedAt === result.fetchedAt;
   const contextualRunDetails = runMatchesCurrentResult ? runDetails : null;
   const contextualSkillError = runMatchesCurrentResult ? skillRun.error : "";
-  const pageHeading = tab === "history" ? "使用记录" : tab === "download" ? "视频下载" : kind === "account" ? "账号分析" : "作品分析";
-  const pageDescription = tab === "history"
-    ? "回看当前账号的内容分析与视频下载状态。"
-    : tab === "download"
+
+  const restoreActivityRecord = async (record: SocialActivityRecordDetailVO) => {
+    pendingAccountAutoRunRef.current = null;
+    inspectEpochRef.current += 1;
+    analysisEpochRef.current += 1;
+    analysisBusyRef.current = false;
+    setLoading(false);
+    setArchiving(false);
+    setError("");
+    setStrategyError("");
+
+    if (record.type === "download") {
+      downloadEpochRef.current += 1;
+      downloadBusyRef.current = false;
+      setDownloadBusy(false);
+      setDownloadSource(record.sourceUrl);
+      if (record.quality === "quality" || record.quality === "compat" || record.quality === "speed") {
+        setDownloadQuality(record.quality);
+      }
+      setDownloadResult(null);
+      setDownloadError("");
+      setHistoricalRecord(record);
+      setTab("download");
+      return;
+    }
+
+    if (!isSocialInspectSnapshot(record.snapshot)) {
+      setHistoricalRecord(record);
+      setTab("breakdown");
+      setKind(record.kind === "account" ? "account" : "content");
+      setURL(record.sourceUrl);
+      setResult(null);
+      setSelectedWork(null);
+      skillRun.clear();
+      toast.info("这条旧记录没有保存数据快照，无法直接复现；可以重新获取最新数据");
+      return;
+    }
+    const snapshot = record.snapshot;
+    setHistoricalRecord(record);
+    setTab("breakdown");
+    setKind(snapshot.kind);
+    setURL(snapshot.sourceUrl);
+    setResult(snapshot);
+    setSelectedWork(snapshot.content ?? snapshot.works[0] ?? null);
+    if (snapshot.kind === "account") setFocus(ACCOUNT_DEFAULT_FOCUS);
+    else if (snapshot.content && !isVideoWork(snapshot.content)) setFocus(IMAGE_DEFAULT_FOCUS);
+    else setFocus(DEFAULT_FOCUS);
+
+    if (record.analysisRunId) {
+      const restored = await skillRun.resume(record.analysisRunId);
+      if (!restored) {
+        const message = "当时的 AI 报告暂时无法恢复，请稍后重试或获取最新数据";
+        if (snapshot.kind === "account") setStrategyError(message);
+        else setError(message);
+      }
+    } else {
+      skillRun.clear();
+    }
+  };
+
+  const refreshHistoricalRecord = () => {
+    const record = historicalRecord;
+    if (!record) return;
+    if (record.type === "download") void resolveVideoDownload();
+    else void inspect();
+  };
+
+  const pageHeading = tab === "download" ? "视频下载" : kind === "account" ? "账号分析" : "作品分析";
+  const pageDescription = tab === "download"
     ? "解析公开视频并选择合适画质保存到本地。"
     : kind === "account"
       ? "读取账号与近期作品，判断内容表现和可复用规律。"
@@ -1401,7 +1548,15 @@ export default function AnalysisWorkbench() {
 
   return (
     <main className={styles.page}>
-      <div className={styles.canvas}>
+      <ActivityHistorySidebar
+        key={ownerUserId || "anonymous"}
+        selectedId={historicalRecord?.id}
+        watchId={watchedDownloadRecordId}
+        refreshKey={historyRefresh}
+        onSelect={restoreActivityRecord}
+      />
+      <div className={styles.workspaceMain}>
+        <div className={styles.canvas}>
         <header className={styles.pageHeader}>
           <h1>{pageHeading}</h1>
           <p>{pageDescription}</p>
@@ -1418,7 +1573,7 @@ export default function AnalysisWorkbench() {
               tabIndex={tab === "breakdown" ? 0 : -1}
               ref={(node) => { tabRefs.current.breakdown = node; }}
               className={tab === "breakdown" ? styles.tabActive : ""}
-              onClick={() => setTab("breakdown")}
+              onClick={() => { setTab("breakdown"); if (historicalRecord?.type === "download") clearHistoricalView(); }}
               onKeyDown={onTabKeyDown}
             >
               内容拆解
@@ -1432,24 +1587,10 @@ export default function AnalysisWorkbench() {
               tabIndex={tab === "download" ? 0 : -1}
               ref={(node) => { tabRefs.current.download = node; }}
               className={tab === "download" ? styles.tabActive : ""}
-              onClick={() => setTab("download")}
+              onClick={() => { setTab("download"); if (historicalRecord?.type === "analysis") clearHistoricalView(); }}
               onKeyDown={onTabKeyDown}
             >
               视频下载
-            </button>
-            <button
-              type="button"
-              role="tab"
-              id="analysis-tab-history"
-              aria-selected={tab === "history"}
-              aria-controls="analysis-panel-history"
-              tabIndex={tab === "history" ? 0 : -1}
-              ref={(node) => { tabRefs.current.history = node; }}
-              className={tab === "history" ? styles.tabActive : ""}
-              onClick={() => setTab("history")}
-              onKeyDown={onTabKeyDown}
-            >
-              我的记录
             </button>
           </div>
           <button
@@ -1457,7 +1598,7 @@ export default function AnalysisWorkbench() {
             className={styles.serviceState}
             data-ready={serviceReady ? "true" : "false"}
             disabled={serviceBusy}
-            title={tab === "history" ? "记录仅当前账号可见" : user ? "点击重新检查服务" : "登录后检查服务"}
+            title={user ? "点击重新检查服务" : "登录后检查服务"}
             aria-live="polite"
             onClick={recheckService}
           >
@@ -1465,14 +1606,25 @@ export default function AnalysisWorkbench() {
           </button>
         </div>
 
+        {historicalRecord ? (
+          <div className={styles.snapshotNotice} role="status">
+            <History aria-hidden />
+            <span>
+              <strong>{historicalRecord.type === "analysis" && !isSocialInspectSnapshot(historicalRecord.snapshot) ? "这条历史记录没有数据快照" : "正在查看历史快照"}</strong>
+              <small>当时调用：{displaySnapshotTime(historicalRecord.createTime)} · {historicalRecord.type === "analysis" && !isSocialInspectSnapshot(historicalRecord.snapshot) ? "可使用原链接获取最新数据" : "当前内容不会重新请求平台"}</small>
+            </span>
+            <button type="button" onClick={refreshHistoricalRecord}>获取最新数据</button>
+          </div>
+        ) : null}
+
         {tab === "breakdown" ? (
           <div className={styles.panel} role="tabpanel" id="analysis-panel-breakdown" aria-labelledby="analysis-tab-breakdown">
             <section className={`${styles.composer}${result || loading ? ` ${styles.composerWithDashboard}` : ""}`}>
               <div className={styles.modeSwitch} aria-label="拆解对象">
-                <button type="button" aria-pressed={kind === "content"} disabled={loading || archiving} className={kind === "content" ? styles.modeActive : ""} onClick={() => { setKind("content"); setFocus(DEFAULT_FOCUS); setResult(null); setSelectedWork(null); setError(""); }}>
+                <button type="button" aria-pressed={kind === "content"} disabled={loading || archiving} className={kind === "content" ? styles.modeActive : ""} onClick={() => { setKind("content"); setFocus(DEFAULT_FOCUS); setResult(null); setSelectedWork(null); setError(""); setStrategyError(""); clearHistoricalView(); }}>
                   <Film aria-hidden /> 单个作品
                 </button>
-                <button type="button" aria-pressed={kind === "account"} disabled={loading || archiving} className={kind === "account" ? styles.modeActive : ""} onClick={() => { setKind("account"); setFocus(ACCOUNT_DEFAULT_FOCUS); setResult(null); setSelectedWork(null); setError(""); }}>
+                <button type="button" aria-pressed={kind === "account"} disabled={loading || archiving} className={kind === "account" ? styles.modeActive : ""} onClick={() => { setKind("account"); setFocus(ACCOUNT_DEFAULT_FOCUS); setResult(null); setSelectedWork(null); setError(""); setStrategyError(""); clearHistoricalView(); }}>
                   <UserRoundSearch aria-hidden /> 整个账号
                 </button>
               </div>
@@ -1482,7 +1634,7 @@ export default function AnalysisWorkbench() {
                   <Link2 aria-hidden />
                   <input
                     value={url}
-                    onChange={(event) => setURL(event.target.value)}
+                    onChange={(event) => { setURL(event.target.value); clearHistoricalView(); }}
                     onKeyDown={(event) => { if (event.key === "Enter") void inspect(); }}
                     disabled={loading || archiving}
                     placeholder={kind === "content" ? "粘贴公开视频链接，自动识别平台" : "粘贴账号主页链接，读取账号与近期作品"}
@@ -1538,14 +1690,15 @@ export default function AnalysisWorkbench() {
                     focus={focus}
                     busy={archiving || skillRun.loading}
                     runDetails={contextualRunDetails}
-                    skillError={contextualSkillError}
+                    skillError={contextualSkillError || strategyError}
+                    historical={historicalRecord?.type === "analysis"}
                     downloaderPlatforms={downloaderPlatforms}
-                    onFocusChange={setFocus}
                     onRun={() => void startDeepAnalysis()}
                     onDownloadWork={(work) => {
                       setDownloadSource(work.pageUrl || "");
                       setDownloadResult(null);
                       setDownloadError("");
+                      clearHistoricalView();
                       setTab("download");
                     }}
                   />
@@ -1567,6 +1720,7 @@ export default function AnalysisWorkbench() {
                         setDownloadSource(currentWork.pageUrl);
                         setDownloadResult(null);
                         setDownloadError("");
+                        clearHistoricalView();
                         setTab("download");
                       }}
                     />
@@ -1595,7 +1749,7 @@ export default function AnalysisWorkbench() {
               </div>
             )}
           </div>
-        ) : tab === "download" ? (
+        ) : (
           <div className={styles.panel} role="tabpanel" id="analysis-panel-download" aria-labelledby="analysis-tab-download">
             {/* 版式参考成熟下载站:居中窄栏 + 逐块堆叠,一次只回答一个问题——
                 怎么用 → 贴链接 → 看画面 → 选格式下载 → 取元信息。画质不再在
@@ -1613,7 +1767,7 @@ export default function AnalysisWorkbench() {
                   </span>
                   <input
                     value={downloadSource}
-                    onChange={(event) => { setDownloadSource(event.target.value); setDownloadResult(null); setDownloadError(""); }}
+                    onChange={(event) => { setDownloadSource(event.target.value); setDownloadResult(null); setDownloadError(""); clearHistoricalView(); }}
                     onKeyDown={(event) => { if (event.key === "Enter") void resolveVideoDownload(); }}
                     disabled={downloadBusy}
                     maxLength={4096}
@@ -1625,7 +1779,7 @@ export default function AnalysisWorkbench() {
                     aria-label="公开视频链接"
                   />
                   {!!url.trim() && url.trim() !== downloadSource.trim() && (
-                    <button type="button" className={styles.getterBorrow} disabled={downloadBusy} onClick={() => { setDownloadSource(url.trim()); setDownloadResult(null); setDownloadError(""); }}>用拆解链接</button>
+                    <button type="button" className={styles.getterBorrow} disabled={downloadBusy} onClick={() => { setDownloadSource(url.trim()); setDownloadResult(null); setDownloadError(""); clearHistoricalView(); }}>用拆解链接</button>
                   )}
                   {initialized && !user ? (
                     <Link className={styles.primaryButton} href="/login">登录后下载 <ChevronRight aria-hidden /></Link>
@@ -1653,6 +1807,19 @@ export default function AnalysisWorkbench() {
                 )}
                 {downloadError && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{downloadError}</span></div>}
               </section>
+
+              {historicalRecord?.type === "download" ? (
+                <section className={styles.historicalDownload}>
+                  <header><History aria-hidden /><span><strong>{historicalRecord.title || "公开视频"}</strong><small>历史下载记录 · 不会自动重新解析</small></span></header>
+                  <dl>
+                    <div><dt>当时状态</dt><dd>{ACTIVITY_STATUS_LABEL[historicalRecord.status] || historicalRecord.status}</dd></div>
+                    <div><dt>请求画质</dt><dd>{DOWNLOAD_QUALITY.find((option) => option.key === historicalRecord.quality)?.label || historicalRecord.quality || "未记录"}</dd></div>
+                    <div><dt>画面尺寸</dt><dd>{historicalRecord.width && historicalRecord.height ? `${historicalRecord.width}×${historicalRecord.height}` : "未返回"}</dd></div>
+                    <div><dt>文件大小</dt><dd>{displayBytes(historicalRecord.downloadedBytes || historicalRecord.estimatedBytes || 0)}</dd></div>
+                  </dl>
+                  {historicalRecord.errorMessage ? <p>{historicalRecord.errorMessage}</p> : null}
+                </section>
+              ) : null}
 
               {downloadResult ? (
                 <>
@@ -1710,7 +1877,7 @@ export default function AnalysisWorkbench() {
                     <InfoRow label="文件名" value={downloadResult.fileName || "video.mp4"} />
                   </section>
                 </>
-              ) : downloadBusy ? (
+              ) : historicalRecord?.type === "download" ? null : downloadBusy ? (
                 <section className={styles.posterCard} aria-busy="true">
                   <div className={`${styles.posterMedia} ${styles.posterLoading}`} />
                   <p className={styles.loadingNote} role="status">正在解析视频…</p>
@@ -1724,11 +1891,8 @@ export default function AnalysisWorkbench() {
               )}
             </div>
           </div>
-        ) : (
-          <div className={styles.panel} role="tabpanel" id="analysis-panel-history" aria-labelledby="analysis-tab-history">
-            <ActivityHistoryPanel key={ownerUserId || "anonymous"} />
-          </div>
         )}
+        </div>
       </div>
     </main>
   );

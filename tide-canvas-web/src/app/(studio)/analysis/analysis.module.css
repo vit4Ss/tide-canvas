@@ -22,8 +22,10 @@
   --text-quiet: color-mix(in oklab, var(--text) 48%, transparent);
 
   flex: 1;
+  display: grid;
+  grid-template-columns: 288px minmax(0, 1fr);
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   background: var(--bg);
   color: var(--text);
 }
@@ -126,6 +128,54 @@
 }
 
 .serviceState[data-ready="true"] i { background: var(--tech); }
+
+.snapshotNotice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+}
+
+.snapshotNotice > svg { width: 16px; height: 16px; flex: none; color: var(--tech); }
+.snapshotNotice > span { min-width: 0; flex: 1; }
+.snapshotNotice strong,
+.snapshotNotice small { display: block; }
+.snapshotNotice strong { color: var(--text); font-size: 12px; font-weight: 600; }
+.snapshotNotice small { margin-top: 4px; color: var(--text-dim); font-size: 12px; }
+.snapshotNotice button {
+  flex: none;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--text);
+  background: var(--surface-raised);
+  font-size: 12px;
+}
+.snapshotNotice button:hover { border-color: var(--border-strong); }
+
+.historicalDownload {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+.historicalDownload > header { display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.historicalDownload > header > svg { width: 16px; height: 16px; flex: none; color: var(--tech); }
+.historicalDownload > header strong,
+.historicalDownload > header small { display: block; }
+.historicalDownload > header strong { font-size: 14px; font-weight: 600; }
+.historicalDownload > header small { margin-top: 4px; color: var(--text-faint); font-size: 12px; }
+.historicalDownload dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
+.historicalDownload dl > div { min-width: 0; padding: 16px 20px; border-right: 1px solid var(--border); }
+.historicalDownload dl > div:last-child { border-right: 0; }
+.historicalDownload dt { color: var(--text-faint); font-size: 12px; }
+.historicalDownload dd { margin: 8px 0 0; overflow: hidden; color: var(--text); font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.historicalDownload > p { margin: 0; padding: 12px 20px; border-top: 1px solid var(--border); color: var(--danger-text); font-size: 12px; }
 
 /* ── 页签面板 ──────────────────────────────────────────────────────── */
 
@@ -832,6 +882,30 @@
 .strategyGrid { display: grid; grid-template-columns: minmax(300px, .72fr) minmax(0, 1.28fr); min-height: 400px; }
 .strategyControl { display: flex; align-items: stretch; flex-direction: column; gap: 16px; padding: 20px; border-right: 1px solid var(--border); }
 .strategyControl .primaryButton { justify-content: center; width: 100%; margin-top: auto; }
+.autoAnalysisState {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  margin-top: auto;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--text-dim);
+  background: var(--surface-raised);
+}
+
+.workspaceMain {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.autoAnalysisState > svg { width: 16px; height: 16px; flex: none; color: var(--tech); }
+.autoAnalysisState span { min-width: 0; }
+.autoAnalysisState strong,
+.autoAnalysisState small { display: block; }
+.autoAnalysisState strong { color: var(--text); font-size: 12px; font-weight: 600; }
+.autoAnalysisState small { margin-top: 4px; color: var(--text-faint); font-size: 12px; }
 .strategyScope { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .strategyScope > span { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px; border: 1px solid var(--border); border-radius: var(--r-sm); color: var(--text-dim); font-size: 12px; }
 .strategyScope svg { width: 16px; height: 16px; color: color-mix(in oklab, var(--platform) 72%, var(--text)); }
@@ -1254,10 +1328,13 @@
 
 /* ── 当前用户活动记录 ─────────────────────────────────────────────── */
 
-.historyPanel {
+.historySidebar {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
+  border-right: 1px solid var(--border);
   background: var(--surface);
   box-shadow: inset 0 1px 0 color-mix(in oklab, var(--text) 8%, transparent);
 }
@@ -1267,7 +1344,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  padding: 24px;
+  padding: 20px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -1325,7 +1402,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 24px;
+  padding: 12px 20px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -1352,19 +1429,39 @@
   font-size: 12px;
 }
 
-.historyList { display: grid; }
+.historyList {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
 
 .historyRow {
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) 88px 136px 32px;
+  grid-template-columns: minmax(0, 1fr) 32px;
   align-items: center;
-  gap: 16px;
-  min-height: 80px;
-  padding: 12px 24px;
+  gap: 4px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--border);
 }
 
 .historyRow:last-child { border-bottom: 0; }
+.historyRow[data-selected="true"] { background: var(--surface-raised); }
+
+.historyRecordButton {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 12px;
+  padding: 12px;
+  border-radius: var(--r);
+  color: inherit;
+  text-align: left;
+  transition: background 160ms var(--ease);
+}
+
+.historyRecordButton:hover:not(:disabled) { background: var(--surface-raised); }
+.historyRecordButton:disabled { cursor: default; }
 
 .historyTypeIcon {
   display: grid;
@@ -1375,12 +1472,14 @@
   border-radius: var(--r);
   color: var(--text-dim);
   background: var(--surface-raised);
+  grid-column: 1;
+  grid-row: 1 / span 3;
 }
 
 .historyTypeIcon svg { width: 14px; height: 14px; }
 .historyTypeIcon[data-type="analysis"] { color: var(--text); }
 
-.historyCopy { min-width: 0; }
+.historyCopy { min-width: 0; grid-column: 2; }
 .historyCopy strong,
 .historyCopy > span,
 .historyCopy em {
@@ -1411,6 +1510,7 @@
   color: var(--text-dim);
   font-size: 12px;
   white-space: nowrap;
+  grid-column: 2;
 }
 
 .historyState i {
@@ -1425,10 +1525,11 @@
 .historyState[data-status="failed"] i { background: var(--danger-line); }
 .historyState[data-status="expired"] { color: var(--text-faint); }
 
-.historyRow time {
+.historyRecordButton time {
   color: var(--text-faint);
   font-size: 12px;
   white-space: nowrap;
+  grid-column: 2;
 }
 
 .historyRow > a {
@@ -1480,14 +1581,16 @@
 .historyPager > span { color: var(--text-faint); font-size: 12px; }
 .historyPager > div { display: flex; gap: 8px; }
 
-@media (max-width: 760px) {
+@media (max-width: 900px) {
+  .page { display: block; overflow: auto; }
+  .workspaceMain { overflow: visible; }
+  .historySidebar { max-height: 440px; border-right: 0; border-bottom: 1px solid var(--border); }
   .historyHeader { align-items: flex-start; padding: 20px; }
   .historyFilters { overflow-x: auto; padding: 12px 20px; }
   .historyFilters > span { display: none; }
-  .historyRow { grid-template-columns: 32px minmax(0, 1fr) 32px; gap: 12px; padding: 16px 20px; }
-  .historyState { grid-column: 2; grid-row: 2; }
-  .historyRow time { grid-column: 2; grid-row: 3; }
-  .historyRow > a { grid-column: 3; grid-row: 1 / span 3; }
+  .historyLoading,
+  .historyList { max-height: 240px; overflow: auto; }
+  .historyEmpty { min-height: 200px; }
   .historyPager { padding: 12px 20px; }
 }
 
@@ -1762,6 +1865,9 @@
 
 @media (max-width: 720px) {
   .getter { padding: 16px; }
+  .historicalDownload dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .historicalDownload dl > div:nth-child(2) { border-right: 0; }
+  .historicalDownload dl > div:nth-child(n + 3) { border-top: 1px solid var(--border); }
   .getterField {
     align-items: stretch;
     flex-direction: column;

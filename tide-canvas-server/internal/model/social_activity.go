@@ -39,6 +39,8 @@ type SocialActivityRecord struct {
 	Height          int            `gorm:"column:height;not null;default:0" json:"height"`
 	EstimatedBytes  int64          `gorm:"column:estimated_bytes;not null;default:0" json:"estimatedBytes"`
 	DownloadedBytes int64          `gorm:"column:downloaded_bytes;not null;default:0" json:"downloadedBytes"`
+	AnalysisRunID   idgen.ID       `gorm:"column:analysis_run_id;not null;default:0;index" json:"analysisRunId,omitempty"`
+	SnapshotJSON    string         `gorm:"column:snapshot_json;type:longtext" json:"-"`
 	ErrorMessage    string         `gorm:"column:error_message;type:text" json:"errorMessage"`
 	ExpiresAt       *time.Time     `gorm:"column:expires_at;index;index:idx_social_activity_expiry,priority:3" json:"expiresAt,omitempty"`
 	CompletedAt     *time.Time     `gorm:"column:completed_at;index" json:"completedAt,omitempty"`

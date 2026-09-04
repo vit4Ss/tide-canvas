@@ -83,10 +83,10 @@ test("public video downloader uses Relay capability discovery and a native hidde
   assert.match(workbench, /下载票据有效/);
 });
 
-test("workbench splits into three top-level tabs with a11y wiring", () => {
+test("workbench keeps two action tabs with a11y wiring", () => {
   assert.match(workbench, /useState<WorkbenchTab>\("breakdown"\)/);
   assert.match(workbench, /role="tablist"/);
-  for (const id of ["breakdown", "download", "history"]) {
+  for (const id of ["breakdown", "download"]) {
     assert.match(workbench, new RegExp(`id="analysis-tab-${id}"`));
     assert.match(workbench, new RegExp(`id="analysis-panel-${id}"`));
     assert.match(workbench, new RegExp(`aria-controls="analysis-panel-${id}"`));
@@ -97,19 +97,18 @@ test("workbench splits into three top-level tabs with a11y wiring", () => {
   // unreachable by keyboard entirely.
   assert.match(workbench, /tabIndex=\{tab === "breakdown" \? 0 : -1\}/);
   assert.match(workbench, /tabIndex=\{tab === "download" \? 0 : -1\}/);
-  assert.match(workbench, /tabIndex=\{tab === "history" \? 0 : -1\}/);
   assert.match(workbench, /const onTabKeyDown =/);
   for (const key of ["ArrowRight", "ArrowLeft", "Home", "End"]) {
     assert.ok(workbench.includes(`"${key}"`), `tablist ignores ${key}`);
   }
-  assert.equal(workbench.match(/onKeyDown=\{onTabKeyDown\}/g)?.length, 3);
+  assert.equal(workbench.match(/onKeyDown=\{onTabKeyDown\}/g)?.length, 2);
 });
 
 test("service state is stated once and follows the active tab", () => {
   // Each tab is backed by a different service (TikHub parse / Relay downloader);
   // one control with a tab-aware value replaces the two duplicated indicators.
-  assert.match(workbench, /const serviceReady = tab === "history" \? true/);
-  assert.match(workbench, /const serviceLabel = tab === "history" \? "仅自己可见"/);
+  assert.match(workbench, /const serviceReady = tab === "breakdown"/);
+  assert.match(workbench, /const serviceLabel = tab === "breakdown" \? statusLabel : downloaderStateLabel/);
   assert.match(workbench, /const recheckService = \(\)/);
   assert.equal(workbench.match(/className=\{styles\.serviceState\}/g)?.length, 1);
 });
@@ -184,7 +183,7 @@ test("both tabs show a result-shaped skeleton while a request is in flight", () 
   // 请求期间此前仍停在空态,页面看不出在做事。
   assert.match(workbench, /function ResultSkeleton/);
   assert.match(workbench, /\) : loading \? \(/);
-  assert.match(workbench, /\) : downloadBusy \? \(/);
+  assert.match(workbench, /historicalRecord\?\.type === "download" \? null : downloadBusy \? \(/);
   // 拆解页用双栏骨架;下载页用封面形状的骨架,两者版式不同不强行复用。
   assert.match(workbench, /<ResultSkeleton \/>/);
   assert.match(workbench, /styles\.posterLoading/);
@@ -236,8 +235,7 @@ test("stylesheet stays inside the project design system", () => {
   const perTab = {
     breakdownContent: [".composer", ".contentHero", ".contentSignals", ".contentStrategy", ".runPanel"],
     breakdownAccount: [".composer", ".accountStrategy", ".runPanel"],
-    download: [".getter", ".posterCard", ".formatCard", ".infoCard", ".runPanel"],
-    history: [".historyPanel"],
+    download: [".getter", ".posterCard", ".formatCard", ".infoCard", ".historicalDownload", ".runPanel"],
   };
   const unaccounted = raised.filter((selector) => !Object.values(perTab).flat().includes(selector));
   assert.deepEqual(unaccounted, [], `raised surface not attributed to a tab: ${unaccounted.join(" | ")}`);
@@ -246,7 +244,7 @@ test("stylesheet stays inside the project design system", () => {
     // The account view is deliberately a dense intelligence board. Its four
     // major regions replace the old nested left/right cards, while the input
     // composer and a running report can coexist above/below them.
-    const ceiling = tab === "breakdownAccount" ? 6 : 5;
+    const ceiling = tab === "breakdownAccount" || tab === "download" ? 6 : 5;
     assert.ok(onScreen.length <= ceiling, `too many card surfaces on ${tab}: ${onScreen.join(" | ")}`);
   }
 
@@ -263,11 +261,23 @@ test("stylesheet stays inside the project design system", () => {
   assert.doesNotMatch(rules, /background-clip:\s*text|-webkit-background-clip:\s*text/);
 });
 
-test("history tab reads only the current-user activity endpoint", () => {
+test("left history sidebar restores an owned immutable snapshot without re-inspecting", () => {
   assert.match(api, /\/api\/social-analysis\/records/);
-  assert.match(workbench, /<ActivityHistoryPanel key=\{ownerUserId \|\| "anonymous"\} \/>/);
+  assert.match(api, /\/api\/social-analysis\/records\/\$\{id\}/);
+  assert.match(workbench, /<ActivityHistorySidebar/);
+  assert.match(workbench, /refreshKey=\{historyRefresh\}/);
+  assert.match(workbench, /watchId=\{watchedDownloadRecordId\}/);
+  assert.match(history, /watched\.status === "succeeded"/);
+  assert.match(workbench, /setHistoryRefresh\(\(value\) => value \+ 1\)/);
+  assert.ok(workbench.indexOf("<ActivityHistorySidebar") < workbench.indexOf("styles.workspaceMain"));
+  assert.match(workbench, /isSocialInspectSnapshot\(record\.snapshot\)/);
+  assert.match(workbench, /skillRun\.resume\(record\.analysisRunId\)/);
+  assert.match(workbench, /正在查看历史快照/);
+  assert.match(workbench, /当时调用：/);
+  assert.match(workbench, /获取最新数据/);
   assert.match(history, /socialAnalysisApi\.records/);
-  assert.match(history, /这里只展示当前账号/);
+  assert.match(history, /socialAnalysisApi\.record\(record\.id\)/);
+  assert.match(history, /仅当前账号可见/);
   assert.doesNotMatch(history, /userId:|userKeyword:/);
 });
 
@@ -324,6 +334,16 @@ test("account mode renders a real intelligence board instead of a source-and-tex
   assert.doesNotMatch(accountHeroRule, /::before|background: var\(--platform\)/, "account header regained a decorative accent stripe");
 });
 
+test("account inspection automatically starts one strategy run without a second click", () => {
+  assert.match(workbench, /pendingAccountAutoRunRef\.current = response\.data/);
+  assert.match(workbench, /pendingAccountAutoRunRef\.current !== result/);
+  assert.match(workbench, /pendingAccountAutoRunRef\.current = null;[\s\S]*queueMicrotask\(\(\) => \{ void startDeepAnalysis\(\); \}\)/);
+  assert.match(workbench, /正在自动生成账号策略/);
+  assert.match(workbench, /无需再次点击，结果会直接显示在右侧/);
+  assert.match(workbench, /activityRecordId: result\.recordId/);
+  assert.doesNotMatch(workbench, /busy \? "正在启动分析" : "生成账号策略"/);
+});
+
 test("single-work mode has a factual dashboard and a dedicated timecode report workspace", () => {
   assert.match(workbench, /function ContentDashboard/);
   assert.match(workbench, /result=\{result\}[\s\S]*work=\{currentWork\}[\s\S]*canDownload=/);
@@ -341,7 +361,7 @@ test("single-work mode has a factual dashboard and a dedicated timecode report w
 
 test("a restored AI report is shown only beside the account or work that created it", () => {
   assert.match(workbench, /function analysisRunContext/);
-  assert.match(workbench, /sourceUrl: sourceURL, sourceFetchedAt: result\.fetchedAt/);
+  assert.match(workbench, /sourceUrl: sourceURL,[\s\S]{0,160}sourceFetchedAt: result\.fetchedAt/);
   assert.match(workbench, /activeRunContext\.sourceUrl === currentAnalysisSource/);
   assert.match(workbench, /activeRunContext\.sourceFetchedAt === result\.fetchedAt/);
   assert.match(workbench, /const contextualRunDetails = runMatchesCurrentResult \? runDetails : null/);

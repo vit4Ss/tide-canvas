@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -111,6 +112,54 @@ func TestActivityRecordsAreAlwaysScopedToCurrentUser(t *testing.T) {
 	var otherUserRecord model.SocialActivityRecord
 	if err := db.First(&otherUserRecord, "id = ?", idgen.ID(1203)).Error; err != nil || otherUserRecord.Status != model.SocialActivityReady {
 		t.Fatalf("current-user list mutated another user's record: %+v err=%v", otherUserRecord, err)
+	}
+}
+
+func TestActivityRecordDetailReturnsOwnedSnapshotOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := activityTestDB(t)
+	ownerID := idgen.ID(4101)
+	otherID := idgen.ID(4102)
+	if err := db.Create(&[]model.User{
+		{ID: ownerID, Username: "snapshot-owner", Email: "snapshot-owner@example.com"},
+		{ID: otherID, Username: "snapshot-other", Email: "snapshot-other@example.com"},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	record := model.SocialActivityRecord{
+		ID: idgen.ID(4201), UserID: ownerID, ActivityType: model.SocialActivityAnalysis,
+		Platform: "bilibili", SourceURL: "https://space.bilibili.com/1", Title: "Historical account",
+		Status: model.SocialActivitySucceeded, SnapshotJSON: `{"platform":"bilibili","platformName":"哔哩哔哩","kind":"account","sourceUrl":"https://space.bilibili.com/1","works":[],"warnings":[],"fetchedAt":1788450000000}`,
+		AnalysisRunID: idgen.ID(4301),
+	}
+	if err := db.Create(&record).Error; err != nil {
+		t.Fatal(err)
+	}
+	h := &handler{db: db}
+	router := gin.New()
+	router.GET("/records/:id", func(c *gin.Context) {
+		c.Set(middleware.CtxUserID, ownerID)
+		c.Next()
+	}, h.activityRecordDetail)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/records/4201", nil))
+	var result response.Result[ActivityRecordDetailVO]
+	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.Success || result.Data.ID != record.ID || result.Data.AnalysisRunID != idgen.ID(4301) || !json.Valid(result.Data.Snapshot) {
+		t.Fatalf("unexpected owned detail: %+v body=%s", result, recorder.Body.String())
+	}
+
+	forbiddenRouter := gin.New()
+	forbiddenRouter.GET("/records/:id", func(c *gin.Context) {
+		c.Set(middleware.CtxUserID, otherID)
+		c.Next()
+	}, h.activityRecordDetail)
+	forbidden := httptest.NewRecorder()
+	forbiddenRouter.ServeHTTP(forbidden, httptest.NewRequest(http.MethodGet, "/records/4201", nil))
+	if forbidden.Code != http.StatusNotFound || strings.Contains(forbidden.Body.String(), "Historical account") {
+		t.Fatalf("cross-user detail leaked: status=%d body=%s", forbidden.Code, forbidden.Body.String())
 	}
 }
 

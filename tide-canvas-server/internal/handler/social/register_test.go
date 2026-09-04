@@ -607,11 +607,14 @@ func TestInspectHTTPHandlerLoadsServerCredentialWithoutExposingIt(t *testing.T) 
 	if !result.Success || result.Data.Content == nil || result.Data.Content.ID != "1" {
 		t.Fatalf("unexpected inspect response: %+v", result)
 	}
+	if result.Data.RecordID == 0 {
+		t.Fatal("inspect response did not expose its activity record id")
+	}
 	var activity model.SocialActivityRecord
 	if err := db.First(&activity, "user_id = ?", idgen.ID(7001)).Error; err != nil {
 		t.Fatal(err)
 	}
-	if activity.ActivityType != model.SocialActivityAnalysis || activity.Platform != "douyin" || activity.Kind != "content" || activity.Status != model.SocialActivitySucceeded || activity.CompletedAt == nil {
+	if activity.ActivityType != model.SocialActivityAnalysis || activity.Platform != "douyin" || activity.Kind != "content" || activity.Status != model.SocialActivitySucceeded || activity.CompletedAt == nil || !json.Valid([]byte(activity.SnapshotJSON)) {
 		t.Fatalf("unexpected analysis activity: %+v", activity)
 	}
 }

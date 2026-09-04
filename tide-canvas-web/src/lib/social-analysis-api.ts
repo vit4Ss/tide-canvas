@@ -62,6 +62,7 @@ export interface SocialWorkVO {
 }
 
 export interface SocialInspectVO {
+  recordId?: string;
   platform: SocialPlatform;
   platformName: string;
   kind: SocialAnalysisKind;
@@ -99,6 +100,10 @@ export interface VideoDownloadResolveVO {
   coverUrl?: string;
 }
 
+export type SocialActivityRecordDetailVO = SocialActivityRecordVO & {
+  snapshot?: SocialInspectVO;
+};
+
 export const socialAnalysisApi = {
   status: () => http.get<SocialAnalysisStatusVO>("/api/social-analysis/status"),
   inspect: (data: { url: string; kind: SocialAnalysisKind }) =>
@@ -109,4 +114,6 @@ export const socialAnalysisApi = {
     http.post<VideoDownloadResolveVO>("/api/social-analysis/downloader/resolve", data),
   records: (query: SocialActivityRecordQuery = {}) =>
     http.get<PageData<SocialActivityRecordVO>>("/api/social-analysis/records", toParams(query)),
+  record: (id: string) =>
+    http.get<SocialActivityRecordDetailVO>(`/api/social-analysis/records/${id}`),
 };

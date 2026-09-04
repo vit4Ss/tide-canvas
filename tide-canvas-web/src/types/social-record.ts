@@ -25,6 +25,7 @@ export interface SocialActivityRecordVO {
   height?: number;
   estimatedBytes?: number;
   downloadedBytes?: number;
+  analysisRunId?: string;
   errorMessage?: string;
   expiresAt?: string;
   createTime: string;

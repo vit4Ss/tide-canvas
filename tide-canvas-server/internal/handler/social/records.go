@@ -1,6 +1,7 @@
 package social
 
 import (
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -46,11 +47,17 @@ type ActivityRecordVO struct {
 	Height          int        `json:"height,omitempty"`
 	EstimatedBytes  int64      `json:"estimatedBytes,omitempty"`
 	DownloadedBytes int64      `json:"downloadedBytes,omitempty"`
+	AnalysisRunID   idgen.ID   `json:"analysisRunId,omitempty"`
 	ErrorMessage    string     `json:"errorMessage,omitempty"`
 	ExpiresAt       *time.Time `json:"expiresAt,omitempty"`
 	CreateTime      time.Time  `json:"createTime"`
 	UpdateTime      time.Time  `json:"updateTime"`
 	CompletedAt     *time.Time `json:"completedAt,omitempty"`
+}
+
+type ActivityRecordDetailVO struct {
+	ActivityRecordVO
+	Snapshot json.RawMessage `json:"snapshot,omitempty"`
 }
 
 func parseActivityPositive(raw string, fallback int) int {
@@ -135,6 +142,32 @@ func (h *handler) failActivity(record *model.SocialActivityRecord, message strin
 func (h *handler) activityRecords(c *gin.Context) {
 	userID := middleware.CurrentUserID(c)
 	writeActivityRecords(c, h.db, &userID, false)
+}
+
+func (h *handler) activityRecordDetail(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+	recordID, err := idgen.Parse(strings.TrimSpace(c.Param("id")))
+	if err != nil || recordID == 0 {
+		response.Fail(c, response.CodeBadRequest, "记录 ID 无效")
+		return
+	}
+	userID := middleware.CurrentUserID(c)
+	var record model.SocialActivityRecord
+	if err := h.db.Where("id = ? AND user_id = ?", recordID, userID).First(&record).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.Fail(c, response.CodeNotFound, "记录不存在")
+			return
+		}
+		response.Fail(c, response.CodeServerError, "failed to load social activity record")
+		return
+	}
+	var user model.User
+	_ = h.db.Unscoped().First(&user, "id = ?", userID).Error
+	detail := ActivityRecordDetailVO{ActivityRecordVO: activityRecordVO(record, user)}
+	if raw := strings.TrimSpace(record.SnapshotJSON); raw != "" && json.Valid([]byte(raw)) {
+		detail.Snapshot = json.RawMessage(raw)
+	}
+	response.OK(c, detail)
 }
 
 // AdminActivityRecords writes the administrator-wide list. The /api/admin
@@ -240,7 +273,7 @@ func writeActivityRecords(c *gin.Context, db *gorm.DB, ownerID *idgen.ID, allowU
 		return
 	}
 	var records []model.SocialActivityRecord
-	if err := tx.Order("create_time DESC, id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&records).Error; err != nil {
+	if err := tx.Omit("snapshot_json").Order("create_time DESC, id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&records).Error; err != nil {
 		response.Fail(c, response.CodeServerError, "failed to list social activity records")
 		return
 	}
@@ -267,15 +300,19 @@ func writeActivityRecords(c *gin.Context, db *gorm.DB, ownerID *idgen.ID, allowU
 	for i := range records {
 		record := records[i]
 		user := usersByID[record.UserID]
-		rows = append(rows, ActivityRecordVO{
-			ID: record.ID, UserID: record.UserID, UserName: activityUserName(user, record.UserID), UserEmail: user.Email,
-			Type: record.ActivityType, Kind: record.Kind, Platform: record.Platform, SourceURL: record.SourceURL,
-			Title: record.Title, Status: record.Status, Quality: record.Quality,
-			DurationSeconds: record.DurationSeconds, Width: record.Width, Height: record.Height,
-			EstimatedBytes: record.EstimatedBytes, DownloadedBytes: record.DownloadedBytes,
-			ErrorMessage: activityString(record.ErrorMessage, 1000), ExpiresAt: record.ExpiresAt, CreateTime: record.CreateTime,
-			UpdateTime: record.UpdateTime, CompletedAt: record.CompletedAt,
-		})
+		rows = append(rows, activityRecordVO(record, user))
 	}
 	response.Page(c, rows, total, page, pageSize)
+}
+
+func activityRecordVO(record model.SocialActivityRecord, user model.User) ActivityRecordVO {
+	return ActivityRecordVO{
+		ID: record.ID, UserID: record.UserID, UserName: activityUserName(user, record.UserID), UserEmail: user.Email,
+		Type: record.ActivityType, Kind: record.Kind, Platform: record.Platform, SourceURL: record.SourceURL,
+		Title: record.Title, Status: record.Status, Quality: record.Quality,
+		DurationSeconds: record.DurationSeconds, Width: record.Width, Height: record.Height,
+		EstimatedBytes: record.EstimatedBytes, DownloadedBytes: record.DownloadedBytes, AnalysisRunID: record.AnalysisRunID,
+		ErrorMessage: activityString(record.ErrorMessage, 1000), ExpiresAt: record.ExpiresAt, CreateTime: record.CreateTime,
+		UpdateTime: record.UpdateTime, CompletedAt: record.CompletedAt,
+	}
 }

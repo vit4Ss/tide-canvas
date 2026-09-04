@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, ExternalLink, History, Loader2, RefreshCw, ScanSearch } from "lucide-react";
 import { socialAnalysisApi } from "@/lib/social-analysis-api";
+import type { SocialActivityRecordDetailVO } from "@/lib/social-analysis-api";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { toast } from "@/components/shared/toast";
 import type { SocialActivityRecordVO, SocialActivityType } from "@/types/social-record";
 import styles from "./analysis.module.css";
 
@@ -64,7 +66,14 @@ function recordLabel(row: SocialActivityRecordVO): string {
   return row.kind === "account" ? "账号分析" : "作品分析";
 }
 
-export function ActivityHistoryPanel() {
+interface ActivityHistorySidebarProps {
+  selectedId?: string;
+  watchId?: string;
+  refreshKey: number;
+  onSelect: (record: SocialActivityRecordDetailVO) => void | Promise<void>;
+}
+
+export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSelect }: ActivityHistorySidebarProps) {
   const ensureSession = useAuthStore((state) => state.ensureSession);
   const requestRef = useRef(0);
   const [type, setType] = useState<"" | SocialActivityType>("");
@@ -73,6 +82,7 @@ export function ActivityHistoryPanel() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [openingId, setOpeningId] = useState("");
 
   const load = useCallback(async () => {
     const requestID = ++requestRef.current;
@@ -101,17 +111,43 @@ export function ActivityHistoryPanel() {
       cancelAnimationFrame(frame);
       requestRef.current += 1;
     };
-  }, [load]);
+  }, [load, refreshKey]);
+
+  useEffect(() => {
+    if (!watchId || page !== 1 || type === "analysis") return;
+    const watched = rows.find((row) => row.id === watchId);
+    if (watched && (watched.status === "succeeded" || watched.status === "failed" || watched.status === "expired")) return;
+    const timer = window.setTimeout(() => { void load(); }, 5_000);
+    return () => window.clearTimeout(timer);
+  }, [load, page, rows, type, watchId]);
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+  const openRecord = async (record: SocialActivityRecordVO) => {
+    if (openingId) return;
+    setOpeningId(record.id);
+    try {
+      if (!await ensureSession()) return;
+      const response = await socialAnalysisApi.record(record.id);
+      if (!response.success || !response.data) {
+        toast.error(response.message || "记录详情加载失败");
+        return;
+      }
+      await onSelect(response.data);
+    } catch {
+      toast.error("记录详情加载失败，请稍后重试");
+    } finally {
+      setOpeningId("");
+    }
+  };
+
   return (
-    <section className={styles.historyPanel} aria-busy={loading}>
+    <aside className={styles.historySidebar} aria-busy={loading} aria-label="我的使用记录">
       <header className={styles.historyHeader}>
         <div>
-          <small>ACTIVITY</small>
-          <h2>我的使用记录</h2>
-          <p>这里只展示当前账号的内容分析与视频下载记录。</p>
+          <small>HISTORY</small>
+          <h2>使用记录</h2>
+          <p>仅当前账号可见</p>
         </div>
         <button type="button" onClick={() => void load()} disabled={loading} aria-label="刷新使用记录">
           {loading ? <Loader2 className={styles.spin} aria-hidden /> : <RefreshCw aria-hidden />}
@@ -155,23 +191,22 @@ export function ActivityHistoryPanel() {
       ) : (
         <div className={styles.historyList}>
           {rows.map((row) => (
-            <article className={styles.historyRow} key={row.id}>
-              <span className={styles.historyTypeIcon} data-type={row.type}>
-                {row.type === "download" ? <Download aria-hidden /> : <ScanSearch aria-hidden />}
-              </span>
-              <div className={styles.historyCopy}>
-                <strong title={row.title || row.sourceUrl}>{row.title || (row.type === "download" ? "公开视频" : "内容分析")}</strong>
-                <span>
-                  {PLATFORM_LABEL[row.platform || ""] || row.platform || "待识别"}
-                  <i aria-hidden>·</i>{recordLabel(row)}
-                  {row.type === "download" && (row.downloadedBytes || row.estimatedBytes) ? <><i aria-hidden>·</i>{formatBytes(row.downloadedBytes || row.estimatedBytes)}</> : null}
+            <article className={styles.historyRow} data-selected={selectedId === row.id ? "true" : "false"} key={row.id}>
+              <button type="button" className={styles.historyRecordButton} aria-pressed={selectedId === row.id} onClick={() => void openRecord(row)} disabled={!!openingId}>
+                <span className={styles.historyTypeIcon} data-type={row.type}>
+                  {openingId === row.id ? <Loader2 className={styles.spin} aria-hidden /> : row.type === "download" ? <Download aria-hidden /> : <ScanSearch aria-hidden />}
                 </span>
-                {row.errorMessage ? <em title={row.errorMessage}>{row.errorMessage}</em> : null}
-              </div>
-              <div className={styles.historyState} data-status={row.status}>
-                <i aria-hidden />{statusLabel(row.status)}
-              </div>
-              <time dateTime={row.createTime}>{formatTime(row.createTime)}</time>
+                <span className={styles.historyCopy}>
+                  <strong title={row.title || row.sourceUrl}>{row.title || (row.type === "download" ? "公开视频" : "内容分析")}</strong>
+                  <span>
+                    {PLATFORM_LABEL[row.platform || ""] || row.platform || "待识别"}<i aria-hidden>·</i>{recordLabel(row)}
+                    {row.type === "download" && (row.downloadedBytes || row.estimatedBytes) ? <><i aria-hidden>·</i>{formatBytes(row.downloadedBytes || row.estimatedBytes)}</> : null}
+                  </span>
+                  {row.errorMessage ? <em title={row.errorMessage}>{row.errorMessage}</em> : null}
+                </span>
+                <span className={styles.historyState} data-status={row.status}><i aria-hidden />{statusLabel(row.status)}</span>
+                <time dateTime={row.createTime}>{formatTime(row.createTime)}</time>
+              </button>
               <a href={row.sourceUrl} target="_blank" rel="noreferrer" aria-label="打开来源链接"><ExternalLink aria-hidden /></a>
             </article>
           ))}
@@ -187,6 +222,6 @@ export function ActivityHistoryPanel() {
           </div>
         </footer>
       ) : null}
-    </section>
+    </aside>
   );
 }

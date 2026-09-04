@@ -429,6 +429,14 @@ func (s *service) createRun(ctx context.Context, userID idgen.ID, dto CreateDTO)
 		return nil, false, err
 	}
 	dto.Input.Parameters = parameters
+	activityRecordID, err := analysisActivityRecordID(skill.SeedKey, parameters)
+	if err != nil {
+		return nil, false, err
+	}
+	activitySourceURL, activityPlatform, activityKind, err := analysisActivityContext(activityRecordID, parameters)
+	if err != nil {
+		return nil, false, err
+	}
 	if err := validateRunInput(dto.Input); err != nil {
 		return nil, false, err
 	}
@@ -464,6 +472,11 @@ func (s *service) createRun(ctx context.Context, userID idgen.ID, dto CreateDTO)
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(run).Error; err != nil {
 			return err
+		}
+		if activityRecordID != 0 {
+			if err := linkAnalysisActivity(tx, activityRecordID, userID, run.ID, activitySourceURL, activityPlatform, activityKind); err != nil {
+				return err
+			}
 		}
 		if err := tx.Model(&model.Skill{}).Where("id = ?", skill.ID).
 			UpdateColumn("use_count", gorm.Expr("use_count + 1")).Error; err != nil {
@@ -503,6 +516,63 @@ func (s *service) createRun(ctx context.Context, userID idgen.ID, dto CreateDTO)
 		return nil, false, err
 	}
 	return run, false, nil
+}
+
+func analysisActivityRecordID(seedKey string, parameters map[string]any) (idgen.ID, error) {
+	raw, exists := parameters["activityRecordId"]
+	if !exists || raw == nil || strings.TrimSpace(fmt.Sprint(raw)) == "" {
+		return 0, nil
+	}
+	allowed := seedKey == "tool-account-analysis" || seedKey == "tool-video-analysis" || seedKey == "tool-image-analysis"
+	if !allowed {
+		return 0, invalid("activityRecordId is only valid for analysis skills")
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return 0, invalid("invalid activityRecordId")
+	}
+	id, err := idgen.Parse(strings.TrimSpace(value))
+	if err != nil || id == 0 {
+		return 0, invalid("invalid activityRecordId")
+	}
+	return id, nil
+}
+
+func analysisActivityContext(activityRecordID idgen.ID, parameters map[string]any) (string, string, string, error) {
+	if activityRecordID == 0 {
+		return "", "", "", nil
+	}
+	stringValue := func(key string) string {
+		value, _ := parameters[key].(string)
+		return strings.TrimSpace(value)
+	}
+	sourceURL := stringValue("sourceUrl")
+	platform := strings.ToLower(stringValue("platform"))
+	mode := strings.ToLower(stringValue("analysisMode"))
+	kind := "content"
+	if mode == "account" {
+		kind = "account"
+	} else if mode != "image" && mode != "video" {
+		return "", "", "", invalid("invalid analysis activity context")
+	}
+	if sourceURL == "" || platform == "" {
+		return "", "", "", invalid("invalid analysis activity context")
+	}
+	return sourceURL, platform, kind, nil
+}
+
+func linkAnalysisActivity(db *gorm.DB, activityRecordID, userID, runID idgen.ID, sourceURL, platform, kind string) error {
+	linked := db.Model(&model.SocialActivityRecord{}).
+		Where("id = ? AND user_id = ? AND activity_type = ? AND source_url = ? AND platform = ? AND kind = ? AND (analysis_run_id = 0 OR analysis_run_id = ?)",
+			activityRecordID, userID, model.SocialActivityAnalysis, sourceURL, platform, kind, runID).
+		Update("analysis_run_id", runID)
+	if linked.Error != nil {
+		return linked.Error
+	}
+	if linked.RowsAffected != 1 {
+		return invalid("analysis activity record not found or already linked")
+	}
+	return nil
 }
 
 type versionBinding struct {

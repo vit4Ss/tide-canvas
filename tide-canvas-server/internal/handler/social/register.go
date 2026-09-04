@@ -118,6 +118,7 @@ type workVO struct {
 }
 
 type inspectVO struct {
+	RecordID     idgen.ID   `json:"recordId,omitempty"`
 	Platform     platform   `json:"platform"`
 	PlatformName string     `json:"platformName"`
 	Kind         string     `json:"kind"`
@@ -161,6 +162,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	g.Use(middleware.JWTAuth(d))
 	g.GET("/status", h.status)
 	g.GET("/records", h.activityRecords)
+	g.GET("/records/:id", h.activityRecordDetail)
 	g.GET("/downloader/platforms", h.downloaderPlatforms)
 	g.POST("/downloader/resolve", middleware.RateLimit(d, 15, time.Minute), h.resolveVideoDownload)
 	g.POST("/inspect", middleware.RateLimit(d, 20, time.Minute), h.inspect)
@@ -323,11 +325,22 @@ func (h *handler) inspect(c *gin.Context) {
 	if result.Warnings == nil {
 		result.Warnings = []string{}
 	}
+	if activity != nil {
+		result.RecordID = activity.ID
+	}
 	completedAt := time.Now()
-	h.updateActivity(activity, map[string]any{
+	activityUpdate := map[string]any{
 		"status": model.SocialActivitySucceeded, "title": inspectActivityTitle(result),
 		"error_message": "", "completed_at": completedAt,
-	})
+	}
+	if snapshot, marshalErr := json.Marshal(result); marshalErr == nil && len(snapshot) <= 4<<20 {
+		activityUpdate["snapshot_json"] = string(snapshot)
+	} else if marshalErr != nil {
+		logger.L().Warn("failed to marshal social analysis snapshot", zap.Error(marshalErr))
+	} else {
+		logger.L().Warn("social analysis snapshot exceeds storage limit", zap.Int("bytes", len(snapshot)))
+	}
+	h.updateActivity(activity, activityUpdate)
 	response.OK(c, result)
 }
 
