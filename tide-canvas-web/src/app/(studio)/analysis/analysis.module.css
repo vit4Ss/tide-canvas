@@ -152,7 +152,10 @@
 .composer,
 .sourceColumn,
 .aiCard,
-.downloadCard {
+.getter,
+.posterCard,
+.formatCard,
+.infoCard {
   background:
     linear-gradient(180deg,
       color-mix(in oklab, var(--text) 4%, var(--surface)) 0%,
@@ -207,7 +210,6 @@
 }
 
 .urlField > span,
-.qualityRow > span,
 .focusField > span {
   color: var(--text-faint);
   font-size: 12px;
@@ -258,36 +260,6 @@
 .urlField > div > button:hover:not(:disabled) { border-color: var(--border-strong); color: var(--text); }
 .urlField > div > button:disabled { cursor: default; opacity: .5; }
 
-.qualityRow { display: grid; gap: 8px; }
-
-.qualityRow > div {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.qualityRow button {
-  display: grid;
-  gap: 4px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  text-align: left;
-  transition: border-color 160ms var(--ease), background 160ms var(--ease);
-}
-
-.qualityRow button b { color: var(--text-dim); font-size: 14px; font-weight: 600; }
-.qualityRow button small { color: var(--text-faint); font-size: 12px; }
-.qualityRow button:hover:not(:disabled) { border-color: var(--border-strong); }
-.qualityRow button:disabled { cursor: default; opacity: .55; }
-
-/* 同上:基础规则用的是 border 简写,裸类的 border-color 排不上。 */
-.qualityRow button.qualityActive {
-  border-color: var(--border-strong);
-  background: var(--panel);
-}
-
-.qualityRow button.qualityActive b { color: var(--text); }
 
 /* ── 动作行与按钮 ──────────────────────────────────────────────────── */
 
@@ -708,8 +680,7 @@
   border-radius: var(--r-lg);
 }
 
-.aiCard h3,
-.downloadBody h3 {
+.aiCard h3 {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
@@ -750,22 +721,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ── 下载页:双栏 + 封面主体 ────────────────────────────────────────── */
-
-.downloadLayout {
-  display: grid;
-  grid-template-columns: minmax(360px, 460px) minmax(0, 1fr);
-  gap: 20px;
-  align-items: start;
-}
-
-.downloadCard {
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  /* 结果卡是这一屏唯一抬起的对象,给它主题的投影建立层级;其余表面只靠边框。 */
-  box-shadow: var(--shadow), inset 0 1px 0 color-mix(in oklab, var(--text) 8%, transparent);
-}
 
 /* 封面:平台品牌色是这张卡唯一的强调色,也是唯一的彩色来源。 */
 .posterMedia {
@@ -821,38 +776,6 @@
 .posterChipQuality { top: 12px; right: 12px; }
 .posterChipDuration { bottom: 12px; right: 12px; font-variant-numeric: tabular-nums; }
 
-.downloadBody {
-  display: grid;
-  gap: 16px;
-  padding: 20px;
-}
-
-.downloadMeta {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  padding: 16px 0;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-}
-
-.downloadMeta span { display: grid; gap: 4px; }
-.downloadMeta small { color: var(--text-faint); font-size: 12px; }
-.downloadMeta b {
-  font-size: 20px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -.02em;
-}
-
-.downloadActions {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.downloadActions small { color: var(--text-faint); font-size: 12px; }
 
 /* 未解析时右栏的占位:保持与结果卡相同的比例与轮廓,解析完成不跳版。 */
 .downloadPlaceholder {
@@ -1092,8 +1015,7 @@
 
 @media (max-width: 1080px) {
   .resultGrid,
-  .skeletonGrid,
-  .downloadLayout { grid-template-columns: minmax(0, 1fr); }
+  .skeletonGrid { grid-template-columns: minmax(0, 1fr); }
   .profileNumbers { gap: 24px; }
 }
 
@@ -1103,15 +1025,11 @@
   .serviceState { align-self: flex-start; margin-bottom: 0; order: -1; }
   .tabs { gap: 20px; }
   .composer { padding: 16px; gap: 16px; }
-  .qualityRow > div { grid-template-columns: minmax(0, 1fr); }
   .composerFooter,
   .aiActionRow { align-items: stretch; flex-direction: column; }
   .composerFooter .primaryButton,
   .aiActionRow .primaryButton { justify-content: center; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 16px; }
-  .downloadMeta { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-  .downloadMeta b { font-size: 16px; }
-  .downloadBody { padding: 16px; }
   .pageHeader h1 { font-size: 28px; }
   .profileNumbers { gap: 20px; }
   .empty { padding: 48px 20px; }
@@ -1131,4 +1049,303 @@
   .primaryButton,
   .bridgeButton { height: 44px; }
   .tabs button { padding: 12px 0 16px; }
+}
+
+/* ── 下载页:居中窄栏,逐块堆叠 ──────────────────────────────────────────
+   版式参考成熟下载站。此前是双栏铺满 1240px,输入框有 1180px 宽只为装一条
+   链接;现在收到 880px 居中,每块面板只回答一个问题:怎么用 → 贴链接 →
+   看画面 → 选格式下载 → 取元信息。 */
+
+.downloadColumn {
+  display: grid;
+  gap: 16px;
+  width: min(880px, 100%);
+  margin: 0 auto;
+}
+
+.getter {
+  display: grid;
+  gap: 16px;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  text-align: center;
+  justify-items: center;
+}
+
+/* 使用步骤:第一次来的人需要知道链接从哪来。用发丝小点分隔,不做成编号列表。 */
+.getterSteps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.getterSteps i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* 输入与动作合成一件控件:整屏唯一的下一步,不再拆成输入框 + 页脚按钮。 */
+.getterField {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 8px 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--pill);
+  background: var(--bg);
+  transition: border-color 160ms var(--ease);
+}
+
+.getterField:focus-within { border-color: var(--border-strong); }
+
+.getterMark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+  transition: color 160ms var(--ease);
+}
+
+.getterMark svg { width: 16px; height: 16px; }
+/* 认出是可解析的链接就把标记点亮:这是真实校验的结果,不是装饰。 */
+.getterField[data-recognized="true"] .getterMark { color: var(--tech); }
+
+.getterField input {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  border: none;
+  background: none;
+  color: var(--text);
+  caret-color: var(--tech);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+}
+
+.getterField input::placeholder { color: var(--text-quiet); }
+.getterField input:focus { outline: none; }
+.getterField input:disabled { cursor: default; color: var(--text-dim); }
+
+.getterBorrow {
+  flex: none;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--pill);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+  transition: color 160ms var(--ease), border-color 160ms var(--ease);
+}
+
+.getterBorrow:hover:not(:disabled) { border-color: var(--border-strong); color: var(--text); }
+.getterBorrow:disabled { cursor: default; opacity: .5; }
+
+.getter .platformRow { justify-content: center; border-top: none; padding-top: 0; }
+.getter .notice,
+.getter .error { width: 100%; text-align: left; }
+
+/* 封面面板:画面本身就是这一屏的主体,不再套一层内边距。 */
+.posterCard {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  /* 结果里唯一带投影的一块,建立「这是主体」的层级。 */
+  box-shadow: var(--shadow), inset 0 1px 0 color-mix(in oklab, var(--text) 8%, transparent);
+}
+
+.posterCard .loadingNote {
+  padding: 16px 20px;
+  text-align: center;
+}
+
+/* 格式面板:先说清拿到的是什么文件,再给下载与切换。 */
+.formatCard {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+
+.formatCard h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.formatCard h3 svg { width: 16px; height: 16px; }
+
+.formatRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.formatSpec { display: grid; gap: 8px; }
+
+.formatSpec b {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -.02em;
+}
+
+.formatChips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.formatChips i {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.formatSwitch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.formatSwitch > span {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.formatSwitch > div {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--pill);
+  background: var(--panel);
+}
+
+.formatSwitch button {
+  padding: 4px 12px;
+  border-radius: var(--pill);
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+  transition: color 160ms var(--ease), background 160ms var(--ease);
+}
+
+.formatSwitch button:hover:not(:disabled):not(.formatSwitchActive) { color: var(--text-dim); }
+.formatSwitch button:disabled { cursor: default; opacity: .5; }
+
+.formatSwitch button.formatSwitchActive {
+  color: var(--bg);
+  background: var(--accent);
+}
+
+.formatSwitch > small {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+/* 元信息面板:解析出来的标题与封面地址常要拿去别处用,做成只读字段 + 一键复制。 */
+.infoCard {
+  display: grid;
+  gap: 8px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+
+.infoRow {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.infoRow > span {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.infoRow input {
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  text-overflow: ellipsis;
+}
+
+.infoRow input:focus {
+  outline: none;
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.infoRow > button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+  transition: color 160ms var(--ease), border-color 160ms var(--ease);
+}
+
+.infoRow > button svg { width: 16px; height: 16px; }
+.infoRow > button:hover { border-color: var(--border-strong); color: var(--text); }
+
+@media (max-width: 720px) {
+  .getter { padding: 16px; }
+  .getterField {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 8px;
+    border-radius: var(--r);
+  }
+  .getterField input { height: 36px; padding: 0 4px; }
+  .getterField .primaryButton,
+  .getterBorrow { justify-content: center; width: 100%; }
+  .getterMark { display: none; }
+  .formatRow .primaryButton { width: 100%; justify-content: center; }
+  .formatSwitch > small { margin-left: 0; }
+  .infoRow { grid-template-columns: minmax(0, 1fr) auto; }
+  .infoRow > span { grid-column: 1 / -1; }
 }

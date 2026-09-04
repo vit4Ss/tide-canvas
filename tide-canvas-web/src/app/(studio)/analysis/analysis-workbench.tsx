@@ -16,10 +16,13 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   ArrowUpRight,
+  Check,
   ChevronRight,
   CircleAlert,
   Clock3,
+  Copy,
   Download,
+  FileVideo,
   Eye,
   Film,
   Heart,
@@ -305,6 +308,33 @@ function DownloadPoster({ result }: { result: VideoDownloadResolveVO }) {
           <Clock3 aria-hidden />{displayDurationSeconds(result.durationSeconds)}
         </span>
       )}
+    </div>
+  );
+}
+
+/* 可复制的元信息行。下载站的常见做法:解析出来的标题与封面地址往往还要拿去
+   别处用,做成只读字段 + 一键复制比让用户从卡片里手选文本可靠。 */
+function InfoRow({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<number | null>(null);
+  useEffect(() => () => { if (timer.current) window.clearTimeout(timer.current); }, []);
+  const copy = async () => {
+    try {
+      await navigator.clipboard?.writeText(value);
+      setCopied(true);
+      if (timer.current) window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      toast.error("复制失败，可手动选中文本");
+    }
+  };
+  return (
+    <div className={styles.infoRow}>
+      <span>{label}</span>
+      <input readOnly value={value} onFocus={(event) => event.currentTarget.select()} />
+      <button type="button" onClick={() => void copy()} aria-label={`复制${label}`}>
+        {copied ? <Check aria-hidden /> : <Copy aria-hidden />}{copied ? "已复制" : "复制"}
+      </button>
     </div>
   );
 }
@@ -618,8 +648,10 @@ export default function AnalysisWorkbench() {
     if (!updated) setError(skillRun.error || "操作失败，请稍后重试");
   };
 
-  const resolveVideoDownload = async () => {
+  const resolveVideoDownload = async (qualityOverride?: VideoDownloadQuality) => {
     if (downloadBusyRef.current || !downloadSource.trim()) return;
+    // 结果面板里切换画质会立即重解析,此时 state 尚未更新,必须用传入值。
+    const targetQuality = qualityOverride ?? downloadQuality;
     const sourceURL = extractDownloadURL(downloadSource);
     if (!sourceURL) {
       setDownloadError("请输入有效的公开视频 HTTPS 链接");
@@ -632,7 +664,7 @@ export default function AnalysisWorkbench() {
     setDownloadResult(null);
     try {
       if (!await ensureSession()) return;
-      const response = await socialAnalysisApi.resolveDownload({ url: sourceURL, quality: downloadQuality });
+      const response = await socialAnalysisApi.resolveDownload({ url: sourceURL, quality: targetQuality });
       if (epoch !== downloadEpochRef.current) return;
       if (!response.success || !response.data) {
         setDownloadError(response.code === 429 ? "请求过于频繁，请稍后再试" : response.message || "视频解析失败，请检查链接后重试");
@@ -987,14 +1019,20 @@ export default function AnalysisWorkbench() {
           </div>
         ) : (
           <div className={styles.panel} role="tabpanel" id="analysis-panel-download" aria-labelledby="analysis-tab-download">
-            {/* 双栏:输入在左、结果在右。此前是单列铺满 1240px,结果卡之后留下
-                大片空白,页面既没有主体也没有收尾。 */}
-            <div className={styles.downloadLayout}>
-            <section className={styles.composer}>
-              <label className={styles.urlField}>
-                <span>公开视频链接</span>
-                <div>
-                  <Link2 aria-hidden />
+            {/* 版式参考成熟下载站:居中窄栏 + 逐块堆叠,一次只回答一个问题——
+                怎么用 → 贴链接 → 看画面 → 选格式下载 → 取元信息。画质不再在
+                解析前猜,而是拿到真实结果后在格式面板里切换(见 formatSwitch)。 */}
+            <div className={styles.downloadColumn}>
+              <section className={styles.getter}>
+                <p className={styles.getterSteps}>
+                  <span>复制视频分享链接</span><i aria-hidden />
+                  <span>粘贴到下方</span><i aria-hidden />
+                  <span>点击解析视频</span>
+                </p>
+                <div className={styles.getterField} data-recognized={extractDownloadURL(downloadSource) ? "true" : "false"}>
+                  <span className={styles.getterMark} aria-hidden>
+                    {extractDownloadURL(downloadSource) ? <Check /> : <Link2 />}
+                  </span>
                   <input
                     value={downloadSource}
                     onChange={(event) => { setDownloadSource(event.target.value); setDownloadResult(null); setDownloadError(""); }}
@@ -1006,91 +1044,99 @@ export default function AnalysisWorkbench() {
                       : "粘贴公开视频链接"}
                     autoComplete="off"
                     spellCheck={false}
+                    aria-label="公开视频链接"
                   />
                   {!!url.trim() && url.trim() !== downloadSource.trim() && (
-                    <button type="button" disabled={downloadBusy} onClick={() => { setDownloadSource(url.trim()); setDownloadResult(null); setDownloadError(""); }}>用拆解链接</button>
+                    <button type="button" className={styles.getterBorrow} disabled={downloadBusy} onClick={() => { setDownloadSource(url.trim()); setDownloadResult(null); setDownloadError(""); }}>用拆解链接</button>
+                  )}
+                  {initialized && !user ? (
+                    <Link className={styles.primaryButton} href="/login">登录后下载 <ChevronRight aria-hidden /></Link>
+                  ) : (
+                    <button className={styles.primaryButton} type="button" disabled={!downloadSource.trim() || !downloaderReady || downloadBusy} onClick={() => void resolveVideoDownload()}>
+                      {downloadBusy ? <Loader2 className={styles.spin} aria-hidden /> : <ScanSearch aria-hidden />}
+                      {downloadBusy ? "正在解析" : "解析视频"}
+                    </button>
                   )}
                 </div>
-              </label>
-              <div className={styles.qualityRow}>
-                <span>下载质量</span>
-                <div>
-                  {DOWNLOAD_QUALITY.map((option) => (
-                    <button
-                      type="button"
-                      key={option.key}
-                      aria-pressed={downloadQuality === option.key}
-                      className={downloadQuality === option.key ? styles.qualityActive : ""}
-                      disabled={downloadBusy}
-                      onClick={() => { setDownloadQuality(option.key); setDownloadResult(null); setDownloadError(""); }}
-                    ><b>{option.label}</b><small>{option.detail}</small></button>
-                  ))}
+                <div className={styles.platformRow}>
+                  <span className={styles.platformLead}>支持</span>
+                  {downloaderPlatforms.length > 0
+                    ? downloaderPlatforms.map((platform) => (
+                      <span key={platform} className={styles.platformChip}>{DOWNLOAD_PLATFORM_LABEL[platform] || platform}</span>
+                    ))
+                    : <span className={styles.platformNote}>{downloaderStatusError ? "平台列表读取失败" : downloaderCapabilities ? "暂无已启用平台" : "正在读取已启用平台"}</span>}
+                  <span className={styles.platformNote}>仅公开内容 · 单文件上限 {displayBytes(downloaderCapabilities?.maxFileBytes || 0)} · 下载票据有效 {displayTokenTTL(downloaderCapabilities?.tokenTtlSeconds || 0)}</span>
                 </div>
-              </div>
-              <div className={styles.composerFooter}>
-                <span className={styles.footNote}><ShieldCheck aria-hidden /> 仅处理公开且已获授权的内容</span>
-                {initialized && !user ? (
-                  <Link className={styles.primaryButton} href="/login">登录后下载 <ChevronRight aria-hidden /></Link>
-                ) : (
-                  <button className={styles.primaryButton} type="button" disabled={!downloadSource.trim() || !downloaderReady || downloadBusy} onClick={() => void resolveVideoDownload()}>
-                    {downloadBusy ? <Loader2 className={styles.spin} aria-hidden /> : <ScanSearch aria-hidden />}
-                    {downloadBusy ? "正在解析视频" : "解析视频"}
-                  </button>
+                {user && downloaderCapabilities && !downloaderReady && (
+                  <div className={styles.notice}><CircleAlert aria-hidden /> 视频下载服务当前未启用，请联系管理员检查 Relay API Key 与下载器开关。</div>
                 )}
-              </div>
-              <div className={styles.platformRow}>
-                <span className={styles.platformLead}>支持</span>
-                {downloaderPlatforms.length > 0
-                  ? downloaderPlatforms.map((platform) => (
-                    <span key={platform} className={styles.platformChip}>{DOWNLOAD_PLATFORM_LABEL[platform] || platform}</span>
-                  ))
-                  : <span className={styles.platformNote}>{downloaderStatusError ? "平台列表读取失败" : downloaderCapabilities ? "暂无已启用平台" : "正在读取已启用平台"}</span>}
-                <span className={styles.platformNote}>单文件上限 {displayBytes(downloaderCapabilities?.maxFileBytes || 0)} · 下载票据有效 {displayTokenTTL(downloaderCapabilities?.tokenTtlSeconds || 0)}</span>
-              </div>
-              {user && downloaderCapabilities && !downloaderReady && (
-                <div className={styles.notice}><CircleAlert aria-hidden /> 视频下载服务当前未启用，请联系管理员检查 Relay API Key 与下载器开关。</div>
-              )}
-              {user && downloaderStatusError && (
-                <div className={styles.notice}><CircleAlert aria-hidden /> 暂时无法读取下载器能力，可点击右上角状态重新检查。</div>
-              )}
-              {downloadError && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{downloadError}</span></div>}
-            </section>
+                {user && downloaderStatusError && (
+                  <div className={styles.notice}><CircleAlert aria-hidden /> 暂时无法读取下载器能力，可点击右上角状态重新检查。</div>
+                )}
+                {downloadError && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{downloadError}</span></div>}
+              </section>
 
-            {downloadResult ? (
-              <article className={styles.downloadCard}>
-                <DownloadPoster result={downloadResult} />
-                <div className={styles.downloadBody}>
-                  <h3>{downloadResult.title || "公开视频"}</h3>
-                  <div className={styles.downloadMeta}>
-                    <span><small>画面尺寸</small><b>{downloadResult.width && downloadResult.height ? `${downloadResult.width}×${downloadResult.height}` : "待确认"}</b></span>
-                    <span><small>预计大小</small><b>{displayBytes(downloadResult.estimatedBytes)}</b></span>
-                    <span><small>时长</small><b>{displayDurationSeconds(downloadResult.durationSeconds)}</b></span>
-                  </div>
-                  <div className={styles.downloadActions}>
-                    <button type="button" className={styles.primaryButton} onClick={downloadResolvedVideo}>
-                      <Download aria-hidden /> 下载 MP4
-                    </button>
-                    <small>临时地址在 {new Date(downloadResult.expiresAt * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 前有效</small>
-                  </div>
-                </div>
-              </article>
-            ) : downloadBusy ? (
-              <article className={styles.downloadCard} aria-busy="true">
-                <div className={`${styles.posterMedia} ${styles.posterLoading}`} />
-                <div className={styles.downloadBody}>
+              {downloadResult ? (
+                <>
+                  <section className={styles.posterCard}>
+                    <DownloadPoster result={downloadResult} />
+                  </section>
+
+                  <section className={styles.formatCard}>
+                    <h3><FileVideo aria-hidden /> MP4</h3>
+                    <div className={styles.formatRow}>
+                      <div className={styles.formatSpec}>
+                        <b>
+                          {DOWNLOAD_QUALITY.find((item) => item.key === downloadResult.quality)?.label || downloadResult.quality}
+                          {downloadResult.height > 0 ? ` ${downloadResult.height}P` : ""}
+                        </b>
+                        <span className={styles.formatChips}>
+                          <i>{displayDurationSeconds(downloadResult.durationSeconds)}</i>
+                          <i>{displayBytes(downloadResult.estimatedBytes)}</i>
+                          {downloadResult.width > 0 && downloadResult.height > 0 && <i>{downloadResult.width}×{downloadResult.height}</i>}
+                        </span>
+                      </div>
+                      <button type="button" className={styles.primaryButton} onClick={downloadResolvedVideo}>
+                        <Download aria-hidden /> 下载
+                      </button>
+                    </div>
+                    <div className={styles.formatSwitch}>
+                      <span>切换画质</span>
+                      <div>
+                        {DOWNLOAD_QUALITY.map((option) => (
+                          <button
+                            type="button"
+                            key={option.key}
+                            aria-pressed={downloadQuality === option.key}
+                            className={downloadQuality === option.key ? styles.formatSwitchActive : ""}
+                            disabled={downloadBusy}
+                            title={option.detail}
+                            onClick={() => { setDownloadQuality(option.key); void resolveVideoDownload(option.key); }}
+                          >{option.label}</button>
+                        ))}
+                      </div>
+                      <small>临时地址在 {new Date(downloadResult.expiresAt * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 前有效</small>
+                    </div>
+                  </section>
+
+                  <section className={styles.infoCard}>
+                    <InfoRow label="标题" value={downloadResult.title || "公开视频"} />
+                    {!!downloadResult.coverUrl && <InfoRow label="封面" value={downloadResult.coverUrl} />}
+                    <InfoRow label="文件名" value={downloadResult.fileName || "video.mp4"} />
+                  </section>
+                </>
+              ) : downloadBusy ? (
+                <section className={styles.posterCard} aria-busy="true">
+                  <div className={`${styles.posterMedia} ${styles.posterLoading}`} />
                   <p className={styles.loadingNote} role="status">正在解析视频…</p>
-                  <div className={styles.downloadMeta}>
-                    <span className={styles.skeletonBar} /><span className={styles.skeletonBar} /><span className={styles.skeletonBar} />
-                  </div>
+                </section>
+              ) : (
+                <div className={styles.downloadPlaceholder}>
+                  <span><Download aria-hidden /></span>
+                  <strong>解析后在这里预览并下载</strong>
+                  <p>先确认画面、分辨率与预计大小，再交给浏览器保存到默认目录。下载不消耗积分。</p>
                 </div>
-              </article>
-            ) : (
-              <div className={styles.downloadPlaceholder}>
-                <span><Download aria-hidden /></span>
-                <strong>解析后在这里预览并下载</strong>
-                <p>先确认画面、分辨率与预计大小，再交给浏览器保存到默认目录。下载不消耗积分。</p>
-              </div>
-            )}
+              )}
             </div>
           </div>
         )}

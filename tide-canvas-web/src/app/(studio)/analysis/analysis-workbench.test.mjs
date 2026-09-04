@@ -215,13 +215,24 @@ test("stylesheet stays inside the project design system", () => {
   const offTempo = durations.filter((value) => ![120, 160, 200].includes(value));
   assert.deepEqual(offTempo, [], `off-tempo transitions: ${offTempo.join(", ")}ms`);
 
-  // 「减少 Card」:真正抬起的表面只有输入区、来源栏、AI 拆解、下载结果与运行面板。
-  // 虚线占位与加载骨架共用同一圆角但不是卡片,按语义排除,免得阈值被它们占满。
+  // 「减少 Card」按「一屏」计数,而不是按整张样式表:两个页签的面板从不同时出现,
+  // 把它们加在一起会得出一个不存在的数字。虚线占位与加载骨架共用同一圆角但
+  // 不是卡片,按语义排除。
   const raised = [...rules.matchAll(/([^{}]+)\{([^}]*)\}/g)]
     .filter(([, , body]) => /border-radius: var\(--r-lg\)/.test(body))
     .map(([, selector, body]) => ({ selector: selector.trim(), body }))
-    .filter(({ selector, body }) => !/dashed/.test(body) && !/skeleton/i.test(selector));
-  assert.ok(raised.length <= 5, `too many card surfaces: ${raised.map((rule) => rule.selector).join(" | ")}`);
+    .filter(({ selector, body }) => !/dashed/.test(body) && !/skeleton/i.test(selector))
+    .map(({ selector }) => selector);
+  const perTab = {
+    breakdown: [".composer", ".sourceColumn", ".aiCard", ".runPanel"],
+    download: [".getter", ".posterCard", ".formatCard", ".infoCard", ".runPanel"],
+  };
+  const unaccounted = raised.filter((selector) => !Object.values(perTab).flat().includes(selector));
+  assert.deepEqual(unaccounted, [], `raised surface not attributed to a tab: ${unaccounted.join(" | ")}`);
+  for (const [tab, selectors] of Object.entries(perTab)) {
+    const onScreen = selectors.filter((selector) => raised.includes(selector));
+    assert.ok(onScreen.length <= 5, `too many card surfaces on ${tab}: ${onScreen.join(" | ")}`);
+  }
 
   // 触屏目标:主题的 pointer:coarse 规则不覆盖 CSS Module,本页自己声明。
   assert.match(rules, /@media \(pointer: coarse\)/);
