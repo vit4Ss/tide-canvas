@@ -1,8 +1,14 @@
 /* 拆解工作台样式。
 
-   全部取 imini 主题 token(--bg/--surface/--border/--text/--accent/--r*),
-   页面不再自带一套十六进制:主题调整时本页跟随。彩色仅出现在平台角标
-   (品牌标识,主题允许的例外)与就绪状态点(冷青 --tech,毫米级点缀)。 */
+   设计系统(与 AGENTS.md 一致,改动前先对照):
+   - 间距只取 4 / 8 / 12 / 16 / 20 / 24 / 32 / 40 / 48 / 64,2px 仅用于发丝级内缩。
+   - 字阶只有五档:32(页标题) / 20(区块标题) / 16(块级标题与数据值) / 14(正文) / 12(说明),
+     层级靠字重与三级文字色拉开,不靠增加字号档位。
+   - 圆角、色彩、阴影一律取 imini 主题 token,本页不自带十六进制。
+   - 过渡只用 120 / 160 / 200ms。
+   - 盒子(border + surface)只给五处真正需要抬起的容器:输入区、来源栏、
+     AI 拆解、下载确认、技能运行面板。资料区、作品列表与空态一律用留白与
+     分隔线成组,避免「整页都是卡片」。 */
 
 .page {
   /* 主题尚无语义告警色(各页此前各写各的),本页收敛到这一处声明,
@@ -11,9 +17,9 @@
   --danger-text: #fca5a5;
   /* 浮在封面图上的遮罩:跟随主题底色,不写死近黑。 */
   --scrim: color-mix(in oklab, var(--bg) 78%, transparent);
-  /* 主题的 --text-faint(45% 白)落在页面底 #0A0A0B 上只有 4.49:1,差 0.01
-     不到 PRODUCT.md 要求的 4.5(占位符同样受此约束)。凡是坐在页面底或
-     输入框底上的弱文字改用这一档 48%,实测 4.68:1;卡片底上的仍用主题值。 */
+  /* 主题的 --text-faint(45% 白)落在页面底上只有 4.49:1,差 0.01 不到
+     PRODUCT.md 要求的 4.5(占位符同样受此约束)。凡是坐在页面底或输入框底
+     上的弱文字改用这一档 48%,实测 4.68:1;卡片底上的仍用主题值。 */
   --text-quiet: color-mix(in oklab, var(--text) 48%, transparent);
 
   flex: 1;
@@ -26,30 +32,30 @@
 .canvas {
   width: min(1240px, calc(100% - 64px));
   margin: 0 auto;
-  padding: 32px 0 80px;
+  padding: 32px 0 64px;
 }
 
 /* ── 页头 ──────────────────────────────────────────────────────────── */
 
 .pageHeader {
   display: grid;
-  gap: 6px;
-  padding-bottom: 20px;
+  gap: 8px;
+  padding-bottom: 24px;
 }
 
 .pageHeader h1 {
   margin: 0;
-  font-size: 28px;
+  font-size: 32px;
   line-height: 1.2;
   font-weight: 650;
-  letter-spacing: -.025em;
+  letter-spacing: -.02em;
 }
 
 .pageHeader p {
-  max-width: 62ch;
+  max-width: 60ch;
   margin: 0;
   color: var(--text-dim);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
 }
 
@@ -70,15 +76,14 @@
 }
 
 .tabs button {
-  position: relative;
-  padding: 10px 0 11px;
+  padding: 8px 0 12px;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
   color: var(--text-quiet);
   font-size: 14px;
   font-weight: 600;
   letter-spacing: -.01em;
-  transition: color 160ms var(--ease);
+  transition: color 160ms var(--ease), border-color 160ms var(--ease);
 }
 
 .tabs button:hover { color: var(--text-dim); }
@@ -95,16 +100,16 @@
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   margin-bottom: 8px;
-  padding: 5px 11px;
+  padding: 4px 12px;
   border: 1px solid var(--border);
   border-radius: var(--pill);
   color: var(--text-dim);
-  font-size: 11.5px;
-  line-height: 1;
+  font-size: 12px;
+  line-height: 20px;
   white-space: nowrap;
-  transition: border-color 160ms var(--ease), color 160ms var(--ease);
+  transition: color 160ms var(--ease), border-color 160ms var(--ease);
 }
 
 .serviceState:hover:not(:disabled) {
@@ -115,8 +120,8 @@
 .serviceState:disabled { cursor: default; opacity: .72; }
 
 .serviceState i {
-  width: 5px;
-  height: 5px;
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
   background: var(--text-faint);
 }
@@ -128,7 +133,7 @@
 .panel {
   display: grid;
   gap: 24px;
-  animation: panelIn 180ms var(--ease);
+  animation: panelIn 200ms var(--ease);
 }
 
 @keyframes panelIn {
@@ -144,7 +149,7 @@
 
 .composer {
   display: grid;
-  gap: 16px;
+  gap: 20px;
   padding: 20px;
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
@@ -154,7 +159,7 @@
 .modeSwitch {
   display: inline-flex;
   gap: 4px;
-  padding: 3px;
+  padding: 4px;
   border-radius: var(--pill);
   background: var(--panel);
   justify-self: start;
@@ -163,17 +168,17 @@
 .modeSwitch button {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
+  gap: 8px;
+  padding: 8px 16px;
   border-radius: var(--pill);
   color: var(--text-faint);
-  font-size: 12.5px;
+  font-size: 14px;
   font-weight: 500;
   line-height: 1;
   transition: color 160ms var(--ease), background 160ms var(--ease);
 }
 
-.modeSwitch button svg { width: 14px; height: 14px; }
+.modeSwitch button svg { width: 16px; height: 16px; }
 .modeSwitch button:hover:not(:disabled):not(.modeActive) { color: var(--text-dim); }
 .modeSwitch button:disabled { cursor: default; opacity: .5; }
 
@@ -186,19 +191,21 @@
 
 .urlField {
   display: grid;
-  gap: 7px;
+  gap: 8px;
 }
 
-.urlField > span {
+.urlField > span,
+.qualityRow > span,
+.focusField > span {
   color: var(--text-faint);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
 }
 
 .urlField > div {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   padding: 0 12px;
   border: 1px solid var(--border);
   border-radius: var(--r);
@@ -207,17 +214,18 @@
 }
 
 .urlField > div:focus-within { border-color: var(--border-strong); }
-.urlField > div > svg { flex: none; width: 15px; height: 15px; color: var(--text-faint); }
+.urlField > div > svg { flex: none; width: 16px; height: 16px; color: var(--text-faint); }
 
 .urlField input {
   flex: 1;
   min-width: 0;
-  height: 42px;
+  height: 40px;
   border: none;
   background: none;
   color: var(--text);
+  caret-color: var(--tech);
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .urlField input::placeholder { color: var(--text-quiet); }
@@ -226,28 +234,19 @@
 
 .urlField > div > button {
   flex: none;
-  padding: 5px 10px;
+  padding: 4px 12px;
   border: 1px solid var(--border);
   border-radius: var(--pill);
   color: var(--text-dim);
-  font-size: 11.5px;
-  line-height: 1;
-  transition: border-color 160ms var(--ease), color 160ms var(--ease);
+  font-size: 12px;
+  line-height: 20px;
+  transition: color 160ms var(--ease), border-color 160ms var(--ease);
 }
 
 .urlField > div > button:hover:not(:disabled) { border-color: var(--border-strong); color: var(--text); }
 .urlField > div > button:disabled { cursor: default; opacity: .5; }
 
-.qualityRow {
-  display: grid;
-  gap: 7px;
-}
-
-.qualityRow > span {
-  color: var(--text-faint);
-  font-size: 11.5px;
-  font-weight: 500;
-}
+.qualityRow { display: grid; gap: 8px; }
 
 .qualityRow > div {
   display: grid;
@@ -257,16 +256,16 @@
 
 .qualityRow button {
   display: grid;
-  gap: 3px;
-  padding: 10px 12px;
+  gap: 4px;
+  padding: 12px;
   border: 1px solid var(--border);
   border-radius: var(--r);
   text-align: left;
   transition: border-color 160ms var(--ease), background 160ms var(--ease);
 }
 
-.qualityRow button b { color: var(--text-dim); font-size: 12.5px; font-weight: 600; }
-.qualityRow button small { color: var(--text-faint); font-size: 11px; }
+.qualityRow button b { color: var(--text-dim); font-size: 14px; font-weight: 600; }
+.qualityRow button small { color: var(--text-faint); font-size: 12px; }
 .qualityRow button:hover:not(:disabled) { border-color: var(--border-strong); }
 .qualityRow button:disabled { cursor: default; opacity: .55; }
 
@@ -277,6 +276,8 @@
 }
 
 .qualityRow button.qualityActive b { color: var(--text); }
+
+/* ── 动作行与按钮 ──────────────────────────────────────────────────── */
 
 .composerFooter,
 .aiActionRow {
@@ -290,31 +291,30 @@
 .footNote {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   color: var(--text-faint);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
-.footNote svg { flex: none; width: 13px; height: 13px; }
+.footNote svg { flex: none; width: 16px; height: 16px; }
 
 .primaryButton {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 0 18px;
-  height: 38px;
-  border: 1px solid transparent;
+  gap: 8px;
+  height: 40px;
+  padding: 0 20px;
   border-radius: var(--btn-r);
   background: var(--accent);
   color: var(--bg);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   white-space: nowrap;
-  transition: filter 160ms var(--ease), opacity 160ms var(--ease);
+  transition: filter 120ms var(--ease), opacity 120ms var(--ease);
 }
 
-.primaryButton svg { width: 15px; height: 15px; }
+.primaryButton svg { width: 16px; height: 16px; }
 .primaryButton:hover:not(:disabled) { filter: brightness(.92); }
 .primaryButton:disabled { cursor: default; opacity: .38; }
 
@@ -322,18 +322,18 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 8px;
   width: 100%;
-  height: 36px;
+  height: 40px;
   border: 1px solid var(--border);
   border-radius: var(--btn-r);
   color: var(--text-dim);
-  font-size: 12.5px;
+  font-size: 14px;
   font-weight: 500;
-  transition: border-color 160ms var(--ease), color 160ms var(--ease);
+  transition: color 160ms var(--ease), border-color 160ms var(--ease);
 }
 
-.bridgeButton svg { width: 14px; height: 14px; }
+.bridgeButton svg { width: 16px; height: 16px; }
 .bridgeButton:hover { border-color: var(--border-strong); color: var(--text); }
 
 /* ── 平台说明行 ────────────────────────────────────────────────────── */
@@ -343,39 +343,38 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  padding-top: 14px;
+  padding-top: 20px;
   border-top: 1px solid var(--border);
 }
 
 .platformLead,
 .platformNote {
   color: var(--text-faint);
-  font-size: 11.5px;
-  line-height: 1.5;
+  font-size: 12px;
+  line-height: 24px;
 }
-
-.platformNote { margin-left: 2px; }
 
 .platformChip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px 4px 5px;
+  gap: 8px;
+  height: 24px;
+  padding: 0 12px;
   border: 1px solid var(--border);
   border-radius: var(--pill);
   color: var(--text-dim);
-  font-size: 11.5px;
-  line-height: 1;
+  font-size: 12px;
 }
 
-.platformChip:not(:has(.platformMark)) { padding-left: 10px; }
+/* 带平台角标时左侧内缩收窄,让角标与文字的视觉间距和右侧留白等宽。 */
+.platformChip:has(.platformMark) { padding-left: 4px; }
 
 .platformMark {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-sm);
   background: color-mix(in oklab, var(--platform) 20%, transparent);
   color: var(--platform);
   font-size: 12px;
@@ -384,10 +383,10 @@
 }
 
 .platformMarkSmall {
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-  font-size: 9.5px;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
 }
 
 /* ── 提示条 ────────────────────────────────────────────────────────── */
@@ -397,7 +396,7 @@
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 12px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--panel);
@@ -407,19 +406,16 @@
 }
 
 .notice svg,
-.error svg { flex: none; width: 14px; height: 14px; margin-top: 2px; }
+.error svg { flex: none; width: 16px; height: 16px; }
 .error { border-color: color-mix(in oklab, var(--danger-line) 42%, var(--border)); color: var(--danger-text); }
 
-.warningList {
-  display: grid;
-  gap: 8px;
-}
+.warningList { display: grid; gap: 8px; }
 
 /* ── 结果区 ────────────────────────────────────────────────────────── */
 
 .resultSection {
   display: grid;
-  gap: 16px;
+  gap: 20px;
 }
 
 .sectionHeader {
@@ -432,7 +428,7 @@
 
 .sectionHeader h2 {
   margin: 0;
-  font-size: 17px;
+  font-size: 20px;
   font-weight: 600;
   letter-spacing: -.015em;
 }
@@ -440,14 +436,14 @@
 .sectionHeader a {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   color: var(--text-faint);
   font-size: 12px;
   transition: color 160ms var(--ease);
 }
 
 .sectionHeader a:hover { color: var(--text); }
-.sectionHeader a svg { width: 13px; height: 13px; }
+.sectionHeader a svg { width: 16px; height: 16px; }
 
 .resultTag {
   display: inline-flex;
@@ -458,65 +454,69 @@
 }
 
 .resultTag i {
-  width: 3px;
-  height: 3px;
+  width: 2px;
+  height: 2px;
   border-radius: 50%;
   background: currentColor;
 }
 
 .resultGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
   align-items: start;
 }
 
-.sourceColumn,
+/* 左栏整体是一个表面,作品与近期列表是它的两节,靠分隔线分组——
+   此前是两个独立卡片上下堆叠,读起来像两件不相干的东西。 */
+.sourceColumn {
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
 .analysisColumn {
   display: grid;
-  gap: 16px;
+  gap: 20px;
   align-content: start;
 }
 
-/* 账号资料 */
-
+/* 账号资料:标题块而非卡片,用分隔线收尾。 */
 .profileCard {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
   flex-wrap: wrap;
-  padding: 18px 20px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  background: var(--surface);
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
 }
 
 .profileIdentity {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
   min-width: 0;
 }
 
 .profileIdentity > img,
 .profileIdentity > .platformMark {
   flex: none;
-  width: 46px;
-  height: 46px;
+  width: 48px;
+  height: 48px;
   border-radius: 50%;
   object-fit: cover;
 }
 
 .profileIdentity > div { min-width: 0; }
-.profileIdentity span { color: var(--text-faint); font-size: 11.5px; }
-.profileIdentity h3 { margin: 2px 0 4px; font-size: 16px; font-weight: 600; letter-spacing: -.015em; }
+.profileIdentity span { color: var(--text-faint); font-size: 12px; }
+.profileIdentity h3 { margin: 4px 0; font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
 .profileIdentity p {
   max-width: 52ch;
   margin: 0;
   color: var(--text-dim);
   font-size: 12px;
-  line-height: 1.55;
+  line-height: 1.5;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -525,29 +525,26 @@
 
 .profileNumbers {
   display: flex;
-  gap: 28px;
+  gap: 32px;
   flex: none;
 }
 
-.profileNumbers small { display: block; color: var(--text-faint); font-size: 11px; }
+.profileNumbers small { display: block; color: var(--text-faint); font-size: 12px; }
 .profileNumbers strong {
   display: block;
-  margin-top: 3px;
+  margin-top: 4px;
   font-size: 16px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: -.02em;
 }
 
-/* 作品事实卡 */
+/* 作品事实(左栏第一节,不再自带边框) */
 
 .selectedWork {
   display: grid;
-  gap: 14px;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  background: var(--surface);
+  gap: 16px;
+  padding: 16px;
 }
 
 .selectedMedia {
@@ -564,73 +561,69 @@
 .sourceBadge,
 .duration {
   position: absolute;
-  bottom: 10px;
+  bottom: 8px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
+  gap: 8px;
+  height: 24px;
+  padding: 0 8px;
   border-radius: var(--pill);
   background: var(--scrim);
   color: var(--text);
-  font-size: 11px;
-  line-height: 1;
+  font-size: 12px;
 }
 
-.sourceBadge { left: 10px; }
-.duration { right: 10px; gap: 5px; font-variant-numeric: tabular-nums; }
+.sourceBadge { left: 8px; }
+.duration { right: 8px; font-variant-numeric: tabular-nums; }
 .duration svg { width: 12px; height: 12px; }
 
 .selectedBody h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
-  line-height: 1.45;
-  letter-spacing: -.015em;
+  line-height: 1.5;
+  letter-spacing: -.01em;
 }
 
 .selectedBody p {
-  margin: 7px 0 0;
+  margin: 8px 0 0;
   color: var(--text-dim);
   font-size: 12px;
-  line-height: 1.65;
+  line-height: 1.6;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-.selectedBody time { display: block; margin-top: 8px; color: var(--text-faint); font-size: 11.5px; }
+.selectedBody time { display: block; margin-top: 8px; color: var(--text-faint); font-size: 12px; }
 
 .metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
-  padding-top: 14px;
+  padding-top: 16px;
   border-top: 1px solid var(--border);
 }
 
 .metric { display: grid; gap: 4px; }
 .metric > span { color: var(--text-faint); }
-.metric svg { width: 14px; height: 14px; }
-.metric small { color: var(--text-faint); font-size: 11px; }
+.metric svg { width: 16px; height: 16px; }
+.metric small { color: var(--text-faint); font-size: 12px; }
 .metric strong {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: -.02em;
 }
 
-/* 作品列表 */
+/* 近期作品(左栏第二节) */
 
 .workList {
-  display: grid;
-  gap: 2px;
-  max-height: 420px;
+  max-height: 400px;
   overflow: auto;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  background: var(--surface);
+  padding: 16px;
+  border-top: 1px solid var(--border);
 }
 
 .workListHead {
@@ -638,34 +631,35 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  padding: 0 4px 10px;
+  padding-bottom: 12px;
 }
 
-.workListHead span { color: var(--text-dim); font-size: 12.5px; font-weight: 600; }
-.workListHead small { color: var(--text-faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.workListHead span { color: var(--text-dim); font-size: 14px; font-weight: 600; }
+.workListHead small { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 .workList > button {
   display: grid;
-  grid-template-columns: 46px minmax(0, 1fr) 14px;
+  grid-template-columns: 48px minmax(0, 1fr) 16px;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  width: 100%;
   padding: 8px;
   border-radius: var(--r-sm);
   text-align: left;
-  transition: background 160ms var(--ease);
+  transition: background 120ms var(--ease);
 }
 
 .workList > button:hover:not(:disabled) { background: var(--panel); }
 .workList > button:disabled { cursor: default; opacity: .55; }
-.workList > button > svg { width: 14px; height: 14px; color: var(--text-faint); }
+.workList > button > svg { width: 16px; height: 16px; color: var(--text-faint); }
 
 .workList > button.workRowActive,
 .workList > button.workRowActive:hover { background: var(--panel-hover); }
 
 .workThumb {
   overflow: hidden;
-  width: 46px;
-  height: 46px;
+  width: 48px;
+  height: 48px;
   border-radius: var(--r-sm);
   background: var(--surface-2);
 }
@@ -677,18 +671,18 @@
 .workInfo b {
   display: block;
   color: var(--text);
-  font-size: 12.5px;
+  font-size: 14px;
   font-weight: 500;
-  line-height: 1.45;
+  line-height: 1.5;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .workInfo small {
   display: block;
-  margin-top: 3px;
+  margin-top: 2px;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -705,47 +699,9 @@
 .workCoverFallback > .platformMark { position: absolute; top: 8px; left: 8px; }
 .workCoverFallback > svg { width: 20px; height: 20px; }
 
-/* AI 拆解 */
+/* ── AI 拆解与下载确认 ─────────────────────────────────────────────── */
 
-.aiCard {
-  display: grid;
-  gap: 14px;
-  padding: 20px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  background: var(--surface);
-}
-
-.aiCard h3 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -.015em; }
-.aiCard > p { margin: -6px 0 0; color: var(--text-dim); font-size: 12px; line-height: 1.65; }
-
-.focusField { display: grid; gap: 7px; }
-.focusField > span { color: var(--text-faint); font-size: 11.5px; font-weight: 500; }
-
-.focusField textarea {
-  width: 100%;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-  font-size: 12.5px;
-  line-height: 1.7;
-  resize: vertical;
-  transition: border-color 160ms var(--ease);
-}
-
-.focusField textarea:focus { outline: none; border-color: var(--border-strong); }
-.focusField > small {
-  justify-self: end;
-  color: var(--text-faint);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-/* 下载结果 */
-
+.aiCard,
 .downloadCard {
   display: grid;
   gap: 16px;
@@ -755,27 +711,61 @@
   background: var(--surface);
 }
 
+.aiCard h3,
 .downloadCard h3 {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
-  line-height: 1.45;
-  letter-spacing: -.015em;
+  line-height: 1.5;
+  letter-spacing: -.01em;
+}
+
+.aiCard > p {
+  /* 说明与标题是紧配对:抵掉一半的 16px 栅格间距,让它贴住标题。 */
+  margin: -8px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.focusField { display: grid; gap: 8px; }
+
+.focusField textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--bg);
+  color: var(--text);
+  caret-color: var(--tech);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  resize: vertical;
+  transition: border-color 160ms var(--ease);
+}
+
+.focusField textarea:focus { outline: none; border-color: var(--border-strong); }
+.focusField > small {
+  justify-self: end;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .downloadMeta {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-  padding: 14px 0;
+  padding: 16px 0;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
 }
 
 .downloadMeta span { display: grid; gap: 4px; }
-.downloadMeta small { color: var(--text-faint); font-size: 11px; }
+.downloadMeta small { color: var(--text-faint); font-size: 12px; }
 .downloadMeta b {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: -.02em;
@@ -784,47 +774,43 @@
 .downloadActions {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
   flex-wrap: wrap;
 }
 
-.downloadActions small { color: var(--text-faint); font-size: 11.5px; }
+.downloadActions small { color: var(--text-faint); font-size: 12px; }
 
-/* ── 空态 ──────────────────────────────────────────────────────────── */
+/* ── 空态(不用虚线盒子,靠留白与字重成组) ──────────────────────────── */
 
 .empty {
   display: grid;
   justify-items: center;
-  gap: 10px;
+  gap: 12px;
   padding: 64px 24px;
-  border: 1px dashed var(--border);
-  border-radius: var(--r-lg);
   text-align: center;
 }
 
-.empty > svg { width: 22px; height: 22px; color: var(--text-quiet); }
-.empty strong { font-size: 14px; font-weight: 600; letter-spacing: -.015em; }
+.empty > svg { width: 20px; height: 20px; color: var(--text-quiet); }
+.empty strong { font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
 .empty p {
   max-width: 56ch;
   margin: 0;
   color: var(--text-dim);
-  font-size: 12.5px;
-  line-height: 1.7;
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 .emptyResult {
   display: grid;
   place-items: center;
-  min-height: 220px;
-  padding: 30px;
-  border: 1px dashed var(--border);
-  border-radius: var(--r-lg);
+  min-height: 200px;
+  padding: 24px;
   color: var(--text-quiet);
   text-align: center;
 }
 
-.emptyResult svg { width: 24px; height: 24px; }
-.emptyResult p { max-width: 34ch; margin: 12px 0 0; font-size: 12px; line-height: 1.65; }
+.emptyResult svg { width: 20px; height: 20px; }
+.emptyResult p { max-width: 32ch; margin: 12px 0 0; font-size: 12px; line-height: 1.6; }
 
 /* ── 技能运行面板与 Markdown ───────────────────────────────────────── */
 
@@ -836,33 +822,34 @@
 .markdown {
   max-height: 520px;
   overflow: auto;
-  padding: 18px;
+  padding: 20px;
   color: var(--text-dim);
-  font-size: 12.5px;
-  line-height: 1.75;
+  font-size: 14px;
+  line-height: 1.7;
 }
 
 .markdown > :first-child { margin-top: 0; }
 .markdown > :last-child { margin-bottom: 0; }
 
+/* 标题上方的留白大于下方,让分节看起来属于下文而不是漂在中间。 */
 .markdown h1,
 .markdown h2,
 .markdown h3 {
-  margin: 22px 0 9px;
+  margin: 24px 0 8px;
   color: var(--text);
-  line-height: 1.35;
+  line-height: 1.4;
   letter-spacing: -.015em;
 }
 
-.markdown h1 { font-size: 18px; }
-.markdown h2 { padding-bottom: 7px; border-bottom: 1px solid var(--border); font-size: 15px; }
-.markdown h3 { font-size: 13.5px; }
-.markdown p { margin: 9px 0; }
+.markdown h1 { font-size: 20px; }
+.markdown h2 { padding-bottom: 8px; border-bottom: 1px solid var(--border); font-size: 16px; }
+.markdown h3 { font-size: 14px; }
+.markdown p { margin: 8px 0; }
 .markdown ul,
-.markdown ol { margin: 9px 0; padding-left: 20px; }
+.markdown ol { margin: 8px 0; padding-left: 20px; }
 .markdown li + li { margin-top: 4px; }
 .markdown strong { color: var(--text); }
-.markdown a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
+.markdown a { color: var(--text); text-decoration: underline; text-underline-offset: 4px; text-decoration-color: var(--border-strong); }
 .markdown a:hover { text-decoration-color: currentColor; }
 
 .markdown blockquote {
@@ -875,15 +862,15 @@
 
 .markdown table {
   width: 100%;
-  margin: 14px 0;
+  margin: 16px 0;
   border-collapse: collapse;
-  font-size: 11.5px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
 .markdown th,
 .markdown td {
-  padding: 8px 9px;
+  padding: 8px;
   border: 1px solid var(--border);
   text-align: left;
   vertical-align: top;
@@ -892,12 +879,13 @@
 .markdown th { color: var(--text); background: var(--surface-2); }
 
 .markdown code {
-  padding: 2px 5px;
-  border-radius: 4px;
+  padding: 2px 4px;
+  /* 行内代码用字阶最小的 6px 圆角:--r-sm(8px) 在这个高度上会圆成药丸。 */
+  border-radius: 6px;
   color: var(--text);
   background: var(--panel);
   font-family: var(--mono);
-  font-size: .94em;
+  font-size: .92em;
 }
 
 .markdown pre {
@@ -932,51 +920,28 @@
 .spin { animation: spin 800ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── 响应式 ────────────────────────────────────────────────────────── */
-
-@media (max-width: 1080px) {
-  .resultGrid { grid-template-columns: minmax(0, 1fr); }
-  .profileNumbers { gap: 22px; }
-}
-
-@media (max-width: 720px) {
-  .canvas { width: calc(100% - 32px); padding: 24px 0 64px; }
-  .pageHeader h1 { font-size: 24px; }
-  .tabBar { align-items: stretch; flex-direction: column; gap: 12px; }
-  .serviceState { align-self: flex-start; margin-bottom: 0; order: -1; }
-  .tabs { gap: 20px; }
-  .composer { padding: 16px; }
-  .qualityRow > div { grid-template-columns: minmax(0, 1fr); }
-  .composerFooter,
-  .aiActionRow { align-items: stretch; flex-direction: column; }
-  .composerFooter .primaryButton,
-  .aiActionRow .primaryButton { justify-content: center; }
-  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; }
-  .downloadMeta { grid-template-columns: minmax(0, 1fr); }
-  .profileNumbers { gap: 18px; }
-  .empty { padding: 48px 20px; }
-}
-
 /* ── 加载骨架 ──────────────────────────────────────────────────────────
-   点下按钮到结果返回之间有数秒空窗。此前这段时间下方仍停在空态,页面看不出
-   在做事;骨架按结果的真实版式占位,返回时不产生跳版。 */
+   点下按钮到结果返回之间有数秒空窗。骨架按结果的真实版式占位,返回时不跳版。 */
 
-.skeleton {
-  display: grid;
-  gap: 16px;
+.loadingNote {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 14px;
 }
+
+.skeleton { display: grid; gap: 20px; }
 
 .skeletonGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
   align-items: start;
 }
 
 .skeletonCard {
   display: grid;
-  gap: 14px;
-  padding: 14px;
+  gap: 16px;
+  padding: 16px;
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   background: var(--surface);
@@ -991,19 +956,19 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
-  padding-top: 14px;
+  padding-top: 16px;
   border-top: 1px solid var(--border);
 }
 
 .skeletonBar {
-  height: 10px;
+  height: 12px;
   border-radius: var(--r-sm);
 }
 
 .skeletonMedia,
 .skeletonBar {
   background: var(--panel-hover);
-  animation: skeletonPulse 1400ms var(--ease) infinite;
+  animation: skeletonPulse 1200ms var(--ease) infinite;
 }
 
 @keyframes skeletonPulse {
@@ -1016,12 +981,44 @@
   .skeletonBar { animation: none; }
 }
 
+/* ── 响应式 ────────────────────────────────────────────────────────── */
+
 @media (max-width: 1080px) {
+  .resultGrid,
   .skeletonGrid { grid-template-columns: minmax(0, 1fr); }
+  .profileNumbers { gap: 24px; }
 }
 
-.loadingNote {
-  margin: 0;
-  color: var(--text-dim);
-  font-size: 13px;
+@media (max-width: 720px) {
+  .canvas { width: calc(100% - 32px); padding: 24px 0 48px; }
+  .pageHeader h1 { font-size: 24px; }
+  .tabBar { align-items: stretch; flex-direction: column; gap: 12px; }
+  .serviceState { align-self: flex-start; margin-bottom: 0; order: -1; }
+  .tabs { gap: 20px; }
+  .composer { padding: 16px; gap: 16px; }
+  .qualityRow > div { grid-template-columns: minmax(0, 1fr); }
+  .composerFooter,
+  .aiActionRow { align-items: stretch; flex-direction: column; }
+  .composerFooter .primaryButton,
+  .aiActionRow .primaryButton { justify-content: center; }
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 16px; }
+  .downloadMeta { grid-template-columns: minmax(0, 1fr); }
+  .profileNumbers { gap: 20px; }
+  .empty { padding: 48px 20px; }
+}
+
+/* ── 触屏目标尺寸 ──────────────────────────────────────────────────────
+   主题的 pointer:coarse 规则只作用于全局类名,CSS Module 内的控件不在其列。
+   指针粗糙时把 24-40px 的小控件抬到 44px(HIG / WCAG 2.5.8),视觉尺寸不变,
+   只增加可点区域。 */
+
+@media (pointer: coarse) {
+  .serviceState,
+  .urlField > div > button,
+  .modeSwitch button,
+  .platformChip { min-height: 44px; }
+  .modeSwitch { padding: 0; }
+  .primaryButton,
+  .bridgeButton { height: 44px; }
+  .tabs button { padding: 12px 0 16px; }
 }

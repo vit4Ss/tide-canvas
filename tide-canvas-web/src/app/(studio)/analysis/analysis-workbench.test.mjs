@@ -189,3 +189,35 @@ test("both tabs explain a disabled service instead of only greying the button", 
   assert.match(workbench, /内容拆解服务尚未配置/);
   assert.match(workbench, /视频下载服务当前未启用/);
 });
+
+test("stylesheet stays inside the project design system", () => {
+  // 上一版这里漂得很厉害:间距混用 5/6/7/9/11/13/15/18/22/26/30/38/42/46px,
+  // 字号出现 11 种档位(含 9.5 / 11.5 / 12.5 / 13.5),都违反 AGENTS.md。
+  // 这条测试把系统本身变成可执行约束,免得下一次改动又悄悄漂回去。
+  const rules = css.replace(/\/\*[\s\S]*?\*\//g, "");
+
+  // 间距:4 的倍数;1-2px 只留给发丝级描边与内缩。
+  const spacing = [...rules.matchAll(/(?:padding|margin|gap|row-gap|column-gap)[a-z-]*:\s*([^;]+);/g)]
+    .flatMap((match) => [...match[1].matchAll(/(-?\d+(?:\.\d+)?)px/g)].map((value) => Math.abs(parseFloat(value[1]))));
+  const offGrid = [...new Set(spacing.filter((value) => value > 2 && value % 4 !== 0))];
+  assert.deepEqual(offGrid, [], `off-grid spacing: ${offGrid.join(", ")}px`);
+
+  // 字阶:12(说明) / 14(正文) / 16(小标题) / 20(区块标题) / 24(窄屏页标题) / 32(页标题)。
+  const scale = new Set([12, 14, 16, 20, 24, 32]);
+  const sizes = [...new Set([...rules.matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)].map((match) => parseFloat(match[1])))];
+  const offScale = sizes.filter((value) => !scale.has(value));
+  assert.deepEqual(offScale, [], `off-scale font sizes: ${offScale.join(", ")}px`);
+
+  // 过渡时长只用 120 / 160 / 200ms;更长的是加载脉冲与 spinner,属功能性指示。
+  const durations = [...new Set([...rules.matchAll(/transition:[^;]*?(\d+)ms/g)].map((match) => Number(match[1])))];
+  const offTempo = durations.filter((value) => ![120, 160, 200].includes(value));
+  assert.deepEqual(offTempo, [], `off-tempo transitions: ${offTempo.join(", ")}ms`);
+
+  // 「减少 Card」:抬起的表面只给输入区、来源栏、AI 拆解/下载确认、运行面板。
+  const surfaces = (rules.match(/border-radius: var\(--r-lg\)/g) ?? []).length;
+  assert.ok(surfaces <= 5, `too many card surfaces: ${surfaces}`);
+
+  // 触屏目标:主题的 pointer:coarse 规则不覆盖 CSS Module,本页自己声明。
+  assert.match(rules, /@media \(pointer: coarse\)/);
+  assert.match(rules, /min-height: 44px/);
+});
