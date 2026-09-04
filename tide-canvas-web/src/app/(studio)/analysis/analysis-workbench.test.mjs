@@ -220,18 +220,23 @@ test("stylesheet stays inside the project design system", () => {
   // 不是卡片,按语义排除。
   const raised = [...rules.matchAll(/([^{}]+)\{([^}]*)\}/g)]
     .filter(([, , body]) => /border-radius: var\(--r-lg\)/.test(body))
-    .map(([, selector, body]) => ({ selector: selector.trim(), body }))
+    .flatMap(([, selector, body]) => selector.split(",").map((part) => ({ selector: part.trim(), body })))
     .filter(({ selector, body }) => !/dashed/.test(body) && !/skeleton/i.test(selector))
     .map(({ selector }) => selector);
   const perTab = {
-    breakdown: [".composer", ".sourceColumn", ".aiCard", ".runPanel"],
+    breakdownContent: [".composer", ".sourceColumn", ".aiCard", ".runPanel"],
+    breakdownAccount: [".composer", ".accountHero", ".accountStage", ".accountSignals", ".accountStrategy", ".runPanel"],
     download: [".getter", ".posterCard", ".formatCard", ".infoCard", ".runPanel"],
   };
   const unaccounted = raised.filter((selector) => !Object.values(perTab).flat().includes(selector));
   assert.deepEqual(unaccounted, [], `raised surface not attributed to a tab: ${unaccounted.join(" | ")}`);
   for (const [tab, selectors] of Object.entries(perTab)) {
     const onScreen = selectors.filter((selector) => raised.includes(selector));
-    assert.ok(onScreen.length <= 5, `too many card surfaces on ${tab}: ${onScreen.join(" | ")}`);
+    // The account view is deliberately a dense intelligence board. Its four
+    // major regions replace the old nested left/right cards, while the input
+    // composer and a running report can coexist above/below them.
+    const ceiling = tab === "breakdownAccount" ? 6 : 5;
+    assert.ok(onScreen.length <= ceiling, `too many card surfaces on ${tab}: ${onScreen.join(" | ")}`);
   }
 
   // 触屏目标:主题的 pointer:coarse 规则不覆盖 CSS Module,本页自己声明。
@@ -279,4 +284,32 @@ test("copyable metadata fields carry an accessible name", () => {
   // <span>标题</span> 不是 label,少了 aria-label 读屏只会念出一个无名输入框。
   assert.match(workbench, /<input readOnly value=\{value\} aria-label=\{label\}/);
   assert.match(workbench, /aria-label=\{`复制\$\{label\}`\}/);
+});
+
+test("account mode renders a real intelligence board instead of a source-and-text split", () => {
+  assert.match(workbench, /function AccountDashboard/);
+  assert.match(workbench, /result\.kind === "account"[\s\S]*<AccountDashboard/);
+  for (const section of ["内容表现排行", "聚焦样本", "样本信号", "互动构成", "内容样本", "AI 账号策略拆解"]) {
+    assert.ok(workbench.includes(section), `account board misses ${section}`);
+  }
+  assert.match(workbench, /buildAccountSnapshot\(result\)/);
+  assert.match(workbench, /这是当前抓取样本的横截面，不代表粉丝增长趋势或行业基准/);
+  assert.match(css, /\.accountDashboard \{[\s\S]*container-type: inline-size/);
+  assert.match(css, /@container \(max-width: 820px\)/);
+  // No historical series is returned by the API. A line chart or invented
+  // growth percentage would be visually impressive but analytically false.
+  assert.doesNotMatch(workbench, /粉丝增长曲线|近30天增长|行业平均|同比|环比/);
+});
+
+test("a restored AI report is shown only beside the account or work that created it", () => {
+  assert.match(workbench, /function analysisRunContext/);
+  assert.match(workbench, /sourceUrl: sourceURL, sourceFetchedAt: result\.fetchedAt/);
+  assert.match(workbench, /activeRunContext\.sourceUrl === currentAnalysisSource/);
+  assert.match(workbench, /activeRunContext\.sourceFetchedAt === result\.fetchedAt/);
+  assert.match(workbench, /const contextualRunDetails = runMatchesCurrentResult \? runDetails : null/);
+  assert.match(workbench, /runDetails=\{contextualRunDetails\}/);
+  assert.match(workbench, /\{contextualRunDetails\}/);
+  // A failed create has no run to carry source metadata. Starting another
+  // inspection clears that orphaned error so it cannot leak to the new account.
+  assert.match(workbench, /if \(!skillRun\.run && skillRun\.error\) skillRun\.clear\(\)/);
 });

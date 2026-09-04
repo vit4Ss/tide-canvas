@@ -6,9 +6,8 @@
      层级靠字重与三级文字色拉开,不靠增加字号档位。
    - 圆角、色彩、阴影一律取 imini 主题 token,本页不自带十六进制。
    - 过渡只用 120 / 160 / 200ms。
-   - 盒子(border + surface)只给五处真正需要抬起的容器:输入区、来源栏、
-     AI 拆解、下载确认、技能运行面板。资料区、作品列表与空态一律用留白与
-     分隔线成组,避免「整页都是卡片」。 */
+   - 盒子(border + surface)只给每个视图的一级区域；账号大屏内部用共享表面
+     与分隔线组织排行、信号和策略，不再把每个指标单独套卡。 */
 
 .page {
   /* 主题尚无语义告警色(各页此前各写各的),本页收敛到这一处声明,
@@ -152,6 +151,10 @@
 .composer,
 .sourceColumn,
 .aiCard,
+.accountHero,
+.accountStage,
+.accountSignals,
+.accountStrategy,
 .getter,
 .posterCard,
 .formatCard,
@@ -170,6 +173,21 @@
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
 }
+
+/* 账号数据已返回后，输入区退成一条可再次查询的命令栏，把首屏还给情报大屏。 */
+.composer.composerWithDashboard {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 16px;
+  padding: 16px;
+}
+
+.composerWithDashboard .modeSwitch { align-self: end; }
+.composerWithDashboard .composerFooter { align-self: end; }
+.composerWithDashboard .composerFooter .footNote,
+.composerWithDashboard .platformRow { display: none; }
+.composerWithDashboard .notice,
+.composerWithDashboard .error { grid-column: 1 / -1; }
 
 .modeSwitch {
   display: inline-flex;
@@ -670,6 +688,554 @@
 .workCoverFallback > .platformMark { position: absolute; top: 8px; left: 8px; }
 .workCoverFallback > svg { width: 20px; height: 20px; }
 
+/* ── 账号情报大屏 ────────────────────────────────────────────────────
+   成熟账号分析产品的共同结构不是「左素材、右长文本」，而是先给账号总览，
+   再用样本排行与互动构成解释表现，最后才进入 AI 策略。这里只使用平台真实
+   返回的横截面数据；没有历史序列就不伪造增长曲线或行业基准。 */
+
+.accountDashboard {
+  display: grid;
+  gap: 24px;
+  container-type: inline-size;
+}
+
+.accountHero,
+.accountStage,
+.accountSignals,
+.accountStrategy {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+
+.accountHero {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 24px;
+  padding: 24px 24px 0;
+}
+
+.accountHero::before {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: var(--platform);
+  content: "";
+}
+
+.accountIdentity {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-width: 0;
+}
+
+.accountAvatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--platform) 36%, var(--border));
+  border-radius: 50%;
+  background: var(--surface-2);
+}
+
+.accountAvatar > img,
+.accountAvatar > .platformMark {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.accountAvatar > .platformMark { font-size: 20px; }
+
+.accountIdentityText { min-width: 0; }
+
+.accountMetaLine {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.accountMetaLine > span { display: inline-flex; align-items: center; gap: 8px; }
+.accountMetaLine code { min-width: 0; overflow: hidden; color: var(--text-dim); font-family: var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+
+.accountIdentityText h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -.02em;
+  line-height: 1.3;
+}
+
+.accountIdentityText p {
+  max-width: 64ch;
+  margin: 8px 0 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  display: -webkit-box;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.accountHeroActions {
+  display: flex;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.accountHeroActions a,
+.focusActions a,
+.focusActions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+  transition: color 160ms var(--ease);
+}
+
+.accountHeroActions a:hover,
+.focusActions a:hover,
+.focusActions button:hover { color: var(--text); }
+
+.accountHeroActions svg,
+.focusActions svg { width: 16px; height: 16px; }
+
+.accountKpiRail {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  margin: 0 -24px;
+  border-top: 1px solid var(--border);
+}
+
+.accountKpiRail > div {
+  min-width: 0;
+  padding: 16px 20px 20px;
+  border-left: 1px solid var(--border);
+}
+
+.accountKpiRail > div:first-child { border-left: none; }
+.accountKpiRail small,
+.accountKpiRail span { display: block; color: var(--text-faint); font-size: 12px; }
+
+.accountKpiRail strong {
+  display: block;
+  margin: 8px 0 4px;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.025em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountStage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(280px, .75fr);
+}
+
+.performanceBoard,
+.focusSample,
+.signalPanel,
+.interactionPanel {
+  min-width: 0;
+  padding: 20px;
+}
+
+.focusSample,
+.interactionPanel { border-left: 1px solid var(--border); }
+
+.dataPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 40px;
+  margin-bottom: 16px;
+}
+
+.dataPanelHeader > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.dataPanelHeader > div > svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: color-mix(in oklab, var(--platform) 76%, var(--text));
+}
+
+.dataPanelHeader > div > span { display: grid; gap: 2px; min-width: 0; }
+.dataPanelHeader strong { font-size: 14px; font-weight: 600; }
+.dataPanelHeader small,
+.dataPanelHeader > span { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.performanceRows { display: grid; gap: 4px; }
+
+.performanceRows > button {
+  display: grid;
+  grid-template-columns: 24px minmax(140px, 1fr) minmax(120px, 1.2fr) 64px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 40px;
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  text-align: left;
+  transition: color 120ms var(--ease), background 120ms var(--ease);
+}
+
+.performanceRows > button:hover { color: var(--text); background: var(--panel); }
+.performanceRows > button.performanceRowActive { color: var(--text); background: var(--panel-hover); }
+.performanceRows > button.performanceRowActive .performanceTitle { font-weight: 650; }
+.performanceRows > button > b { color: var(--text-faint); font-family: var(--mono); font-size: 12px; font-weight: 500; }
+.performanceRows > button > strong { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+
+.performanceTitle {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.performanceBar {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--pill);
+  background: var(--panel-hover);
+}
+
+.performanceBar i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: color-mix(in oklab, var(--platform) 78%, var(--text));
+  transform: scaleX(var(--bar-scale, 0));
+  transform-origin: left center;
+  transition: transform 200ms var(--ease);
+}
+
+.focusSample { display: flex; flex-direction: column; }
+
+.focusMedia {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+
+.focusMedia .workCoverImage,
+.focusMedia .workCoverFallback { width: 100%; height: 100%; }
+
+.focusCopy { padding: 12px 0; }
+.focusCopy h3 { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.5; }
+.focusCopy time { display: block; margin-top: 4px; color: var(--text-faint); font-size: 12px; }
+
+.focusMetrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.focusMetrics small { display: block; color: var(--text-faint); font-size: 12px; }
+.focusMetrics strong { display: block; margin-top: 4px; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.focusActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  padding-top: 12px;
+}
+
+.accountSignals {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, .75fr);
+}
+
+.signalGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.signalGrid > div {
+  min-width: 0;
+  padding: 16px;
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+}
+
+.signalGrid > div:nth-child(-n + 2) { border-top: none; }
+.signalGrid > div:nth-child(odd) { border-left: none; }
+.signalGrid span { display: flex; align-items: center; gap: 8px; color: var(--text-dim); font-size: 12px; }
+.signalGrid span svg { width: 16px; height: 16px; color: var(--text-faint); }
+.signalGrid strong { display: block; margin-top: 8px; font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.signalGrid small { display: block; margin-top: 4px; overflow: hidden; color: var(--text-faint); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+
+.interactionPanel { display: flex; flex-direction: column; }
+
+.interactionTrack {
+  display: flex;
+  gap: 2px;
+  width: 100%;
+  height: 16px;
+  overflow: hidden;
+  border-radius: var(--pill);
+  background: var(--panel-hover);
+}
+
+.interactionTrack > i { flex-basis: 0; min-width: 4px; }
+.interactionTrack > i[data-part="like"],
+.interactionLegend span[data-part="like"] > i { background: color-mix(in oklab, var(--platform) 86%, var(--text)); }
+.interactionTrack > i[data-part="comment"],
+.interactionLegend span[data-part="comment"] > i { background: color-mix(in oklab, var(--platform) 62%, var(--text-dim)); }
+.interactionTrack > i[data-part="share"],
+.interactionLegend span[data-part="share"] > i { background: color-mix(in oklab, var(--platform) 42%, var(--text-faint)); }
+.interactionTrack > i[data-part="favorite"],
+.interactionLegend span[data-part="favorite"] > i { background: var(--text-faint); }
+
+.interactionLegend {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 20px;
+  margin-top: 20px;
+}
+
+.interactionLegend > span {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.interactionLegend > span > i { width: 8px; height: 8px; border-radius: 50%; }
+.interactionLegend strong { color: var(--text-dim); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.scopeNote {
+  margin: auto 0 0;
+  padding-top: 20px;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.dataEmpty {
+  display: grid;
+  place-items: center;
+  min-height: 120px;
+  padding: 24px;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.accountWorks {
+  display: grid;
+  gap: 16px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+.sectionHeader > div > h2 { margin: 0; }
+.sectionHeader > div > p { margin: 4px 0 0; color: var(--text-dim); font-size: 12px; line-height: 1.6; }
+.sectionHeader > span { color: var(--text-faint); font-size: 12px; }
+
+.accountWorkGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.accountWorkGrid > button {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  transition: border-color 160ms var(--ease), background 160ms var(--ease), transform 160ms var(--ease);
+}
+
+.accountWorkGrid > button:hover { border-color: var(--border-strong); background: var(--panel); transform: translateY(-2px); }
+.accountWorkGrid > button.accountWorkActive { border-color: color-mix(in oklab, var(--platform) 72%, var(--border)); background: var(--panel-hover); }
+
+.accountWorkMedia {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.accountWorkMedia .workCoverImage,
+.accountWorkMedia .workCoverFallback { width: 100%; height: 100%; }
+
+.accountWorkState {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in oklab, var(--text) 12%, transparent);
+  border-radius: var(--pill);
+  background: var(--scrim);
+  color: var(--text);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.accountWorkCopy { display: block; padding: 12px; }
+.accountWorkCopy b { display: block; overflow: hidden; font-size: 12px; font-weight: 600; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+.accountWorkCopy small { display: block; margin-top: 4px; color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.accountStrategy > .sectionHeader { padding: 20px; border-bottom: 1px solid var(--border); }
+
+.strategyGrid {
+  display: grid;
+  grid-template-columns: minmax(300px, .72fr) minmax(0, 1.28fr);
+  min-height: 400px;
+}
+
+.strategyControl {
+  display: flex;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border-right: 1px solid var(--border);
+}
+
+.strategyControl .primaryButton { justify-content: center; width: 100%; margin-top: auto; }
+
+.strategyScope {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.strategyScope > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.strategyScope svg { width: 16px; height: 16px; color: color-mix(in oklab, var(--platform) 72%, var(--text)); }
+
+.strategyOutput { min-width: 0; padding: 20px; background: color-mix(in oklab, var(--bg) 42%, transparent); }
+.strategyOutput .runPanel { border: 1px solid var(--border); }
+.strategyOutput .markdown { max-height: 720px; }
+
+.strategyEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 360px;
+  color: var(--text-faint);
+}
+
+.strategyEmpty > svg { flex: none; width: 20px; height: 20px; color: color-mix(in oklab, var(--platform) 72%, var(--text)); }
+.strategyEmpty strong { color: var(--text); font-size: 14px; font-weight: 600; }
+.strategyEmpty p { max-width: 48ch; margin: 4px 0 0; font-size: 12px; line-height: 1.6; }
+
+@media (prefers-reduced-motion: reduce) {
+  .performanceBar i,
+  .accountWorkGrid > button { transition: none; }
+  .accountWorkGrid > button:hover { transform: none; }
+}
+
+/* 账号大屏按自身可用宽度而不是浏览器宽度折叠。工作台左侧导航会吃掉一段
+   空间，用 viewport media query 会在不同导航状态下过早或过晚换列。 */
+@container (max-width: 1100px) {
+  .accountKpiRail { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .accountKpiRail > div:nth-child(5) { border-left: none; }
+  .accountKpiRail > div:nth-child(n + 5) { border-top: 1px solid var(--border); }
+  .accountWorkGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@container (max-width: 820px) {
+  .accountHero { grid-template-columns: minmax(0, 1fr); }
+  .accountHeroActions { align-items: center; flex-direction: row; justify-content: space-between; }
+  .accountStage,
+  .accountSignals,
+  .strategyGrid { grid-template-columns: minmax(0, 1fr); }
+  .focusSample,
+  .interactionPanel { border-top: 1px solid var(--border); border-left: none; }
+  .strategyControl { border-right: none; border-bottom: 1px solid var(--border); }
+}
+
+@container (max-width: 620px) {
+  .accountHero { gap: 20px; padding: 20px 16px 0; }
+  .accountIdentity { align-items: flex-start; gap: 16px; }
+  .accountAvatar { width: 56px; height: 56px; }
+  .accountHeroActions { align-items: flex-start; flex-direction: column; }
+  .accountKpiRail { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0 -16px; }
+  .accountKpiRail > div:nth-child(odd) { border-left: none; }
+  .accountKpiRail > div:nth-child(n + 3) { border-top: 1px solid var(--border); }
+  .performanceBoard,
+  .focusSample,
+  .signalPanel,
+  .interactionPanel,
+  .strategyControl,
+  .strategyOutput { padding: 16px; }
+  .performanceRows > button { grid-template-columns: 24px minmax(100px, 1fr) minmax(72px, .8fr) 56px; gap: 8px; }
+  .signalGrid { grid-template-columns: minmax(0, 1fr); }
+  .signalGrid > div,
+  .signalGrid > div:nth-child(-n + 2),
+  .signalGrid > div:nth-child(odd) { border-top: 1px solid var(--border); border-left: none; }
+  .signalGrid > div:first-child { border-top: none; }
+  .accountWorkGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .accountStrategy > .sectionHeader { padding: 16px; }
+  .strategyEmpty { min-height: 240px; }
+}
+
+@container (max-width: 420px) {
+  .accountWorkGrid { grid-template-columns: minmax(0, 1fr); }
+  .performanceRows > button { grid-template-columns: 24px minmax(0, 1fr) 56px; }
+  .performanceBar { display: none; }
+  .interactionLegend { grid-template-columns: minmax(0, 1fr); }
+  .strategyScope { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* ── AI 拆解与下载确认 ─────────────────────────────────────────────── */
 
 .aiCard {
@@ -1025,6 +1591,7 @@
   .serviceState { align-self: flex-start; margin-bottom: 0; order: -1; }
   .tabs { gap: 20px; }
   .composer { padding: 16px; gap: 16px; }
+  .composer.composerWithDashboard { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
   .composerFooter,
   .aiActionRow { align-items: stretch; flex-direction: column; }
   .composerFooter .primaryButton,
@@ -1049,6 +1616,10 @@
   .primaryButton,
   .bridgeButton { height: 44px; }
   .tabs button { padding: 12px 0 16px; }
+  .performanceRows > button,
+  .accountWorkGrid > button,
+  .focusActions a,
+  .focusActions button { min-height: 44px; }
 }
 
 /* ── 下载页:居中窄栏,逐块堆叠 ──────────────────────────────────────────

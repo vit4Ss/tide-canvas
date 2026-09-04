@@ -15,7 +15,10 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
+  Activity,
   ArrowUpRight,
+  BarChart3,
+  CalendarDays,
   Check,
   ChevronRight,
   CircleAlert,
@@ -25,6 +28,7 @@ import {
   FileVideo,
   Eye,
   Film,
+  Gauge,
   Heart,
   Library,
   Link2,
@@ -34,6 +38,8 @@ import {
   ShieldCheck,
   Share2,
   Sparkles,
+  Target,
+  Trophy,
   UserRoundSearch,
 } from "lucide-react";
 import { fileApi } from "@/lib/api";
@@ -58,6 +64,7 @@ import type { SkillRunAction } from "@/types/skill-run";
 import { FileCategory } from "@/types/file";
 import type { SkillVO } from "@/types/skill";
 import { toast } from "@/components/shared/toast";
+import { buildAccountSnapshot } from "./account-insights";
 import styles from "./analysis.module.css";
 
 type WorkbenchTab = "breakdown" | "download";
@@ -105,6 +112,20 @@ function displayCount(value?: string): string {
   const number = Number(value);
   if (!Number.isFinite(number)) return value;
   return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(number);
+}
+
+function displayCompactMetric(value: number | null, suffix = ""): string {
+  if (value === null || !Number.isFinite(value)) return "—";
+  return `${new Intl.NumberFormat("zh-CN", {
+    notation: value >= 10_000 ? "compact" : "standard",
+    maximumFractionDigits: value >= 10_000 ? 1 : 0,
+  }).format(value)}${suffix}`;
+}
+
+function displayPercent(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return "—";
+  const digits = value < 1 ? 2 : value < 10 ? 1 : 0;
+  return `${value.toFixed(digits)}%`;
 }
 
 function displayDate(value?: string): string {
@@ -223,6 +244,19 @@ function accountPrompt(result: SocialInspectVO, focus: string): string {
     prompt = render();
   }
   return prompt;
+}
+
+function analysisRunContext(input: unknown): { sourceUrl: string; sourceFetchedAt: number | null } {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return { sourceUrl: "", sourceFetchedAt: null };
+  const parameters = (input as { parameters?: unknown }).parameters;
+  if (!parameters || typeof parameters !== "object" || Array.isArray(parameters)) return { sourceUrl: "", sourceFetchedAt: null };
+  const record = parameters as { sourceUrl?: unknown; sourceFetchedAt?: unknown };
+  return {
+    sourceUrl: typeof record.sourceUrl === "string" ? record.sourceUrl.trim() : "",
+    sourceFetchedAt: typeof record.sourceFetchedAt === "number" && Number.isFinite(record.sourceFetchedAt)
+      ? record.sourceFetchedAt
+      : null,
+  };
 }
 
 function platformMeta(key?: SocialPlatform) {
@@ -361,6 +395,270 @@ function ResultSkeleton() {
           {bar("40%")}{bar("88%")}{bar("64%")}{bar("76%")}
         </div>
       </div>
+    </div>
+  );
+}
+
+interface AccountDashboardProps {
+  result: SocialInspectVO;
+  currentWork: SocialWorkVO | null;
+  focus: string;
+  busy: boolean;
+  runDetails: React.ReactNode;
+  skillError: string;
+  downloaderPlatforms: string[];
+  onSelectWork: (work: SocialWorkVO) => void;
+  onFocusChange: (value: string) => void;
+  onRun: () => void;
+  onDownloadWork: (work: SocialWorkVO) => void;
+}
+
+function AccountDashboard({
+  result,
+  currentWork,
+  focus,
+  busy,
+  runDetails,
+  skillError,
+  downloaderPlatforms,
+  onSelectWork,
+  onFocusChange,
+  onRun,
+  onDownloadWork,
+}: AccountDashboardProps) {
+  const snapshot = buildAccountSnapshot(result);
+  const meta = platformMeta(result.platform);
+  const profile = result.profile;
+  const currentDatum = snapshot.works.find((item) => item.work === currentWork) ?? snapshot.rankedWorks[0] ?? null;
+  const chartWorks = snapshot.rankedWorks.slice(0, 8);
+  const interactionTotal = snapshot.interactionParts.reduce((sum, item) => sum + item.value, 0);
+  const publishedRange = snapshot.firstPublishedAt !== null && snapshot.lastPublishedAt !== null
+    ? `${displayDate(String(snapshot.firstPublishedAt))} — ${displayDate(String(snapshot.lastPublishedAt))}`
+    : "发布时间不完整";
+  const fetchedLabel = result.fetchedAt > 0
+    ? `抓取于 ${new Intl.DateTimeFormat("zh-CN", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(result.fetchedAt))}`
+    : "本次查询";
+
+  return (
+    <div className={styles.accountDashboard} style={{ "--platform": meta.color } as React.CSSProperties}>
+      <header className={styles.accountHero}>
+        <div className={styles.accountIdentity}>
+          <span className={styles.accountAvatar}><ProfileAvatar url={profile?.avatarUrl} platform={result.platform} /></span>
+          <div className={styles.accountIdentityText}>
+            <div className={styles.accountMetaLine}>
+              <span><PlatformMark platform={result.platform} small />{result.platformName}</span>
+              {profile?.handle && <code title={profile.handle}>{profile.handle}</code>}
+            </div>
+            <h2>{profile?.name || profile?.handle || "未命名账号"}</h2>
+            <p title={profile?.bio}>{profile?.bio || "平台暂未返回账号简介"}</p>
+          </div>
+        </div>
+        <div className={styles.accountHeroActions}>
+          <span>{fetchedLabel}</span>
+          <a href={result.sourceUrl} target="_blank" rel="noopener noreferrer">查看账号主页 <ArrowUpRight aria-hidden /></a>
+        </div>
+
+        <div className={styles.accountKpiRail} role="list" aria-label="账号关键指标">
+          <div role="listitem"><small>粉丝</small><strong>{displayCount(profile?.followers)}</strong><span>平台累计</span></div>
+          <div role="listitem"><small>关注</small><strong>{displayCount(profile?.following)}</strong><span>平台累计</span></div>
+          <div role="listitem"><small>获赞</small><strong>{displayCount(profile?.likes)}</strong><span>平台累计</span></div>
+          <div role="listitem"><small>作品</small><strong>{displayCount(profile?.works)}</strong><span>平台累计</span></div>
+          <div role="listitem"><small>样本均播</small><strong>{displayCompactMetric(snapshot.averageViews)}</strong><span>{snapshot.measuredViews} 个有效样本</span></div>
+          <div role="listitem"><small>可见互动率</small><strong>{displayPercent(snapshot.engagementRate)}</strong><span>已返回互动 ÷ 播放</span></div>
+          <div role="listitem"><small>样本播放 / 粉丝</small><strong>{displayPercent(snapshot.viewToFollowerRate)}</strong><span>均播 ÷ 粉丝</span></div>
+          <div role="listitem"><small>可见总互动</small><strong>{snapshot.measuredInteractions ? displayCompactMetric(snapshot.totalInteractions) : "—"}</strong><span>{snapshot.measuredInteractions} 个有效样本</span></div>
+        </div>
+      </header>
+
+      {!!result.warnings?.length && (
+        <div className={styles.warningList} role="status">
+          {result.warnings.map((warning) => (
+            <div className={styles.notice} key={warning}><CircleAlert aria-hidden /> {warning}</div>
+          ))}
+        </div>
+      )}
+
+      <div className={styles.accountStage}>
+        <section className={styles.performanceBoard}>
+          <header className={styles.dataPanelHeader}>
+            <div><Trophy aria-hidden /><span><strong>{snapshot.rankingLabel === "平台顺序" ? "近期作品索引" : "内容表现排行"}</strong><small>{snapshot.rankingLabel === "平台顺序" ? "暂无可比较的表现指标" : `按样本${snapshot.rankingLabel}排序`}</small></span></div>
+            <span>{snapshot.sampleCount} 个公开样本</span>
+          </header>
+          {chartWorks.length > 0 ? (
+            <div className={styles.performanceRows}>
+              {chartWorks.map((item, rank) => {
+                const width = item.score > 0 ? Math.max(4, (item.score / snapshot.maxScore) * 100) : 0;
+                return (
+                  <button
+                    type="button"
+                    key={item.work.id || `${item.work.pageUrl}-${item.index}`}
+                    className={currentDatum?.work === item.work ? styles.performanceRowActive : ""}
+                    aria-pressed={currentDatum?.work === item.work}
+                    title={titleOf(item.work)}
+                    onClick={() => onSelectWork(item.work)}
+                  >
+                    <b>{String(rank + 1).padStart(2, "0")}</b>
+                    <span className={styles.performanceTitle}>{titleOf(item.work)}</span>
+                    <span className={styles.performanceBar} aria-hidden>
+                      <i style={{ "--bar-scale": width / 100 } as React.CSSProperties} />
+                    </span>
+                    <strong>{displayCompactMetric(snapshot.maxScore > 0 ? item.score : null)}</strong>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className={styles.dataEmpty}>平台没有返回可用于排行的播放或互动数据。</div>
+          )}
+        </section>
+
+        <aside className={styles.focusSample}>
+          <header className={styles.dataPanelHeader}>
+            <div><Target aria-hidden /><span><strong>聚焦样本</strong><small>点击左侧排行切换</small></span></div>
+            {currentDatum && <span>#{String(snapshot.rankedWorks.indexOf(currentDatum) + 1).padStart(2, "0")}</span>}
+          </header>
+          {currentDatum ? (
+            <>
+              <div className={styles.focusMedia}>
+                <WorkCover work={currentDatum.work} platform={result.platform} />
+                {currentDatum.work.duration && <span className={styles.duration}><Clock3 aria-hidden /> {currentDatum.work.duration}</span>}
+              </div>
+              <div className={styles.focusCopy}>
+                <h3>{titleOf(currentDatum.work)}</h3>
+                <time>{displayDate(currentDatum.work.publishedAt) || "发布时间未知"}</time>
+              </div>
+              <div className={styles.focusMetrics}>
+                <div><small>播放</small><strong>{displayCompactMetric(currentDatum.views)}</strong></div>
+                <div><small>可见互动</small><strong>{displayCompactMetric(currentDatum.hasInteractionData ? currentDatum.interactions : null)}</strong></div>
+                <div><small>可见互动率</small><strong>{displayPercent(currentDatum.engagementRate)}</strong></div>
+              </div>
+              {currentDatum.work.pageUrl && (
+                <div className={styles.focusActions}>
+                  <a href={currentDatum.work.pageUrl} target="_blank" rel="noopener noreferrer">查看作品 <ArrowUpRight aria-hidden /></a>
+                  {downloaderPlatforms.includes(result.platform) && (
+                    <button type="button" onClick={() => onDownloadWork(currentDatum.work)}><Download aria-hidden /> 下载原片</button>
+                  )}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className={styles.dataEmpty}>暂时没有可聚焦的公开作品。</div>
+          )}
+        </aside>
+      </div>
+
+      <div className={styles.accountSignals}>
+        <section className={styles.signalPanel}>
+          <header className={styles.dataPanelHeader}>
+            <div><Activity aria-hidden /><span><strong>样本信号</strong><small>只描述本次公开样本</small></span></div>
+          </header>
+          <div className={styles.signalGrid}>
+            <div><span><Gauge aria-hidden /> 中位播放</span><strong>{displayCompactMetric(snapshot.medianViews)}</strong><small>减少单条爆款对均值的干扰</small></div>
+            <div><span><BarChart3 aria-hidden /> 爆款集中度</span><strong>{displayPercent(snapshot.topConcentration)}</strong><small>头部作品占样本总播放</small></div>
+            <div><span><CalendarDays aria-hidden /> 样本发布频率</span><strong>{snapshot.postsPerWeek === null ? "—" : `${snapshot.postsPerWeek.toFixed(1)} 条/周`}</strong><small>{snapshot.measuredPublished} 个定时样本 · {publishedRange}</small></div>
+            <div><span><Activity aria-hidden /> 平均可见互动</span><strong>{displayCompactMetric(snapshot.averageInteractions)}</strong><small>{snapshot.measuredInteractions} 个有效样本</small></div>
+          </div>
+        </section>
+
+        <section className={styles.interactionPanel}>
+          <header className={styles.dataPanelHeader}>
+            <div><BarChart3 aria-hidden /><span><strong>互动构成</strong><small>{snapshot.measuredInteractions ? `${displayCompactMetric(snapshot.totalInteractions)} 次可见互动` : "暂无有效互动样本"}</small></span></div>
+          </header>
+          {snapshot.measuredInteractions > 0 && interactionTotal > 0 ? (
+            <>
+              <div className={styles.interactionTrack} role="img" aria-label={snapshot.interactionParts.map((item) => `${item.label}${displayCompactMetric(item.measured ? item.value : null)}`).join("，")}>
+                {snapshot.interactionParts.filter((item) => item.value > 0).map((item) => (
+                  <i key={item.key} data-part={item.key} style={{ flexGrow: item.value }} />
+                ))}
+              </div>
+              <div className={styles.interactionLegend}>
+                {snapshot.interactionParts.map((item) => (
+                  <span key={item.key} data-part={item.key}><i />{item.label}<strong>{displayCompactMetric(item.measured ? item.value : null)}</strong></span>
+                ))}
+              </div>
+            </>
+          ) : snapshot.measuredInteractions > 0 ? (
+            <div className={styles.dataEmpty}>平台返回的互动指标均为 0。</div>
+          ) : (
+            <div className={styles.dataEmpty}>平台没有返回点赞、评论、分享或收藏数据。</div>
+          )}
+          <p className={styles.scopeNote}>这是当前抓取样本的横截面，不代表粉丝增长趋势或行业基准。</p>
+        </section>
+      </div>
+
+      <section className={styles.accountWorks}>
+        <header className={styles.sectionHeader}>
+          <div><h2>内容样本</h2><p>从封面、标题与数据一起判断什么值得复用。</p></div>
+          <span>{snapshot.sampleCount} 个样本 · {publishedRange}</span>
+        </header>
+        {snapshot.works.length > 0 ? (
+          <div className={styles.accountWorkGrid}>
+            {snapshot.works.map((item) => (
+              <button
+                type="button"
+                key={item.work.id || `${item.work.pageUrl}-${item.index}`}
+                className={currentDatum?.work === item.work ? styles.accountWorkActive : ""}
+                aria-pressed={currentDatum?.work === item.work}
+                title={titleOf(item.work)}
+                onClick={() => onSelectWork(item.work)}
+              >
+                <span className={styles.accountWorkMedia}>
+                  <WorkCover work={item.work} platform={result.platform} />
+                  {currentDatum?.work === item.work && <em className={styles.accountWorkState}>聚焦</em>}
+                </span>
+                <span className={styles.accountWorkCopy}><b>{titleOf(item.work)}</b><small>{displayCompactMetric(item.views)} 播放 · {displayCompactMetric(item.hasInteractionData ? item.interactions : null)} 互动</small></span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className={styles.dataEmpty}>平台返回了账号资料，但没有可展示的公开作品。</div>
+        )}
+      </section>
+
+      <section className={styles.accountStrategy}>
+        <header className={styles.sectionHeader}>
+          <div><h2>AI 账号策略拆解</h2><p>把样本数据转成定位、内容支柱与下一轮测试动作。</p></div>
+          <span>只使用本次公开样本</span>
+        </header>
+        <div className={styles.strategyGrid}>
+          <article className={styles.strategyControl}>
+            <label className={styles.focusField}>
+              <span>你希望重点分析什么</span>
+              <textarea rows={7} value={focus} onChange={(event) => onFocusChange(event.target.value)} maxLength={4000} />
+              <small>{focus.length} / 4000</small>
+            </label>
+            <div className={styles.strategyScope}>
+              <span><Target aria-hidden />账号定位</span>
+              <span><Trophy aria-hidden />爆款差异</span>
+              <span><BarChart3 aria-hidden />内容支柱</span>
+              <span><CalendarDays aria-hidden />发布节奏</span>
+            </div>
+            <button
+              type="button"
+              className={styles.primaryButton}
+              disabled={(!profile && result.works.length === 0) || busy || !!runDetails}
+              onClick={onRun}
+            >
+              {busy ? <Loader2 className={styles.spin} aria-hidden /> : <ScanSearch aria-hidden />}
+              {busy ? "正在启动分析" : "生成账号策略"}
+            </button>
+          </article>
+          <div className={styles.strategyOutput}>
+            {skillError && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{skillError}</span></div>}
+            {runDetails || (
+              <div className={styles.strategyEmpty}>
+                <Sparkles aria-hidden />
+                <div><strong>策略报告将在这里展开</strong><p>AI 会引用当前账号资料和 {snapshot.sampleCount} 个作品样本，不会编造平台未返回的指标。</p></div>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
@@ -516,6 +814,7 @@ export default function AnalysisWorkbench() {
 
   const inspect = async () => {
     if (inspectBusyRef.current || !url.trim()) return;
+    if (!skillRun.run && skillRun.error) skillRun.clear();
     inspectBusyRef.current = true;
     const epoch = ++inspectEpochRef.current;
     setLoading(true);
@@ -626,7 +925,7 @@ export default function AnalysisWorkbench() {
           prompt,
           assets,
           sourceNodeIds: [],
-          parameters: { platform: currentPlatform, sourceUrl: sourceURL },
+          parameters: { platform: currentPlatform, sourceUrl: sourceURL, sourceFetchedAt: result.fetchedAt },
         },
       });
       if (epoch !== analysisEpochRef.current) return;
@@ -761,6 +1060,23 @@ export default function AnalysisWorkbench() {
       />
     </div>
   ) : null;
+  const currentAnalysisSource = result
+    ? result.kind === "account"
+      ? result.sourceUrl.trim()
+      : (currentWork?.pageUrl || result.sourceUrl).trim()
+    : "";
+  const activeRunContext = analysisRunContext(skillRun.run?.input);
+  // A restored or previous report must never be rendered beneath a different
+  // account/work. Without this fence, parsing account B after account A makes
+  // A's report look like B's and also keeps B's analysis button disabled.
+  const runMatchesCurrentResult = !result || !skillRun.run
+    ? true
+    : !!activeRunContext.sourceUrl &&
+      activeRunContext.sourceUrl === currentAnalysisSource &&
+      activeRunContext.sourceFetchedAt !== null &&
+      activeRunContext.sourceFetchedAt === result.fetchedAt;
+  const contextualRunDetails = runMatchesCurrentResult ? runDetails : null;
+  const contextualSkillError = runMatchesCurrentResult ? skillRun.error : "";
 
   return (
     <main className={styles.page}>
@@ -816,7 +1132,7 @@ export default function AnalysisWorkbench() {
 
         {tab === "breakdown" ? (
           <div className={styles.panel} role="tabpanel" id="analysis-panel-breakdown" aria-labelledby="analysis-tab-breakdown">
-            <section className={styles.composer}>
+            <section className={`${styles.composer}${kind === "account" && (result || loading) ? ` ${styles.composerWithDashboard}` : ""}`}>
               <div className={styles.modeSwitch} aria-label="拆解对象">
                 <button type="button" aria-pressed={kind === "content"} disabled={loading || archiving} className={kind === "content" ? styles.modeActive : ""} onClick={() => { setKind("content"); setFocus(DEFAULT_FOCUS); setResult(null); setSelectedWork(null); setError(""); }}>
                   <Film aria-hidden /> 单个作品
@@ -880,8 +1196,29 @@ export default function AnalysisWorkbench() {
 
             {result ? (
               <section className={styles.resultSection}>
+                {result.kind === "account" ? (
+                  <AccountDashboard
+                    result={result}
+                    currentWork={currentWork}
+                    focus={focus}
+                    busy={archiving || skillRun.loading}
+                    runDetails={contextualRunDetails}
+                    skillError={contextualSkillError}
+                    downloaderPlatforms={downloaderPlatforms}
+                    onSelectWork={setSelectedWork}
+                    onFocusChange={setFocus}
+                    onRun={() => void startDeepAnalysis()}
+                    onDownloadWork={(work) => {
+                      setDownloadSource(work.pageUrl || "");
+                      setDownloadResult(null);
+                      setDownloadError("");
+                      setTab("download");
+                    }}
+                  />
+                ) : (
+                  <>
                 <header className={styles.sectionHeader}>
-                  <h2>{result.kind === "account" ? "账号与作品样本" : "作品事实卡"}</h2>
+                  <h2>作品事实卡</h2>
                   <a href={result.sourceUrl} target="_blank" rel="noopener noreferrer">查看原链接 <ArrowUpRight aria-hidden /></a>
                 </header>
 
@@ -987,7 +1324,7 @@ export default function AnalysisWorkbench() {
                         <button
                           type="button"
                           className={styles.primaryButton}
-                          disabled={(kind === "content" ? !currentWork?.mediaUrl : !result.profile && result.works.length === 0) || archiving || skillRun.loading || !!skillRun.run}
+                          disabled={!currentWork?.mediaUrl || archiving || skillRun.loading || !!contextualRunDetails}
                           onClick={() => void startDeepAnalysis()}
                         >
                           {archiving || skillRun.loading ? <Loader2 className={styles.spin} aria-hidden /> : <ScanSearch aria-hidden />}
@@ -1002,10 +1339,12 @@ export default function AnalysisWorkbench() {
                       )}
                     </article>
 
-                    {skillRun.error && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{skillRun.error}</span></div>}
-                    {runDetails}
+                    {contextualSkillError && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{contextualSkillError}</span></div>}
+                    {contextualRunDetails}
                   </div>
                 </div>
+                  </>
+                )}
               </section>
             ) : runDetails ? (
               <section className={styles.resultSection}>
@@ -1016,14 +1355,16 @@ export default function AnalysisWorkbench() {
               </section>
             ) : loading ? (
               <section className={styles.resultSection} aria-busy="true">
-                <p className={styles.loadingNote} role="status">正在读取平台数据…</p>
+                <p className={styles.loadingNote} role="status">{kind === "account" ? "正在建立账号情报快照…" : "正在读取平台数据…"}</p>
                 <ResultSkeleton />
               </section>
             ) : (
               <div className={styles.empty}>
-                <Film aria-hidden />
-                <strong>先还原事实，再解释方法</strong>
-                <p>标题、作者、发布时间与互动指标直接来自平台，不由 AI 猜测；随后 AI 依据视频或账号样本给出带时间码证据的拆解。</p>
+                {kind === "account" ? <UserRoundSearch aria-hidden /> : <Film aria-hidden />}
+                <strong>{kind === "account" ? "输入账号主页，建立情报快照" : "先还原事实，再解释方法"}</strong>
+                <p>{kind === "account"
+                  ? "先读取账号资料与近期公开作品，再生成样本排行、互动构成和可执行的内容策略。"
+                  : "标题、作者、发布时间与互动指标直接来自平台，不由 AI 猜测；随后 AI 依据视频给出带时间码证据的拆解。"}</p>
               </div>
             )}
           </div>
