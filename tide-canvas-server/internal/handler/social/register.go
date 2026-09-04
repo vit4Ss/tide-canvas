@@ -160,6 +160,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	g := api.Group("/social-analysis")
 	g.Use(middleware.JWTAuth(d))
 	g.GET("/status", h.status)
+	g.GET("/records", h.activityRecords)
 	g.GET("/downloader/platforms", h.downloaderPlatforms)
 	g.POST("/downloader/resolve", middleware.RateLimit(d, 15, time.Minute), h.resolveVideoDownload)
 	g.POST("/inspect", middleware.RateLimit(d, 20, time.Minute), h.inspect)
@@ -270,16 +271,23 @@ func (h *handler) inspect(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, msg)
 		return
 	}
+	activity := h.beginActivity(model.SocialActivityRecord{
+		UserID: middleware.CurrentUserID(c), ActivityType: model.SocialActivityAnalysis,
+		Kind: dto.Kind, Platform: string(p), SourceURL: parsed.String(), Status: model.SocialActivityProcessing,
+	})
 	cfg, err := h.loadSettings()
 	if err != nil {
+		h.failActivity(activity, "读取内容拆解配置失败")
 		response.Fail(c, response.CodeServerError, "failed to load social analysis settings")
 		return
 	}
 	if !cfg.enabled {
+		h.failActivity(activity, "内容拆解功能暂未开放")
 		response.Fail(c, response.CodeToolDisabled, "内容拆解功能暂未开放")
 		return
 	}
 	if cfg.apiKey == "" {
+		h.failActivity(activity, "内容拆解服务尚未配置")
 		response.Fail(c, response.CodeToolDisabled, "内容拆解服务尚未配置，请联系管理员配置 TikHub API Key")
 		return
 	}
@@ -295,9 +303,12 @@ func (h *handler) inspect(c *gin.Context) {
 			zap.String("platform", string(p)), zap.String("kind", dto.Kind), zap.Error(err))
 		var upstream *upstreamError
 		if errors.As(err, &upstream) {
-			response.Fail(c, response.CodeBadRequest, "平台解析失败："+safeMessage(upstream.message))
+			message := "平台解析失败：" + safeMessage(upstream.message)
+			h.failActivity(activity, message)
+			response.Fail(c, response.CodeBadRequest, message)
 			return
 		}
+		h.failActivity(activity, "内容拆解服务暂时不可用")
 		response.Fail(c, response.CodeServerError, "social analysis upstream request failed")
 		return
 	}
@@ -312,7 +323,39 @@ func (h *handler) inspect(c *gin.Context) {
 	if result.Warnings == nil {
 		result.Warnings = []string{}
 	}
+	completedAt := time.Now()
+	h.updateActivity(activity, map[string]any{
+		"status": model.SocialActivitySucceeded, "title": inspectActivityTitle(result),
+		"error_message": "", "completed_at": completedAt,
+	})
 	response.OK(c, result)
+}
+
+func inspectActivityTitle(result *inspectVO) string {
+	if result == nil {
+		return "内容分析"
+	}
+	if result.Kind == "account" && result.Profile != nil {
+		if title := activityString(result.Profile.Name, 200); title != "" {
+			return title
+		}
+		if title := activityString(result.Profile.Handle, 200); title != "" {
+			return title
+		}
+	}
+	if result.Content != nil {
+		if title := activityString(result.Content.Title, 200); title != "" {
+			return title
+		}
+	}
+	label := strings.TrimSpace(result.PlatformName)
+	if label == "" {
+		label = "平台"
+	}
+	if result.Kind == "account" {
+		return label + "账号分析"
+	}
+	return label + "作品分析"
 }
 
 func parseSourceURL(raw string) (*url.URL, platform, error) {

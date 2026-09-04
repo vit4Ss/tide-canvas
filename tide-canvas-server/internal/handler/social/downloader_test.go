@@ -15,9 +15,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 
 	"tidecanvas/internal/config"
 	"tidecanvas/internal/middleware"
+	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/response"
 	"tidecanvas/internal/pkg/token"
@@ -83,6 +86,13 @@ func TestRelayDownloaderResolveUsesDocumentedContract(t *testing.T) {
 func TestVideoDownloadHTTPFlowIssuesBoundTicketAndStreamsAttachment(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	token.Init(config.JWTConfig{Secret: "video-download-test-secret", Issuer: "video-download-test"}, nil)
+	db, err := gorm.Open(sqlite.Open("file:video-download-flow?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.SocialActivityRecord{}); err != nil {
+		t.Fatal(err)
+	}
 	var downloadCalls atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer relay-key" {
@@ -105,7 +115,7 @@ func TestVideoDownloadHTTPFlowIssuesBoundTicketAndStreamsAttachment(t *testing.T
 		}
 	}))
 	defer upstream.Close()
-	h := &handler{downloader: newRelayVideoDownloader(upstream.URL, "relay-key")}
+	h := &handler{db: db, downloader: newRelayVideoDownloader(upstream.URL, "relay-key")}
 	router := gin.New()
 	router.POST("/resolve", func(c *gin.Context) {
 		c.Set(middleware.CtxUserID, idgen.ID(901))
@@ -128,6 +138,13 @@ func TestVideoDownloadHTTPFlowIssuesBoundTicketAndStreamsAttachment(t *testing.T
 	if resolved.Data.ExpiresAt > time.Now().Add(videoDownloadTicketMax+time.Second).Unix() {
 		t.Fatalf("client expiry exceeds local ticket lifetime: %d", resolved.Data.ExpiresAt)
 	}
+	if resolved.Data.RecordID == 0 {
+		t.Fatal("resolve response did not include an activity record id")
+	}
+	var activity model.SocialActivityRecord
+	if err := db.First(&activity, "id = ?", resolved.Data.RecordID).Error; err != nil || activity.Status != model.SocialActivityReady {
+		t.Fatalf("resolved activity = %+v err=%v", activity, err)
+	}
 
 	localURL, err := url.Parse(resolved.Data.DownloadURL)
 	if err != nil {
@@ -142,6 +159,9 @@ func TestVideoDownloadHTTPFlowIssuesBoundTicketAndStreamsAttachment(t *testing.T
 	if !strings.HasPrefix(downloadRecorder.Header().Get("Content-Disposition"), "attachment;") || !strings.Contains(strings.ToLower(downloadRecorder.Header().Get("Content-Disposition")), "utf-8") {
 		t.Fatalf("content disposition = %q", downloadRecorder.Header().Get("Content-Disposition"))
 	}
+	if err := db.First(&activity, "id = ?", resolved.Data.RecordID).Error; err != nil || activity.Status != model.SocialActivitySucceeded || activity.DownloadedBytes != 11 {
+		t.Fatalf("completed activity = %+v err=%v", activity, err)
+	}
 
 	tamperedQuery := localURL.Query()
 	tamperedQuery.Set("name", "other.mp4")
@@ -150,6 +170,14 @@ func TestVideoDownloadHTTPFlowIssuesBoundTicketAndStreamsAttachment(t *testing.T
 	router.ServeHTTP(tamperedRecorder, tamperedRequest)
 	if tamperedRecorder.Code != http.StatusUnauthorized || downloadCalls.Load() != 1 {
 		t.Fatalf("tampered ticket status=%d downloadCalls=%d", tamperedRecorder.Code, downloadCalls.Load())
+	}
+	tamperedRecordQuery := localURL.Query()
+	tamperedRecordQuery.Set("record", "999999")
+	tamperedRecordRecorder := httptest.NewRecorder()
+	tamperedRecordRequest := httptest.NewRequest(http.MethodGet, strings.Replace(localURL.Path, "/api/social-analysis/downloader", "", 1)+"?"+tamperedRecordQuery.Encode(), nil)
+	router.ServeHTTP(tamperedRecordRecorder, tamperedRecordRequest)
+	if tamperedRecordRecorder.Code != http.StatusUnauthorized || downloadCalls.Load() != 1 {
+		t.Fatalf("tampered record binding status=%d downloadCalls=%d", tamperedRecordRecorder.Code, downloadCalls.Load())
 	}
 }
 

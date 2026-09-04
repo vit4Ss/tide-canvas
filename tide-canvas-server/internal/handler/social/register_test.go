@@ -15,7 +15,9 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/response"
 )
 
@@ -562,7 +564,7 @@ func TestInspectHTTPHandlerLoadsServerCredentialWithoutExposingIt(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.SysConfig{}); err != nil {
+	if err := db.AutoMigrate(&model.SysConfig{}, &model.SocialActivityRecord{}); err != nil {
 		t.Fatal(err)
 	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -583,7 +585,10 @@ func TestInspectHTTPHandlerLoadsServerCredentialWithoutExposingIt(t *testing.T) 
 	}
 	h := &handler{db: db, httpcli: upstream.Client()}
 	router := gin.New()
-	router.POST("/inspect", h.inspect)
+	router.POST("/inspect", func(c *gin.Context) {
+		c.Set(middleware.CtxUserID, idgen.ID(7001))
+		c.Next()
+	}, h.inspect)
 	body := []byte(`{"url":"https://www.douyin.com/video/1","kind":"content"}`)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/inspect", bytes.NewReader(body))
@@ -601,6 +606,13 @@ func TestInspectHTTPHandlerLoadsServerCredentialWithoutExposingIt(t *testing.T) 
 	}
 	if !result.Success || result.Data.Content == nil || result.Data.Content.ID != "1" {
 		t.Fatalf("unexpected inspect response: %+v", result)
+	}
+	var activity model.SocialActivityRecord
+	if err := db.First(&activity, "user_id = ?", idgen.ID(7001)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if activity.ActivityType != model.SocialActivityAnalysis || activity.Platform != "douyin" || activity.Kind != "content" || activity.Status != model.SocialActivitySucceeded || activity.CompletedAt == nil {
+		t.Fatalf("unexpected analysis activity: %+v", activity)
 	}
 }
 

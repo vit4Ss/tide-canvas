@@ -3,9 +3,9 @@
 /* /analysis — 拆解工作台。
 
    两件事共用一个入口:「内容拆解」把公开链接还原成平台事实再交给 AI 拆方法,
-   「视频下载」把公开视频取回本地。两者都从一条链接出发、各自依赖不同的后端
-   服务(TikHub 解析 / Relay 下载器),因此并列为顶层页签而不是上下堆叠——
-   一次只做一件事,各自占满整幅宽度,状态词汇只写一遍。
+   「视频下载」把公开视频取回本地；第三个页签集中回看当前账号的使用记录。
+   两项操作各自依赖不同的后端服务(TikHub 解析 / Relay 下载器),因此并列为
+   顶层页签而不是上下堆叠——一次只做一件事,各自占满整幅宽度。
 
    配色全部走 imini 主题 token(--bg/--surface/--border/--text/--accent),
    不再手抄十六进制:主题调整时本页跟随,不会落单。 */
@@ -62,9 +62,10 @@ import type { SkillVO } from "@/types/skill";
 import { toast } from "@/components/shared/toast";
 import { buildAccountSnapshot, type AccountWorkDatum } from "./account-insights";
 import { buildWorkSnapshot } from "./work-insights";
+import { ActivityHistoryPanel } from "./activity-history";
 import styles from "./analysis.module.css";
 
-type WorkbenchTab = "breakdown" | "download";
+type WorkbenchTab = "breakdown" | "download" | "history";
 
 const PLATFORMS: Array<{ key: SocialPlatform; label: string; mark: string; color: string; hint: string }> = [
   { key: "douyin", label: "抖音", mark: "抖", color: "#25f4ee", hint: "视频 · 账号" },
@@ -1067,12 +1068,13 @@ export default function AnalysisWorkbench() {
         : "正在检查";
   // 两个页签共用同一套状态词汇,值随当前页签背后的服务切换:拆解看 TikHub
   // 解析,下载看 Relay 下载器。此前两块各写一遍状态,是重复与错位的来源。
-  const serviceReady = tab === "breakdown" ? !!status?.enabled && !!status?.configured : downloaderReady;
-  const serviceLabel = tab === "breakdown" ? statusLabel : downloaderStateLabel;
-  const serviceBusy = tab === "breakdown"
+  const serviceReady = tab === "history" ? true : tab === "breakdown" ? !!status?.enabled && !!status?.configured : downloaderReady;
+  const serviceLabel = tab === "history" ? "仅自己可见" : tab === "breakdown" ? statusLabel : downloaderStateLabel;
+  const serviceBusy = tab === "history" ? true : tab === "breakdown"
     ? !user || statusChecking
     : !user || downloadBusy || (!downloaderCapabilities && !downloaderStatusError);
   const recheckService = () => {
+    if (tab === "history") return;
     if (tab === "breakdown") {
       setStatus(null);
       setStatusError(false);
@@ -1342,7 +1344,7 @@ export default function AnalysisWorkbench() {
     tabRefs.current[next]?.focus();
   };
   const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    const order: WorkbenchTab[] = ["breakdown", "download"];
+    const order: WorkbenchTab[] = ["breakdown", "download", "history"];
     const index = order.indexOf(tab);
     if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
       event.preventDefault();
@@ -1388,8 +1390,10 @@ export default function AnalysisWorkbench() {
       activeRunContext.sourceFetchedAt === result.fetchedAt;
   const contextualRunDetails = runMatchesCurrentResult ? runDetails : null;
   const contextualSkillError = runMatchesCurrentResult ? skillRun.error : "";
-  const pageHeading = tab === "download" ? "视频下载" : kind === "account" ? "账号分析" : "作品分析";
-  const pageDescription = tab === "download"
+  const pageHeading = tab === "history" ? "使用记录" : tab === "download" ? "视频下载" : kind === "account" ? "账号分析" : "作品分析";
+  const pageDescription = tab === "history"
+    ? "回看当前账号的内容分析与视频下载状态。"
+    : tab === "download"
     ? "解析公开视频并选择合适画质保存到本地。"
     : kind === "account"
       ? "读取账号与近期作品，判断内容表现和可复用规律。"
@@ -1433,13 +1437,27 @@ export default function AnalysisWorkbench() {
             >
               视频下载
             </button>
+            <button
+              type="button"
+              role="tab"
+              id="analysis-tab-history"
+              aria-selected={tab === "history"}
+              aria-controls="analysis-panel-history"
+              tabIndex={tab === "history" ? 0 : -1}
+              ref={(node) => { tabRefs.current.history = node; }}
+              className={tab === "history" ? styles.tabActive : ""}
+              onClick={() => setTab("history")}
+              onKeyDown={onTabKeyDown}
+            >
+              我的记录
+            </button>
           </div>
           <button
             type="button"
             className={styles.serviceState}
             data-ready={serviceReady ? "true" : "false"}
             disabled={serviceBusy}
-            title={user ? "点击重新检查服务" : "登录后检查服务"}
+            title={tab === "history" ? "记录仅当前账号可见" : user ? "点击重新检查服务" : "登录后检查服务"}
             aria-live="polite"
             onClick={recheckService}
           >
@@ -1577,7 +1595,7 @@ export default function AnalysisWorkbench() {
               </div>
             )}
           </div>
-        ) : (
+        ) : tab === "download" ? (
           <div className={styles.panel} role="tabpanel" id="analysis-panel-download" aria-labelledby="analysis-tab-download">
             {/* 版式参考成熟下载站:居中窄栏 + 逐块堆叠,一次只回答一个问题——
                 怎么用 → 贴链接 → 看画面 → 选格式下载 → 取元信息。画质不再在
@@ -1705,6 +1723,10 @@ export default function AnalysisWorkbench() {
                 </div>
               )}
             </div>
+          </div>
+        ) : (
+          <div className={styles.panel} role="tabpanel" id="analysis-panel-history" aria-labelledby="analysis-tab-history">
+            <ActivityHistoryPanel key={ownerUserId || "anonymous"} />
           </div>
         )}
       </div>

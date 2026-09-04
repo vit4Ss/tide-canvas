@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const workbench = readFileSync(join(here, "analysis-workbench.tsx"), "utf8");
+const history = readFileSync(join(here, "activity-history.tsx"), "utf8");
 const api = readFileSync(join(here, "../../../lib/social-analysis-api.ts"), "utf8");
 const rail = readFileSync(join(here, "../../../components/studio/studio-rail.tsx"), "utf8");
 const css = readFileSync(join(here, "analysis.module.css"), "utf8");
@@ -82,10 +83,10 @@ test("public video downloader uses Relay capability discovery and a native hidde
   assert.match(workbench, /下载票据有效/);
 });
 
-test("workbench splits into two top-level tabs with a11y wiring", () => {
+test("workbench splits into three top-level tabs with a11y wiring", () => {
   assert.match(workbench, /useState<WorkbenchTab>\("breakdown"\)/);
   assert.match(workbench, /role="tablist"/);
-  for (const id of ["breakdown", "download"]) {
+  for (const id of ["breakdown", "download", "history"]) {
     assert.match(workbench, new RegExp(`id="analysis-tab-${id}"`));
     assert.match(workbench, new RegExp(`id="analysis-panel-${id}"`));
     assert.match(workbench, new RegExp(`aria-controls="analysis-panel-${id}"`));
@@ -96,18 +97,19 @@ test("workbench splits into two top-level tabs with a11y wiring", () => {
   // unreachable by keyboard entirely.
   assert.match(workbench, /tabIndex=\{tab === "breakdown" \? 0 : -1\}/);
   assert.match(workbench, /tabIndex=\{tab === "download" \? 0 : -1\}/);
+  assert.match(workbench, /tabIndex=\{tab === "history" \? 0 : -1\}/);
   assert.match(workbench, /const onTabKeyDown =/);
   for (const key of ["ArrowRight", "ArrowLeft", "Home", "End"]) {
     assert.ok(workbench.includes(`"${key}"`), `tablist ignores ${key}`);
   }
-  assert.equal(workbench.match(/onKeyDown=\{onTabKeyDown\}/g)?.length, 2);
+  assert.equal(workbench.match(/onKeyDown=\{onTabKeyDown\}/g)?.length, 3);
 });
 
 test("service state is stated once and follows the active tab", () => {
   // Each tab is backed by a different service (TikHub parse / Relay downloader);
   // one control with a tab-aware value replaces the two duplicated indicators.
-  assert.match(workbench, /const serviceReady = tab === "breakdown"/);
-  assert.match(workbench, /const serviceLabel = tab === "breakdown" \? statusLabel : downloaderStateLabel/);
+  assert.match(workbench, /const serviceReady = tab === "history" \? true/);
+  assert.match(workbench, /const serviceLabel = tab === "history" \? "仅自己可见"/);
   assert.match(workbench, /const recheckService = \(\)/);
   assert.equal(workbench.match(/className=\{styles\.serviceState\}/g)?.length, 1);
 });
@@ -235,6 +237,7 @@ test("stylesheet stays inside the project design system", () => {
     breakdownContent: [".composer", ".contentHero", ".contentSignals", ".contentStrategy", ".runPanel"],
     breakdownAccount: [".composer", ".accountStrategy", ".runPanel"],
     download: [".getter", ".posterCard", ".formatCard", ".infoCard", ".runPanel"],
+    history: [".historyPanel"],
   };
   const unaccounted = raised.filter((selector) => !Object.values(perTab).flat().includes(selector));
   assert.deepEqual(unaccounted, [], `raised surface not attributed to a tab: ${unaccounted.join(" | ")}`);
@@ -258,6 +261,14 @@ test("stylesheet stays inside the project design system", () => {
   const glass = [...rules.matchAll(/([^{}]+)\{([^}]*backdrop-filter[^}]*)\}/g)].map((match) => match[1].trim());
   assert.deepEqual(glass, [".posterChip"], `glass may only sit on media overlays: ${glass.join(" | ")}`);
   assert.doesNotMatch(rules, /background-clip:\s*text|-webkit-background-clip:\s*text/);
+});
+
+test("history tab reads only the current-user activity endpoint", () => {
+  assert.match(api, /\/api\/social-analysis\/records/);
+  assert.match(workbench, /<ActivityHistoryPanel key=\{ownerUserId \|\| "anonymous"\} \/>/);
+  assert.match(history, /socialAnalysisApi\.records/);
+  assert.match(history, /这里只展示当前账号/);
+  assert.doesNotMatch(history, /userId:|userKeyword:/);
 });
 
 test("platform image hosts are hotlink-protected, so every cover omits the referrer", () => {

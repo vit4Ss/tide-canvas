@@ -1,0 +1,46 @@
+export type SocialActivityType = "analysis" | "download";
+
+export type SocialActivityStatus =
+  | "processing"
+  | "ready"
+  | "downloading"
+  | "succeeded"
+  | "failed"
+  | "expired";
+
+export interface SocialActivityRecordVO {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail?: string;
+  type: SocialActivityType;
+  kind?: string;
+  platform?: string;
+  sourceUrl: string;
+  title?: string;
+  status: SocialActivityStatus;
+  quality?: string;
+  durationSeconds?: number;
+  width?: number;
+  height?: number;
+  estimatedBytes?: number;
+  downloadedBytes?: number;
+  errorMessage?: string;
+  expiresAt?: string;
+  createTime: string;
+  updateTime: string;
+  completedAt?: string;
+}
+
+export interface SocialActivityRecordQuery {
+  pageNum?: number;
+  pageSize?: number;
+  type?: SocialActivityType;
+  status?: SocialActivityStatus;
+  platform?: string;
+  keyword?: string;
+  userId?: string;
+  userKeyword?: string;
+  startDate?: string;
+  endDate?: string;
+}
