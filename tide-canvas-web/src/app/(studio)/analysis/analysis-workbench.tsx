@@ -334,7 +334,7 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div className={styles.infoRow}>
       <span>{label}</span>
-      <input readOnly value={value} onFocus={(event) => event.currentTarget.select()} />
+      <input readOnly value={value} aria-label={label} onFocus={(event) => event.currentTarget.select()} />
       <button type="button" onClick={() => void copy()} aria-label={`复制${label}`}>
         {copied ? <Check aria-hidden /> : <Copy aria-hidden />}{copied ? "已复制" : "复制"}
       </button>
@@ -744,6 +744,10 @@ export default function AnalysisWorkbench() {
     if (event.key === "End") { event.preventDefault(); focusTab(order[order.length - 1]); }
   };
 
+  // 链接能否解析出可用地址:输入框的标记与 data 属性共用同一个判断,
+  // 分别计算容易两边漂移。
+  const recognizedSource = extractDownloadURL(downloadSource);
+
   const runDetails = skillRun.run ? (
     <div className={styles.runPanel}>
       <SkillRunPanel
@@ -1035,9 +1039,9 @@ export default function AnalysisWorkbench() {
                   <span>粘贴到下方</span><i aria-hidden />
                   <span>点击解析视频</span>
                 </p>
-                <div className={styles.getterField} data-recognized={extractDownloadURL(downloadSource) ? "true" : "false"}>
+                <div className={styles.getterField} data-recognized={recognizedSource ? "true" : "false"}>
                   <span className={styles.getterMark} aria-hidden>
-                    {extractDownloadURL(downloadSource) ? <Check /> : <Link2 />}
+                    {recognizedSource ? <Check /> : <Link2 />}
                   </span>
                   <input
                     value={downloadSource}
@@ -1116,8 +1120,12 @@ export default function AnalysisWorkbench() {
                           <button
                             type="button"
                             key={option.key}
-                            aria-pressed={downloadQuality === option.key}
-                            className={downloadQuality === option.key ? styles.formatSwitchActive : ""}
+                            // 选中态取自实际解析结果,而不是 downloadQuality state:
+                            // state 在解析前就已改变,若这次解析失败(结果原地保留),
+                            // 开关会显示新画质而卡片仍是旧画质,自相矛盾。取结果值
+                            // 则失败时自动回到真实状态。
+                            aria-pressed={downloadResult.quality === option.key}
+                            className={downloadResult.quality === option.key ? styles.formatSwitchActive : ""}
                             disabled={downloadBusy}
                             title={option.detail}
                             onClick={() => { setDownloadQuality(option.key); void resolveVideoDownload(option.key); }}

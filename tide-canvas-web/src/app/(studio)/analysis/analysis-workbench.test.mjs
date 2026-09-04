@@ -252,6 +252,7 @@ test("platform image hosts are hotlink-protected, so every cover omits the refer
   // 浏览器默认会带上本站地址,不显式声明的话封面/头像一律加载失败——这一页
   // 三处 <img> 都吃过这个亏,新增图片务必一并声明。
   const images = workbench.match(/<img[^>]*>/g) ?? [];
+  assert.equal(images.length, 3, "the page has exactly three platform-hosted images");
   assert.ok(images.length >= 3, `expected the cover/avatar/poster images, saw ${images.length}`);
   for (const tag of images) {
     assert.match(tag, /referrerPolicy="no-referrer"/, `image sends a referrer: ${tag.slice(0, 80)}`);
@@ -268,4 +269,14 @@ test("switching quality updates in place and blocks the stale download", () => {
   assert.match(formatCard, /disabled=\{downloadBusy\}/);
   assert.match(formatCard, /data-busy=\{downloadBusy \? "true" : "false"\}/);
   assert.match(css, /\.formatCard\[data-busy="true"\] \.formatSpec/);
+  // 选中态必须取自实际解析结果:downloadQuality 在解析前就变了,换档失败时
+  // (结果原地保留)会出现「开关显示高清、卡片显示兼容」的自相矛盾。
+  assert.match(workbench, /aria-pressed=\{downloadResult\.quality === option\.key\}/);
+  assert.doesNotMatch(workbench, /aria-pressed=\{downloadQuality === option\.key\}/);
+});
+
+test("copyable metadata fields carry an accessible name", () => {
+  // <span>标题</span> 不是 label,少了 aria-label 读屏只会念出一个无名输入框。
+  assert.match(workbench, /<input readOnly value=\{value\} aria-label=\{label\}/);
+  assert.match(workbench, /aria-label=\{`复制\$\{label\}`\}/);
 });
