@@ -251,8 +251,10 @@ function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; 
 function WorkCover({ work, platform }: { work: SocialWorkVO; platform: SocialPlatform }) {
   const [failedUrl, setFailedUrl] = useState("");
   if (work.coverUrl && failedUrl !== work.coverUrl) {
+    // 平台图床按 Referer 防盗链(实测 i0.hdslb.com:无 Referer 200 / 跨站 Referer 403),
+    // 浏览器默认会带上本站地址,必须显式声明不发送,否则封面一律加载失败。
     // eslint-disable-next-line @next/next/no-img-element
-    return <img className={styles.workCoverImage} src={work.coverUrl} alt="" loading="lazy" onError={() => setFailedUrl(work.coverUrl || "")} />;
+    return <img className={styles.workCoverImage} src={work.coverUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailedUrl(work.coverUrl || "")} />;
   }
   return (
     <span className={styles.workCoverFallback}>
@@ -265,8 +267,9 @@ function WorkCover({ work, platform }: { work: SocialWorkVO; platform: SocialPla
 function ProfileAvatar({ url, platform }: { url?: string; platform: SocialPlatform }) {
   const [failedUrl, setFailedUrl] = useState("");
   if (!url || failedUrl === url) return <PlatformMark platform={platform} />;
+  // 同 WorkCover:平台图床按 Referer 防盗链,不声明就取不到头像。
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={url} alt="" onError={() => setFailedUrl(url)} />;
+  return <img src={url} alt="" referrerPolicy="no-referrer" onError={() => setFailedUrl(url)} />;
 }
 
 function renderAnalysisMarkdown(text: string) {
@@ -297,7 +300,7 @@ function DownloadPoster({ result }: { result: VideoDownloadResolveVO }) {
     <div className={styles.posterMedia} style={{ "--platform": tint } as React.CSSProperties}>
       {cover ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={cover} alt="" loading="lazy" onError={() => setFailed(true)} />
+        <img src={cover} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
       ) : (
         <span className={styles.posterFallback} aria-hidden><Film /></span>
       )}
@@ -652,6 +655,9 @@ export default function AnalysisWorkbench() {
     if (downloadBusyRef.current || !downloadSource.trim()) return;
     // 结果面板里切换画质会立即重解析,此时 state 尚未更新,必须用传入值。
     const targetQuality = qualityOverride ?? downloadQuality;
+    // 切换画质是在已有结果上换一档,保留当前结果原地更新;清空会让结果区卸载、
+    // 掉进 busy 分支再挂载,视觉上就是「刷一下」。
+    const replaceInPlace = qualityOverride !== undefined && !!downloadResult;
     const sourceURL = extractDownloadURL(downloadSource);
     if (!sourceURL) {
       setDownloadError("请输入有效的公开视频 HTTPS 链接");
@@ -661,7 +667,7 @@ export default function AnalysisWorkbench() {
     const epoch = ++downloadEpochRef.current;
     setDownloadBusy(true);
     setDownloadError("");
-    setDownloadResult(null);
+    if (!replaceInPlace) setDownloadResult(null);
     try {
       if (!await ensureSession()) return;
       const response = await socialAnalysisApi.resolveDownload({ url: sourceURL, quality: targetQuality });
@@ -1082,7 +1088,9 @@ export default function AnalysisWorkbench() {
                     <DownloadPoster result={downloadResult} />
                   </section>
 
-                  <section className={styles.formatCard}>
+                  {/* 切换画质时结果原地更新,期间旧的下载地址仍在屏幕上——必须禁用
+                      下载,否则点下去拿到的是上一档画质的文件。 */}
+                  <section className={styles.formatCard} data-busy={downloadBusy ? "true" : "false"} aria-busy={downloadBusy}>
                     <h3><FileVideo aria-hidden /> MP4</h3>
                     <div className={styles.formatRow}>
                       <div className={styles.formatSpec}>
@@ -1096,8 +1104,9 @@ export default function AnalysisWorkbench() {
                           {downloadResult.width > 0 && downloadResult.height > 0 && <i>{downloadResult.width}×{downloadResult.height}</i>}
                         </span>
                       </div>
-                      <button type="button" className={styles.primaryButton} onClick={downloadResolvedVideo}>
-                        <Download aria-hidden /> 下载
+                      <button type="button" className={styles.primaryButton} disabled={downloadBusy} onClick={downloadResolvedVideo}>
+                        {downloadBusy ? <Loader2 className={styles.spin} aria-hidden /> : <Download aria-hidden />}
+                        {downloadBusy ? "正在换档" : "下载"}
                       </button>
                     </div>
                     <div className={styles.formatSwitch}>

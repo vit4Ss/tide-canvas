@@ -246,3 +246,26 @@ test("stylesheet stays inside the project design system", () => {
   assert.deepEqual(glass, [".posterChip"], `glass may only sit on media overlays: ${glass.join(" | ")}`);
   assert.doesNotMatch(rules, /background-clip:\s*text|-webkit-background-clip:\s*text/);
 });
+
+test("platform image hosts are hotlink-protected, so every cover omits the referrer", () => {
+  // 实测 i0.hdslb.com:不带 Referer → HTTP 200,带跨站 Referer → HTTP 403。
+  // 浏览器默认会带上本站地址,不显式声明的话封面/头像一律加载失败——这一页
+  // 三处 <img> 都吃过这个亏,新增图片务必一并声明。
+  const images = workbench.match(/<img[^>]*>/g) ?? [];
+  assert.ok(images.length >= 3, `expected the cover/avatar/poster images, saw ${images.length}`);
+  for (const tag of images) {
+    assert.match(tag, /referrerPolicy="no-referrer"/, `image sends a referrer: ${tag.slice(0, 80)}`);
+    assert.match(tag, /onError=/, `image has no fallback: ${tag.slice(0, 80)}`);
+  }
+});
+
+test("switching quality updates in place and blocks the stale download", () => {
+  // 此前切换画质会先清空结果,整个结果区卸载再挂载,视觉上「刷一下」。
+  assert.match(workbench, /const replaceInPlace = qualityOverride !== undefined && !!downloadResult;/);
+  assert.match(workbench, /if \(!replaceInPlace\) setDownloadResult\(null\);/);
+  // 原地更新期间旧的下载地址仍在屏幕上,必须禁用下载,否则拿到的是上一档画质。
+  const formatCard = workbench.slice(workbench.indexOf("styles.formatCard"), workbench.indexOf("styles.formatSwitch"));
+  assert.match(formatCard, /disabled=\{downloadBusy\}/);
+  assert.match(formatCard, /data-busy=\{downloadBusy \? "true" : "false"\}/);
+  assert.match(css, /\.formatCard\[data-busy="true"\] \.formatSpec/);
+});
