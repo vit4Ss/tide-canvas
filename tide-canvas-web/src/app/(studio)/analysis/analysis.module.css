@@ -454,8 +454,8 @@
 }
 
 .resultTag i {
-  width: 2px;
-  height: 2px;
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
   background: currentColor;
 }
@@ -470,6 +470,9 @@
 /* 左栏整体是一个表面,作品与近期列表是它的两节,靠分隔线分组——
    此前是两个独立卡片上下堆叠,读起来像两件不相干的东西。 */
 .sourceColumn {
+  /* 内部作品列表自带 overflow:auto,不裁剪的话它的滚动条与末行悬停底色
+     会从下方两个圆角处戳出来。栏内没有需要外溢的浮层,可以安全裁剪。 */
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   background: var(--surface);
@@ -575,7 +578,7 @@
 
 .sourceBadge { left: 8px; }
 .duration { right: 8px; font-variant-numeric: tabular-nums; }
-.duration svg { width: 12px; height: 12px; }
+.duration svg { width: 16px; height: 16px; }
 
 .selectedBody h3 {
   margin: 0;
