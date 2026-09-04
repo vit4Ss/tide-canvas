@@ -1,13 +1,21 @@
 "use client";
 
+/* /analysis — 拆解工作台。
+
+   两件事共用一个入口:「内容拆解」把公开链接还原成平台事实再交给 AI 拆方法,
+   「视频下载」把公开视频取回本地。两者都从一条链接出发、各自依赖不同的后端
+   服务(TikHub 解析 / Relay 下载器),因此并列为顶层页签而不是上下堆叠——
+   一次只做一件事,各自占满整幅宽度,状态词汇只写一遍。
+
+   配色全部走 imini 主题 token(--bg/--surface/--border/--text/--accent),
+   不再手抄十六进制:主题调整时本页跟随,不会落单。 */
+
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   ArrowUpRight,
-  BarChart3,
-  Check,
   ChevronRight,
   CircleAlert,
   Clock3,
@@ -24,7 +32,6 @@ import {
   Share2,
   Sparkles,
   UserRoundSearch,
-  UsersRound,
 } from "lucide-react";
 import { fileApi } from "@/lib/api";
 import { skillApi } from "@/lib/skill-api";
@@ -49,6 +56,8 @@ import { FileCategory } from "@/types/file";
 import type { SkillVO } from "@/types/skill";
 import { toast } from "@/components/shared/toast";
 import styles from "./analysis.module.css";
+
+type WorkbenchTab = "breakdown" | "download";
 
 const PLATFORMS: Array<{ key: SocialPlatform; label: string; mark: string; color: string; hint: string }> = [
   { key: "douyin", label: "抖音", mark: "抖", color: "#25f4ee", hint: "视频 · 账号" },
@@ -149,7 +158,7 @@ function titleOf(work: SocialWorkVO): string {
 }
 
 function safeFileName(title: string, mediaUrl: string): string {
-  const cleaned = title.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim().slice(0, 64);
+  const cleaned = title.replace(/[\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim().slice(0, 64);
   let extension = ".mp4";
   try {
     const match = /\.(mp4|webm|mov|mkv)$/i.exec(new URL(mediaUrl).pathname);
@@ -265,6 +274,7 @@ function renderAnalysisMarkdown(text: string) {
 export default function AnalysisWorkbench() {
   const { user, initialized } = useAuth();
   const ensureSession = useAuthStore((state) => state.ensureSession);
+  const [tab, setTab] = useState<WorkbenchTab>("breakdown");
   const [kind, setKind] = useState<SocialAnalysisKind>("content");
   const [url, setURL] = useState("");
   const [focus, setFocus] = useState(DEFAULT_FOCUS);
@@ -390,6 +400,25 @@ export default function AnalysisWorkbench() {
       : downloaderCapabilities
         ? downloaderReady ? "下载器可用" : "下载器未启用"
         : "正在检查";
+  // 两个页签共用同一套状态词汇,值随当前页签背后的服务切换:拆解看 TikHub
+  // 解析,下载看 Relay 下载器。此前两块各写一遍状态,是重复与错位的来源。
+  const serviceReady = tab === "breakdown" ? !!status?.enabled && !!status?.configured : downloaderReady;
+  const serviceLabel = tab === "breakdown" ? statusLabel : downloaderStateLabel;
+  const serviceBusy = tab === "breakdown"
+    ? !user || statusChecking
+    : !user || downloadBusy || (!downloaderCapabilities && !downloaderStatusError);
+  const recheckService = () => {
+    if (tab === "breakdown") {
+      setStatus(null);
+      setStatusError(false);
+      setError("");
+      setStatusRefresh((value) => value + 1);
+      return;
+    }
+    setDownloaderCapabilities(null);
+    setDownloaderStatusError(false);
+    setDownloaderRefresh((value) => value + 1);
+  };
 
   const inspect = async () => {
     if (inspectBusyRef.current || !url.trim()) return;
@@ -587,23 +616,34 @@ export default function AnalysisWorkbench() {
         setFocus(prompt.split("\n平台：", 1)[0]?.trim() || DEFAULT_FOCUS);
       }
     }
+    // 重新编辑始终回到拆解页签:运行面板只属于拆解,留在下载页会失去上下文。
+    setTab("breakdown");
     setError("");
     setResult(null);
     setSelectedWork(null);
     skillRun.clear();
   };
 
-  const capabilityItems = useMemo(() => kind === "content"
-    ? [
-        ["01", "文案转写", "ASR 与时间码定位"],
-        ["02", "分镜拆解", "构图、景别与节奏"],
-        ["03", "爆点诊断", "钩子、情绪和转化"],
-      ]
-    : [
-        ["01", "账号画像", "定位、体量与内容方向"],
-        ["02", "作品矩阵", "近期内容与互动表现"],
-        ["03", "策略诊断", "模式提炼与选题建议"],
-      ], [kind]);
+  // ARIA tabs 模式:roving tabindex 让整组页签只占一个 Tab 停靠点,
+  // 因此必须由方向键在页签间移动——只做 tabIndex 不接方向键,
+  // 键盘用户会被困在当前页签上,永远到不了另一个。
+  const tabRefs = useRef<Partial<Record<WorkbenchTab, HTMLButtonElement | null>>>({});
+  const focusTab = (next: WorkbenchTab) => {
+    setTab(next);
+    tabRefs.current[next]?.focus();
+  };
+  const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    const order: WorkbenchTab[] = ["breakdown", "download"];
+    const index = order.indexOf(tab);
+    if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+      event.preventDefault();
+      const step = event.key === "ArrowRight" ? 1 : -1;
+      focusTab(order[(index + step + order.length) % order.length]);
+      return;
+    }
+    if (event.key === "Home") { event.preventDefault(); focusTab(order[0]); return; }
+    if (event.key === "End") { event.preventDefault(); focusTab(order[order.length - 1]); }
+  };
 
   const runDetails = skillRun.run ? (
     <div className={styles.runPanel}>
@@ -623,132 +663,253 @@ export default function AnalysisWorkbench() {
     <main className={styles.page}>
       <div className={styles.canvas}>
         <header className={styles.pageHeader}>
-          <div>
-            <span className={styles.eyebrow}>CONTENT INTELLIGENCE / 01</span>
-            <h1>内容拆解</h1>
-          </div>
-          <div className={styles.headerCopy}>
-            <p>从公开链接提取真实作品与账号信息，再用 AI 完成内容、分镜、爆点和账号策略分析。</p>
-            <button
-              type="button"
-              className={styles.serviceState}
-              data-ready={status?.enabled && status?.configured ? "true" : "false"}
-              disabled={!user || statusChecking}
-              title={user ? "重新检查解析服务" : "登录后检查解析服务"}
-              aria-live="polite"
-              onClick={() => {
-                setStatus(null);
-                setStatusError(false);
-                setError("");
-                setStatusRefresh((value) => value + 1);
-              }}
-            >
-              <i /> {statusLabel}
-            </button>
-          </div>
+          <h1>拆解</h1>
+          <p>粘贴一条公开链接：把原片取回本地，或让 AI 拆开它为什么有效。</p>
         </header>
 
-        <section className={styles.launchGrid}>
-          <article className={styles.briefCard}>
-            <div className={styles.briefIndex}>FL / BREAKDOWN</div>
-            <div className={styles.briefBody}>
-              <ScanSearch aria-hidden />
-              <h2>把“感觉不错”<br />变成可复用的方法</h2>
-              <p>链接负责还原事实，AI 负责解释为什么有效。结论、证据和时间码放在同一份拆解里。</p>
-            </div>
-            <div className={styles.capabilityList}>
-              {capabilityItems.map(([index, label, detail]) => (
-                <div key={index}><b>{index}</b><span><strong>{label}</strong><small>{detail}</small></span></div>
-              ))}
-            </div>
-          </article>
-
-          <article className={styles.inputCard}>
-            <div className={styles.modeSwitch} aria-label="拆解模式">
-              <button type="button" aria-pressed={kind === "content"} disabled={loading || archiving} className={kind === "content" ? styles.modeActive : ""} onClick={() => { setKind("content"); setFocus(DEFAULT_FOCUS); setResult(null); setSelectedWork(null); setError(""); }}>
-                <Film aria-hidden /> 单作品拆解
-              </button>
-              <button type="button" aria-pressed={kind === "account"} disabled={loading || archiving} className={kind === "account" ? styles.modeActive : ""} onClick={() => { setKind("account"); setFocus(ACCOUNT_DEFAULT_FOCUS); setResult(null); setSelectedWork(null); setError(""); }}>
-                <UserRoundSearch aria-hidden /> 账号拆解
-              </button>
-            </div>
-            <label className={styles.urlField}>
-              <span>{kind === "content" ? "作品链接" : "账号主页链接"}</span>
-              <div>
-                <Link2 aria-hidden />
-                <input
-                  value={url}
-                  onChange={(event) => setURL(event.target.value)}
-                  onKeyDown={(event) => { if (event.key === "Enter") void inspect(); }}
-                  disabled={loading || archiving}
-                  placeholder={kind === "content" ? "粘贴公开视频链接，自动识别平台" : "粘贴账号主页链接，读取账号与近期作品"}
-                  maxLength={4096}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </div>
-            </label>
-            <div className={styles.inputFooter}>
-              <span><Check aria-hidden /> 仅支持公开内容</span>
-              {initialized && !user ? (
-                <Link className={styles.primaryButton} href="/login">登录后使用 <ChevronRight aria-hidden /></Link>
-              ) : (
-                <button
-                  className={styles.primaryButton}
-                  type="button"
-                  disabled={!url.trim() || loading || archiving || skillRun.loading || !status?.enabled || !status?.configured}
-                  onClick={() => void inspect()}
-                >
-                  {loading ? <Loader2 className={styles.spin} aria-hidden /> : <Sparkles aria-hidden />}
-                  {loading ? "正在读取平台数据" : "开始拆解"}
-                </button>
-              )}
-            </div>
-            {error && (
-              <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{error}</span></div>
-            )}
-          </article>
-        </section>
-
-        <section className={styles.platformRail} aria-label="支持的平台">
-          <span className={styles.platformRailLabel}>首批支持</span>
-          {PLATFORMS.map((item) => (
-            <div key={item.key} className={styles.platformItem}>
-              <PlatformMark platform={item.key} small />
-              <span><b>{item.label}</b><small>{item.hint}</small></span>
-            </div>
-          ))}
-        </section>
-
-        <section className={styles.downloadSection}>
-          <header className={styles.downloadHeader}>
-            <div className={styles.downloadTitle}>
-              <span className={styles.downloadIcon}><Download aria-hidden /></span>
-              <div><small>PUBLIC VIDEO / RELAY</small><h2>公开视频下载</h2></div>
-            </div>
+        <div className={styles.tabBar}>
+          <div className={styles.tabs} role="tablist" aria-label="拆解工作台">
             <button
               type="button"
-              className={styles.downloadState}
-              data-ready={downloaderReady ? "true" : "false"}
-              disabled={!user || downloadBusy || (!downloaderCapabilities && !downloaderStatusError)}
-              title={downloaderStatusError ? "重新检查下载服务" : downloaderStateLabel}
-              aria-live="polite"
-              onClick={() => {
-                setDownloaderCapabilities(null);
-                setDownloaderStatusError(false);
-                setDownloaderRefresh((value) => value + 1);
-              }}
-            ><i /> {downloaderStateLabel}</button>
-          </header>
+              role="tab"
+              id="analysis-tab-breakdown"
+              aria-selected={tab === "breakdown"}
+              aria-controls="analysis-panel-breakdown"
+              tabIndex={tab === "breakdown" ? 0 : -1}
+              ref={(node) => { tabRefs.current.breakdown = node; }}
+              className={tab === "breakdown" ? styles.tabActive : ""}
+              onClick={() => setTab("breakdown")}
+              onKeyDown={onTabKeyDown}
+            >
+              内容拆解
+            </button>
+            <button
+              type="button"
+              role="tab"
+              id="analysis-tab-download"
+              aria-selected={tab === "download"}
+              aria-controls="analysis-panel-download"
+              tabIndex={tab === "download" ? 0 : -1}
+              ref={(node) => { tabRefs.current.download = node; }}
+              className={tab === "download" ? styles.tabActive : ""}
+              onClick={() => setTab("download")}
+              onKeyDown={onTabKeyDown}
+            >
+              视频下载
+            </button>
+          </div>
+          <button
+            type="button"
+            className={styles.serviceState}
+            data-ready={serviceReady ? "true" : "false"}
+            disabled={serviceBusy}
+            title={user ? "点击重新检查服务" : "登录后检查服务"}
+            aria-live="polite"
+            onClick={recheckService}
+          >
+            <i /> {serviceLabel}
+          </button>
+        </div>
 
-          <div className={styles.downloadBody}>
-            <div className={styles.downloadComposer}>
-              <div className={styles.downloadPlatforms} aria-label="下载器支持的平台">
-                {downloaderPlatforms.length > 0
-                  ? downloaderPlatforms.map((platform) => <span key={platform}>{DOWNLOAD_PLATFORM_LABEL[platform] || platform}</span>)
-                  : <span>{downloaderStatusError ? "平台列表读取失败" : downloaderCapabilities ? "暂无已启用平台" : "正在读取已启用平台"}</span>}
+        {tab === "breakdown" ? (
+          <div className={styles.panel} role="tabpanel" id="analysis-panel-breakdown" aria-labelledby="analysis-tab-breakdown">
+            <section className={styles.composer}>
+              <div className={styles.modeSwitch} aria-label="拆解对象">
+                <button type="button" aria-pressed={kind === "content"} disabled={loading || archiving} className={kind === "content" ? styles.modeActive : ""} onClick={() => { setKind("content"); setFocus(DEFAULT_FOCUS); setResult(null); setSelectedWork(null); setError(""); }}>
+                  <Film aria-hidden /> 单个作品
+                </button>
+                <button type="button" aria-pressed={kind === "account"} disabled={loading || archiving} className={kind === "account" ? styles.modeActive : ""} onClick={() => { setKind("account"); setFocus(ACCOUNT_DEFAULT_FOCUS); setResult(null); setSelectedWork(null); setError(""); }}>
+                  <UserRoundSearch aria-hidden /> 整个账号
+                </button>
               </div>
-              <label className={styles.downloadUrlField}>
+              <label className={styles.urlField}>
+                <span>{kind === "content" ? "作品链接" : "账号主页链接"}</span>
+                <div>
+                  <Link2 aria-hidden />
+                  <input
+                    value={url}
+                    onChange={(event) => setURL(event.target.value)}
+                    onKeyDown={(event) => { if (event.key === "Enter") void inspect(); }}
+                    disabled={loading || archiving}
+                    placeholder={kind === "content" ? "粘贴公开视频链接，自动识别平台" : "粘贴账号主页链接，读取账号与近期作品"}
+                    maxLength={4096}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </div>
+              </label>
+              <div className={styles.composerFooter}>
+                <span className={styles.footNote}><ShieldCheck aria-hidden /> 仅支持公开内容</span>
+                {initialized && !user ? (
+                  <Link className={styles.primaryButton} href="/login">登录后使用 <ChevronRight aria-hidden /></Link>
+                ) : (
+                  <button
+                    className={styles.primaryButton}
+                    type="button"
+                    disabled={!url.trim() || loading || archiving || skillRun.loading || !status?.enabled || !status?.configured}
+                    onClick={() => void inspect()}
+                  >
+                    {loading ? <Loader2 className={styles.spin} aria-hidden /> : <Sparkles aria-hidden />}
+                    {loading ? "正在读取平台数据" : "开始拆解"}
+                  </button>
+                )}
+              </div>
+              <div className={styles.platformRow}>
+                <span className={styles.platformLead}>支持</span>
+                {PLATFORMS.map((item) => (
+                  <span key={item.key} className={styles.platformChip} title={item.hint}>
+                    <PlatformMark platform={item.key} small />{item.label}
+                  </span>
+                ))}
+              </div>
+              {error && (
+                <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{error}</span></div>
+              )}
+            </section>
+
+            {result ? (
+              <section className={styles.resultSection}>
+                <header className={styles.sectionHeader}>
+                  <h2>{result.kind === "account" ? "账号与作品样本" : "作品事实卡"}</h2>
+                  <a href={result.sourceUrl} target="_blank" rel="noopener noreferrer">查看原链接 <ArrowUpRight aria-hidden /></a>
+                </header>
+
+                {!!result.warnings?.length && (
+                  <div className={styles.warningList} role="status">
+                    {result.warnings.map((warning) => (
+                      <div className={styles.notice} key={warning}><CircleAlert aria-hidden /> {warning}</div>
+                    ))}
+                  </div>
+                )}
+
+                {result.profile && (
+                  <article className={styles.profileCard}>
+                    <div className={styles.profileIdentity}>
+                      <ProfileAvatar url={result.profile.avatarUrl} platform={result.platform} />
+                      <div><span>{result.platformName}</span><h3>{result.profile.name || result.profile.handle || "未命名账号"}</h3><p>{result.profile.bio || "平台暂未返回账号简介"}</p></div>
+                    </div>
+                    <div className={styles.profileNumbers}>
+                      <div><small>粉丝</small><strong>{displayCount(result.profile.followers)}</strong></div>
+                      <div><small>关注</small><strong>{displayCount(result.profile.following)}</strong></div>
+                      <div><small>获赞</small><strong>{displayCount(result.profile.likes)}</strong></div>
+                      <div><small>作品</small><strong>{displayCount(result.profile.works)}</strong></div>
+                    </div>
+                  </article>
+                )}
+
+                <div className={styles.resultGrid}>
+                  <div className={styles.sourceColumn}>
+                    {currentWork ? (
+                      <article className={styles.selectedWork}>
+                        <div className={styles.selectedMedia}>
+                          <WorkCover work={currentWork} platform={result.platform} />
+                          <span className={styles.sourceBadge}><PlatformMark platform={result.platform} small /> {result.platformName}</span>
+                          {currentWork.duration && <span className={styles.duration}><Clock3 aria-hidden /> {currentWork.duration}</span>}
+                        </div>
+                        <div className={styles.selectedBody}>
+                          <h3>{titleOf(currentWork)}</h3>
+                          {currentWork.description && currentWork.description !== currentWork.title && <p>{currentWork.description}</p>}
+                          {currentWork.publishedAt && <time>{displayDate(currentWork.publishedAt)}</time>}
+                        </div>
+                        <div className={styles.metrics}>
+                          <Metric icon={<Eye aria-hidden />} label="播放" value={metrics.play} />
+                          <Metric icon={<Heart aria-hidden />} label="点赞" value={metrics.like} />
+                          <Metric icon={<MessageCircle aria-hidden />} label="评论" value={metrics.comment} />
+                          <Metric icon={<Share2 aria-hidden />} label="分享" value={metrics.share} />
+                        </div>
+                        <button
+                          type="button"
+                          className={styles.bridgeButton}
+                          onClick={() => {
+                            setDownloadSource(currentWork.pageUrl || result.sourceUrl || "");
+                            setDownloadResult(null);
+                            setDownloadError("");
+                            setTab("download");
+                          }}
+                        >
+                          <Download aria-hidden /> 到「视频下载」取这条原片
+                        </button>
+                      </article>
+                    ) : (
+                      <div className={styles.emptyResult}><Film aria-hidden /><p>平台返回了账号信息，但暂时没有可展示的公开作品。</p></div>
+                    )}
+
+                    {result.works.length > 0 && (
+                      <div className={styles.workList}>
+                        <div className={styles.workListHead}><span>近期作品</span><small>{result.works.length} 个样本</small></div>
+                        {result.works.map((work, index) => (
+                          <button
+                            type="button"
+                            key={work.id || `${work.pageUrl}-${index}`}
+                            className={currentWork === work ? styles.workRowActive : ""}
+                            aria-pressed={currentWork === work}
+                            disabled={archiving || skillRun.loading}
+                            onClick={() => setSelectedWork(work)}
+                          >
+                            <span className={styles.workThumb}><WorkCover work={work} platform={result.platform} /></span>
+                            <span className={styles.workInfo}><b>{titleOf(work)}</b><small>{displayCount(work.stats.play)} 播放 · {displayCount(work.stats.like)} 点赞</small></span>
+                            <ChevronRight aria-hidden />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className={styles.analysisColumn}>
+                    <article className={styles.aiCard}>
+                      <h3>{kind === "account" ? "AI 账号策略拆解" : "AI 视频深度拆解"}</h3>
+                      <p>{kind === "account"
+                        ? "基于账号资料与近期作品样本，分析定位、内容支柱和表现差异，并给出可执行的选题与测试建议。"
+                        : "视频会先安全归档到你的资产库，再交给视频分析技能提取音轨与关键帧。页面关闭后任务仍可恢复。"}</p>
+                      <label className={styles.focusField}>
+                        <span>你希望重点分析什么</span>
+                        <textarea rows={5} value={focus} onChange={(event) => setFocus(event.target.value)} maxLength={4000} />
+                        <small>{focus.length} / 4000</small>
+                      </label>
+                      <div className={styles.aiActionRow}>
+                        <span className={styles.footNote}><Library aria-hidden /> {kind === "account" ? "仅使用当前公开样本" : "分析素材自动进入资产库"}</span>
+                        <button
+                          type="button"
+                          className={styles.primaryButton}
+                          disabled={(kind === "content" ? !currentWork?.mediaUrl : !result.profile && result.works.length === 0) || archiving || skillRun.loading || !!skillRun.run}
+                          onClick={() => void startDeepAnalysis()}
+                        >
+                          {archiving || skillRun.loading ? <Loader2 className={styles.spin} aria-hidden /> : <ScanSearch aria-hidden />}
+                          {archiving
+                            ? kind === "account" ? "正在启动分析" : "正在归档视频"
+                            : skillRun.loading ? "正在启动技能"
+                              : kind === "account" ? "生成账号拆解" : "开始深度拆解"}
+                        </button>
+                      </div>
+                      {kind === "content" && !currentWork?.mediaUrl && currentWork && (
+                        <div className={styles.notice}><CircleAlert aria-hidden /> 当前平台只返回了作品信息，没有可归档的视频直链；可先查看数据，或换一个公开视频链接。</div>
+                      )}
+                    </article>
+
+                    {skillRun.error && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{skillRun.error}</span></div>}
+                    {runDetails}
+                  </div>
+                </div>
+              </section>
+            ) : runDetails ? (
+              <section className={styles.resultSection}>
+                <header className={styles.sectionHeader}>
+                  <h2>{skillRun.run?.skillTitle || "拆解任务"}</h2>
+                </header>
+                {runDetails}
+              </section>
+            ) : (
+              <div className={styles.empty}>
+                <Film aria-hidden />
+                <strong>先还原事实，再解释方法</strong>
+                <p>标题、作者、发布时间与互动指标直接来自平台，不由 AI 猜测；随后 AI 依据视频或账号样本给出带时间码证据的拆解。</p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className={styles.panel} role="tabpanel" id="analysis-panel-download" aria-labelledby="analysis-tab-download">
+            <section className={styles.composer}>
+              <label className={styles.urlField}>
                 <span>公开视频链接</span>
                 <div>
                   <Link2 aria-hidden />
@@ -764,7 +925,9 @@ export default function AnalysisWorkbench() {
                     autoComplete="off"
                     spellCheck={false}
                   />
-                  {!!url.trim() && <button type="button" disabled={downloadBusy} onClick={() => { setDownloadSource(url.trim()); setDownloadResult(null); setDownloadError(""); }}>使用上方链接</button>}
+                  {!!url.trim() && url.trim() !== downloadSource.trim() && (
+                    <button type="button" disabled={downloadBusy} onClick={() => { setDownloadSource(url.trim()); setDownloadResult(null); setDownloadError(""); }}>用拆解链接</button>
+                  )}
                 </div>
               </label>
               <div className={styles.qualityRow}>
@@ -777,22 +940,30 @@ export default function AnalysisWorkbench() {
                       aria-pressed={downloadQuality === option.key}
                       className={downloadQuality === option.key ? styles.qualityActive : ""}
                       disabled={downloadBusy}
-                      title={option.detail}
                       onClick={() => { setDownloadQuality(option.key); setDownloadResult(null); setDownloadError(""); }}
                     ><b>{option.label}</b><small>{option.detail}</small></button>
                   ))}
                 </div>
               </div>
-              <div className={styles.downloadComposerFooter}>
-                <span><ShieldCheck aria-hidden /> 仅处理公开且已获授权的内容 · 单文件上限 {displayBytes(downloaderCapabilities?.maxFileBytes || 0)} · 下载票据有效 {displayTokenTTL(downloaderCapabilities?.tokenTtlSeconds || 0)}</span>
+              <div className={styles.composerFooter}>
+                <span className={styles.footNote}><ShieldCheck aria-hidden /> 仅处理公开且已获授权的内容</span>
                 {initialized && !user ? (
-                  <Link className={styles.downloadPrimary} href="/login">登录后下载 <ChevronRight aria-hidden /></Link>
+                  <Link className={styles.primaryButton} href="/login">登录后下载 <ChevronRight aria-hidden /></Link>
                 ) : (
-                  <button className={styles.downloadPrimary} type="button" disabled={!downloadSource.trim() || !downloaderReady || downloadBusy} onClick={() => void resolveVideoDownload()}>
+                  <button className={styles.primaryButton} type="button" disabled={!downloadSource.trim() || !downloaderReady || downloadBusy} onClick={() => void resolveVideoDownload()}>
                     {downloadBusy ? <Loader2 className={styles.spin} aria-hidden /> : <ScanSearch aria-hidden />}
                     {downloadBusy ? "正在解析视频" : "解析视频"}
                   </button>
                 )}
+              </div>
+              <div className={styles.platformRow}>
+                <span className={styles.platformLead}>支持</span>
+                {downloaderPlatforms.length > 0
+                  ? downloaderPlatforms.map((platform) => (
+                    <span key={platform} className={styles.platformChip}>{DOWNLOAD_PLATFORM_LABEL[platform] || platform}</span>
+                  ))
+                  : <span className={styles.platformNote}>{downloaderStatusError ? "平台列表读取失败" : downloaderCapabilities ? "暂无已启用平台" : "正在读取已启用平台"}</span>}
+                <span className={styles.platformNote}>单文件上限 {displayBytes(downloaderCapabilities?.maxFileBytes || 0)} · 下载票据有效 {displayTokenTTL(downloaderCapabilities?.tokenTtlSeconds || 0)}</span>
               </div>
               {user && downloaderCapabilities && !downloaderReady && (
                 <div className={styles.notice}><CircleAlert aria-hidden /> 视频下载服务当前未启用，请联系管理员检查 Relay API Key 与下载器开关。</div>
@@ -801,166 +972,41 @@ export default function AnalysisWorkbench() {
                 <div className={styles.notice}><CircleAlert aria-hidden /> 暂时无法读取下载器能力，可点击右上角状态重新检查。</div>
               )}
               {downloadError && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{downloadError}</span></div>}
-            </div>
+            </section>
 
-            <aside className={styles.downloadResult} data-empty={downloadResult ? "false" : "true"}>
-              {downloadResult ? (
-                <>
-                  <div className={styles.downloadResultTop}>
-                    <span>{DOWNLOAD_PLATFORM_LABEL[downloadResult.platform] || downloadResult.platform}</span>
-                    <small>{DOWNLOAD_QUALITY.find((item) => item.key === downloadResult.quality)?.label || downloadResult.quality}</small>
-                  </div>
+            {downloadResult ? (
+              <section className={styles.resultSection}>
+                <header className={styles.sectionHeader}>
+                  <h2>确认后下载</h2>
+                  <span className={styles.resultTag}>
+                    {DOWNLOAD_PLATFORM_LABEL[downloadResult.platform] || downloadResult.platform}
+                    <i />
+                    {DOWNLOAD_QUALITY.find((item) => item.key === downloadResult.quality)?.label || downloadResult.quality}
+                  </span>
+                </header>
+                <article className={styles.downloadCard}>
                   <h3>{downloadResult.title || "公开视频"}</h3>
                   <div className={styles.downloadMeta}>
-                    <span><b>{displayDurationSeconds(downloadResult.durationSeconds)}</b><small>视频时长</small></span>
-                    <span><b>{downloadResult.width && downloadResult.height ? `${downloadResult.width} × ${downloadResult.height}` : "待确认"}</b><small>画面尺寸</small></span>
-                    <span><b>{displayBytes(downloadResult.estimatedBytes)}</b><small>预计大小</small></span>
+                    <span><small>视频时长</small><b>{displayDurationSeconds(downloadResult.durationSeconds)}</b></span>
+                    <span><small>画面尺寸</small><b>{downloadResult.width && downloadResult.height ? `${downloadResult.width} × ${downloadResult.height}` : "待确认"}</b></span>
+                    <span><small>预计大小</small><b>{displayBytes(downloadResult.estimatedBytes)}</b></span>
                   </div>
-                  <button type="button" className={styles.downloadNow} onClick={downloadResolvedVideo}>
-                    <Download aria-hidden /> 下载 MP4
-                  </button>
-                  <small className={styles.downloadExpiry}>临时地址将在 {new Date(downloadResult.expiresAt * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 前有效</small>
-                </>
-              ) : (
-                <div className={styles.downloadEmpty}>
-                  <Download aria-hidden />
-                  <strong>解析后在这里确认文件</strong>
-                  <p>确认标题、分辨率和预计大小后，再交给浏览器下载到默认目录。</p>
-                </div>
-              )}
-            </aside>
-          </div>
-        </section>
-
-        {result ? (
-          <section className={styles.resultSection}>
-            <header className={styles.sectionHeader}>
-              <div><span>ANALYSIS SOURCE</span><h2>{result.kind === "account" ? "账号与作品样本" : "作品事实卡"}</h2></div>
-              <a href={result.sourceUrl} target="_blank" rel="noopener noreferrer">查看原链接 <ArrowUpRight aria-hidden /></a>
-            </header>
-
-            {!!result.warnings?.length && (
-              <div className={styles.warningList} role="status">
-                {result.warnings.map((warning) => (
-                  <div className={styles.notice} key={warning}><CircleAlert aria-hidden /> {warning}</div>
-                ))}
-              </div>
-            )}
-
-            {result.profile && (
-              <article className={styles.profileCard}>
-                <div className={styles.profileIdentity}>
-                  <ProfileAvatar url={result.profile.avatarUrl} platform={result.platform} />
-                  <div><span>{result.platformName}</span><h3>{result.profile.name || result.profile.handle || "未命名账号"}</h3><p>{result.profile.bio || "平台暂未返回账号简介"}</p></div>
-                </div>
-                <div className={styles.profileNumbers}>
-                  <div><small>粉丝</small><strong>{displayCount(result.profile.followers)}</strong></div>
-                  <div><small>关注</small><strong>{displayCount(result.profile.following)}</strong></div>
-                  <div><small>获赞</small><strong>{displayCount(result.profile.likes)}</strong></div>
-                  <div><small>作品</small><strong>{displayCount(result.profile.works)}</strong></div>
-                </div>
-              </article>
-            )}
-
-            <div className={styles.resultGrid}>
-              <div className={styles.sourceColumn}>
-                {currentWork ? (
-                  <article className={styles.selectedWork}>
-                    <div className={styles.selectedMedia}>
-                      <WorkCover work={currentWork} platform={result.platform} />
-                      <span className={styles.sourceBadge}><PlatformMark platform={result.platform} small /> {result.platformName}</span>
-                      {currentWork.duration && <span className={styles.duration}><Clock3 aria-hidden /> {currentWork.duration}</span>}
-                    </div>
-                    <div className={styles.selectedBody}>
-                      <span className={styles.selectedKicker}>{result.kind === "account" ? "SELECTED SAMPLE" : "SOURCE CONTENT"}</span>
-                      <h3>{titleOf(currentWork)}</h3>
-                      {currentWork.description && currentWork.description !== currentWork.title && <p>{currentWork.description}</p>}
-                      {currentWork.publishedAt && <time>{displayDate(currentWork.publishedAt)}</time>}
-                    </div>
-                    <div className={styles.metrics}>
-                      <Metric icon={<Eye aria-hidden />} label="播放" value={metrics.play} />
-                      <Metric icon={<Heart aria-hidden />} label="点赞" value={metrics.like} />
-                      <Metric icon={<MessageCircle aria-hidden />} label="评论" value={metrics.comment} />
-                      <Metric icon={<Share2 aria-hidden />} label="分享" value={metrics.share} />
-                    </div>
-                  </article>
-                ) : (
-                  <div className={styles.emptyResult}><Film aria-hidden /><p>平台返回了账号信息，但暂时没有可展示的公开作品。</p></div>
-                )}
-
-                {result.works.length > 0 && (
-                  <div className={styles.workList}>
-                    <div className={styles.workListHead}><span>近期作品</span><small>{result.works.length} 个样本</small></div>
-                    {result.works.map((work, index) => (
-                      <button
-                        type="button"
-                        key={work.id || `${work.pageUrl}-${index}`}
-                        className={currentWork === work ? styles.workRowActive : ""}
-                        aria-pressed={currentWork === work}
-                        disabled={archiving || skillRun.loading}
-                        onClick={() => setSelectedWork(work)}
-                      >
-                        <span className={styles.workThumb}><WorkCover work={work} platform={result.platform} /></span>
-                        <span className={styles.workInfo}><b>{titleOf(work)}</b><small>{displayCount(work.stats.play)} 播放 · {displayCount(work.stats.like)} 点赞</small></span>
-                        <ChevronRight aria-hidden />
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className={styles.analysisColumn}>
-                <article className={styles.aiCard}>
-                  <div className={styles.aiCardHead}>
-                    <span><Sparkles aria-hidden /></span>
-                    <div><small>FLOWINGLIGHT AI</small><h3>{kind === "account" ? "AI 账号策略拆解" : "视频深度拆解"}</h3></div>
-                  </div>
-                  <p>{kind === "account"
-                    ? "基于账号资料与近期作品样本，分析定位、内容支柱和表现差异，并给出可执行的选题与测试建议。"
-                    : "视频会先安全归档到你的资产库，再交给视频分析技能提取音轨与关键帧。页面关闭后任务仍可恢复。"}</p>
-                  <label className={styles.focusField}>
-                    <span>你希望重点分析什么</span>
-                    <textarea rows={5} value={focus} onChange={(event) => setFocus(event.target.value)} maxLength={4000} />
-                    <small>{focus.length} / 4000</small>
-                  </label>
-                  <div className={styles.aiActionRow}>
-                    <span><Library aria-hidden /> {kind === "account" ? "仅使用当前公开样本" : "分析素材自动进入资产库"}</span>
-                    <button
-                      type="button"
-                      disabled={(kind === "content" ? !currentWork?.mediaUrl : !result.profile && result.works.length === 0) || archiving || skillRun.loading || !!skillRun.run}
-                      onClick={() => void startDeepAnalysis()}
-                    >
-                      {archiving || skillRun.loading ? <Loader2 className={styles.spin} aria-hidden /> : <ScanSearch aria-hidden />}
-                      {archiving
-                        ? kind === "account" ? "正在启动分析" : "正在归档视频"
-                        : skillRun.loading ? "正在启动技能"
-                          : kind === "account" ? "生成账号拆解" : "AI 深度拆解"}
+                  <div className={styles.downloadActions}>
+                    <button type="button" className={styles.primaryButton} onClick={downloadResolvedVideo}>
+                      <Download aria-hidden /> 下载 MP4
                     </button>
+                    <small>临时地址将在 {new Date(downloadResult.expiresAt * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 前有效</small>
                   </div>
-                  {kind === "content" && !currentWork?.mediaUrl && currentWork && (
-                    <div className={styles.notice}><CircleAlert aria-hidden /> 当前平台只返回了作品信息，没有可归档的视频直链；可先查看数据，或换一个公开视频链接。</div>
-                  )}
                 </article>
-
-                {skillRun.error && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{skillRun.error}</span></div>}
-                {runDetails}
+              </section>
+            ) : (
+              <div className={styles.empty}>
+                <Download aria-hidden />
+                <strong>解析后在这里确认文件</strong>
+                <p>确认标题、分辨率和预计大小后，再交给浏览器下载到默认目录；下载不消耗积分。</p>
               </div>
-            </div>
-          </section>
-        ) : (
-          <section className={styles.emptyBento}>
-            <article><BarChart3 aria-hidden /><span>事实层</span><h3>先拿到平台原始数据</h3><p>标题、作者、发布时间与互动指标来自对应平台解析结果，不让 AI 猜数字。</p></article>
-            <article><Film aria-hidden /><span>内容层</span><h3>文案和画面一起看</h3><p>抽取音轨与关键帧，按时间线拆解钩子、节奏、转场和信息密度。</p></article>
-            <article><UsersRound aria-hidden /><span>账号层</span><h3>从单条回到账户策略</h3><p>读取近期作品矩阵，选代表样本继续深拆，逐步沉淀可复用的创作模式。</p></article>
-          </section>
-        )}
-        {!result && runDetails && (
-          <section className={styles.standaloneRun}>
-            <header className={styles.sectionHeader}>
-              <div><span>ACTIVE ANALYSIS</span><h2>{skillRun.run?.skillTitle || "拆解任务"}</h2></div>
-            </header>
-            {runDetails}
-          </section>
+            )}
+          </div>
         )}
       </div>
     </main>
