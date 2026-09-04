@@ -38,6 +38,9 @@ test("account snapshot derives sample metrics without mixing unknown-view intera
   assert.equal(snapshot.totalViews, 1500);
   assert.equal(snapshot.averageViews, 750);
   assert.equal(snapshot.medianViews, 750);
+  assert.equal(snapshot.medianEngagementRate, 11);
+  assert.equal(snapshot.highPerformanceRate, 0);
+  assert.ok(Math.abs((snapshot.topPerformanceMultiple ?? 0) - 4 / 3) < 1e-9);
   assert.equal(snapshot.totalInteractions, 270);
   assert.equal(snapshot.measuredInteractions, 3);
   assert.ok(Math.abs((snapshot.engagementRate ?? 0) - (170 / 1500) * 100) < 1e-9);

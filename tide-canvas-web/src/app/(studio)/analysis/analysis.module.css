@@ -2,7 +2,7 @@
 
    设计系统(与 AGENTS.md 一致,改动前先对照):
    - 间距只取 4 / 8 / 12 / 16 / 20 / 24 / 32 / 40 / 48 / 64,2px 仅用于发丝级内缩。
-   - 字阶只有五档:32(页标题) / 20(区块标题) / 16(块级标题与数据值) / 14(正文) / 12(说明),
+   - 字阶收敛为32(页标题) / 28(窄屏标题与关键数字) / 20 / 16 / 14 / 12，
      层级靠字重与三级文字色拉开,不靠增加字号档位。
    - 圆角、色彩、阴影一律取 imini 主题 token,本页不自带十六进制。
    - 过渡只用 120 / 160 / 200ms。
@@ -44,7 +44,7 @@
 
 .pageHeader h1 {
   margin: 0;
-  font-size: 40px;
+  font-size: 32px;
   line-height: 1.1;
   font-weight: 650;
   letter-spacing: -.028em;
@@ -152,9 +152,6 @@
 .contentHero,
 .contentSignals,
 .contentStrategy,
-.accountHero,
-.accountStage,
-.accountSignals,
 .accountStrategy,
 .getter,
 .posterCard,
@@ -710,330 +707,102 @@
   .contentStrategy > .sectionHeader { padding: 16px; }
 }
 
-/* ── 账号情报大屏 ────────────────────────────────────────────────────
-   成熟账号分析产品的共同结构不是「左素材、右长文本」，而是先给账号总览，
-   再用样本排行与互动构成解释表现，最后才进入 AI 策略。这里只使用平台真实
-   返回的横截面数据；没有历史序列就不伪造增长曲线或行业基准。 */
+/* ── 账号情报 ────────────────────────────────────────────────────────
+   身份 → 核心表现 → 作品分布 → 作品表 → AI 结论。没有数据的派生模块
+   直接不渲染，不用成排破折号占据与真实信息相同的视觉权重。 */
 
-.accountDashboard {
-  display: grid;
-  gap: 24px;
-  container-type: inline-size;
-}
-
-.accountHero,
-.accountStage,
-.accountSignals,
-.accountStrategy {
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-}
+.accountDashboard { display: grid; gap: 32px; container-type: inline-size; }
 
 .accountHero {
-  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 24px;
-  padding: 24px 24px 0;
+  padding: 8px 0 24px;
+  border-bottom: 1px solid var(--border);
 }
 
-.accountHero::before {
-  position: absolute;
-  inset: 0 0 auto;
-  height: 2px;
-  background: var(--platform);
-  content: "";
-}
-
-.accountIdentity {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  min-width: 0;
-}
-
+.accountIdentity { display: flex; align-items: center; gap: 16px; min-width: 0; }
 .accountAvatar {
   flex: none;
   display: grid;
   place-items: center;
-  width: 72px;
-  height: 72px;
+  width: 64px;
+  height: 64px;
   overflow: hidden;
-  border: 1px solid color-mix(in oklab, var(--platform) 36%, var(--border));
   border-radius: 50%;
   background: var(--surface-2);
 }
-
 .accountAvatar > img,
-.accountAvatar > .platformMark {
-  width: 100%;
-  height: 100%;
-  border-radius: 50%;
-  object-fit: cover;
-}
-
+.accountAvatar > .platformMark { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
 .accountAvatar > .platformMark { font-size: 20px; }
-
 .accountIdentityText { min-width: 0; }
-
-.accountMetaLine {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 4px;
-  color: var(--text-faint);
-  font-size: 12px;
-}
-
+.accountMetaLine { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; color: var(--text-faint); font-size: 12px; }
 .accountMetaLine > span { display: inline-flex; align-items: center; gap: 8px; }
 .accountMetaLine code { min-width: 0; overflow: hidden; color: var(--text-dim); font-family: var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.accountIdentityText h2 { margin: 0; font-size: 20px; font-weight: 650; letter-spacing: -.02em; line-height: 1.3; }
+.accountSummaryLine { margin-top: 8px; color: var(--text-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+.accountIdentityText p { max-width: 64ch; margin: 8px 0 0; overflow: hidden; color: var(--text-dim); display: -webkit-box; font-size: 14px; line-height: 1.6; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 
-.accountIdentityText h2 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 650;
-  letter-spacing: -.02em;
-  line-height: 1.3;
-}
-
-.accountIdentityText p {
-  max-width: 64ch;
-  margin: 8px 0 0;
-  overflow: hidden;
-  color: var(--text-dim);
-  display: -webkit-box;
-  font-size: 14px;
-  line-height: 1.6;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.accountHeroActions {
-  display: flex;
-  align-items: flex-end;
-  flex-direction: column;
-  gap: 8px;
-  color: var(--text-faint);
-  font-size: 12px;
-}
-
-.accountHeroActions a,
-.focusActions a,
-.focusActions button {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--text-dim);
-  font-size: 12px;
-  transition: color 160ms var(--ease);
-}
-
-.accountHeroActions a:hover,
-.focusActions a:hover,
-.focusActions button:hover { color: var(--text); }
-
-.accountHeroActions svg,
-.focusActions svg { width: 16px; height: 16px; }
+.accountHeroActions { display: flex; align-items: flex-end; flex-direction: column; gap: 8px; color: var(--text-faint); font-size: 12px; }
+.accountHeroActions a { display: inline-flex; align-items: center; gap: 4px; color: var(--text-dim); font-size: 12px; transition: color 160ms var(--ease); }
+.accountHeroActions a:hover { color: var(--text); }
+.accountHeroActions svg { width: 16px; height: 16px; }
 
 .accountKpiRail {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
-  margin: 0 -24px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 24px 40px;
+  padding-top: 24px;
   border-top: 1px solid var(--border);
 }
+.accountKpiRail > div { min-width: 0; }
+.accountKpiRail strong { display: block; overflow: hidden; font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -.03em; text-overflow: ellipsis; white-space: nowrap; }
+.accountKpiRail small { display: block; margin-top: 4px; color: var(--text-dim); font-size: 12px; }
+.accountKpiRail span { display: block; margin-top: 4px; color: var(--text-faint); font-size: 12px; }
 
-.accountKpiRail > div {
-  min-width: 0;
-  padding: 16px 20px 20px;
-  border-left: 1px solid var(--border);
-}
+.sectionHeader > div > h2 { margin: 0; }
+.sectionHeader > div > p { margin: 4px 0 0; color: var(--text-dim); font-size: 12px; line-height: 1.6; }
+.sectionHeader > span { color: var(--text-faint); font-size: 12px; }
 
-.accountKpiRail > div:first-child { border-left: none; }
-.accountKpiRail small,
-.accountKpiRail span { display: block; color: var(--text-faint); font-size: 12px; }
+.sampleTrend,
+.accountWorksTable,
+.accountEvidence { display: grid; gap: 16px; }
 
-.accountKpiRail strong {
-  display: block;
-  margin: 8px 0 4px;
-  overflow: hidden;
-  color: var(--text);
-  font-size: 20px;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -.025em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.trendCanvas { padding: 16px 0 0; border-top: 1px solid var(--border); }
+.trendCanvas svg { display: block; width: 100%; height: 240px; overflow: visible; }
+.trendGridLine { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.trendArea { fill: color-mix(in oklab, var(--platform) 10%, transparent); }
+.trendLine { fill: none; stroke: color-mix(in oklab, var(--platform) 74%, var(--text)); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.trendMedian { stroke: var(--text-faint); stroke-width: 1; stroke-dasharray: 5 6; vector-effect: non-scaling-stroke; }
+.trendPoint { fill: var(--surface); stroke: color-mix(in oklab, var(--platform) 74%, var(--text)); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.trendAxis { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+.trendAxis span:nth-child(2) { text-align: center; }
+.trendAxis span:last-child { text-align: right; }
 
-.accountStage {
-  display: grid;
-  grid-template-columns: minmax(0, 1.75fr) minmax(280px, .75fr);
-}
+.accountTableWrap { overflow-x: auto; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.accountTableWrap table { width: 100%; min-width: 840px; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.accountTableWrap th { padding: 12px; color: var(--text-faint); font-weight: 500; text-align: right; white-space: nowrap; }
+.accountTableWrap th:first-child { padding-left: 0; text-align: left; }
+.accountTableWrap td { padding: 12px; border-top: 1px solid var(--border); color: var(--text-dim); text-align: right; white-space: nowrap; }
+.accountTableWrap tbody tr[data-clickable] { cursor: pointer; transition: background 160ms var(--ease); }
+.accountTableWrap tbody tr[data-clickable]:hover { background: color-mix(in oklab, var(--text) 3%, transparent); }
+.accountTableWrap td:first-child { width: 42%; padding-left: 0; text-align: left; }
+.accountWorkTitle { display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: center; gap: 12px; width: 100%; color: var(--text); text-align: left; }
+.accountWorkTitle > span { display: block; width: 48px; height: 40px; overflow: hidden; border-radius: var(--r-sm); background: var(--surface-2); }
+.accountWorkTitle .workCoverImage,
+.accountWorkTitle .workCoverFallback { width: 100%; height: 100%; }
+.accountWorkTitle b { overflow: hidden; font-size: 12px; font-weight: 550; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
+.accountWorkTitle:hover b { text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 4px; }
 
-.performanceBoard,
-.focusSample,
-.signalPanel,
-.interactionPanel {
-  min-width: 0;
-  padding: 20px;
-}
+.relativePerformance { color: var(--text-dim); font-weight: 600; }
+.relativePerformance[data-level="high"] { color: color-mix(in oklab, var(--platform) 72%, var(--text)); }
+.relativePerformance[data-level="low"] { color: var(--text-faint); }
+.inlineEmpty { margin: 0; padding: 32px 0; border-top: 1px solid var(--border); color: var(--text-faint); font-size: 12px; text-align: center; }
 
-.focusSample,
-.interactionPanel { border-left: 1px solid var(--border); }
+.accountEvidence { padding-top: 24px; border-top: 1px solid var(--border); }
 
-.dataPanelHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 40px;
-  margin-bottom: 16px;
-}
-
-.dataPanelHeader > div {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.dataPanelHeader > div > svg {
-  flex: none;
-  width: 20px;
-  height: 20px;
-  color: color-mix(in oklab, var(--platform) 76%, var(--text));
-}
-
-.dataPanelHeader > div > span { display: grid; gap: 2px; min-width: 0; }
-.dataPanelHeader strong { font-size: 14px; font-weight: 600; }
-.dataPanelHeader small,
-.dataPanelHeader > span { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
-
-.performanceRows { display: grid; gap: 4px; }
-
-.performanceRows > button {
-  display: grid;
-  grid-template-columns: 24px minmax(140px, 1fr) minmax(120px, 1.2fr) 64px;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  min-height: 40px;
-  padding: 4px 8px;
-  border-radius: var(--r-sm);
-  color: var(--text-dim);
-  text-align: left;
-  transition: color 120ms var(--ease), background 120ms var(--ease);
-}
-
-.performanceRows > button:hover { color: var(--text); background: var(--panel); }
-.performanceRows > button.performanceRowActive { color: var(--text); background: var(--panel-hover); }
-.performanceRows > button.performanceRowActive .performanceTitle { font-weight: 650; }
-.performanceRows > button > b { color: var(--text-faint); font-family: var(--mono); font-size: 12px; font-weight: 500; }
-.performanceRows > button > strong { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
-
-.performanceTitle {
-  overflow: hidden;
-  font-size: 12px;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.performanceBar {
-  position: relative;
-  height: 8px;
-  overflow: hidden;
-  border-radius: var(--pill);
-  background: var(--panel-hover);
-}
-
-.performanceBar i {
-  display: block;
-  width: 100%;
-  height: 100%;
-  border-radius: inherit;
-  background: color-mix(in oklab, var(--platform) 78%, var(--text));
-  transform: scaleX(var(--bar-scale, 0));
-  transform-origin: left center;
-  transition: transform 200ms var(--ease);
-}
-
-.focusSample { display: flex; flex-direction: column; }
-
-.focusMedia {
-  position: relative;
-  aspect-ratio: 16 / 9;
-  overflow: hidden;
-  border-radius: var(--r);
-  background: var(--surface-2);
-}
-
-.focusMedia .workCoverImage,
-.focusMedia .workCoverFallback { width: 100%; height: 100%; }
-
-.focusCopy { padding: 12px 0; }
-.focusCopy h3 { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.5; }
-.focusCopy time { display: block; margin-top: 4px; color: var(--text-faint); font-size: 12px; }
-
-.focusMetrics {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  padding: 12px 0;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-}
-
-.focusMetrics small { display: block; color: var(--text-faint); font-size: 12px; }
-.focusMetrics strong { display: block; margin-top: 4px; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
-
-.focusActions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 40px;
-  padding-top: 12px;
-}
-
-.accountSignals {
-  display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(320px, .75fr);
-}
-
-.signalGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.signalGrid > div {
-  min-width: 0;
-  padding: 16px;
-  border-top: 1px solid var(--border);
-  border-left: 1px solid var(--border);
-}
-
-.signalGrid > div:nth-child(-n + 2) { border-top: none; }
-.signalGrid > div:nth-child(odd) { border-left: none; }
-.signalGrid span { display: flex; align-items: center; gap: 8px; color: var(--text-dim); font-size: 12px; }
-.signalGrid span svg { width: 16px; height: 16px; color: var(--text-faint); }
-.signalGrid strong { display: block; margin-top: 8px; font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
-.signalGrid small { display: block; margin-top: 4px; overflow: hidden; color: var(--text-faint); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-
-.interactionPanel { display: flex; flex-direction: column; }
-
-.interactionTrack {
-  display: flex;
-  gap: 2px;
-  width: 100%;
-  height: 16px;
-  overflow: hidden;
-  border-radius: var(--pill);
-  background: var(--panel-hover);
-}
-
+.interactionTrack { display: flex; gap: 2px; width: 100%; height: 16px; overflow: hidden; border-radius: var(--pill); background: var(--panel-hover); }
 .interactionTrack > i { flex-basis: 0; min-width: 4px; }
 .interactionTrack > i[data-part="like"],
 .interactionLegend span[data-part="like"] > i { background: color-mix(in oklab, var(--platform) 86%, var(--text)); }
@@ -1043,220 +812,89 @@
 .interactionLegend span[data-part="share"] > i { background: color-mix(in oklab, var(--platform) 42%, var(--text-faint)); }
 .interactionTrack > i[data-part="favorite"],
 .interactionLegend span[data-part="favorite"] > i { background: var(--text-faint); }
-
-.interactionLegend {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 20px;
-  margin-top: 20px;
-}
-
-.interactionLegend > span {
-  display: grid;
-  grid-template-columns: 8px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-faint);
-  font-size: 12px;
-}
-
+.interactionLegend { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 20px; }
+.interactionLegend > span { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 8px; color: var(--text-faint); font-size: 12px; }
 .interactionLegend > span > i { width: 8px; height: 8px; border-radius: 50%; }
 .interactionLegend strong { color: var(--text-dim); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.scopeNote { margin: 0; color: var(--text-faint); font-size: 12px; line-height: 1.6; }
+.dataEmpty { display: grid; place-items: center; min-height: 120px; padding: 24px; color: var(--text-faint); font-size: 12px; line-height: 1.6; text-align: center; }
 
-.scopeNote {
-  margin: auto 0 0;
-  padding-top: 20px;
-  color: var(--text-faint);
-  font-size: 12px;
-  line-height: 1.6;
-}
+.dataPanelHeader { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 40px; margin-bottom: 16px; }
+.dataPanelHeader > div { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.dataPanelHeader > div > svg { flex: none; width: 20px; height: 20px; color: color-mix(in oklab, var(--platform) 76%, var(--text)); }
+.dataPanelHeader > div > span { display: grid; gap: 2px; min-width: 0; }
+.dataPanelHeader strong { font-size: 14px; font-weight: 600; }
+.dataPanelHeader small,
+.dataPanelHeader > span { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
 
-.dataEmpty {
-  display: grid;
-  place-items: center;
-  min-height: 120px;
-  padding: 24px;
-  color: var(--text-faint);
-  font-size: 12px;
-  line-height: 1.6;
-  text-align: center;
-}
-
-.accountWorks {
-  display: grid;
-  gap: 16px;
-  padding-top: 24px;
-  border-top: 1px solid var(--border);
-}
-
-.sectionHeader > div > h2 { margin: 0; }
-.sectionHeader > div > p { margin: 4px 0 0; color: var(--text-dim); font-size: 12px; line-height: 1.6; }
-.sectionHeader > span { color: var(--text-faint); font-size: 12px; }
-
-.accountWorkGrid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.accountWorkGrid > button {
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  background: var(--surface);
-  color: var(--text);
-  text-align: left;
-  transition: border-color 160ms var(--ease), background 160ms var(--ease), transform 160ms var(--ease);
-}
-
-.accountWorkGrid > button:hover { border-color: var(--border-strong); background: var(--panel); transform: translateY(-2px); }
-.accountWorkGrid > button.accountWorkActive { border-color: color-mix(in oklab, var(--platform) 72%, var(--border)); background: var(--panel-hover); }
-
-.accountWorkMedia {
-  position: relative;
-  display: block;
-  aspect-ratio: 16 / 9;
-  overflow: hidden;
-  background: var(--surface-2);
-}
-
-.accountWorkMedia .workCoverImage,
-.accountWorkMedia .workCoverFallback { width: 100%; height: 100%; }
-
-.accountWorkState {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  padding: 4px 8px;
-  border: 1px solid color-mix(in oklab, var(--text) 12%, transparent);
-  border-radius: var(--pill);
-  background: var(--scrim);
-  color: var(--text);
-  font-size: 12px;
-  font-style: normal;
-  font-weight: 600;
-  line-height: 16px;
-}
-
-.accountWorkCopy { display: block; padding: 12px; }
-.accountWorkCopy b { display: block; overflow: hidden; font-size: 12px; font-weight: 600; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
-.accountWorkCopy small { display: block; margin-top: 4px; color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
-
+.accountStrategy { overflow: hidden; border: 1px solid var(--border); border-radius: var(--r-lg); }
 .accountStrategy > .sectionHeader { padding: 20px; border-bottom: 1px solid var(--border); }
-
-.strategyGrid {
-  display: grid;
-  grid-template-columns: minmax(300px, .72fr) minmax(0, 1.28fr);
-  min-height: 400px;
-}
-
-.strategyControl {
-  display: flex;
-  align-items: stretch;
-  flex-direction: column;
-  gap: 16px;
-  padding: 20px;
-  border-right: 1px solid var(--border);
-}
-
+.strategyGrid { display: grid; grid-template-columns: minmax(300px, .72fr) minmax(0, 1.28fr); min-height: 400px; }
+.strategyControl { display: flex; align-items: stretch; flex-direction: column; gap: 16px; padding: 20px; border-right: 1px solid var(--border); }
 .strategyControl .primaryButton { justify-content: center; width: 100%; margin-top: auto; }
-
-.strategyScope {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.strategyScope > span {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 40px;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  color: var(--text-dim);
-  font-size: 12px;
-}
-
+.strategyScope { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.strategyScope > span { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 8px; border: 1px solid var(--border); border-radius: var(--r-sm); color: var(--text-dim); font-size: 12px; }
 .strategyScope svg { width: 16px; height: 16px; color: color-mix(in oklab, var(--platform) 72%, var(--text)); }
-
 .strategyOutput { min-width: 0; padding: 20px; background: color-mix(in oklab, var(--bg) 42%, transparent); }
 .strategyOutput .runPanel { border: 1px solid var(--border); }
 .strategyOutput .markdown { max-height: 720px; }
-
-.strategyEmpty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  min-height: 360px;
-  color: var(--text-faint);
-}
-
+.strategyEmpty { display: flex; align-items: center; justify-content: center; gap: 16px; min-height: 360px; color: var(--text-faint); }
 .strategyEmpty > svg { flex: none; width: 20px; height: 20px; color: color-mix(in oklab, var(--platform) 72%, var(--text)); }
 .strategyEmpty strong { color: var(--text); font-size: 14px; font-weight: 600; }
 .strategyEmpty p { max-width: 48ch; margin: 4px 0 0; font-size: 12px; line-height: 1.6; }
 
-@media (prefers-reduced-motion: reduce) {
-  .performanceBar i,
-  .accountWorkGrid > button { transition: none; }
-  .accountWorkGrid > button:hover { transform: none; }
-}
-
-/* 账号大屏按自身可用宽度而不是浏览器宽度折叠。工作台左侧导航会吃掉一段
-   空间，用 viewport media query 会在不同导航状态下过早或过晚换列。 */
-@container (max-width: 1100px) {
-  .accountKpiRail { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .accountKpiRail > div:nth-child(5) { border-left: none; }
-  .accountKpiRail > div:nth-child(n + 5) { border-top: 1px solid var(--border); }
-  .accountWorkGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
+.workInspector { width: min(440px, 100%); max-width: none; height: 100dvh; max-height: none; margin: 0 0 0 auto; padding: 0; border: 0; border-left: 1px solid var(--border); background: var(--surface); color: var(--text); }
+.workInspector::backdrop { background: color-mix(in oklab, var(--bg) 72%, transparent); }
+.workInspectorPanel { display: flex; min-height: 100%; flex-direction: column; }
+.workInspectorPanel > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 64px; padding: 12px 20px; border-bottom: 1px solid var(--border); }
+.workInspectorPanel > header > div { display: grid; gap: 2px; }
+.workInspectorPanel > header strong { font-size: 14px; }
+.workInspectorPanel > header small { color: var(--text-faint); font-size: 12px; }
+.workInspectorPanel > header button { display: grid; place-items: center; width: 40px; height: 40px; border-radius: var(--r-sm); color: var(--text-dim); }
+.workInspectorPanel > header button:hover { background: var(--panel); color: var(--text); }
+.workInspectorPanel > header svg { width: 16px; height: 16px; }
+.workInspectorMedia { aspect-ratio: 16 / 9; overflow: hidden; background: var(--surface-2); }
+.workInspectorMedia .workCoverImage,
+.workInspectorMedia .workCoverFallback { width: 100%; height: 100%; }
+.workInspectorCopy { padding: 20px; }
+.workInspectorCopy h3 { margin: 0; font-size: 16px; line-height: 1.5; }
+.workInspectorCopy time { display: block; margin-top: 8px; color: var(--text-faint); font-size: 12px; }
+.workInspectorMetrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0 20px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.workInspectorMetrics > div { padding: 16px 0; }
+.workInspectorMetrics small { display: block; color: var(--text-faint); font-size: 12px; }
+.workInspectorMetrics strong { display: block; margin-top: 4px; font-size: 20px; font-variant-numeric: tabular-nums; }
+.workInspectorSignal { margin: 20px; padding: 16px; border: 1px solid var(--border); border-radius: var(--r-sm); }
+.workInspectorSignal strong { font-size: 14px; }
+.workInspectorSignal p { margin: 8px 0 0; color: var(--text-dim); font-size: 12px; line-height: 1.6; }
+.workInspectorSignal[data-level="high"] { border-color: color-mix(in oklab, var(--platform) 48%, var(--border)); }
+.workInspectorPanel > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: auto; padding: 20px; border-top: 1px solid var(--border); }
+.workInspectorPanel > footer a,
+.workInspectorPanel > footer button { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; color: var(--text-dim); font-size: 12px; }
+.workInspectorPanel > footer a:hover,
+.workInspectorPanel > footer button:hover { color: var(--text); }
+.workInspectorPanel > footer svg { width: 16px; height: 16px; }
 
 @container (max-width: 820px) {
   .accountHero { grid-template-columns: minmax(0, 1fr); }
   .accountHeroActions { align-items: center; flex-direction: row; justify-content: space-between; }
-  .accountStage,
-  .accountSignals,
   .strategyGrid { grid-template-columns: minmax(0, 1fr); }
-  .focusSample,
-  .interactionPanel { border-top: 1px solid var(--border); border-left: none; }
   .strategyControl { border-right: none; border-bottom: 1px solid var(--border); }
+  .interactionLegend { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-@container (max-width: 620px) {
-  .accountHero { gap: 20px; padding: 20px 16px 0; }
-  .accountIdentity { align-items: flex-start; gap: 16px; }
+@container (max-width: 520px) {
+  .accountIdentity { align-items: flex-start; }
   .accountAvatar { width: 56px; height: 56px; }
   .accountHeroActions { align-items: flex-start; flex-direction: column; }
-  .accountKpiRail { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0 -16px; }
-  .accountKpiRail > div:nth-child(odd) { border-left: none; }
-  .accountKpiRail > div:nth-child(n + 3) { border-top: 1px solid var(--border); }
-  .performanceBoard,
-  .focusSample,
-  .signalPanel,
-  .interactionPanel,
+  .accountKpiRail { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 20px; }
+  .accountStrategy > .sectionHeader,
   .strategyControl,
   .strategyOutput { padding: 16px; }
-  .performanceRows > button { grid-template-columns: 24px minmax(100px, 1fr) minmax(72px, .8fr) 56px; gap: 8px; }
-  .signalGrid { grid-template-columns: minmax(0, 1fr); }
-  .signalGrid > div,
-  .signalGrid > div:nth-child(-n + 2),
-  .signalGrid > div:nth-child(odd) { border-top: 1px solid var(--border); border-left: none; }
-  .signalGrid > div:first-child { border-top: none; }
-  .accountWorkGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .accountStrategy > .sectionHeader { padding: 16px; }
-  .strategyEmpty { min-height: 240px; }
+  .trendCanvas svg { height: 200px; }
+  .trendAxis { grid-template-columns: 1fr 1fr; }
+  .trendAxis span:nth-child(2) { display: none; }
 }
 
-@container (max-width: 420px) {
-  .accountWorkGrid { grid-template-columns: minmax(0, 1fr); }
-  .performanceRows > button { grid-template-columns: 24px minmax(0, 1fr) 56px; }
-  .performanceBar { display: none; }
-  .interactionLegend { grid-template-columns: minmax(0, 1fr); }
-  .strategyScope { grid-template-columns: minmax(0, 1fr); }
-}
 
 .focusField { display: grid; gap: 8px; }
 
@@ -1593,12 +1231,13 @@
   .modeSwitch { padding: 0; }
   .primaryButton { height: 44px; }
   .tabs button { padding: 12px 0 16px; }
-  .performanceRows > button,
-  .accountWorkGrid > button,
+  .accountWorkTitle,
   .contentImageRail > button,
-  .focusActions a,
-  .focusActions button { min-height: 44px; }
+  .workInspectorPanel > header button,
+  .workInspectorPanel > footer a,
+  .workInspectorPanel > footer button { min-height: 44px; }
   .contentImageRail > button { width: 44px; height: 44px; }
+  .workInspectorPanel > header button { width: 44px; height: 44px; }
 }
 
 /* ── 下载页:居中窄栏,逐块堆叠 ──────────────────────────────────────────

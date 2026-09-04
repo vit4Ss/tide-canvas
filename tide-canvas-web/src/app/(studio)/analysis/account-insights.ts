@@ -23,6 +23,7 @@ export interface AccountWorkDatum {
   interactions: number;
   hasInteractionData: boolean;
   engagementRate: number | null;
+  publishedAtMs: number | null;
   score: number;
 }
 
@@ -36,6 +37,9 @@ export interface AccountSnapshot {
   totalViews: number | null;
   averageViews: number | null;
   medianViews: number | null;
+  medianEngagementRate: number | null;
+  highPerformanceRate: number | null;
+  topPerformanceMultiple: number | null;
   totalInteractions: number;
   measuredInteractions: number;
   averageInteractions: number | null;
@@ -76,6 +80,7 @@ export function buildAccountSnapshot(result: SocialInspectVO): AccountSnapshot {
       interactions,
       hasInteractionData,
       engagementRate: views && views > 0 && hasInteractionData ? (interactions / views) * 100 : null,
+      publishedAtMs: publishedTimestamp(work.publishedAt),
       score: 0,
     };
   });
@@ -102,6 +107,13 @@ export function buildAccountSnapshot(result: SocialInspectVO): AccountSnapshot {
       ? sortedViews[midpoint]
       : (sortedViews[midpoint - 1] + sortedViews[midpoint]) / 2
     : null;
+  const engagementRates = works.flatMap((item) => item.engagementRate === null ? [] : [item.engagementRate]).sort((a, b) => a - b);
+  const engagementMidpoint = Math.floor(engagementRates.length / 2);
+  const medianEngagementRate = engagementRates.length
+    ? engagementRates.length % 2
+      ? engagementRates[engagementMidpoint]
+      : (engagementRates[engagementMidpoint - 1] + engagementRates[engagementMidpoint]) / 2
+    : null;
   const timestamps = works.flatMap((item) => {
     const value = publishedTimestamp(item.work.publishedAt);
     return value === null ? [] : [value];
@@ -122,6 +134,13 @@ export function buildAccountSnapshot(result: SocialInspectVO): AccountSnapshot {
     totalViews,
     averageViews,
     medianViews,
+    medianEngagementRate,
+    highPerformanceRate: medianViews && medianViews > 0 && viewValues.length > 1
+      ? (viewValues.filter((value) => value >= medianViews * 2).length / viewValues.length) * 100
+      : null,
+    topPerformanceMultiple: medianViews && medianViews > 0 && viewValues.length > 1
+      ? Math.max(...viewValues) / medianViews
+      : null,
     totalInteractions,
     measuredInteractions,
     averageInteractions: measuredInteractions ? totalInteractions / measuredInteractions : null,

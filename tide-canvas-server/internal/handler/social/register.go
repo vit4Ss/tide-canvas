@@ -450,6 +450,7 @@ func (h *handler) inspectAccount(ctx context.Context, cfg settings, p platform, 
 	sourceURL := source.String()
 	var profileData, worksData any
 	var err error
+	resolvedIdentifier := ""
 	extraWarnings := []string{}
 	switch p {
 	case platformDouyin:
@@ -460,6 +461,7 @@ func (h *handler) inspectAccount(ctx context.Context, cfg settings, p platform, 
 				return nil, err
 			}
 		}
+		resolvedIdentifier = identifier
 		profileData, worksData, err = h.tikhubPair(ctx, cfg,
 			upstreamCall{"/api/v1/douyin/app/v3/handler_user_profile", url.Values{"sec_user_id": {identifier}}},
 			upstreamCall{"/api/v1/douyin/app/v3/fetch_user_post_videos", url.Values{"sec_user_id": {identifier}, "max_cursor": {"0"}, "count": {"12"}, "sort_type": {"0"}}},
@@ -472,6 +474,7 @@ func (h *handler) inspectAccount(ctx context.Context, cfg settings, p platform, 
 				return nil, err
 			}
 		}
+		resolvedIdentifier = identifier
 		data, errs := h.tikhubMany(ctx, cfg, []upstreamCall{
 			upstreamCall{"/api/v1/bilibili/web/fetch_user_profile", url.Values{"uid": {identifier}}},
 			upstreamCall{"/api/v1/bilibili/web/fetch_user_post_videos", url.Values{"uid": {identifier}, "pn": {"1"}, "ps": {"12"}, "order": {"pubdate"}}},
@@ -505,6 +508,7 @@ func (h *handler) inspectAccount(ctx context.Context, cfg settings, p platform, 
 				return nil, err
 			}
 		}
+		resolvedIdentifier = identifier
 		profileData, worksData, err = h.tikhubPair(ctx, cfg,
 			upstreamCall{"/api/v1/youtube/web/get_channel_info", url.Values{"channel_id": {identifier}}},
 			upstreamCall{"/api/v1/youtube/web/get_channel_videos_v2", url.Values{"channel_id": {identifier}, "lang": {"zh-CN"}, "sortBy": {"newest"}, "contentType": {"videos"}}},
@@ -514,6 +518,7 @@ func (h *handler) inspectAccount(ctx context.Context, cfg settings, p platform, 
 		if identifier == "" {
 			return nil, &upstreamError{message: "TikTok 账号链接中缺少 @用户名"}
 		}
+		resolvedIdentifier = identifier
 		profileData, worksData, err = h.tikhubPair(ctx, cfg,
 			upstreamCall{"/api/v1/tiktok/app/v3/handler_user_profile", url.Values{"unique_id": {identifier}}},
 			upstreamCall{"/api/v1/tiktok/app/v3/fetch_user_post_videos_v3", url.Values{"unique_id": {identifier}, "max_cursor": {"0"}, "count": {"12"}, "sort_type": {"0"}}},
@@ -526,6 +531,7 @@ func (h *handler) inspectAccount(ctx context.Context, cfg settings, p platform, 
 				return nil, err
 			}
 		}
+		resolvedIdentifier = identifier
 		profileData, worksData, err = h.tikhubPair(ctx, cfg,
 			upstreamCall{"/api/v1/kuaishou/app/fetch_one_user_v2", url.Values{"user_id": {identifier}}},
 			upstreamCall{"/api/v1/kuaishou/app/fetch_user_post_v2", url.Values{"user_id": {identifier}}},
@@ -536,6 +542,9 @@ func (h *handler) inspectAccount(ctx context.Context, cfg settings, p platform, 
 	}
 	works := normalizeWorks(worksData)
 	profile := normalizeProfile(profileData, worksData, true)
+	if profile != nil && profile.ID == "" && resolvedIdentifier != "" {
+		profile.ID = truncateText(resolvedIdentifier, 256)
+	}
 	if p == platformBilibili && profile != nil && profile.Works == "" {
 		profile.Works = truncateText(directString(firstValue(worksData, "page"), "count"), 64)
 	}

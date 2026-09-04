@@ -86,6 +86,24 @@ func TestNormalizeNestedDouyinWork(t *testing.T) {
 	}
 }
 
+func TestNormalizeBilibiliArchiveListFields(t *testing.T) {
+	input := map[string]any{
+		"bvid": "BV1Example", "title": "Bilibili sample", "description": "sample description",
+		"pic": "https://i.example/bilibili-cover.jpg", "created": float64(1788515520), "length": "12:34",
+		"play": float64(128000), "review": float64(326), "favorites": float64(892),
+	}
+	got := normalizeWork(input, "")
+	if got.ID != "BV1Example" || got.MediaType != "video" || got.CoverURL != "https://i.example/bilibili-cover.jpg" || got.PageURL != "https://www.bilibili.com/video/BV1Example" {
+		t.Fatalf("unexpected Bilibili identity fields: %+v", got)
+	}
+	if got.PublishedAt != "1788515520" || got.Duration != "12:34" {
+		t.Fatalf("unexpected Bilibili timing fields: %+v", got)
+	}
+	if got.Stats.Play != "128000" || got.Stats.Comment != "326" || got.Stats.Favorite != "892" {
+		t.Fatalf("unexpected Bilibili stats: %+v", got.Stats)
+	}
+}
+
 func TestNormalizeImagePostKeepsOrderedCarouselWithoutBorrowingAuthorAvatar(t *testing.T) {
 	input := map[string]any{"note_card": map[string]any{
 		"note_id": "note-1", "title": "轮播作品", "type": "normal",
@@ -155,10 +173,10 @@ func TestNormalizeKuaishouPhotoDoesNotUseSoundtrackIdentity(t *testing.T) {
 
 func TestProfileAndWorkIDsDoNotFallBackToNestedMusicOrWorkIDs(t *testing.T) {
 	works := map[string]any{"aweme_list": []any{map[string]any{
-		"aweme_id": "work-id", "desc": "sample", "author": map[string]any{"nickname": "Creator"},
+		"aweme_id": "work-id", "desc": "sample", "description": "https://twitch.example/not-a-profile-bio", "likes": float64(9999), "author": map[string]any{"nickname": "Creator"},
 	}}}
 	profile := normalizeProfile(nil, works, true)
-	if profile == nil || profile.Name != "Creator" || profile.ID != "" {
+	if profile == nil || profile.Name != "Creator" || profile.ID != "" || profile.Bio != "" || profile.Likes != "" {
 		t.Fatalf("profile incorrectly borrowed a work id: %+v", profile)
 	}
 	work := normalizeWork(map[string]any{"title": "sample", "music": map[string]any{"id": "music-id"}}, "")
@@ -175,6 +193,10 @@ func TestAccountProfileAllowsDirectRootNameWithoutContentFalsePositive(t *testin
 	}
 	if contentProfile := normalizeProfile(map[string]any{"id": "work-id", "name": "soundtrack"}, nil, false); contentProfile != nil {
 		t.Fatalf("content metadata became a false creator profile: %+v", contentProfile)
+	}
+	works := map[string]any{"vlist": []any{map[string]any{"bvid": "BV1Example", "author": "Fallback Bilibili Creator"}}}
+	if fallback := normalizeProfile(nil, works, true); fallback == nil || fallback.Name != "Fallback Bilibili Creator" {
+		t.Fatalf("scalar work author did not supplement a missing account name: %+v", fallback)
 	}
 }
 
@@ -504,7 +526,7 @@ func TestAccountInspectDegradesToWorkAuthorWhenProfileFails(t *testing.T) {
 	source, _ := url.Parse("https://www.douyin.com/user/sec")
 	h := &handler{httpcli: server.Client()}
 	result, err := h.inspectAccount(context.Background(), settings{baseURL: server.URL, apiKey: "secret"}, platformDouyin, source)
-	if err != nil || result == nil || result.Profile == nil || result.Profile.Name != "Fallback Creator" || len(result.Works) != 1 {
+	if err != nil || result == nil || result.Profile == nil || result.Profile.ID != "sec" || result.Profile.Name != "Fallback Creator" || len(result.Works) != 1 {
 		t.Fatalf("degraded account result = %#v, %v", result, err)
 	}
 	if len(result.Warnings) == 0 || !strings.Contains(result.Warnings[0], "账号资料") {

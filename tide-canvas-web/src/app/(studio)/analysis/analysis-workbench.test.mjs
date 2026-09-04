@@ -173,7 +173,8 @@ test("selected-state rules outrank the base rules they must override", () => {
 test("cross-tab bridge only appears for platforms the downloader actually serves", () => {
   // 拆解支持抖音/小红书,下载器支持 Pinterest/Instagram——两侧平台集合不同。
   // 不设闸的话,拆完抖音点「取原片」跳过去必然解析失败。
-  assert.match(workbench, /downloaderPlatforms\.includes\(result\.platform\) && \(/);
+  assert.match(workbench, /canDownload=\{!!currentWork\.pageUrl && isVideoWork\(currentWork\) && downloaderPlatforms\.includes\(result\.platform\)\}/);
+  assert.match(workbench, /isVideoWork\(inspectedWork\.work\) && downloaderPlatforms\.includes\(result\.platform\)/);
   assert.match(workbench, /下载原片/);
 });
 
@@ -211,8 +212,8 @@ test("stylesheet stays inside the project design system", () => {
   assert.deepEqual(offGrid, [], `off-grid spacing: ${offGrid.join(", ")}px`);
 
   // 字阶:12(说明) / 14(正文) / 16(块级标题与数据值) / 20(区块标题与关键数值) /
-  // 28(窄屏页标题) / 40(页标题)。
-  const scale = new Set([12, 14, 16, 20, 28, 40]);
+  // 28(窄屏页标题与关键数字) / 32(页标题)。
+  const scale = new Set([12, 14, 16, 20, 28, 32]);
   const sizes = [...new Set([...rules.matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)].map((match) => parseFloat(match[1])))];
   const offScale = sizes.filter((value) => !scale.has(value));
   assert.deepEqual(offScale, [], `off-scale font sizes: ${offScale.join(", ")}px`);
@@ -232,7 +233,7 @@ test("stylesheet stays inside the project design system", () => {
     .map(({ selector }) => selector);
   const perTab = {
     breakdownContent: [".composer", ".contentHero", ".contentSignals", ".contentStrategy", ".runPanel"],
-    breakdownAccount: [".composer", ".accountHero", ".accountStage", ".accountSignals", ".accountStrategy", ".runPanel"],
+    breakdownAccount: [".composer", ".accountStrategy", ".runPanel"],
     download: [".getter", ".posterCard", ".formatCard", ".infoCard", ".runPanel"],
   };
   const unaccounted = raised.filter((selector) => !Object.values(perTab).flat().includes(selector));
@@ -296,16 +297,20 @@ test("copyable metadata fields carry an accessible name", () => {
 test("account mode renders a real intelligence board instead of a source-and-text split", () => {
   assert.match(workbench, /function AccountDashboard/);
   assert.match(workbench, /result\.kind === "account"[\s\S]*<AccountDashboard/);
-  for (const section of ["内容表现排行", "聚焦样本", "样本信号", "互动构成", "内容样本", "AI 账号策略拆解"]) {
+  for (const section of ["近期作品表现", "近期作品", "互动构成", "AI 账号策略拆解"]) {
     assert.ok(workbench.includes(section), `account board misses ${section}`);
   }
   assert.match(workbench, /buildAccountSnapshot\(result\)/);
+  assert.match(workbench, /<table>[\s\S]*相对表现[\s\S]*<AccountWorkInspector/);
+  assert.doesNotMatch(workbench, /聚焦样本|performanceBar/);
   assert.match(workbench, /这是当前抓取样本的横截面，不代表粉丝增长趋势或行业基准/);
   assert.match(css, /\.accountDashboard \{[\s\S]*container-type: inline-size/);
   assert.match(css, /@container \(max-width: 820px\)/);
-  // No historical series is returned by the API. A line chart or invented
-  // growth percentage would be visually impressive but analytically false.
+  // The only valid trend is the dated work-sample series. It must not be
+  // mislabeled as account growth or compared with a nonexistent benchmark.
   assert.doesNotMatch(workbench, /粉丝增长曲线|近30天增长|行业平均|同比|环比/);
+  const accountHeroRule = css.slice(css.indexOf(".accountHero {"), css.indexOf(".accountIdentity {"));
+  assert.doesNotMatch(accountHeroRule, /::before|background: var\(--platform\)/, "account header regained a decorative accent stripe");
 });
 
 test("single-work mode has a factual dashboard and a dedicated timecode report workspace", () => {

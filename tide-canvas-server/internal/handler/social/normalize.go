@@ -482,7 +482,7 @@ func normalizeWork(root any, fallbackPageURL string) workVO {
 	if len(mediaURLs) > 0 {
 		mediaURL = mediaURLs[0]
 	}
-	coverURL := firstURL(itemRoot, "cover", "cover_url", "coverUrl", "coverUrls", "origin_cover", "dynamic_cover", "thumbnail", "thumbnail_url", "image_url", "imageUrl")
+	coverURL := firstURL(itemRoot, "cover", "cover_url", "coverUrl", "coverUrls", "origin_cover", "dynamic_cover", "thumbnail", "thumbnail_url", "image_url", "imageUrl", "pic")
 	imageURLs := workImageURLs(itemRoot, coverURL, 9)
 	if coverURL == "" {
 		if len(imageURLs) > 0 {
@@ -492,8 +492,11 @@ func normalizeWork(root any, fallbackPageURL string) workVO {
 			imageURLs = images
 		}
 	}
+	bvid := directString(itemRoot, "bvid")
 	mediaType := strings.ToLower(firstString(itemRoot, "media_type", "mediaType", "note_type", "noteType", "photoType", "type"))
 	if mediaURL != "" {
+		mediaType = "video"
+	} else if bvid != "" {
 		mediaType = "video"
 	} else if len(imageURLs) > 0 || (mediaType == "" && coverURL != "") {
 		mediaType = "image"
@@ -501,6 +504,11 @@ func normalizeWork(root any, fallbackPageURL string) workVO {
 	pageURL := firstURL(itemRoot, "share_url", "shareUrl", "web_url", "webUrl", "canonical_url", "canonicalUrl", "page_url", "pageUrl")
 	if pageURL == "" && firstString(itemRoot, "video_id", "videoId") != "" {
 		pageURL = firstURL(itemRoot, "url")
+	}
+	if pageURL == "" {
+		if bvid != "" {
+			pageURL = "https://www.bilibili.com/video/" + url.PathEscape(bvid)
+		}
 	}
 	if pageURL == "" {
 		pageURL = fallbackPageURL
@@ -516,7 +524,7 @@ func normalizeWork(root any, fallbackPageURL string) workVO {
 		duration = normalizeDuration(firstString(itemRoot, "duration"), shortVideoMilliseconds)
 	}
 	if duration == "" {
-		duration = normalizeDuration(firstString(itemRoot, "video_duration"), false)
+		duration = normalizeDuration(firstString(itemRoot, "video_duration", "length"), false)
 	}
 	workID := firstString(itemRoot, "aweme_id", "awemeId", "video_id", "videoId", "note_id", "noteId", "photo_id", "photoId", "bvid")
 	if workID == "" {
@@ -533,11 +541,11 @@ func normalizeWork(root any, fallbackPageURL string) workVO {
 		PageURL:     pageURL,
 		MediaType:   truncateText(mediaType, 64),
 		Duration:    truncateText(duration, 64),
-		PublishedAt: truncateText(firstString(itemRoot, "create_time", "createTime", "publish_time", "publishTime", "published_time", "publishedAt", "pubdate", "timestamp"), 128),
+		PublishedAt: truncateText(firstString(itemRoot, "create_time", "createTime", "publish_time", "publishTime", "published_time", "publishedAt", "pubdate", "created", "timestamp"), 128),
 		Stats: metricVO{
-			Play:     truncateText(firstString(itemRoot, "play_count", "playCount", "view_count", "viewCount", "views", "view"), 64),
+			Play:     truncateText(firstString(itemRoot, "play_count", "playCount", "view_count", "viewCount", "views", "view", "play"), 64),
 			Like:     truncateText(firstString(itemRoot, "digg_count", "diggCount", "like_count", "likeCount", "liked_count", "likes"), 64),
-			Comment:  truncateText(firstString(itemRoot, "comment_count", "commentCount", "comments"), 64),
+			Comment:  truncateText(firstString(itemRoot, "comment_count", "commentCount", "comments", "review"), 64),
 			Share:    truncateText(firstString(itemRoot, "share_count", "shareCount", "shares"), 64),
 			Favorite: truncateText(firstString(itemRoot, "collect_count", "collectCount", "favorite_count", "favoriteCount", "collectionCount", "favorites"), 64),
 		},
@@ -606,13 +614,19 @@ func normalizeWorks(root any) []workVO {
 func normalizeProfile(profileRoot, worksRoot any, allowRootIdentity bool) *profileVO {
 	profileCandidate := firstValue(profileRoot, "author", "owner", "author_info", "authorInfo", "user_info", "userInfo", "user", "channel")
 	worksCandidate := firstValue(worksRoot, "author", "owner", "author_info", "authorInfo", "user_info", "userInfo", "user", "channel")
-	root := []any{profileCandidate, profileRoot, worksCandidate, worksRoot}
+	// Only the nested author object may supplement a missing profile response.
+	// Searching the complete works tree can borrow a video's likes/title/avatar
+	// and mislabel them as account-level data.
+	root := []any{profileCandidate, profileRoot, worksCandidate}
 	profile := &profileVO{
 		ID:        truncateText(firstString(root, "sec_uid", "secUid", "sec_user_id", "secUserId", "user_eid", "userEid", "eid", "user_id", "userId", "channel_id", "channelId", "mid", "uid"), 256),
 		Name:      truncateText(firstString(root, "nickname", "nick_name", "user_name", "userName", "owner_nickname", "display_name", "displayName", "channel_name", "channelName"), 200),
 		Handle:    truncateText(firstString(root, "unique_id", "uniqueId", "kwai_id", "kwaiId", "handle", "short_id", "shortId"), 200),
 		AvatarURL: firstURL(root, "avatar_larger", "avatarLarger", "avatar_medium", "avatar", "face", "head_url", "headUrl", "profile_pic_url"),
-		Bio:       truncateText(firstString(root, "signature", "bio", "channel_description", "channelDescription", "description"), 2000),
+		// A missing account bio must stay missing. Falling through to worksRoot's
+		// generic `description` borrows a video's caption and presents it as the
+		// creator profile (for example, a Twitch URL became a Bilibili bio).
+		Bio:       truncateText(firstString([]any{profileCandidate, profileRoot}, "signature", "bio", "channel_description", "channelDescription", "description"), 2000),
 		Followers: truncateText(firstString(root, "follower_count", "followerCount", "follower", "fans_count", "fansCount", "fan_count", "fanCount", "fans", "subscriber_count", "subscriberCount"), 64),
 		Following: truncateText(firstString(root, "following_count", "followingCount", "following", "follow_count", "followCount"), 64),
 		Likes:     truncateText(firstString(root, "total_favorited", "totalFavorited", "liked_count", "likedCount", "likes"), 64),
@@ -629,6 +643,9 @@ func normalizeProfile(profileRoot, worksRoot any, allowRootIdentity bool) *profi
 	}
 	if profile.Name == "" {
 		profile.Name = truncateText(scalarString(profileCandidate), 200)
+	}
+	if profile.Name == "" {
+		profile.Name = truncateText(scalarString(worksCandidate), 200)
 	}
 	if profile.Name == "" && allowRootIdentity {
 		profile.Name = truncateText(directString(profileRoot, "name", "title", "channel_title", "channelTitle"), 200)
