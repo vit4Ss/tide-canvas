@@ -26,7 +26,9 @@ func (s *Service) fetch(ctx context.Context, raw, referer string) ([]byte, *url.
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 404 || resp.StatusCode == 401 || resp.StatusCode == 403 {
-		return nil, nil, failure(400, "视频无法公开访问：可能已删除、受地区限制或需要登录")
+		// A blocked HTML/API request is not evidence that the work is private
+		// or deleted. Allow another resolver to inspect the public work.
+		return nil, nil, failure(502, "平台分享页暂时无法访问，请稍后重试")
 	}
 	if resp.StatusCode != 200 {
 		return nil, nil, failure(502, "视频平台暂时无法提供公开数据")

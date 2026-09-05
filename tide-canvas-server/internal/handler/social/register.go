@@ -152,20 +152,21 @@ type handler struct {
 	activeDownloads sync.Map
 }
 
-type upstreamError struct{ message string }
+type upstreamError struct {
+	message string
+	status  int
+}
 
 func (e *upstreamError) Error() string { return e.message }
 
 // Register mounts the social-analysis workbench API.
 func Register(api *gin.RouterGroup, d *app.Deps) {
-	var downloader videoDownloader
-	if d != nil && d.Cfg != nil {
-		downloader = newLocalVideoDownloader(d.Cfg.VideoDownloader)
-	}
 	h := &handler{
-		db:         d.DB,
-		httpcli:    newTikHubHTTPClient(),
-		downloader: downloader,
+		db:      d.DB,
+		httpcli: newTikHubHTTPClient(),
+	}
+	if d.Cfg != nil {
+		h.downloader = newLocalVideoDownloader(d.Cfg.VideoDownloader, h.resolveDouyinDownload)
 	}
 	api.GET("/social-analysis/downloader/download/:token", videoDownloadTicketAuth(), h.downloadVideo)
 	g := api.Group("/social-analysis")
@@ -206,8 +207,12 @@ func supportedPlatforms() []platformVO {
 }
 
 func (h *handler) loadSettings() (settings, error) {
+	return h.loadSettingsContext(context.Background())
+}
+
+func (h *handler) loadSettingsContext(ctx context.Context) (settings, error) {
 	var rows []model.SysConfig
-	if err := h.db.Where("config_key IN ?", model.SocialAnalysisConfigKeys).Find(&rows).Error; err != nil {
+	if err := h.db.WithContext(ctx).Where("config_key IN ?", model.SocialAnalysisConfigKeys).Find(&rows).Error; err != nil {
 		return settings{}, err
 	}
 	values := make(map[string]string, len(rows))
@@ -686,31 +691,24 @@ func (h *handler) tikhubGet(ctx context.Context, cfg settings, path string, quer
 		message = firstNonEmptyString(envelope, "message_zh", "message", "msg", "detail")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		switch resp.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden:
-			message = "TikHub 凭证无效或没有接口权限，请联系管理员检查配置"
-		case http.StatusPaymentRequired:
-			message = "TikHub 账户额度不足，请联系管理员处理"
-		case http.StatusTooManyRequests:
-			message = "TikHub 请求过于频繁，请稍后重试"
-		default:
-			if resp.StatusCode >= 500 {
-				message = "TikHub 服务暂时不可用，请稍后重试"
-			}
+		message = tikHubStatusMessage(resp.StatusCode, message)
+		if resp.StatusCode >= 500 {
+			message = "TikHub 服务暂时不可用，请稍后重试"
 		}
 		if message == "" {
 			message = fmt.Sprintf("HTTP %d", resp.StatusCode)
 		}
-		return nil, &upstreamError{message: message}
+		return nil, &upstreamError{message: message, status: resp.StatusCode}
 	}
 	if decoderErr != nil {
 		return nil, &upstreamError{message: fmt.Sprintf("TikHub 返回了无法识别的数据（HTTP %d）", resp.StatusCode)}
 	}
 	if code := numericCode(envelope["code"]); code != 0 && code != http.StatusOK {
+		message = tikHubStatusMessage(code, message)
 		if message == "" {
 			message = "TikHub 请求未成功"
 		}
-		return nil, &upstreamError{message: message}
+		return nil, &upstreamError{message: message, status: code}
 	}
 	data, exists := envelope["data"]
 	if !exists || data == nil {
@@ -744,6 +742,19 @@ func (h *handler) tikhubGet(ctx context.Context, cfg settings, path string, quer
 		}
 	}
 	return data, nil
+}
+
+func tikHubStatusMessage(status int, message string) string {
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "TikHub 凭证无效或没有接口权限，请联系管理员检查配置"
+	case http.StatusPaymentRequired:
+		return "TikHub 账户额度不足，请联系管理员处理"
+	case http.StatusTooManyRequests:
+		return "TikHub 请求过于频繁，请稍后重试"
+	default:
+		return message
+	}
 }
 
 func numericCode(value any) int {

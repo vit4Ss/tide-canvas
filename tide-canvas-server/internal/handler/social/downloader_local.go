@@ -14,8 +14,12 @@ import (
 
 type localVideoDownloader struct{ engine *videodownload.Service }
 
-func newLocalVideoDownloader(cfg config.VideoDownloaderConfig) *localVideoDownloader {
-	return &localVideoDownloader{engine: videodownload.New(cfg)}
+func newLocalVideoDownloader(cfg config.VideoDownloaderConfig, fallback ...videodownload.DouyinResolver) *localVideoDownloader {
+	var resolve videodownload.DouyinResolver
+	if len(fallback) > 0 {
+		resolve = fallback[0]
+	}
+	return &localVideoDownloader{engine: videodownload.NewWithDouyinFallback(cfg, resolve)}
 }
 func (d *localVideoDownloader) platforms(context.Context) (downloaderCapabilitiesVO, error) {
 	ready := d.engine.Ready()

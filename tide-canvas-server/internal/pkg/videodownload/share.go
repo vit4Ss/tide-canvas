@@ -25,7 +25,7 @@ func (s *Service) douyin(ctx context.Context, source, quality string) (*download
 		}
 		id = douyinID(final)
 		if id == "" {
-			return nil, failure(400, "抖音短链接未指向单个公开视频")
+			return nil, failure(502, "抖音分享页暂未返回作品编号，请稍后重试")
 		}
 	}
 	body, _, err := s.fetch(ctx, "https://www.iesdouyin.com/share/video/"+id+"/", "https://www.douyin.com/")
@@ -73,6 +73,10 @@ func parseDouyin(body, id, quality string) (*downloadPlan, error) {
 	for _, state := range states {
 		walk(state, 0)
 	}
+	return douyinItemsPlan(items, id, quality)
+}
+
+func douyinItemsPlan(items []map[string]any, id, quality string) (*downloadPlan, error) {
 	for _, item := range items {
 		status := child(item, "status")
 		if flag(status, "is_private") || flag(status, "is_delete") {

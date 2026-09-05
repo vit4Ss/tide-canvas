@@ -40,8 +40,9 @@ type mediaPart struct {
 }
 type downloadPlan struct {
 	Metadata
-	Parts []mediaPart
-	Audio *mediaPart
+	Parts        []mediaPart
+	Audio        *mediaPart
+	fromFallback bool
 }
 type File struct {
 	*os.File
@@ -61,6 +62,22 @@ type Service struct {
 	client              *http.Client
 	run                 commandRunner
 	resolves, downloads chan struct{}
+	douyinFallback      DouyinResolver
+}
+
+// ResolvedVideo contains only a provider's media result, never its API key.
+// Media URLs still pass the download engine's host and public-address checks.
+type ResolvedVideo struct {
+	Metadata
+	URLs []string
+}
+
+type DouyinResolver func(context.Context, string, string) (*ResolvedVideo, error)
+
+func NewWithDouyinFallback(cfg config.VideoDownloaderConfig, fallback DouyinResolver) *Service {
+	s := New(cfg)
+	s.douyinFallback = fallback
+	return s
 }
 
 func New(cfg config.VideoDownloaderConfig) *Service {
@@ -164,7 +181,11 @@ func outputMetadata(m Metadata, quality string) Metadata {
 }
 func (s *Service) resolvePlan(ctx context.Context, source, platform, quality string) (downloadPlan, error) {
 	// Leave time for the general extractor if a public page/API is unavailable.
-	directCtx, cancel := context.WithTimeout(ctx, min(s.cfg.ResolveTimeout/2, 25*time.Second))
+	directBudget := min(s.cfg.ResolveTimeout/2, 25*time.Second)
+	if platform == "douyin" && s.douyinFallback != nil {
+		directBudget = min(directBudget, 8*time.Second)
+	}
+	directCtx, cancel := context.WithTimeout(ctx, directBudget)
 	defer cancel()
 	var plan *downloadPlan
 	var err error
@@ -186,7 +207,39 @@ func (s *Service) resolvePlan(ctx context.Context, source, platform, quality str
 	if ctx.Err() != nil {
 		return downloadPlan{}, failure(504, "视频解析超时，请稍后重试")
 	}
+	if platform == "douyin" {
+		if fallback, fallbackErr := s.resolveDouyinFallback(ctx, source, quality); fallbackErr != nil {
+			return downloadPlan{}, fallbackErr
+		} else if fallback != nil {
+			return *fallback, nil
+		}
+	}
 	return s.extract(ctx, source, platform, quality)
+}
+
+func (s *Service) resolveDouyinFallback(ctx context.Context, source, quality string) (*downloadPlan, error) {
+	if s.douyinFallback == nil {
+		return nil, nil
+	}
+	video, err := s.douyinFallback(ctx, source, quality)
+	if err != nil || video == nil {
+		return nil, err
+	}
+	part := mediaPart{Size: video.EstimatedBytes}
+	for _, raw := range video.URLs {
+		if trusted := trustedMedia(raw, "douyin"); trusted != "" {
+			part.URLs = append(part.URLs, trusted)
+		}
+	}
+	if len(part.URLs) == 0 {
+		return nil, failure(502, "解析服务没有返回有效的抖音视频地址")
+	}
+	metadata := video.Metadata
+	metadata.Platform, metadata.SourceURL = "douyin", source
+	if metadata.EstimatedBytes > s.cfg.MaxFileBytes {
+		return nil, failure(400, "视频预计大小超过当前单文件下载上限，请选择更低画质")
+	}
+	return &downloadPlan{Metadata: metadata, Parts: []mediaPart{part}, fromFallback: true}, nil
 }
 func (s *Service) baseArgs(proxy string) []string {
 	return []string{"--ignore-config", "--no-plugin-dirs", "--no-cache-dir", "--no-playlist", "--no-warnings", "--no-progress", "--socket-timeout", "15", "--retries", "1", "--extractor-retries", "1", "--use-extractors", "youtube.*,bilibili.*,tiktok.*,douyin.*,instagram.*,pinterest.*,kuaishou.*,kwai.*", "--js-runtimes", "node:" + s.cfg.JSRuntime, "--user-agent", userAgent, "--proxy", proxy, "--ffmpeg-location", s.cfg.FFmpegCommand}
@@ -338,6 +391,19 @@ func (s *Service) Download(ctx context.Context, raw, quality string) (*File, err
 		err = s.downloadDirect(ctx, plan, quality, dir, target)
 	} else {
 		err = s.downloadExtracted(ctx, plan, quality, dir, target)
+	}
+	// The public page can resolve successfully but hand back an expired media
+	// URL. Try the configured provider once at download time as well.
+	var mediaErr *Error
+	if err != nil && platform == "douyin" && !plan.fromFallback && ctx.Err() == nil && errors.As(err, &mediaErr) && mediaErr.Status == 502 {
+		fallbackCtx, fallbackCancel := context.WithTimeout(ctx, s.cfg.ResolveTimeout)
+		fallback, fallbackErr := s.resolveDouyinFallback(fallbackCtx, source, quality)
+		fallbackCancel()
+		if fallbackErr != nil {
+			err = fallbackErr
+		} else if fallback != nil {
+			err = s.downloadDirect(ctx, *fallback, quality, dir, target)
+		}
 	}
 	if err != nil {
 		return nil, err

@@ -134,6 +134,62 @@ func TestRealMediaDownloadPipeline(t *testing.T) {
 	}
 }
 
+func TestRealDouyinProviderDownload(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	ffprobe, err := exec.LookPath("ffprobe")
+	if err != nil {
+		t.Skip("ffprobe not installed")
+	}
+	binary, _ := os.Executable()
+	dir := t.TempDir()
+	source := filepath.Join(dir, "provider.mp4")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, stderr, err := runCommand(ctx, ffmpeg, []string{"-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=1280x720:r=1:d=1", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:v", "libx264", "-threads", "2", "-pix_fmt", "yuv420p", "-c:a", "aac", source}, dir, 10<<20)
+	if err != nil {
+		t.Fatalf("fixture failed: %v %s", err, stderr)
+	}
+	calls := 0
+	s := NewWithDouyinFallback(config.VideoDownloaderConfig{Enabled: true, Command: binary, JSRuntime: binary, FFmpegCommand: ffmpeg, FFprobeCommand: ffprobe, TempDir: t.TempDir()}, func(context.Context, string, string) (*ResolvedVideo, error) {
+		calls++
+		data, _ := decodeJSON(strings.NewReader(`{"original_video_url":"https://v.douyinvod.com/real.mp4"}`))
+		return DouyinProviderVideo(data, "https://www.douyin.com/video/12345", "speed")
+	})
+	s.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "www.iesdouyin.com" {
+			resp := responseFor(r, "blocked", "text/html")
+			resp.StatusCode = 403
+			return resp, nil
+		}
+		if r.Header.Get("Authorization") != "" {
+			t.Fatal("provider credentials sent to media CDN")
+		}
+		f, err := os.Open(source)
+		if err != nil {
+			return nil, err
+		}
+		st, _ := f.Stat()
+		return &http.Response{StatusCode: 200, Request: r, Header: http.Header{"Content-Type": []string{"video/mp4"}}, Body: f, ContentLength: st.Size()}, nil
+	})
+	f, err := s.Download(ctx, "https://www.douyin.com/video/12345", "speed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	out, stderr, err := runCommand(ctx, ffprobe, []string{"-v", "error", "-show_entries", "stream=codec_type,codec_name,height", "-of", "json", f.Name()}, dir, 10<<20)
+	if err != nil || !strings.Contains(string(out), `"height": 480`) || !strings.Contains(string(out), `"codec_name": "h264"`) || !strings.Contains(string(out), `"codec_name": "aac"`) || calls != 1 {
+		t.Fatalf("invalid video=%s err=%v stderr=%s calls=%d", out, err, stderr, calls)
+	}
+	f.Close()
+	entries, _ := os.ReadDir(s.cfg.TempDir)
+	if len(entries) != 0 || len(s.downloads) != 0 {
+		t.Fatal("provider download leaked resources")
+	}
+}
+
 func TestRealCompatConvertsUnsupportedH264PixelFormat(t *testing.T) {
 	ffmpeg, err := exec.LookPath("ffmpeg")
 	if err != nil {
