@@ -1,0 +1,51 @@
+{
+  "code": 200,
+  "data": {
+    "status_code": 0,
+    "aweme_detail": {
+      "aweme_id": "7534641277405531446",
+      "desc": "TikHub public demo",
+      "create_time": 1754295391,
+      "aweme_type": 0,
+      "statistics": {
+        "admire_count": 7,
+        "aweme_id": "7534641277405531446",
+        "collect_count": 30406,
+        "comment_count": 2397,
+        "digg_count": 252433,
+        "play_count": 0,
+        "recommend_count": 35550,
+        "share_count": 43090
+      },
+      "author": {
+        "sec_uid": "MS4wLjABAAAAdW3Q0zPLGjvRq1vFZ-AgkPZh69VtuhEWzz9gsgTvXxIgA4feVGlOVMLI8nLKPeMh",
+        "uid": "2210437470619907",
+        "unique_id": "Richard_Lawrence",
+        "short_id": "64467618766",
+        "nickname": "Demo creator",
+        "signature": "",
+        "follower_count": 59576,
+        "following_count": 0,
+        "total_favorited": 5653917,
+        "avatar_thumb": {
+          "url_list": [
+            "https://cdn.example/douyin-author.jpg"
+          ]
+        }
+      },
+      "video": {
+        "duration": 29400,
+        "play_addr": {
+          "url_list": [
+            "https://cdn.example/douyin-video.mp4"
+          ]
+        },
+        "cover": {
+          "url_list": [
+            "https://cdn.example/douyin-cover.jpg"
+          ]
+        }
+      }
+    }
+  }
+}

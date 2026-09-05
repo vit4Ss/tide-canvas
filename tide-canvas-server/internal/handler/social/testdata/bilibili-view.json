@@ -1,0 +1,17 @@
+{
+  "code": 0,
+  "message": "OK",
+  "data": {
+    "bvid": "BV1114y1X7TA",
+    "aid": 786429754,
+    "cid": 1211226722,
+    "title": "红米AC2100路由器一键刷入BREED刷入第三方openwrt+老毛子固件+能刷回小米官方固件",
+    "pic": "https://cdn.example/bilibili-cover.jpg",
+    "desc": "视频简介",
+    "pubdate": 1690375500,
+    "duration": 295,
+    "owner": {"mid": 256455508, "name": "IT常识", "face": "https://cdn.example/bilibili-avatar.jpg"},
+    "stat": {"aid": 786429754, "view": 89652, "danmaku": 19, "reply": 398, "favorite": 1714, "coin": 440, "share": 289, "like": 853, "dislike": 0},
+    "pages": [{"cid": 1211226722, "page": 1, "duration": 295, "part": "红米AC2100路由器"}]
+  }
+}

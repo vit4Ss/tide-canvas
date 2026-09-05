@@ -116,13 +116,28 @@ test("heatmap uses explicit local times and excludes date-only or invalid timest
   assert.equal(features.timing.flat().reduce((sum, cell) => sum + cell.count, 0), 2);
 });
 
-test("complete interaction coverage requires all four returned fields, including explicit zero", () => {
+test("complete interaction coverage requires all platform-specific returned fields, including explicit zero", () => {
   const snapshot = buildAccountSnapshot(resultWith([
-    { stats: { like: '0', comment: '0', share: '0', favorite: '0' } },
+    { stats: { like: '0', comment: '0', share: '0', favorite: '0', coin: '0', danmaku: '0' } },
     { stats: { comment: '0' } },
     { stats: {} },
   ]));
   assert.equal(buildAccountFeatures(snapshot).completeInteractionSamples, 1);
   assert.equal(snapshot.interactionParts.find(part => part.key === 'comment').measured, 2);
   assert.equal(snapshot.totalInteractions, 0);
+});
+
+test("compact upload dates are calendar dates, invalid dates are not chart samples", () => {
+  const snapshot = buildAccountSnapshot(resultWith([
+    { publishedAt: '20260905', stats: { play: '100' } },
+    { publishedAt: '2026-09-12', stats: { play: '200' } },
+    { publishedAt: '20260230', stats: { play: '300' } },
+    { publishedAt: '2026-02-30', stats: {} },
+    { publishedAt: '0', stats: {} },
+  ]));
+  assert.equal(new Date(snapshot.firstPublishedAt).getFullYear(), 2026);
+  assert.equal(snapshot.measuredPublished, 2);
+  assert.equal(snapshot.publishSpanDays, 8);
+  assert.equal(snapshot.postsPerWeek, 1.75);
+  assert.equal(buildAccountFeatures(snapshot).timedSamples, 0);
 });

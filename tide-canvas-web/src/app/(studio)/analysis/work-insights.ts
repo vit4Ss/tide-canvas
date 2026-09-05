@@ -1,8 +1,9 @@
-import type { SocialWorkVO } from "@/lib/social-analysis-api";
+import type { SocialWorkVO, SocialPlatform, SocialMetricVO } from "@/lib/social-analysis-api";
 import { parseMetricNumber } from "./metric-number.js";
+import { platformMetrics } from "./platform-metrics.js";
 
 export interface WorkInteractionPart {
-  key: "like" | "comment" | "share" | "favorite";
+  key: keyof SocialMetricVO;
   label: string;
   value: number | null;
   rate: number | null;
@@ -18,14 +19,10 @@ export interface WorkSnapshot {
 
 // A work snapshot is a factual view of the counters returned by the platform.
 // Missing counters stay null instead of silently becoming zero.
-export function buildWorkSnapshot(work: SocialWorkVO): WorkSnapshot {
+export function buildWorkSnapshot(work: SocialWorkVO, platform: SocialPlatform | undefined = work.platform): WorkSnapshot {
   const views = parseMetricNumber(work.stats.play);
-  const parts: WorkInteractionPart[] = [
-    { key: "like", label: "点赞", value: parseMetricNumber(work.stats.like), rate: null },
-    { key: "comment", label: "评论", value: parseMetricNumber(work.stats.comment), rate: null },
-    { key: "share", label: "分享", value: parseMetricNumber(work.stats.share), rate: null },
-    { key: "favorite", label: "收藏", value: parseMetricNumber(work.stats.favorite), rate: null },
-  ];
+  const parts: WorkInteractionPart[] = platformMetrics(platform).filter((item) => item.interaction)
+    .map((item) => ({ key: item.key, label: item.label, value: parseMetricNumber(work.stats[item.key]), rate: null }));
   const measured = parts.filter((item) => item.value !== null);
   const interactions = measured.length
     ? measured.reduce((sum, item) => sum + (item.value ?? 0), 0)

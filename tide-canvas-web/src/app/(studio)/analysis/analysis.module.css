@@ -522,7 +522,7 @@
 }
 
 .contentOverview { grid-area: overview; display: grid; gap: 16px; min-width: 0; container-type: inline-size; }
-.contentData { grid-area: data; min-width: 0; container-type: inline-size; }
+.contentData { display: grid; gap: 24px; align-content: start; grid-area: data; min-width: 0; container-type: inline-size; }
 
 .contentHero,
 .contentSignals,
@@ -691,7 +691,7 @@
 .contentKpiRail {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   border-top: 1px solid var(--border);
 }
 
@@ -2391,3 +2391,47 @@
   opacity: .45;
   transition: opacity 160ms var(--ease);
 }
+.platformFacts {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--text) 3%, var(--surface)), var(--surface));
+}
+.platformFieldGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0 24px; margin: 12px 0 0; }
+.platformFieldGrid > div { min-width: 0; padding: 16px 0; border-bottom: 1px solid var(--border); }
+.platformFieldGrid dt { color: var(--text-dim); font-size: 12px; margin-bottom: 8px; }
+.platformFieldGrid dd { margin: 0; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.platformFieldGrid [data-numeric="true"] dd { font-size: 28px; line-height: 1.3; font-weight: 650; font-variant-numeric: tabular-nums; }
+.platformTagList { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 16px; }
+.platformTagList > svg { width: 16px; height: 16px; color: var(--accent); }
+.platformTagList > span { font-size: 12px; line-height: 1.5; padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; overflow-wrap: anywhere; }
+.platformDistribution { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: 16px; }
+.formatSpectrum { display: flex; height: 24px; gap: 4px; margin: 24px 0; overflow: hidden; border-radius: 4px; }
+.formatSpectrum i { background: var(--accent); min-width: 4px; }
+.formatSpectrum [data-tone="1"] { opacity: .5; }
+.formatSpectrum [data-tone="2"] { opacity: .2; }
+.formatLegend > div { display: flex; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.formatLegend svg { width: 14px; height: 14px; color: var(--accent); }
+.formatLegend span { flex: 1; font-size: 14px; }
+.formatLegend strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.formatLegend small { min-width: 40px; text-align: right; color: var(--text-dim); }
+.topicBars { display: grid; gap: 16px; margin-top: 24px; }
+.topicBars > div { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(60px, 1.5fr) 42px; align-items: center; gap: 12px; font-size: 12px; }
+.topicBars span { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.topicBars i { height: 6px; background: var(--border); border-radius: 2px; overflow: hidden; }
+.topicBars i::before { content: ""; display: block; height: 100%; width: var(--topic-width); background: var(--accent); }
+.topicBars strong { text-align: right; font-weight: 500; font-variant-numeric: tabular-nums; }
+.platformAllTags { margin-top: 16px; font-size: 12px; }
+.platformAllTags summary { cursor: pointer; color: var(--text-dim); }
+.platformChapters { list-style: none; padding: 0; margin: 16px 0 0; max-height: 400px; overflow-y: auto; }
+.platformChapters li { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 12px; align-items: baseline; padding: 12px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+.platformChapters li > span { color: var(--accent); font-variant-numeric: tabular-nums; }
+.platformChapters strong { font-weight: 500; overflow-wrap: anywhere; }
+.platformChapters time { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.platformFullText { min-width: 0; padding: 16px 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.platformFullText summary { cursor: pointer; font-size: 14px; color: var(--text-dim); }
+.platformFullText p { max-height: 400px; overflow-y: auto; margin: 16px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.8; }
+@media (max-width: 760px) { .platformDistribution { grid-template-columns: minmax(0, 1fr); } .platformFacts { padding: 16px; } }
+
+.trendScale select { max-width: 120px; min-width: 64px; padding: 8px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }

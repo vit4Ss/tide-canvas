@@ -1,15 +1,12 @@
-import type { SocialInspectVO, SocialWorkVO } from "@/lib/social-analysis-api";
+import type { SocialInspectVO, SocialWorkVO, SocialMetricVO } from "@/lib/social-analysis-api";
 import { parseMetricNumber } from "./metric-number.js";
+import { platformMetrics } from "./platform-metrics.js";
+import { parsePublicationDate } from "./publication-date.js";
 
 export { parseMetricNumber } from "./metric-number.js";
 
 function publishedTimestamp(value?: string): number | null {
-  if (!value) return null;
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 0
-    ? new Date(numeric < 10_000_000_000 ? numeric * 1000 : numeric)
-    : new Date(value);
-  return Number.isNaN(date.valueOf()) ? null : date.valueOf();
+  return parsePublicationDate(value)?.timestamp ?? null;
 }
 
 export interface AccountWorkDatum {
@@ -52,7 +49,7 @@ export interface AccountSnapshot {
   firstPublishedAt: number | null;
   lastPublishedAt: number | null;
   interactionParts: Array<{
-    key: "like" | "comment" | "share" | "favorite";
+    key: keyof SocialMetricVO;
     label: string;
     value: number;
     measured: number;
@@ -67,8 +64,9 @@ export function buildAccountSnapshot(result: SocialInspectVO): AccountSnapshot {
     const rawComments = parseMetricNumber(work.stats.comment);
     const rawShares = parseMetricNumber(work.stats.share);
     const rawFavorites = parseMetricNumber(work.stats.favorite);
-    const interactions = (rawLikes ?? 0) + (rawComments ?? 0) + (rawShares ?? 0) + (rawFavorites ?? 0);
-    const hasInteractionData = [rawLikes, rawComments, rawShares, rawFavorites].some((value) => value !== null);
+    const measured = platformMetrics(result.platform).filter((item) => item.interaction).map((item) => parseMetricNumber(work.stats[item.key]));
+    const interactions = measured.reduce<number>((sum, value) => sum + (value ?? 0), 0);
+    const hasInteractionData = measured.some((value) => value !== null);
     return {
       work,
       index,
@@ -154,32 +152,11 @@ export function buildAccountSnapshot(result: SocialInspectVO): AccountSnapshot {
     postsPerWeek: publishSpanDays ? (timestamps.length / publishSpanDays) * 7 : null,
     firstPublishedAt,
     lastPublishedAt,
-    interactionParts: [
-      {
-        key: "like",
-        label: "点赞",
-        value: works.reduce((sum, item) => sum + (item.likes ?? 0), 0),
-        measured: works.filter((item) => item.likes !== null).length,
-      },
-      {
-        key: "comment",
-        label: "评论",
-        value: works.reduce((sum, item) => sum + (item.comments ?? 0), 0),
-        measured: works.filter((item) => item.comments !== null).length,
-      },
-      {
-        key: "share",
-        label: "分享",
-        value: works.reduce((sum, item) => sum + (item.shares ?? 0), 0),
-        measured: works.filter((item) => item.shares !== null).length,
-      },
-      {
-        key: "favorite",
-        label: "收藏",
-        value: works.reduce((sum, item) => sum + (item.favorites ?? 0), 0),
-        measured: works.filter((item) => item.favorites !== null).length,
-      },
-    ],
+    interactionParts: platformMetrics(result.platform).filter((part) => part.interaction).map((part) => ({
+      key: part.key, label: part.label,
+      value: works.reduce((sum, item) => sum + (parseMetricNumber(item.work.stats[part.key]) ?? 0), 0),
+      measured: works.filter((item) => parseMetricNumber(item.work.stats[part.key]) !== null).length,
+    })),
   };
 }
 
@@ -204,10 +181,8 @@ export function buildAccountFeatures(snapshot: AccountSnapshot) {
   );
   let timedSamples = 0;
   for (const item of snapshot.works) {
-    const source = item.work.publishedAt?.trim() || "";
     // A date without a time is not a midnight publication. Leave it out.
-    const precise = /^\d{10,13}$/.test(source) || /[T\s]\d{2}:\d{2}/.test(source);
-    if (!precise || item.publishedAtMs === null) continue;
+    if (!parsePublicationDate(item.work.publishedAt)?.hasTime || item.publishedAtMs === null) continue;
     const date = new Date(item.publishedAtMs);
     const day = (date.getDay() + 6) % 7;
     const slot = Math.floor(date.getHours() / 4);
@@ -216,7 +191,7 @@ export function buildAccountFeatures(snapshot: AccountSnapshot) {
   }
   const maxTimingCount = Math.max(0, ...timing.flat().map((cell) => cell.count));
   const completeInteractionSamples = snapshot.works.filter((item) =>
-    [item.likes, item.comments, item.shares, item.favorites].every((value) => value !== null),
+    snapshot.interactionParts.every((part) => parseMetricNumber(item.work.stats[part.key]) !== null),
   ).length;
   const top = snapshot.rankedWorks[0] ?? null;
   const headline = !comparable ? "样本还在积累，先了解已有作品"

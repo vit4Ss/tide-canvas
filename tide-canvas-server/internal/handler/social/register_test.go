@@ -382,9 +382,9 @@ func TestContentInspectRequestMatrix(t *testing.T) {
 		source   string
 		requests []string
 	}{
-		{"douyin", platformDouyin, "https://www.douyin.com/video/1", []string{"/api/v1/douyin/app/v3/fetch_one_video_by_share_url?share_url=https%3A%2F%2Fwww.douyin.com%2Fvideo%2F1"}},
+		{"douyin", platformDouyin, "https://www.douyin.com/video/1", []string{"/api/v1/douyin/app/v3/fetch_one_video?aweme_id=1"}},
 		{"bilibili", platformBilibili, "https://www.bilibili.com/video/BV1xx", []string{"/api/v1/bilibili/web/fetch_one_video_v3?url=https%3A%2F%2Fwww.bilibili.com%2Fvideo%2FBV1xx"}},
-		{"xiaohongshu", platformXiaohongshu, "https://www.xiaohongshu.com/explore/1", []string{"/api/v1/xiaohongshu/app_v2/get_mixed_note_detail?share_text=https%3A%2F%2Fwww.xiaohongshu.com%2Fexplore%2F1"}},
+		{"xiaohongshu", platformXiaohongshu, "https://www.xiaohongshu.com/explore/1", []string{"/api/v1/xiaohongshu/app_v2/get_image_note_detail?share_text=https%3A%2F%2Fwww.xiaohongshu.com%2Fexplore%2F1"}},
 		{"youtube", platformYouTube, "https://www.youtube.com/watch?v=dQw4w9WgXcQ", []string{
 			"/api/v1/youtube/web_v2/get_video_info_v2?need_format=true&video_id=dQw4w9WgXcQ",
 			"/api/v1/youtube/web_v2/get_video_streams_v2?video_id=dQw4w9WgXcQ&video_url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ",
@@ -403,6 +403,14 @@ func TestContentInspectRequestMatrix(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				if strings.Contains(r.URL.Path, "get_video_streams_v2") {
 					_, _ = w.Write([]byte(`{"code":200,"data":{"formats":[{"itag":18,"height":360,"mime_type":"video/mp4","url":"https://cdn.example/youtube.mp4"}]}}`))
+					return
+				}
+				if strings.Contains(r.URL.Path, "/bilibili/") {
+					_, _ = w.Write([]byte(`{"code":200,"data":{"bvid":"BV1xx","title":"sample","media_url":"https://cdn.example/video.mp4","owner":{"name":"Creator"},"stat":{"view":10,"like":0,"reply":0,"share":0,"favorite":0}}}`))
+					return
+				}
+				if strings.Contains(r.URL.Path, "/douyin/") {
+					_, _ = w.Write([]byte(`{"code":200,"data":{"aweme_detail":{"aweme_id":"1","desc":"sample","video":{"play_addr":{"url_list":["https://cdn.example/video.mp4"]}},"author":{"nickname":"Creator"}}}}`))
 					return
 				}
 				_, _ = w.Write([]byte(`{"code":200,"data":{"id":"1","title":"sample","cover":"https://cdn.example/cover.jpg","media_url":"https://cdn.example/video.mp4","user":{"name":"Creator"}}}`))
@@ -445,27 +453,29 @@ func TestAccountInspectRequestMatrix(t *testing.T) {
 		source   string
 		requests []string
 	}{
-		{"douyin", platformDouyin, "https://www.douyin.com/user/sec", []string{
-			"/api/v1/douyin/app/v3/handler_user_profile?sec_user_id=sec",
-			"/api/v1/douyin/app/v3/fetch_user_post_videos?count=12&max_cursor=0&sec_user_id=sec&sort_type=0",
+		{"douyin", platformDouyin, "https://www.douyin.com/user/MS4wLjABTest", []string{
+			"/api/v1/douyin/app/v3/handler_user_profile?sec_user_id=MS4wLjABTest",
+			"/api/v1/douyin/app/v3/fetch_user_post_videos?count=12&max_cursor=0&sec_user_id=MS4wLjABTest&sort_type=0",
 		}},
 		{"bilibili", platformBilibili, "https://space.bilibili.com/123", []string{
 			"/api/v1/bilibili/web/fetch_user_profile?uid=123",
 			"/api/v1/bilibili/web/fetch_user_post_videos?order=pubdate&pn=1&ps=12&uid=123",
 			"/api/v1/bilibili/web/fetch_user_relation_stat?uid=123",
 			"/api/v1/bilibili/web/fetch_user_up_stat?uid=123",
+			"/api/v1/bilibili/web/fetch_one_video?bv_id=BV1114y1X7TA",
 		}},
 		{"xiaohongshu", platformXiaohongshu, "https://www.xiaohongshu.com/user/profile/abc", []string{
 			"/api/v1/xiaohongshu/app_v2/get_user_info?share_text=https%3A%2F%2Fwww.xiaohongshu.com%2Fuser%2Fprofile%2Fabc",
 			"/api/v1/xiaohongshu/app_v2/get_user_posted_notes?share_text=https%3A%2F%2Fwww.xiaohongshu.com%2Fuser%2Fprofile%2Fabc",
+			"/api/v1/xiaohongshu/app_v2/get_image_note_detail?note_id=v1",
 		}},
 		{"youtube", platformYouTube, "https://www.youtube.com/channel/UC123456", []string{
 			"/api/v1/youtube/web/get_channel_info?channel_id=UC123456",
-			"/api/v1/youtube/web/get_channel_videos_v2?channel_id=UC123456&contentType=videos&lang=zh-CN&sortBy=newest",
+			"/api/v1/youtube/web_v2/get_channel_videos?channel_id=UC123456&language_code=zh-CN&need_format=true",
 		}},
 		{"tiktok", platformTikTok, "https://www.tiktok.com/@creator", []string{
 			"/api/v1/tiktok/app/v3/handler_user_profile?unique_id=creator",
-			"/api/v1/tiktok/app/v3/fetch_user_post_videos_v3?count=12&max_cursor=0&sort_type=0&unique_id=creator",
+			"/api/v1/tiktok/app/v3/fetch_user_post_videos?count=12&max_cursor=0&sort_type=0&unique_id=creator",
 		}},
 		{"kuaishou", platformKuaishou, "https://www.kuaishou.com/profile/eid", []string{
 			"/api/v1/kuaishou/app/fetch_one_user_v2?user_id=eid",
@@ -481,7 +491,19 @@ func TestAccountInspectRequestMatrix(t *testing.T) {
 				received = append(received, r.URL.Path+"?"+r.URL.Query().Encode())
 				mu.Unlock()
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"code":200,"data":{"user":{"user_id":"u1","nickname":"Creator"},"aweme_list":[{"aweme_id":"v1","desc":"work","media_url":"https://cdn.example/video.mp4"}]}}`))
+				if strings.HasSuffix(r.URL.Path, "/fetch_one_video") && strings.Contains(r.URL.Path, "/bilibili/") {
+					_, _ = w.Write([]byte(`{"code":200,"data":{"bvid":"BV1114y1X7TA","title":"work","stat":{"view":100,"like":12,"reply":2,"coin":1,"danmaku":0,"share":3,"favorite":4}}}`))
+					return
+				}
+				if strings.HasSuffix(r.URL.Path, "/get_image_note_detail") {
+					_, _ = w.Write([]byte(`{"code":200,"data":{"note_id":"v1","title":"work","type":"normal","interact_info":{"liked_count":12,"comment_count":2,"collected_count":3,"shared_count":0}}}`))
+					return
+				}
+				if strings.Contains(r.URL.Path, "/bilibili/") {
+					_, _ = w.Write([]byte(`{"code":200,"data":{"user":{"mid":"123","name":"Creator"},"list":{"vlist":[{"bvid":"BV1114y1X7TA","title":"work","stat":{"like":12,"reply":2,"coin":1}}]}}}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"code":200,"data":{"user":{"user_id":"u1","nickname":"Creator"},"aweme_list":[{"aweme_id":"v1","desc":"work","statistics":{"digg_count":12,"comment_count":2},"media_url":"https://cdn.example/video.mp4"}]}}`))
 			}))
 			defer server.Close()
 			source, err := url.Parse(test.source)
@@ -525,10 +547,10 @@ func TestAccountInspectDegradesToWorkAuthorWhenProfileFails(t *testing.T) {
 		_, _ = w.Write([]byte(`{"code":200,"data":{"aweme_list":[{"aweme_id":"v1","desc":"work","author":{"nickname":"Fallback Creator"}}]}}`))
 	}))
 	defer server.Close()
-	source, _ := url.Parse("https://www.douyin.com/user/sec")
+	source, _ := url.Parse("https://www.douyin.com/user/MS4wLjABTest")
 	h := &handler{httpcli: server.Client()}
 	result, err := h.inspectAccount(context.Background(), settings{baseURL: server.URL, apiKey: "secret"}, platformDouyin, source)
-	if err != nil || result == nil || result.Profile == nil || result.Profile.ID != "sec" || result.Profile.Name != "Fallback Creator" || len(result.Works) != 1 {
+	if err != nil || result == nil || result.Profile == nil || result.Profile.ID != "MS4wLjABTest" || result.Profile.Name != "Fallback Creator" || len(result.Works) != 1 {
 		t.Fatalf("degraded account result = %#v, %v", result, err)
 	}
 	if len(result.Warnings) == 0 || !strings.Contains(result.Warnings[0], "账号资料") {

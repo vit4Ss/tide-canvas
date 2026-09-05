@@ -323,7 +323,7 @@ test("account mode renders a real intelligence board instead of a source-and-tex
     assert.ok(workbench.includes(section), `account board misses ${section}`);
   }
   assert.match(workbench, /buildAccountSnapshot\(result\)/);
-  assert.match(workbench, /<table>[\s\S]*相对表现[\s\S]*<AccountWorkInspector/);
+  assert.match(workbench, /<table>[\s\S]*相对播放[\s\S]*<AccountWorkInspector/);
   assert.doesNotMatch(workbench, /聚焦样本|performanceBar/);
   assert.match(workbench, /这是当前抓取样本的横截面，不代表粉丝增长趋势或行业基准/);
   assert.match(css, /\.accountDashboard \{[\s\S]*container-type: inline-size/);
@@ -364,8 +364,8 @@ test("single-work mode has a factual dashboard and a dedicated timecode report w
   for (const section of ["互动结构", "作品数据口径", "视频拆解速览", "调整分析重点"]) {
     assert.ok(workbench.includes(section), `work dashboard misses ${section}`);
   }
-  assert.match(workbench, /buildWorkSnapshot\(work\)/);
-  assert.match(workbench, /缺失字段不会按 0 处理/);
+  assert.match(workbench, /buildWorkSnapshot\(work, result\.platform\)/);
+  assert.match(workbench, /缺失字段不按 0 处理/);
   assert.match(workbench, /function workImageSources/);
   assert.match(workbench, /contentImageURLs/);
   assert.match(workbench, /开始图文拆解/);

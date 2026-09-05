@@ -299,7 +299,13 @@ func findMediaURL(root any) string {
 }
 
 func findYouTubeMergedMediaURL(root any) string {
-	formats := firstValue(root, "formats")
+	// TikHub's formats contains combined streams; adaptive_formats does not.
+	// Stay within response wrappers, never borrow a recommended video's formats.
+	item := scopedObject(root, []string{"data", "result", "streaming_data", "video_info", "video_details"}, func(m map[string]any) bool {
+		_, exists := m["formats"]
+		return exists
+	}, 0)
+	formats := directValue(item, "formats")
 	rows, ok := formats.([]any)
 	if !ok || len(rows) == 0 {
 		return ""
@@ -315,16 +321,19 @@ func findYouTubeMergedMediaURL(root any) string {
 		if !ok {
 			continue
 		}
-		mimeType := strings.ToLower(firstString(item, "mime_type", "mimeType"))
+		mimeType := strings.ToLower(directString(item, "mime_type", "mimeType"))
 		if mimeType != "" && !strings.Contains(mimeType, "video") {
+			continue
+		}
+		if encrypted, ok := directValue(item, "has_signature").(bool); ok && encrypted {
 			continue
 		}
 		mediaURL := archiveableMediaURL(urlFromValue(item["url"], 0))
 		if mediaURL == "" {
 			continue
 		}
-		height, _ := strconv.Atoi(firstString(item, "height"))
-		candidates = append(candidates, candidate{url: mediaURL, itag: firstString(item, "itag"), height: height})
+		height, _ := strconv.Atoi(directString(item, "height"))
+		candidates = append(candidates, candidate{url: mediaURL, itag: directString(item, "itag"), height: height})
 	}
 	for _, item := range candidates {
 		if item.itag == "18" {
@@ -471,6 +480,9 @@ func primaryWorkRoot(root any) any {
 }
 
 func normalizeWork(root any, fallbackPageURL string) workVO {
+	if item := bilibiliWorkRoot(root, 0); item != nil {
+		return normalizeBilibiliWork(item, fallbackPageURL)
+	}
 	itemRoot := primaryWorkRoot(root)
 	description := firstString(itemRoot, "desc", "description", "content", "text", "dynamic", "caption")
 	title := firstString(itemRoot, "title", "caption", "name")

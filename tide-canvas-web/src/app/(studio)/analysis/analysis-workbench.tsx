@@ -51,6 +51,8 @@ import {
   type SocialAnalysisStatusVO,
   type SocialInspectVO,
   type SocialPlatform,
+  type SocialMetricVO,
+  type SocialPlatformDetails,
   type SocialWorkVO,
   type VideoDownloaderCapabilitiesVO,
   type VideoDownloadQuality,
@@ -72,6 +74,10 @@ import { extractAccountReportBrief } from "./account-report-brief";
 import { ContentAnalysisReport } from "./content-analysis-report";
 import { CONTENT_REPORT_FORMAT } from "./content-report";
 import { buildWorkSnapshot } from "./work-insights";
+import { platformMetrics, platformVocabulary } from "./platform-metrics.js";
+import { parseMetricNumber } from "./metric-number.js";
+import { parsePublicationDate } from "./publication-date.js";
+import { PlatformAccountPanels, PlatformWorkDetails } from "./platform-details";
 import { ActivityHistorySidebar } from "./activity-history";
 import styles from "./analysis.module.css";
 
@@ -147,21 +153,14 @@ function displayPercent(value: number | null): string {
 }
 
 function parsedDate(value?: string): Date | null {
-  if (!value) return null;
-  const numeric = Number(value);
-  let date: Date | null = null;
-  if (Number.isFinite(numeric) && numeric > 0) {
-    date = new Date(numeric < 10_000_000_000 ? numeric * 1000 : numeric);
-  } else if (/^\d{4}-\d{2}-\d{2}/.test(value)) {
-    date = new Date(value);
-  }
-  return date && !Number.isNaN(date.valueOf()) ? date : null;
+  const parsed = parsePublicationDate(value);
+  return parsed ? new Date(parsed.timestamp) : null;
 }
 
 function displayDate(value?: string): string {
   const date = parsedDate(value);
   return date
-    ? new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "short", day: "numeric" }).format(date)
+    ? new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "short", day: "numeric", timeZone: parsePublicationDate(value)?.hasTime ? undefined : "UTC" }).format(date)
     : value || "";
 }
 
@@ -184,7 +183,7 @@ function isSocialInspectSnapshot(value: unknown): value is SocialInspectVO {
 function displayDateTime(value?: string): string {
   const date = parsedDate(value);
   if (!date) return value || "";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return displayDate(value);
+  if (!parsePublicationDate(value)?.hasTime) return displayDate(value);
   return new Intl.DateTimeFormat("zh-CN", {
     month: "2-digit",
     day: "2-digit",
@@ -251,8 +250,8 @@ function workVideoSources(work: SocialWorkVO): string[] {
   return [...new Set([work.mediaUrl ?? "", ...(work.mediaUrls ?? [])].map(value => value.trim()).filter(Boolean))].slice(0, 5);
 }
 
-function workImageSources(work: SocialWorkVO): string[] {
-  const images = [...new Set((work.imageUrls ?? []).map((value) => value.trim()).filter(Boolean))].slice(0, 9);
+function workImageSources(work: SocialWorkVO, limit = 9): string[] {
+  const images = [...new Set((work.imageUrls ?? []).map((value) => value.trim()).filter(Boolean))].slice(0, limit);
   if (images.length > 0) return images;
   return work.coverUrl?.trim() ? [work.coverUrl.trim()] : [];
 }
@@ -285,6 +284,25 @@ function byteLength(value: string): number {
   return typeof TextEncoder !== "undefined" ? new TextEncoder().encode(value).length : value.length * 3;
 }
 
+function promptDetails(details?: SocialPlatformDetails, maxBytes = 2400): SocialPlatformDetails | undefined {
+  if (!details) return undefined;
+  const summary = {
+    fields: details.fields?.slice(0, 12).map((field) => ({ ...field, value: field.value.slice(0, 160) })),
+    tags: details.tags?.slice(0, 16).map((tag) => tag.slice(0, 80)),
+    chapters: details.chapters?.slice(0, 12).map((chapter) => ({ ...chapter, title: chapter.title.slice(0, 120) })),
+    languages: details.languages?.slice(0, 10),
+  };
+  // Keep valid JSON and whole metadata entries; this does not alter the snapshot.
+  while (byteLength(JSON.stringify(summary)) > maxBytes) {
+    if (summary.chapters?.length) summary.chapters.pop();
+    else if (summary.fields?.length) summary.fields.pop();
+    else if (summary.tags?.length) summary.tags.pop();
+    else if (summary.languages?.length) summary.languages = summary.languages.slice(0, -1);
+    else break;
+  }
+  return summary;
+}
+
 function accountPrompt(result: SocialInspectVO, focus: string): string {
   const snapshot = buildAccountSnapshot(result);
   const profile = result.profile ? {
@@ -296,6 +314,7 @@ function accountPrompt(result: SocialInspectVO, focus: string): string {
     following: result.profile.following,
     likes: result.profile.likes,
     works: result.profile.works,
+    details: promptDetails(result.profile.details),
   } : undefined;
   const recentWorks = result.works.map((work) => ({
     id: work.id,
@@ -305,6 +324,7 @@ function accountPrompt(result: SocialInspectVO, focus: string): string {
     duration: work.duration,
     mediaType: work.mediaType,
     stats: work.stats,
+    details: promptDetails(work.details),
   }));
   const sampleSummary = {
     sampleCount: snapshot.sampleCount,
@@ -326,16 +346,28 @@ function accountPrompt(result: SocialInspectVO, focus: string): string {
   };
   const render = () => [
     "<user_request>",
-    focus.trim() || ACCOUNT_DEFAULT_FOCUS,
+    focus.trim().slice(0, 4000) || ACCOUNT_DEFAULT_FOCUS,
     "先面向普通创作者输出三个简短板块：## 一句话定位、## 值得借鉴、## 下一步建议。每个板块只写一句不超过 70 字的完整结论，不重复罗列统计数字。推测保留‘可能’等限定语，缺少依据时明确说明。之后以 ## 详细分析 展开依据和细节。不要编造分数、评级或平台未提供的数据。",
     "</user_request>",
     "<platform_data untrusted=\"true\">",
-    JSON.stringify({ platform: result.platformName, sourceUrl: result.sourceUrl, profile, sampleSummary, recentWorks }),
+    JSON.stringify({ platform: result.platformName, sourceUrl: result.sourceUrl.slice(0, 1024), profile, sampleSummary, includedWorkCount: recentWorks.length, recentWorks }),
     "</platform_data>",
   ].join("\n");
   let prompt = render();
-  // Skill-run requests cap prompt bytes at 32 KiB. Drop the oldest tail
-  // samples before the request can be rejected; the visible result remains intact.
+  // Compress optional metadata first so twelve samples do not silently become
+  // one simply because the provider returned detailed chapters or long tags.
+  if (byteLength(prompt) > 30 * 1024) {
+    if (profile) profile.details = promptDetails(profile.details, 768);
+    for (const work of recentWorks) work.details = promptDetails(work.details, 768);
+    prompt = render();
+  }
+  if (byteLength(prompt) > 30 * 1024) {
+    if (profile) profile.details = undefined;
+    for (const work of recentWorks) { work.details = undefined; work.description = work.description?.slice(0, 80); }
+    prompt = render();
+  }
+  // Last resort for unusually long identities/counters in a saved response.
+  // Keep the full-cohort summary and state how many work details are included.
   while (byteLength(prompt) > 30 * 1024 && recentWorks.length > 1) {
     recentWorks.pop();
     prompt = render();
@@ -346,19 +378,21 @@ function accountPrompt(result: SocialInspectVO, focus: string): string {
 function contentPrompt(result: SocialInspectVO, work: SocialWorkVO, focus: string, videoWork: boolean): string {
   return [
     "<user_request>",
-    focus.trim() || (videoWork ? DEFAULT_FOCUS : IMAGE_DEFAULT_FOCUS),
+    focus.trim().slice(0, 4000) || (videoWork ? DEFAULT_FOCUS : IMAGE_DEFAULT_FOCUS),
     "</user_request>",
+    "根据平台和作品类型分析。B 站关注投币、收藏、弹幕和分区；小红书区分图文与视频，关注收藏、话题与笔记内容；YouTube 关注频道、观看、字幕与章节；抖音/TikTok/快手关注短视频、音乐、话题和已返回的互动。只使用本次有值的字段，不把未返回数据当作 0，不推断未提供的粉丝画像。",
     videoWork ? CONTENT_REPORT_FORMAT : "先输出 ## 一句话看懂、## 视觉焦点、## 值得借鉴，每项一句不超过 70 字的完整结论，保留不确定性；随后用 ## 完整分析 给出依据与细节，不编造评分。",
     "<platform_data untrusted=\"true\">",
     JSON.stringify({
       platform: result.platformName,
-      sourceUrl: work.pageUrl || result.sourceUrl,
+      sourceUrl: (work.pageUrl || result.sourceUrl).slice(0, 1024),
       title: work.title?.slice(0, 300),
       description: work.description?.slice(0, 1000),
       publishedAt: work.publishedAt,
       duration: work.duration,
       mediaType: work.mediaType,
       stats: work.stats,
+      details: promptDetails(work.details),
     }),
     "</platform_data>",
   ].join("\n");
@@ -584,37 +618,43 @@ function ResultSkeleton() {
   );
 }
 
-function AccountSampleTrend({ works, medianViews, onInspect }: { works: AccountWorkDatum[]; medianViews: number | null; onInspect: (item: AccountWorkDatum) => void }) {
+function AccountSampleTrend({ works, medianViews: sampleMedian, platform, onInspect }: { works: AccountWorkDatum[]; medianViews: number | null; platform: SocialPlatform; onInspect: (item: AccountWorkDatum) => void }) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [logScale, setLogScale] = useState(false);
-  const points = works.filter((item) => item.publishedAtMs !== null && item.views !== null).sort((a, b) => a.publishedAtMs! - b.publishedAtMs!);
-  if (points.length < 2) return <section className={styles.sampleTrend}><header className={styles.sectionHeader}><div><h2>近期作品表现</h2><p>按发布时间对照每条作品的播放量。</p></div></header><p className={styles.visualEmpty}>至少需要两条同时包含播放量和发布时间的作品，才能展示分布曲线。已有作品仍可在下方查看。</p></section>;
+  const [metricKey, setMetricKey] = useState<keyof SocialMetricVO | null>(null);
+  const choices = platformMetrics(platform).filter((metric) => works.filter((item) => item.publishedAtMs !== null && parseMetricNumber(item.work.stats[metric.key]) !== null).length >= 2);
+  const metric = choices.find((item) => item.key === metricKey) || choices[0];
+  const points = works.map((item) => ({ ...item, metricValue: metric ? parseMetricNumber(item.work.stats[metric.key]) : null })).filter((item) => item.publishedAtMs !== null && item.metricValue !== null).sort((a, b) => a.publishedAtMs! - b.publishedAtMs!);
+  if (!metric || points.length < 2) return <section className={styles.sampleTrend}><header className={styles.sectionHeader}><div><h2>近期作品表现</h2><p>按发布时间对照本平台已返回的指标。</p></div></header><p className={styles.visualEmpty}>至少需要两条同时包含同一指标和发布时间的作品，才能展示分布曲线。已有作品仍可在下方查看。</p></section>;
+  const sortedValues = points.map((item) => item.metricValue!).sort((a, b) => a - b);
+  const middle = Math.floor(sortedValues.length / 2);
+  const medianViews = metric.key === "play" ? sampleMedian : sortedValues.length % 2 ? sortedValues[middle] : (sortedValues[middle - 1] + sortedValues[middle]) / 2;
   const width = 1000, height = 220, left = 16, right = 16, top = 16, bottom = 28;
   const plotWidth = width - left - right, plotHeight = height - top - bottom;
   const minTime = points[0].publishedAtMs!, maxTime = points.at(-1)!.publishedAtMs!;
-  const peakViews = Math.max(0, ...points.map((item) => item.views!));
+  const peakViews = Math.max(0, ...points.map((item) => item.metricValue!));
   const maxViews = Math.max(1, peakViews);
-  const selected = points.find((item) => item.index === selectedIndex) ?? points.reduce((best, item) => item.views! > best.views! ? item : best);
+  const selected = points.find((item) => item.index === selectedIndex) ?? points.reduce((best, item) => item.metricValue! > best.metricValue! ? item : best);
   const x = (time: number, index: number) => left + (maxTime === minTime ? index / (points.length - 1) : (time - minTime) / (maxTime - minTime)) * plotWidth;
   const y = (views: number) => top + plotHeight - (logScale ? Math.log1p(views) / Math.log1p(maxViews) : views / maxViews) * plotHeight;
-  const coordinates = points.map((item, index) => ({ x: x(item.publishedAtMs!, index), y: y(item.views!) }));
+  const coordinates = points.map((item, index) => ({ x: x(item.publishedAtMs!, index), y: y(item.metricValue!) }));
   const line = coordinates.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
   const area = `${left},${top + plotHeight} ${line} ${coordinates.at(-1)!.x},${top + plotHeight}`;
   const medianY = medianViews !== null && medianViews <= maxViews ? y(medianViews) : null;
   return (
     <section className={styles.sampleTrend}>
       <header className={styles.sectionHeader}>
-        <div><h2>近期作品表现</h2><p>按作品发布时间观察播放分布，不等同于账号历史增长。</p></div>
-        <div className={styles.trendScale} role="group" aria-label="播放刻度"><button type="button" aria-pressed={!logScale} onClick={() => setLogScale(false)}>原始播放</button><button type="button" aria-pressed={logScale} onClick={() => setLogScale(true)}>对数刻度</button></div>
+        <div><h2>近期作品表现</h2><p>按作品发布时间观察{metric.label}分布，不等同于账号历史增长。</p></div>
+        <div className={styles.trendScale} role="group" aria-label="指标与刻度"><select aria-label="图表指标" value={metric.key} onChange={(event) => setMetricKey(event.target.value as keyof SocialMetricVO)}>{choices.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select><button type="button" aria-pressed={!logScale} onClick={() => setLogScale(false)}>原始数值</button><button type="button" aria-pressed={logScale} onClick={() => setLogScale(true)}>对数刻度</button></div>
       </header>
       <div className={styles.trendReadout}>
-        <div><small>{points.length} 条有效样本 · 峰值 {displayCompactMetric(peakViews)}</small><strong>{displayCompactMetric(selected.views)}<span> 次播放</span></strong></div>
+        <div><small>{points.length} 条有效样本 · 峰值 {displayCompactMetric(peakViews)}</small><strong>{displayCompactMetric(selected.metricValue)}<span> 次{metric.label}</span></strong></div>
         <button type="button" onClick={() => onInspect(selected)}><span>{titleOf(selected.work)}</span><small>{displayDateTime(selected.work.publishedAt)} · 查看作品 <ArrowUpRight aria-hidden /></small></button>
       </div>
       <div className={styles.trendCanvas}>
         <div className={styles.trendYAxis} aria-hidden>{[1, .75, .5, .25, 0].map((ratio) => <span key={ratio}>{displayCompactMetric(logScale ? Math.expm1(Math.log1p(maxViews) * ratio) : maxViews * ratio)}</span>)}</div>
-        <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="group" aria-label="近期作品播放量走势，点选节点查看作品">
-          <title>近期作品播放量走势</title>
+        <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="group" aria-label={`近期作品${metric.label}分布，点选节点查看作品`}>
+          <title>近期作品{metric.label}分布</title>
           {[0, .25, .5, .75, 1].map((ratio) => <line key={ratio} className={styles.trendGridLine} x1={left} x2={width - right} y1={top + plotHeight * ratio} y2={top + plotHeight * ratio} />)}
           <polygon className={styles.trendArea} points={area} />
           {medianY !== null && <line className={styles.trendMedian} x1={left} x2={width - right} y1={medianY} y2={medianY} />}
@@ -622,16 +662,16 @@ function AccountSampleTrend({ works, medianViews, onInspect }: { works: AccountW
           {coordinates.map((point, index) => <g key={points[index].index}>
             {selected.index === points[index].index && <line className={styles.trendCursor} x1={point.x} x2={point.x} y1={top} y2={top + plotHeight} />}
             <circle className={styles.trendPoint} data-active={selected.index === points[index].index} cx={point.x} cy={point.y} r={selected.index === points[index].index ? 6 : 4} />
-            <circle className={styles.trendHit} cx={point.x} cy={point.y} r="16" tabIndex={0} role="button" aria-label={`${titleOf(points[index].work)}，${displayCompactMetric(points[index].views)} 次播放，查看详情`} onMouseEnter={() => setSelectedIndex(points[index].index)} onFocus={() => setSelectedIndex(points[index].index)} onClick={() => { setSelectedIndex(points[index].index); onInspect(points[index]); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onInspect(points[index]); } }} />
+            <circle className={styles.trendHit} cx={point.x} cy={point.y} r="16" tabIndex={0} role="button" aria-label={`${titleOf(points[index].work)}，${displayCompactMetric(points[index].metricValue)} 次${metric.label}，查看详情`} onMouseEnter={() => setSelectedIndex(points[index].index)} onFocus={() => setSelectedIndex(points[index].index)} onClick={() => { setSelectedIndex(points[index].index); onInspect(points[index]); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onInspect(points[index]); } }} />
           </g>)}
         </svg>
         <div className={styles.trendAxis}>
           <span>{displayDate(points[0].work.publishedAt)}</span>
-          {medianViews !== null && <span>中位播放 {displayCompactMetric(medianViews)}</span>}
+          {medianViews !== null && <span>中位{metric.label} {displayCompactMetric(medianViews)}</span>}
           <span>{displayDate(points.at(-1)?.work.publishedAt)}</span>
         </div>
       </div>
-      <p className={styles.visualNote}>{logScale ? "对数刻度压缩高播放峰值，便于观察普通作品的差异；节点与提示仍显示实际播放量。" : "悬停或聚焦节点查看播放数据，点击打开作品。峰值差距大时可切换对数刻度。"}</p>
+      <p className={styles.visualNote}>{logScale ? `对数刻度压缩高${metric.label}峰值，节点仍显示实际次数。` : `悬停或聚焦节点查看${metric.label}数据，点击打开作品。峰值差距大时可切换对数刻度。`}</p>
     </section>
   );
 }
@@ -673,7 +713,7 @@ function AccountWorkInspector({
           <div className={styles.workInspectorMedia}><WorkCover work={item.work} platform={platform} alt={`作品封面：${titleOf(item.work)}`} /></div>
           <div className={styles.workInspectorCopy}><h3>{titleOf(item.work)}</h3><time>{displayDateTime(item.work.publishedAt) || "发布时间未知"}</time></div>
           <div className={styles.workInspectorMetrics}>
-            <div><small>播放</small><strong>{displayCompactMetric(item.views)}</strong></div>
+            {platformMetrics(platform).filter((metric) => parseMetricNumber(item.work.stats[metric.key]) !== null).map((metric) => <div key={metric.key}><small>{metric.label}</small><strong>{displayCount(item.work.stats[metric.key])}</strong></div>)}
             <div><small>可见互动</small><strong>{displayCompactMetric(item.hasInteractionData ? item.interactions : null)}</strong></div>
             <div><small>可见互动率</small><strong>{displayPercent(item.engagementRate)}</strong></div>
             <div><small>相对中位播放</small><strong>{relative === null ? "—" : `${relative.toFixed(2)}×`}</strong></div>
@@ -686,6 +726,7 @@ function AccountWorkInspector({
             {item.work.pageUrl && <a href={item.work.pageUrl} target="_blank" rel="noopener noreferrer">查看原作品 <ArrowUpRight aria-hidden /></a>}
             {canDownload && <button type="button" onClick={onDownload}><Download aria-hidden /> 下载原片</button>}
           </div>
+          <PlatformWorkDetails work={{ ...item.work, platform }} />
         </div>
       )}
     </dialog>
@@ -732,7 +773,7 @@ function AccountDashboard({
       return (b.publishedAtMs ?? 0) - (a.publishedAtMs ?? 0) || a.index - b.index;
     });
   const publishedRange = snapshot.firstPublishedAt !== null && snapshot.lastPublishedAt !== null
-    ? `${displayDate(String(snapshot.firstPublishedAt))} — ${displayDate(String(snapshot.lastPublishedAt))}`
+    ? `${displayDate(snapshot.works.find((item) => item.publishedAtMs === snapshot.firstPublishedAt)?.work.publishedAt)} — ${displayDate(snapshot.works.find((item) => item.publishedAtMs === snapshot.lastPublishedAt)?.work.publishedAt)}`
     : "发布时间不完整";
   const fetchedLabel = result.fetchedAt > 0
     ? `抓取于 ${new Intl.DateTimeFormat("zh-CN", {
@@ -745,15 +786,16 @@ function AccountDashboard({
   const profileFacts = [
     profile?.following ? `${displayCount(profile.following)} 关注` : "",
     profile?.likes ? `${displayCount(profile.likes)} 获赞` : "",
-    profile?.works ? `${displayCount(profile.works)} 作品` : "",
+    profile?.works ? `${displayCount(profile.works)} ${platformVocabulary(result.platform).works}` : "",
   ].filter(Boolean);
   const kpis = [
-    profile?.followers ? { label: "粉丝", value: displayCount(profile.followers), note: "平台累计" } : null,
+    profile?.followers ? { label: platformVocabulary(result.platform).followers, value: displayCount(profile.followers), note: "平台累计" } : null,
     snapshot.medianViews !== null ? { label: "中位播放", value: displayCompactMetric(snapshot.medianViews), note: `${snapshot.measuredViews} 个有效样本` } : null,
     snapshot.highPerformanceRate !== null ? { label: "高表现样本率", value: displayPercent(snapshot.highPerformanceRate), note: "播放 ≥ 2× 中位数" } : null,
     snapshot.topPerformanceMultiple !== null ? { label: "最高样本倍数", value: `${snapshot.topPerformanceMultiple.toFixed(2)}×`, note: "相对中位播放" } : null,
     { label: "分析样本", value: String(snapshot.sampleCount), note: "近期公开作品" },
   ].filter((item): item is { label: string; value: string; note: string } => item !== null).slice(0, 5);
+  const metricColumns = platformMetrics(result.platform).filter((metric) => result.works.some((work) => parseMetricNumber(work.stats[metric.key]) !== null));
 
   return (
     <div className={styles.accountDashboard} style={{ "--platform": meta.color } as React.CSSProperties}>
@@ -773,7 +815,7 @@ function AccountDashboard({
         </div>
         <div className={styles.accountHeroActions}>
           <span>{fetchedLabel}</span>
-          <a href={result.sourceUrl} target="_blank" rel="noopener noreferrer">查看账号主页 <ArrowUpRight aria-hidden /></a>
+          <a href={profile?.pageUrl || result.sourceUrl} target="_blank" rel="noopener noreferrer">查看账号主页 <ArrowUpRight aria-hidden /></a>
         </div>
 
         <div className={styles.accountKpiRail} role="list" aria-label="账号关键指标">
@@ -793,7 +835,8 @@ function AccountDashboard({
       )}
       </div>
       <div className={styles.accountData}>
-      <AccountSampleTrend works={snapshot.works} medianViews={snapshot.medianViews} onInspect={setInspectedWork} />
+      <PlatformAccountPanels result={result} />
+      <AccountSampleTrend works={snapshot.works} platform={result.platform} medianViews={snapshot.medianViews} onInspect={setInspectedWork} />
 
       <AccountVisuals snapshot={snapshot} onInspect={setInspectedWork} renderCover={(item) => <WorkCover work={item.work} platform={result.platform} />} />
 
@@ -814,23 +857,22 @@ function AccountDashboard({
         {snapshot.works.length > 0 ? (
           <div className={styles.accountTableWrap}>
             <table>
-              <thead><tr><th>作品</th><th>发布时间</th><th>播放</th><th>点赞</th><th>评论</th><th>可见互动率</th><th>相对表现</th></tr></thead>
+              <thead><tr><th>{platformVocabulary(result.platform).works}</th><th>类型</th><th>发布时间</th>{metricColumns.map((metric) => <th key={metric.key}>{metric.label}</th>)}{snapshot.measuredViews > 0 && <th>可见互动率</th>}{snapshot.measuredViews > 1 && <th>相对播放</th>}</tr></thead>
               <tbody>
                 {filteredWorks.map((item) => {
                   const multiple = snapshot.measuredViews > 1 && item.views !== null && snapshot.medianViews && snapshot.medianViews > 0 ? item.views / snapshot.medianViews : null;
                   return (
                     <tr key={item.work.id || `${item.work.pageUrl}-${item.index}`} data-clickable onClick={() => setInspectedWork(item)}>
                       <td><button type="button" className={styles.accountWorkTitle} onClick={() => setInspectedWork(item)} title={titleOf(item.work)}><span><WorkCover work={item.work} platform={result.platform} /></span><b>{titleOf(item.work)}</b></button></td>
+                      <td>{item.work.mediaType === "image" ? "图文" : item.work.mediaType === "video" ? "视频" : "—"}</td>
                       <td>{displayDateTime(item.work.publishedAt) || "—"}</td>
-                      <td className={styles.tableViewValue}>{displayCompactMetric(item.views)}</td>
-                      <td>{displayCompactMetric(item.likes)}</td>
-                      <td>{displayCompactMetric(item.comments)}</td>
-                      <td>{displayPercent(item.engagementRate)}</td>
-                      <td><span className={styles.relativePerformance} data-level={multiple !== null && multiple >= 2 ? "high" : multiple !== null && multiple < .6 ? "low" : "normal"}>{multiple === null ? "—" : `${multiple >= 2 ? "高于日常 · " : ""}${multiple.toFixed(2)}×`}</span></td>
+                      {metricColumns.map((metric) => <td key={metric.key}>{displayCompactMetric(parseMetricNumber(item.work.stats[metric.key]))}</td>)}
+                      {snapshot.measuredViews > 0 && <td>{displayPercent(item.engagementRate)}</td>}
+                      {snapshot.measuredViews > 1 && <td><span className={styles.relativePerformance} data-level={multiple !== null && multiple >= 2 ? "high" : multiple !== null && multiple < .6 ? "low" : "normal"}>{multiple === null ? "—" : `${multiple >= 2 ? "高于日常 · " : ""}${multiple.toFixed(2)}×`}</span></td>}
                     </tr>
                   );
                 })}
-                {filteredWorks.length === 0 && <tr><td colSpan={7}><p className={styles.inlineEmpty}>本次样本暂没有达到中位播放两倍的作品。</p></td></tr>}
+                {filteredWorks.length === 0 && <tr><td colSpan={3 + metricColumns.length + Number(snapshot.measuredViews > 0) + Number(snapshot.measuredViews > 1)}><p className={styles.inlineEmpty}>本次样本暂没有达到中位播放两倍的作品。</p></td></tr>}
               </tbody>
             </table>
           </div>
@@ -908,12 +950,13 @@ function ContentDashboard({
   onDownload,
 }: ContentDashboardProps) {
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
-  const snapshot = buildWorkSnapshot(work);
+  const snapshot = buildWorkSnapshot(work, result.platform);
+  const workMetrics = platformMetrics(result.platform).filter((metric) => parseMetricNumber(work.stats[metric.key]) !== null);
   const meta = platformMeta(result.platform);
   const interactionTotal = snapshot.interactions ?? 0;
   const author = result.profile;
   const videoWork = isVideoWork(work);
-  const imageURLs = videoWork ? [] : workImageSources(work);
+  const imageURLs = videoWork ? [] : workImageSources(work, 40);
   const mediaLabel = work.mediaType === "image" || imageURLs.length > 0 ? "图文作品" : videoWork ? "视频作品" : "公开作品";
   const selectedImageURL = imageURLs[Math.min(selectedImageIndex, Math.max(0, imageURLs.length - 1))] || work.coverUrl;
   const analysisAssetAvailable = videoWork ? workVideoSources(work).length > 0 : imageURLs.length > 0;
@@ -956,7 +999,7 @@ function ContentDashboard({
           <div className={styles.contentMeta}>
             <span><CalendarDays aria-hidden />{displayDateTime(work.publishedAt) || "发布时间未知"}</span>
             <span>{videoWork ? <FileVideo aria-hidden /> : <Film aria-hidden />}{videoWork ? work.duration || "时长未知" : imageURLs.length ? `${imageURLs.length} 张图片` : "图片未返回"}</span>
-            <span><Activity aria-hidden />{snapshot.measuredFields + (snapshot.views !== null ? 1 : 0)} / 5 项数据可用</span>
+            <span><Activity aria-hidden />{workMetrics.length} 项公开指标已获取</span>
           </div>
           <div className={styles.contentActions}>
             <a href={sourceURL} target="_blank" rel="noopener noreferrer">查看原作品 <ArrowUpRight aria-hidden /></a>
@@ -964,11 +1007,11 @@ function ContentDashboard({
           </div>
         </div>
         <div className={styles.contentKpiRail} role="list" aria-label="作品关键指标">
-          <div role="listitem"><small>播放</small><strong>{displayCompactMetric(snapshot.views)}</strong></div>
-          {snapshot.interactionParts.map((item) => (
-            <div role="listitem" key={item.key}><small>{item.label}</small><strong>{displayCompactMetric(item.value)}</strong></div>
+          {workMetrics.map((item) => (
+            <div role="listitem" key={item.key}><small>{item.label}</small><strong>{displayCount(work.stats[item.key])}</strong></div>
           ))}
-          <div role="listitem"><small>可见互动率</small><strong>{displayPercent(snapshot.engagementRate)}</strong></div>
+          {snapshot.engagementRate !== null && <div role="listitem"><small>可见互动率</small><strong>{displayPercent(snapshot.engagementRate)}</strong></div>}
+          {workMetrics.length === 0 && <div role="listitem"><small>公开指标</small><strong>暂未返回</strong></div>}
         </div>
       </header>
 
@@ -981,6 +1024,7 @@ function ContentDashboard({
       )}
       </div>
       <div className={styles.contentData}>
+      <PlatformWorkDetails work={{ ...work, platform: result.platform }} />
       <div className={styles.contentSignals}>
         <section className={styles.contentInteraction}>
           <header className={styles.dataPanelHeader}>
@@ -995,7 +1039,7 @@ function ContentDashboard({
                 ))}
               </div>
               <div className={styles.interactionLegend}>
-                {snapshot.interactionParts.map((item) => (
+                {snapshot.interactionParts.filter((item) => item.value !== null).map((item) => (
                   <span key={item.key} data-part={item.key}>
                     <i />{item.label}<strong>{displayCompactMetric(item.value)}{item.rate !== null ? ` · ${displayPercent(item.rate)}` : ""}</strong>
                   </span>
@@ -1019,7 +1063,7 @@ function ContentDashboard({
             <div><dt>可见互动</dt><dd>{displayCompactMetric(snapshot.interactions)}</dd></div>
             <div><dt>可见互动率</dt><dd>{displayPercent(snapshot.engagementRate)}</dd></div>
           </dl>
-          <p>互动率 = 平台已返回的点赞、评论、分享、收藏之和 ÷ 播放量；缺失字段不会按 0 处理。</p>
+          <p>可见互动汇总本平台已返回的{snapshot.interactionParts.map((item) => item.label).join("、")}；有播放量时才计算互动率。缺失字段不按 0 处理，次数不代表独立人数。</p>
         </section>
       </div>
       </div>
@@ -1562,7 +1606,7 @@ export default function AnalysisWorkbench() {
     tabRefs.current[next]?.focus();
   };
   const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    const order: WorkbenchTab[] = ["breakdown", "download"];
+    const order: WorkbenchTab[] = ["download", "breakdown"];
     const index = order.indexOf(tab);
     if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
       event.preventDefault();
@@ -1734,20 +1778,6 @@ export default function AnalysisWorkbench() {
             <button
               type="button"
               role="tab"
-              id="analysis-tab-breakdown"
-              aria-selected={tab === "breakdown"}
-              aria-controls="analysis-panel-breakdown"
-              tabIndex={tab === "breakdown" ? 0 : -1}
-              ref={(node) => { tabRefs.current.breakdown = node; }}
-              className={tab === "breakdown" ? styles.tabActive : ""}
-              onClick={() => { setTab("breakdown"); if (historicalRecord?.type === "download") clearHistoricalView(); }}
-              onKeyDown={onTabKeyDown}
-            >
-              内容拆解
-            </button>
-            <button
-              type="button"
-              role="tab"
               id="analysis-tab-download"
               aria-selected={tab === "download"}
               aria-controls="analysis-panel-download"
@@ -1758,6 +1788,20 @@ export default function AnalysisWorkbench() {
               onKeyDown={onTabKeyDown}
             >
               视频下载
+            </button>
+            <button
+              type="button"
+              role="tab"
+              id="analysis-tab-breakdown"
+              aria-selected={tab === "breakdown"}
+              aria-controls="analysis-panel-breakdown"
+              tabIndex={tab === "breakdown" ? 0 : -1}
+              ref={(node) => { tabRefs.current.breakdown = node; }}
+              className={tab === "breakdown" ? styles.tabActive : ""}
+              onClick={() => { setTab("breakdown"); if (historicalRecord?.type === "download") clearHistoricalView(); }}
+              onKeyDown={onTabKeyDown}
+            >
+              内容拆解
             </button>
           </div>
           <button

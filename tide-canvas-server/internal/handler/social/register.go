@@ -88,33 +88,40 @@ type metricVO struct {
 	Comment  string `json:"comment,omitempty"`
 	Share    string `json:"share,omitempty"`
 	Favorite string `json:"favorite,omitempty"`
+	Coin     string `json:"coin,omitempty"`
+	Danmaku  string `json:"danmaku,omitempty"`
+	Download string `json:"download,omitempty"`
 }
 
 type profileVO struct {
-	ID        string `json:"id,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Handle    string `json:"handle,omitempty"`
-	AvatarURL string `json:"avatarUrl,omitempty"`
-	Bio       string `json:"bio,omitempty"`
-	Followers string `json:"followers,omitempty"`
-	Following string `json:"following,omitempty"`
-	Likes     string `json:"likes,omitempty"`
-	Works     string `json:"works,omitempty"`
+	ID        string             `json:"id,omitempty"`
+	Name      string             `json:"name,omitempty"`
+	Handle    string             `json:"handle,omitempty"`
+	AvatarURL string             `json:"avatarUrl,omitempty"`
+	PageURL   string             `json:"pageUrl,omitempty"`
+	Bio       string             `json:"bio,omitempty"`
+	Followers string             `json:"followers,omitempty"`
+	Following string             `json:"following,omitempty"`
+	Likes     string             `json:"likes,omitempty"`
+	Works     string             `json:"works,omitempty"`
+	Details   *platformDetailsVO `json:"details,omitempty"`
 }
 
 type workVO struct {
-	ID          string   `json:"id,omitempty"`
-	Title       string   `json:"title,omitempty"`
-	Description string   `json:"description,omitempty"`
-	CoverURL    string   `json:"coverUrl,omitempty"`
-	ImageURLs   []string `json:"imageUrls"`
-	MediaURL    string   `json:"mediaUrl,omitempty"`
-	MediaURLs   []string `json:"mediaUrls"`
-	PageURL     string   `json:"pageUrl,omitempty"`
-	MediaType   string   `json:"mediaType,omitempty"`
-	Duration    string   `json:"duration,omitempty"`
-	PublishedAt string   `json:"publishedAt,omitempty"`
-	Stats       metricVO `json:"stats"`
+	Platform    platform           `json:"platform,omitempty"`
+	Details     *platformDetailsVO `json:"details,omitempty"`
+	ID          string             `json:"id,omitempty"`
+	Title       string             `json:"title,omitempty"`
+	Description string             `json:"description,omitempty"`
+	CoverURL    string             `json:"coverUrl,omitempty"`
+	ImageURLs   []string           `json:"imageUrls"`
+	MediaURL    string             `json:"mediaUrl,omitempty"`
+	MediaURLs   []string           `json:"mediaUrls"`
+	PageURL     string             `json:"pageUrl,omitempty"`
+	MediaType   string             `json:"mediaType,omitempty"`
+	Duration    string             `json:"duration,omitempty"`
+	PublishedAt string             `json:"publishedAt,omitempty"`
+	Stats       metricVO           `json:"stats"`
 }
 
 type inspectVO struct {
@@ -402,19 +409,24 @@ func parseSourceURL(raw string) (*url.URL, platform, error) {
 }
 
 func (h *handler) inspectContent(ctx context.Context, cfg settings, p platform, source *url.URL) (*inspectVO, error) {
+	ctx, cancel := context.WithTimeout(ctx, 55*time.Second)
+	defer cancel()
 	var data any
 	var err error
 	warnings := []string{}
 	sourceURL := source.String()
 	switch p {
 	case platformDouyin:
-		data, err = h.tikhubGet(ctx, cfg, "/api/v1/douyin/app/v3/fetch_one_video_by_share_url", url.Values{"share_url": {sourceURL}})
+		return h.inspectDouyinContent(ctx, cfg, source)
 	case platformBilibili:
-		data, err = h.tikhubGet(ctx, cfg, "/api/v1/bilibili/web/fetch_one_video_v3", url.Values{"url": {sourceURL}})
+		return h.inspectBilibiliContent(ctx, cfg, source)
 	case platformXiaohongshu:
-		data, err = h.tikhubGet(ctx, cfg, "/api/v1/xiaohongshu/app_v2/get_mixed_note_detail", url.Values{"share_text": {sourceURL}})
-		if err == nil && isVideoTree(data) && findMediaURL(data) == "" {
-			if videoData, videoErr := h.tikhubGet(ctx, cfg, "/api/v1/xiaohongshu/app_v2/get_video_note_detail", url.Values{"share_text": {sourceURL}}); videoErr == nil {
+		data, err = h.tikhubGet(ctx, cfg, "/api/v1/xiaohongshu/app_v2/get_image_note_detail", url.Values{"share_text": {sourceURL}})
+		note := normalizePlatformWork(p, data, sourceURL)
+		if err == nil && note.MediaType == "video" && note.MediaURL == "" {
+			videoData, videoErr := h.tikhubGet(ctx, cfg, "/api/v1/xiaohongshu/app_v2/get_video_note_detail", url.Values{"share_text": {sourceURL}})
+			video := normalizePlatformWork(p, videoData, sourceURL)
+			if videoErr == nil && note.ID != "" && video.ID == note.ID && video.MediaURL != "" {
 				data = []any{data, videoData}
 			} else {
 				warnings = append(warnings, "已读取笔记信息，但视频播放地址暂未返回")
@@ -441,6 +453,9 @@ func (h *handler) inspectContent(ctx context.Context, cfg settings, p platform, 
 			warnings = append(warnings, "已读取 YouTube 视频信息，但视频流地址暂未返回")
 		}
 		if mergedURL := findYouTubeMergedMediaURL(secondary); mergedURL != "" {
+			if primary == nil {
+				primary = map[string]any{"video_id": videoID}
+			}
 			data = []any{map[string]any{"preferred_media_url": mergedURL}, primary, secondary}
 		} else {
 			data = []any{primary, secondary}
@@ -456,11 +471,12 @@ func (h *handler) inspectContent(ctx context.Context, cfg settings, p platform, 
 	if err != nil {
 		return nil, err
 	}
-	content := normalizeWork(data, sourceURL)
+	content := normalizePlatformWork(p, data, sourceURL)
 	if !workHasData(content) {
 		return nil, &upstreamError{message: "平台已响应，但返回结构中没有可识别的作品信息"}
 	}
-	return &inspectVO{Profile: normalizeProfile(data, nil, false), Content: &content, Works: []workVO{}, Warnings: warnings}, nil
+	profile := platformProfile(p, data, nil, false)
+	return &inspectVO{Profile: profile, Content: &content, Works: []workVO{}, Warnings: warnings}, nil
 }
 
 type upstreamCall struct {
@@ -503,6 +519,8 @@ func (h *handler) tikhubMany(ctx context.Context, cfg settings, calls []upstream
 }
 
 func (h *handler) inspectAccount(ctx context.Context, cfg settings, p platform, source *url.URL) (*inspectVO, error) {
+	ctx, cancel := context.WithTimeout(ctx, 55*time.Second)
+	defer cancel()
 	sourceURL := source.String()
 	var profileData, worksData any
 	var err error
@@ -510,18 +528,7 @@ func (h *handler) inspectAccount(ctx context.Context, cfg settings, p platform, 
 	extraWarnings := []string{}
 	switch p {
 	case platformDouyin:
-		identifier := pathSegmentAfter(source, "user")
-		if identifier == "" {
-			identifier, err = h.resolveIdentifier(ctx, cfg, "/api/v1/douyin/web/get_sec_user_id", url.Values{"url": {sourceURL}}, "sec_user_id", "sec_uid", "user_id")
-			if err != nil {
-				return nil, err
-			}
-		}
-		resolvedIdentifier = identifier
-		profileData, worksData, err = h.tikhubPair(ctx, cfg,
-			upstreamCall{"/api/v1/douyin/app/v3/handler_user_profile", url.Values{"sec_user_id": {identifier}}},
-			upstreamCall{"/api/v1/douyin/app/v3/fetch_user_post_videos", url.Values{"sec_user_id": {identifier}, "max_cursor": {"0"}, "count": {"12"}, "sort_type": {"0"}}},
-		)
+		return h.inspectDouyinAccount(ctx, cfg, source)
 	case platformBilibili:
 		identifier := bilibiliUserID(source)
 		if identifier == "" {
@@ -567,7 +574,7 @@ func (h *handler) inspectAccount(ctx context.Context, cfg settings, p platform, 
 		resolvedIdentifier = identifier
 		profileData, worksData, err = h.tikhubPair(ctx, cfg,
 			upstreamCall{"/api/v1/youtube/web/get_channel_info", url.Values{"channel_id": {identifier}}},
-			upstreamCall{"/api/v1/youtube/web/get_channel_videos_v2", url.Values{"channel_id": {identifier}, "lang": {"zh-CN"}, "sortBy": {"newest"}, "contentType": {"videos"}}},
+			upstreamCall{"/api/v1/youtube/web_v2/get_channel_videos", url.Values{"channel_id": {identifier}, "language_code": {"zh-CN"}, "need_format": {"true"}}},
 		)
 	case platformTikTok:
 		identifier := tiktokUniqueID(source)
@@ -577,7 +584,7 @@ func (h *handler) inspectAccount(ctx context.Context, cfg settings, p platform, 
 		resolvedIdentifier = identifier
 		profileData, worksData, err = h.tikhubPair(ctx, cfg,
 			upstreamCall{"/api/v1/tiktok/app/v3/handler_user_profile", url.Values{"unique_id": {identifier}}},
-			upstreamCall{"/api/v1/tiktok/app/v3/fetch_user_post_videos_v3", url.Values{"unique_id": {identifier}, "max_cursor": {"0"}, "count": {"12"}, "sort_type": {"0"}}},
+			upstreamCall{"/api/v1/tiktok/app/v3/fetch_user_post_videos", url.Values{"unique_id": {identifier}, "max_cursor": {"0"}, "count": {"12"}, "sort_type": {"0"}}},
 		)
 	case platformKuaishou:
 		identifier := pathSegmentAfter(source, "profile")
@@ -596,8 +603,11 @@ func (h *handler) inspectAccount(ctx context.Context, cfg settings, p platform, 
 	if err != nil {
 		return nil, err
 	}
-	works := normalizeWorks(worksData)
-	profile := normalizeProfile(profileData, worksData, true)
+	works := normalizePlatformWorks(p, worksData)
+	profile := platformProfile(p, profileData, worksData, true)
+	if missing := h.enrichAccountWorks(ctx, cfg, p, works); missing > 0 {
+		extraWarnings = append(extraWarnings, fmt.Sprintf("%d 条作品未能补齐详情，已保留列表数据；缺失指标不按 0 计算", missing))
+	}
 	if profile != nil && profile.ID == "" && resolvedIdentifier != "" {
 		profile.ID = truncateText(resolvedIdentifier, 256)
 	}

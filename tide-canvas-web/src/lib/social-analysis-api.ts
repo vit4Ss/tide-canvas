@@ -32,13 +32,25 @@ export interface SocialMetricVO {
   comment?: string;
   share?: string;
   favorite?: string;
+  coin?: string;
+  danmaku?: string;
+  download?: string;
+}
+
+export interface SocialPlatformDetails {
+  fields?: Array<{ key: string; label: string; value: string; format?: string }>;
+  tags?: string[];
+  chapters?: Array<{ title: string; start?: number; duration?: string }>;
+  languages?: string[];
 }
 
 export interface SocialProfileVO {
+  details?: SocialPlatformDetails;
   id?: string;
   name?: string;
   handle?: string;
   avatarUrl?: string;
+  pageUrl?: string;
   bio?: string;
   followers?: string;
   following?: string;
@@ -47,6 +59,8 @@ export interface SocialProfileVO {
 }
 
 export interface SocialWorkVO {
+  platform?: SocialPlatform;
+  details?: SocialPlatformDetails;
   id?: string;
   title?: string;
   description?: string;

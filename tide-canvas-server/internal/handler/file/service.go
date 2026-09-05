@@ -903,7 +903,7 @@ func newRemoteAssetClient() *http.Client {
 	}
 	return &http.Client{
 		Timeout:   saveFromURLTimeout,
-		Transport: transport,
+		Transport: &remoteAssetTransport{Transport: transport},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return errors.New("too many remote asset redirects")
