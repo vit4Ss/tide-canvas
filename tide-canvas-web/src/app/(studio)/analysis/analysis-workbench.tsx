@@ -79,6 +79,7 @@ import { parseMetricNumber } from "./metric-number.js";
 import { parsePublicationDate } from "./publication-date.js";
 import { PlatformAccountPanels, PlatformWorkDetails } from "./platform-details";
 import { ActivityHistorySidebar } from "./activity-history";
+import { useLatestActivity } from "./use-latest-activity";
 import styles from "./analysis.module.css";
 
 type WorkbenchTab = "breakdown" | "download";
@@ -1149,11 +1150,20 @@ export default function AnalysisWorkbench() {
     storageKey: "tidecanvas.social-analysis.active-run",
     ownerUserId,
     retainTerminalPointer: true,
+    // History owns both the platform snapshot and its report. An older local
+    // run pointer must not compete with the newest server record on refresh.
+    autoRestore: false,
   });
 
   useEffect(() => {
     if (previousOwnerRef.current === ownerUserId) return;
     previousOwnerRef.current = ownerUserId;
+    setTab("breakdown");
+    setKind("content");
+    setURL("");
+    setDownloadSource("");
+    setDownloadQuality("compat");
+    setFocus(DEFAULT_FOCUS);
     setEditingContentFocus(false);
     inspectEpochRef.current += 1;
     analysisEpochRef.current += 1;
@@ -1682,21 +1692,23 @@ export default function AnalysisWorkbench() {
   const contextualRunDetails = runMatchesCurrentResult ? runDetails : null;
   const contextualSkillError = runMatchesCurrentResult ? skillRun.error : "";
 
-  const restoreActivityRecord = async (record: SocialActivityRecordDetailVO) => {
+  const restoreActivityRecord = async (record: SocialActivityRecordDetailVO, automatic = false) => {
+    if (useAuthStore.getState().user?.id !== record.userId) return;
     setEditingContentFocus(false);
     pendingAccountAutoRunRef.current = null;
     inspectEpochRef.current += 1;
+    inspectBusyRef.current = false;
     const epoch = ++analysisEpochRef.current;
     analysisBusyRef.current = false;
+    downloadEpochRef.current += 1;
+    downloadBusyRef.current = false;
+    setDownloadBusy(false);
     setLoading(false);
     setArchiving(false);
     setError("");
     setStrategyError("");
 
     if (record.type === "download") {
-      downloadEpochRef.current += 1;
-      downloadBusyRef.current = false;
-      setDownloadBusy(false);
       setDownloadSource(record.sourceUrl);
       if (record.quality === "quality" || record.quality === "compat" || record.quality === "speed") {
         setDownloadQuality(record.quality);
@@ -1705,6 +1717,7 @@ export default function AnalysisWorkbench() {
       setDownloadError("");
       setHistoricalRecord(record);
       setTab("download");
+      skillRun.clear();
       return;
     }
 
@@ -1716,7 +1729,8 @@ export default function AnalysisWorkbench() {
       setResult(null);
       setSelectedWork(null);
       skillRun.clear();
-      toast.info("这条旧记录没有保存数据快照，无法直接复现；可以重新获取最新数据");
+      setError(record.errorMessage || "");
+      if (!automatic && !record.errorMessage) toast.info("这条旧记录没有保存数据快照，无法直接复现；可以重新获取最新数据");
       return;
     }
     const snapshot = record.snapshot;
@@ -1731,6 +1745,8 @@ export default function AnalysisWorkbench() {
     else setFocus(DEFAULT_FOCUS);
 
     if (record.analysisRunId) {
+      // Stop polling a previously selected report before loading another one.
+      skillRun.clear();
       const restored = await skillRun.resume(record.analysisRunId);
       if (epoch !== analysisEpochRef.current) return;
       if (!restored) {
@@ -1742,6 +1758,8 @@ export default function AnalysisWorkbench() {
       skillRun.clear();
     }
   };
+
+  const latestActivity = useLatestActivity(ownerUserId, (record) => restoreActivityRecord(record, true));
 
   const refreshHistoricalRecord = () => {
     const record = historicalRecord;
@@ -1758,13 +1776,20 @@ export default function AnalysisWorkbench() {
       : "还原单个作品数据，并基于真实素材完成深度拆解。";
 
   return (
-    <main className={styles.page}>
+    <main
+      className={styles.page}
+      onPointerDownCapture={(event) => {
+        if (event.target instanceof Element && event.target.closest("button, input, textarea, select, a")) latestActivity.cancel();
+      }}
+      onKeyDownCapture={latestActivity.cancel}
+      onChangeCapture={latestActivity.cancel}
+    >
       <ActivityHistorySidebar
         key={ownerUserId || "anonymous"}
         selectedId={historicalRecord?.id}
         watchId={watchedDownloadRecordId}
         refreshKey={historyRefresh}
-        onSelect={restoreActivityRecord}
+        onSelect={(record) => { latestActivity.cancel(); return restoreActivityRecord(record); }}
       />
       <div className={styles.workspaceMain}>
         <div className={`${styles.canvas} ${tab === "breakdown" && result ? styles.canvasWide : ""}`}>
@@ -1816,6 +1841,17 @@ export default function AnalysisWorkbench() {
             <i /> {serviceLabel}
           </button>
         </div>
+
+        {!historicalRecord && (latestActivity.restoring || latestActivity.error) ? (
+          <div className={styles.snapshotNotice} role="status">
+            {latestActivity.restoring ? <Loader2 className={styles.spin} aria-hidden /> : <CircleAlert aria-hidden />}
+            <span>
+              <strong>{latestActivity.restoring ? "正在恢复最新记录" : latestActivity.error}</strong>
+              <small>读取已保存的数据与报告，不会重新分析或扣除积分</small>
+            </span>
+            {latestActivity.error ? <button type="button" onClick={latestActivity.retry}>重试恢复</button> : null}
+          </div>
+        ) : null}
 
         {historicalRecord ? (
           <div className={styles.snapshotNotice} role="status">

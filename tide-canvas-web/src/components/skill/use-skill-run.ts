@@ -23,6 +23,8 @@ interface UseSkillRunOptions {
   ownerUserId?: string;
   /** Keep the most recent terminal run restorable until the caller clears it. */
   retainTerminalPointer?: boolean;
+  /** A history-driven page restores its selected run explicitly instead. */
+  autoRestore?: boolean;
   pollIntervalMs?: number;
   onUpdate?: (run: SkillRunVO) => void;
   onTerminal?: (run: SkillRunVO) => void;
@@ -104,6 +106,7 @@ export function useSkillRun({
   storageKey,
   ownerUserId,
   retainTerminalPointer = false,
+  autoRestore = true,
   pollIntervalMs = 1500,
   onUpdate,
   onTerminal,
@@ -335,7 +338,7 @@ export function useSkillRun({
   // cannot delete each other's pointer. The former single-ID value is migrated
   // on read; terminal IDs remove only themselves.
   useEffect(() => {
-    if (!scopedStorageKey || typeof window === "undefined") return;
+    if (!autoRestore || !scopedStorageKey || typeof window === "undefined") return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let backoff = 1_000;
@@ -382,7 +385,7 @@ export function useSkillRun({
       if (timer) clearTimeout(timer);
       window.removeEventListener("storage", onStorage);
     };
-  }, [resume, restoreGeneration, scopedStorageKey, terminalStorageKey]);
+  }, [autoRestore, resume, restoreGeneration, scopedStorageKey, terminalStorageKey]);
 
   useEffect(() => {
     if (!runId || !isSkillRunActive(runStatus)) return;

@@ -103,6 +103,7 @@ interface ActivityHistorySidebarProps {
 export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSelect }: ActivityHistorySidebarProps) {
   const ensureSession = useAuthStore((state) => state.ensureSession);
   const requestRef = useRef(0);
+  const openingRef = useRef<string | null>(null);
   const [type, setType] = useState<"" | SocialActivityType>("");
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState<SocialActivityRecordVO[]>([]);
@@ -110,6 +111,8 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [openingId, setOpeningId] = useState("");
+
+  useEffect(() => () => { openingRef.current = null; }, []);
 
   const load = useCallback(async () => {
     const requestID = ++requestRef.current;
@@ -151,20 +154,25 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const openRecord = async (record: SocialActivityRecordVO) => {
-    if (openingId) return;
+    if (openingRef.current) return;
+    openingRef.current = record.id;
     setOpeningId(record.id);
     try {
-      if (!await ensureSession()) return;
+      if (!await ensureSession() || openingRef.current !== record.id) return;
       const response = await socialAnalysisApi.record(record.id);
+      if (openingRef.current !== record.id) return;
       if (!response.success || !response.data) {
         toast.error(response.message || "记录详情加载失败");
         return;
       }
       await onSelect(response.data);
     } catch {
-      toast.error("记录详情加载失败，请稍后重试");
+      if (openingRef.current === record.id) toast.error("记录详情加载失败，请稍后重试");
     } finally {
-      setOpeningId("");
+      if (openingRef.current === record.id) {
+        openingRef.current = null;
+        setOpeningId("");
+      }
     }
   };
 
