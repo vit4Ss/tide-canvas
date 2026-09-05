@@ -25,6 +25,7 @@ var mediaRoots = map[string][]string{
 var numericID = regexp.MustCompile(`^[0-9]{5,25}$`)
 var shortPath = regexp.MustCompile(`^/[A-Za-z0-9_-]+/?$`)
 var douyinPath = regexp.MustCompile(`^/(?:share/)?video/([0-9]{5,25})/?$`)
+var douyinCategoryPath = regexp.MustCompile(`^/jingxuan/[A-Za-z0-9_-]+/?$`)
 
 func hostIn(host string, domains []string) bool {
 	host = strings.ToLower(host)
@@ -59,7 +60,12 @@ func douyinID(u *url.URL) string {
 	switch strings.TrimSuffix(u.Path, "/") {
 	case "", "/jingxuan", "/discover":
 	default:
-		return ""
+		// Category feeds (e.g. /jingxuan/game) also open single videos using
+		// modal_id. Require one valid ID below, then normalize to /video/ID;
+		// the category page itself is never used as the download source.
+		if !douyinCategoryPath.MatchString(u.Path) {
+			return ""
+		}
 	}
 	values, err := url.ParseQuery(u.RawQuery)
 	if err != nil {
