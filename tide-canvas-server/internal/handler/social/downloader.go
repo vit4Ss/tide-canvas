@@ -40,6 +40,7 @@ const (
 var videoDownloadTokenPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]{1,512}$`)
 
 type downloaderCapabilitiesVO struct {
+	points.SocialDownloadQuota
 	PointCost       int      `json:"pointCost"`
 	Enabled         bool     `json:"enabled"`
 	Platforms       []string `json:"platforms"`
@@ -146,6 +147,13 @@ func (h *handler) downloaderPlatforms(c *gin.Context) {
 		return
 	}
 	capabilities.PointCost = price
+	quota, err := points.DownloadQuota(h.db.WithContext(c.Request.Context()), middleware.CurrentUserID(c), h.db.NowFunc())
+	if err != nil {
+		writeChargeError(c, err)
+		return
+	}
+	capabilities.SocialDownloadQuota = quota
+	c.Header("Cache-Control", "private, no-store")
 	response.OK(c, capabilities)
 }
 

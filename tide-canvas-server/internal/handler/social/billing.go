@@ -16,6 +16,8 @@ import (
 func writeChargeError(c *gin.Context, err error) {
 	if errors.Is(err, points.ErrInsufficient) {
 		response.Fail(c, response.CodeQuotaInsufficient, "积分不足，请充值后再试")
+	} else if errors.Is(err, points.ErrSocialDownloadDailyLimit) {
+		response.Fail(c, response.CodeForbidden, err.Error())
 	} else if errors.Is(err, points.ErrSocialRequest) || errors.Is(err, points.ErrSocialUnavailable) || errors.Is(err, points.ErrSocialPriceChanged) {
 		response.Fail(c, response.CodeBadRequest, err.Error())
 	} else {

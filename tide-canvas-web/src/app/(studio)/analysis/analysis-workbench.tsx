@@ -2,7 +2,7 @@
 
 /* /analysis — 拆解工作台。
 
-   两件事共用一个入口:「内容拆解」把公开链接还原成平台事实再交给 AI 拆方法,
+   两件事共用一个入口:「内容拆解」把公开链接还原成平台数据与图表,
    「视频下载」把公开视频取回本地；左侧栏集中回看当前账号的使用记录。
    两项操作各自依赖不同的后端服务(TikHub 解析 / 本站视频下载器),因此并列为
    顶层操作页签——一次只做一件事，历史快照在右侧原位复现。
@@ -41,8 +41,6 @@ import {
   UserRoundSearch,
   X,
 } from "lucide-react";
-import { fileApi } from "@/lib/api";
-import { skillApi } from "@/lib/skill-api";
 import {
   socialAnalysisApi,
   type SocialActivityRecordDetailVO,
@@ -51,7 +49,6 @@ import {
   type SocialInspectVO,
   type SocialPlatform,
   type SocialMetricVO,
-  type SocialPlatformDetails,
   type SocialWorkVO,
   type VideoDownloaderCapabilitiesVO,
   type VideoDownloadResolveVO,
@@ -62,15 +59,11 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import { useSkillRun } from "@/components/skill/use-skill-run";
 import { SkillRunPanel, type SkillRunPanelActionPayload } from "@/components/skill/skill-run-panel";
 import { skillRunError, type SkillRunAction, type SkillRunVO } from "@/types/skill-run";
-import { FileCategory } from "@/types/file";
-import type { SkillVO } from "@/types/skill";
 import { toast } from "@/components/shared/toast";
 import { buildAccountFeatures, buildAccountSnapshot, type AccountWorkDatum } from "./account-insights";
 import { AccountVisuals } from "./account-visuals";
-import { AccountReportMetrics } from "./account-report-metrics";
 import { extractAccountReportBrief } from "./account-report-brief";
 import { ContentAnalysisReport } from "./content-analysis-report";
-import { CONTENT_REPORT_FORMAT } from "./content-report";
 import { buildWorkSnapshot } from "./work-insights";
 import { platformMetrics, platformVocabulary } from "./platform-metrics.js";
 import { parseMetricNumber } from "./metric-number.js";
@@ -94,9 +87,6 @@ const PLATFORMS: Array<{ key: SocialPlatform; label: string; mark: string; color
   { key: "kuaishou", label: "快手", mark: "快", color: "#ff5000", hint: "视频 · 账号" },
 ];
 
-const DEFAULT_FOCUS = "完整转写视频文案，并拆解开头 3 秒钩子、叙事结构、镜头节奏、情绪变化、核心爆点和可复用的创作方法。所有判断请附时间码证据。";
-const IMAGE_DEFAULT_FOCUS = "分析画面主体、视觉层级、构图与视线动线、色彩光线、可读文案和传播钩子，提炼可复用的封面与图文创作方法，并明确区分可见事实和推断。";
-const ACCOUNT_DEFAULT_FOCUS = "分析账号定位、目标受众、内容支柱和近期作品表现差异，提炼可复用的标题与开场模式，并给出未来两周可执行的选题矩阵和测试建议。";
 
 // Keep legacy labels for historical records; new downloads always request quality.
 const DOWNLOAD_QUALITY_LABEL: Record<string, string> = { quality: "最高画质", compat: "兼容", speed: "极速" };
@@ -243,161 +233,6 @@ function workImageSources(work: SocialWorkVO, limit = 9): string[] {
   const images = [...new Set((work.imageUrls ?? []).map((value) => value.trim()).filter(Boolean))].slice(0, limit);
   if (images.length > 0) return images;
   return work.coverUrl?.trim() ? [work.coverUrl.trim()] : [];
-}
-
-function safeFileName(title: string, mediaUrl: string): string {
-  const cleaned = title.replace(/[\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim().slice(0, 64);
-  let extension = ".mp4";
-  try {
-    const match = /\.(mp4|webm|mov|mkv)$/i.exec(new URL(mediaUrl).pathname);
-    if (match) extension = `.${match[1].toLowerCase()}`;
-  } catch {
-    // The server validates the URL; a malformed display value keeps the safe MP4 fallback.
-  }
-  return `${cleaned || "平台视频"}${extension}`;
-}
-
-function safeImageFileName(title: string, imageUrl: string): string {
-  const cleaned = title.replace(/[\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim().slice(0, 64);
-  let extension = ".jpg";
-  try {
-    const match = /\.(jpe?g|png|webp|gif)$/i.exec(new URL(imageUrl).pathname);
-    if (match) extension = `.${match[1].toLowerCase()}`;
-  } catch {
-    // saveFromUrl validates the URL; the display filename keeps a safe fallback.
-  }
-  return `${cleaned || "平台图片"}${extension}`;
-}
-
-function byteLength(value: string): number {
-  return typeof TextEncoder !== "undefined" ? new TextEncoder().encode(value).length : value.length * 3;
-}
-
-function promptDetails(details?: SocialPlatformDetails, maxBytes = 2400): SocialPlatformDetails | undefined {
-  if (!details) return undefined;
-  const summary = {
-    fields: details.fields?.slice(0, 12).map((field) => ({ ...field, value: field.value.slice(0, 160) })),
-    tags: details.tags?.slice(0, 16).map((tag) => tag.slice(0, 80)),
-    chapters: details.chapters?.slice(0, 12).map((chapter) => ({ ...chapter, title: chapter.title.slice(0, 120) })),
-    languages: details.languages?.slice(0, 10),
-  };
-  // Keep valid JSON and whole metadata entries; this does not alter the snapshot.
-  while (byteLength(JSON.stringify(summary)) > maxBytes) {
-    if (summary.chapters?.length) summary.chapters.pop();
-    else if (summary.fields?.length) summary.fields.pop();
-    else if (summary.tags?.length) summary.tags.pop();
-    else if (summary.languages?.length) summary.languages = summary.languages.slice(0, -1);
-    else break;
-  }
-  return summary;
-}
-
-function accountPrompt(result: SocialInspectVO, focus: string): string {
-  const snapshot = buildAccountSnapshot(result);
-  const profile = result.profile ? {
-    id: result.profile.id,
-    name: result.profile.name?.slice(0, 160),
-    handle: result.profile.handle?.slice(0, 160),
-    bio: result.profile.bio?.slice(0, 600),
-    followers: result.profile.followers,
-    following: result.profile.following,
-    likes: result.profile.likes,
-    works: result.profile.works,
-    details: promptDetails(result.profile.details),
-  } : undefined;
-  const recentWorks = result.works.map((work) => ({
-    id: work.id,
-    title: work.title?.slice(0, 120),
-    description: work.description?.slice(0, 240),
-    publishedAt: work.publishedAt,
-    duration: work.duration,
-    mediaType: work.mediaType,
-    stats: work.stats,
-    details: promptDetails(work.details),
-  }));
-  const sampleSummary = {
-    sampleCount: snapshot.sampleCount,
-    measuredViewSamples: snapshot.measuredViews,
-    totalSampleViews: snapshot.totalViews,
-    averageSampleViews: snapshot.averageViews,
-    medianSampleViews: snapshot.medianViews,
-    medianVisibleEngagementRate: snapshot.medianEngagementRate,
-    highPerformanceSampleRate: snapshot.highPerformanceRate,
-    highPerformanceDefinition: "play count >= 2 * sample median play count",
-    topPerformanceMultiple: snapshot.topPerformanceMultiple,
-    measuredInteractionSamples: snapshot.measuredInteractions,
-    visibleInteractions: snapshot.measuredInteractions ? snapshot.totalInteractions : null,
-    visibleEngagementRate: snapshot.engagementRate,
-    averageViewsToFollowersRate: snapshot.viewToFollowerRate,
-    topWorkViewConcentration: snapshot.topConcentration,
-    timedSamples: snapshot.measuredPublished,
-    samplePostsPerWeek: snapshot.postsPerWeek,
-  };
-  const render = () => [
-    "<user_request>",
-    focus.trim().slice(0, 4000) || ACCOUNT_DEFAULT_FOCUS,
-    "先面向普通创作者输出三个简短板块：## 一句话定位、## 值得借鉴、## 下一步建议。每个板块只写一句不超过 70 字的完整结论，不重复罗列统计数字。推测保留‘可能’等限定语，缺少依据时明确说明。之后以 ## 详细分析 展开依据和细节。不要编造分数、评级或平台未提供的数据。",
-    "</user_request>",
-    "<platform_data untrusted=\"true\">",
-    JSON.stringify({ platform: result.platformName, sourceUrl: result.sourceUrl.slice(0, 1024), profile, sampleSummary, includedWorkCount: recentWorks.length, recentWorks }),
-    "</platform_data>",
-  ].join("\n");
-  let prompt = render();
-  // Compress optional metadata first so twelve samples do not silently become
-  // one simply because the provider returned detailed chapters or long tags.
-  if (byteLength(prompt) > 30 * 1024) {
-    if (profile) profile.details = promptDetails(profile.details, 768);
-    for (const work of recentWorks) work.details = promptDetails(work.details, 768);
-    prompt = render();
-  }
-  if (byteLength(prompt) > 30 * 1024) {
-    if (profile) profile.details = undefined;
-    for (const work of recentWorks) { work.details = undefined; work.description = work.description?.slice(0, 80); }
-    prompt = render();
-  }
-  // Last resort for unusually long identities/counters in a saved response.
-  // Keep the full-cohort summary and state how many work details are included.
-  while (byteLength(prompt) > 30 * 1024 && recentWorks.length > 1) {
-    recentWorks.pop();
-    prompt = render();
-  }
-  return prompt;
-}
-
-function contentPrompt(result: SocialInspectVO, work: SocialWorkVO, focus: string, videoWork: boolean): string {
-  return [
-    "<user_request>",
-    focus.trim().slice(0, 4000) || (videoWork ? DEFAULT_FOCUS : IMAGE_DEFAULT_FOCUS),
-    "</user_request>",
-    "根据平台和作品类型分析。B 站关注投币、收藏、弹幕和分区；小红书区分图文与视频，关注收藏、话题与笔记内容；YouTube 关注频道、观看、字幕与章节；抖音/TikTok/快手关注短视频、音乐、话题和已返回的互动。只使用本次有值的字段，不把未返回数据当作 0，不推断未提供的粉丝画像。",
-    videoWork ? CONTENT_REPORT_FORMAT : "先输出 ## 一句话看懂、## 视觉焦点、## 值得借鉴，每项一句不超过 70 字的完整结论，保留不确定性；随后用 ## 完整分析 给出依据与细节，不编造评分。",
-    "<platform_data untrusted=\"true\">",
-    JSON.stringify({
-      platform: result.platformName,
-      sourceUrl: (work.pageUrl || result.sourceUrl).slice(0, 1024),
-      title: work.title?.slice(0, 300),
-      description: work.description?.slice(0, 1000),
-      publishedAt: work.publishedAt,
-      duration: work.duration,
-      mediaType: work.mediaType,
-      stats: work.stats,
-      details: promptDetails(work.details),
-    }),
-    "</platform_data>",
-  ].join("\n");
-}
-
-function analysisRunContext(input: unknown): { sourceUrl: string; sourceFetchedAt: number | null } {
-  if (!input || typeof input !== "object" || Array.isArray(input)) return { sourceUrl: "", sourceFetchedAt: null };
-  const parameters = (input as { parameters?: unknown }).parameters;
-  if (!parameters || typeof parameters !== "object" || Array.isArray(parameters)) return { sourceUrl: "", sourceFetchedAt: null };
-  const record = parameters as { sourceUrl?: unknown; sourceFetchedAt?: unknown };
-  return {
-    sourceUrl: typeof record.sourceUrl === "string" ? record.sourceUrl.trim() : "",
-    sourceFetchedAt: typeof record.sourceFetchedAt === "number" && Number.isFinite(record.sourceFetchedAt)
-      ? record.sourceFetchedAt
-      : null,
-  };
 }
 
 function analysisRunMode(input: unknown): "account" | "image" | "video" | "" {
@@ -668,7 +503,7 @@ function AccountSampleTrend({ works, medianViews: sampleMedian, platform, onInsp
       <div className={styles.trendCanvas}>
         <div className={styles.trendYAxis} aria-hidden>{[1, .75, .5, .25, 0].map((ratio) => <span key={ratio}>{displayCompactMetric(logScale ? Math.expm1(Math.log1p(maxViews) * ratio) : maxViews * ratio)}</span>)}</div>
         <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="group" aria-label={`近期作品${metric.label}分布，点选节点查看作品`}>
-          <title>近期作品{metric.label}分布</title>
+          <title>{`近期作品${metric.label}分布`}</title>
           {[0, .25, .5, .75, 1].map((ratio) => <line key={ratio} className={styles.trendGridLine} x1={left} x2={width - right} y1={top + plotHeight * ratio} y2={top + plotHeight * ratio} />)}
           <polygon className={styles.trendArea} points={area} />
           {medianY !== null && <line className={styles.trendMedian} x1={left} x2={width - right} y1={medianY} y2={medianY} />}
@@ -749,27 +584,13 @@ function AccountWorkInspector({
 
 interface AccountDashboardProps {
   result: SocialInspectVO;
-  focus: string;
-  busy: boolean;
-  runDetails: React.ReactNode;
-  skillError: string;
-  historical: boolean;
-  hasSavedReport: boolean;
   downloaderPlatforms: string[];
-  onRun: () => void;
   onDownloadWork: (work: SocialWorkVO) => void;
 }
 
 function AccountDashboard({
   result,
-  focus,
-  busy,
-  runDetails,
-  skillError,
-  historical,
-  hasSavedReport,
   downloaderPlatforms,
-  onRun,
   onDownloadWork,
 }: AccountDashboardProps) {
   const [inspectedWork, setInspectedWork] = useState<AccountWorkDatum | null>(null);
@@ -897,26 +718,6 @@ function AccountDashboard({
 
       <p className={styles.scopeNote}>这是当前抓取样本的横截面，不代表粉丝增长趋势或行业基准。可见互动仅汇总已返回的指标，缺失数据以“—”展示。</p>
       </div>
-
-      <aside className={`${styles.accountStrategy} ${styles.accountSummaryRail}`} aria-label="账号策略速览">
-        <header className={styles.reportRailHeader}>
-          <div><Sparkles aria-hidden /><h2>账号策略速览</h2></div>
-          <span>{historical ? "历史快照" : "本次分析"}</span>
-        </header>
-        <AccountReportMetrics snapshot={snapshot} />
-        <div className={styles.reportRailBody}>
-          {skillError && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{skillError}</span></div>}
-          {skillError && <button type="button" className={styles.primaryButton} disabled={busy} onClick={onRun}>{busy ? "正在重新启动" : "重新生成账号策略"}</button>}
-          {runDetails || (!skillError && (
-            <div className={styles.reportWaiting} role="status" aria-live="polite">
-              {busy ? <Loader2 className={styles.spin} aria-hidden /> : <Sparkles aria-hidden />}
-              <div><strong>{busy ? historical ? "正在读取当时的策略报告" : "正在自动生成账号策略" : historical && !hasSavedReport ? "这条记录未保存 AI 报告" : "当前未展示策略报告"}</strong>
-                <p>{busy ? historical ? "正在恢复已保存的报告，不会重新调用平台或扣费。" : "无需再次点击，完成后会在这里展示简短结论。" : historical && !hasSavedReport ? "上方指标来自当时样本。查看历史不会重新调用或扣费。" : "可从左侧历史记录重新打开已保存的报告。"}</p></div>
-            </div>
-          ))}
-          <details className={styles.accountAnalysisScope}><summary>本次分析范围</summary><p>{focus}</p></details>
-        </div>
-      </aside>
 
       <AccountWorkInspector
         item={inspectedWork}
@@ -1068,7 +869,6 @@ export default function AnalysisWorkbench() {
   const [tab, setTab] = useState<WorkbenchTab>("breakdown");
   const [kind, setKind] = useState<SocialAnalysisKind>("content");
   const [url, setURL] = useState("");
-  const [focus, setFocus] = useState(DEFAULT_FOCUS);
   const [status, setStatus] = useState<SocialAnalysisStatusVO | null>(null);
   const [statusRefresh, setStatusRefresh] = useState(0);
   const [statusChecking, setStatusChecking] = useState(false);
@@ -1076,28 +876,23 @@ export default function AnalysisWorkbench() {
   const [downloaderCapabilities, setDownloaderCapabilities] = useState<VideoDownloaderCapabilitiesVO | null>(null);
   const [downloaderStatusError, setDownloaderStatusError] = useState(false);
   const [downloaderRefresh, setDownloaderRefresh] = useState(0);
+  const refreshDownloadQuota = useCallback(() => setDownloaderRefresh(value => value + 1), []);
   const [downloadSource, setDownloadSource] = useState("");
   const [downloadResult, setDownloadResult] = useState<VideoDownloadResolveVO | null>(null);
   const [downloadError, setDownloadError] = useState("");
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const [downloadClock, setDownloadClock] = useState(() => Date.now());
   const [result, setResult] = useState<SocialInspectVO | null>(null);
   const [selectedWork, setSelectedWork] = useState<SocialWorkVO | null>(null);
   const [loading, setLoading] = useState(false);
-  const [archiving, setArchiving] = useState(false);
   const [error, setError] = useState("");
-  const [strategyError, setStrategyError] = useState("");
   const [historicalRecord, setHistoricalRecord] = useState<SocialActivityRecordDetailVO | null>(null);
   const [historyRefresh, setHistoryRefresh] = useState(0);
   const [watchedDownloadRecordId, setWatchedDownloadRecordId] = useState("");
-  const videoSkillRef = useRef<SkillVO | null>(null);
-  const imageSkillRef = useRef<SkillVO | null>(null);
-  const accountSkillRef = useRef<SkillVO | null>(null);
   const inspectBusyRef = useRef(false);
-  const analysisBusyRef = useRef(false);
   const runActionRef = useRef<{ runId: string } | null>(null);
   const inspectEpochRef = useRef(0);
   const analysisEpochRef = useRef(0);
-  const pendingAccountAutoRunRef = useRef<SocialInspectVO | null>(null);
   const downloadBusyRef = useRef(false);
   const downloadEpochRef = useRef(0);
   const ownerUserId = user?.id ?? "";
@@ -1110,21 +905,28 @@ export default function AnalysisWorkbench() {
   const downloadPointCost = downloaderCapabilities?.pointCost ?? 1;
   const retryingInspection = pendingInspectKey === `${ownerUserId}:${kind}:${url.trim()}`;
   const retryingDownload = pendingDownloadKey === `${ownerUserId}:${extractDownloadURL(downloadSource)}`;
-  const analysisInsufficient = !!user && user.points < analysisPointCost && !retryingInspection;
+  const analysisInsufficient = !!user && !!status && user.points < analysisPointCost && !retryingInspection;
   const downloadInsufficient = !!user && user.points < downloadPointCost && !retryingDownload;
-  const reusableDownload = Boolean(historicalRecord?.download) || !historicalRecord && !!downloadResult && (Boolean(downloadedPreviewUrl) || (!(videoDownload.state.resultId === downloadResult.id && ["failed", "cancelled"].includes(videoDownload.state.phase))));
+  const reusableDownload = Boolean(historicalRecord?.download && historicalRecord.download.expiresAt * 1000 > downloadClock + 10_000) || !historicalRecord && !!downloadResult && (Boolean(downloadedPreviewUrl) || (downloadResult.expiresAt * 1000 > downloadClock + 10_000 && !(videoDownload.state.resultId === downloadResult.id && ["failed", "cancelled"].includes(videoDownload.state.phase))));
+  const downloadLimitReached = !!user && downloaderCapabilities?.dailyRemaining === 0 && !retryingDownload && !reusableDownload;
   const previousOwnerRef = useRef(ownerUserId);
   useEffect(() => {
-    const refresh = () => { void refreshBalance(); };
+    const refresh = () => { void refreshBalance(); setDownloadClock(Date.now()); setDownloaderRefresh(value => value + 1); };
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
   }, [refreshBalance]);
+  const reservationExpiresAt = (historicalRecord?.download || downloadResult)?.expiresAt;
+  useEffect(() => {
+    if (!reservationExpiresAt) return;
+    const timer = window.setTimeout(() => setDownloadClock(Date.now()), Math.max(0, reservationExpiresAt * 1000 - Date.now() - 10_000));
+    return () => window.clearTimeout(timer);
+  }, [reservationExpiresAt]);
   const skillRun = useSkillRun({
     storageKey: "tidecanvas.social-analysis.active-run",
     ownerUserId,
     retainTerminalPointer: true,
-    // History owns both the platform snapshot and its report. An older local
-    // run pointer must not compete with the newest server record on refresh.
+    // Restore the latest platform snapshot on refresh. Legacy AI reports are
+    // available only when explicitly opened from generation history.
     autoRestore: false,
   });
 
@@ -1150,15 +952,11 @@ export default function AnalysisWorkbench() {
     setKind("content");
     setURL("");
     setDownloadSource("");
-    setFocus(DEFAULT_FOCUS);
     inspectEpochRef.current += 1;
     analysisEpochRef.current += 1;
-    pendingAccountAutoRunRef.current = null;
     downloadEpochRef.current += 1;
     inspectBusyRef.current = false;
-    analysisBusyRef.current = false;
     setLoading(false);
-    setArchiving(false);
     setStatus(null);
     setStatusChecking(false);
     setStatusError(false);
@@ -1172,20 +970,19 @@ export default function AnalysisWorkbench() {
     setResult(null);
     setSelectedWork(null);
     setError("");
-    setStrategyError("");
     setHistoricalRecord(null);
     skillRun.clear();
     // skillRun controller identity changes with polling state; only the owner
     // boundary should trigger this cleanup.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ownerUserId, statusRefresh]);
+  }, [ownerUserId]);
 
   useEffect(() => {
     if (!ownerUserId) return;
     let cancelled = false;
     void socialAnalysisApi.downloaderPlatforms().then((response) => {
       if (cancelled) return;
-      if (response.success && response.data) {
+      if (response.success && response.data && Number.isSafeInteger(response.data.pointCost) && response.data.pointCost >= 1 && response.data.pointCost <= 100000) {
         setDownloaderCapabilities(response.data);
         setDownloaderStatusError(false);
       } else {
@@ -1194,7 +991,14 @@ export default function AnalysisWorkbench() {
       }
     });
     return () => { cancelled = true; };
-  }, [downloaderRefresh, ownerUserId]);
+  }, [downloaderRefresh, ownerUserId, user?.points, tab]);
+
+  useEffect(() => {
+    const resetAt = downloaderCapabilities?.dailyResetAt;
+    if (!ownerUserId || !resetAt) return;
+    const timer = window.setTimeout(() => setDownloaderRefresh(value => value + 1), Math.max(1000, resetAt * 1000 - Date.now() + 1000));
+    return () => window.clearTimeout(timer);
+  }, [downloaderCapabilities?.dailyResetAt, ownerUserId]);
 
   useEffect(() => {
     if (!ownerUserId) return;
@@ -1205,8 +1009,9 @@ export default function AnalysisWorkbench() {
       setStatusError(false);
       const response = await socialAnalysisApi.status();
       if (cancelled) return;
-      if (response.success && response.data) setStatus(response.data);
+      if (response.success && response.data && Number.isSafeInteger(response.data.pointCost) && response.data.pointCost >= 1 && response.data.pointCost <= 100000) setStatus(response.data);
       else {
+        setStatus(null);
         setStatusError(true);
         setError(response.message || "无法读取内容拆解服务状态");
       }
@@ -1214,10 +1019,9 @@ export default function AnalysisWorkbench() {
       if (!cancelled) setStatusChecking(false);
     });
     return () => { cancelled = true; };
-  }, [ownerUserId]);
+  }, [ownerUserId, statusRefresh]);
 
   const currentWork = selectedWork ?? result?.content ?? null;
-  const currentPlatform = result?.platform;
   const statusLabel = initialized && !user
     ? "登录后检查服务"
     : statusChecking
@@ -1267,14 +1071,29 @@ export default function AnalysisWorkbench() {
 
   const inspect = async () => {
     if (inspectBusyRef.current || !url.trim()) return;
+    // Apply the same gate to the button, Enter and history refresh. A pending
+    // request retains its original idempotency key even after reserving the last point.
+    if (!retryingInspection) {
+      if (!status) {
+        setError("暂时无法获取拆解积分价格，请重新检查服务后重试；本次未扣费。");
+        setStatusRefresh(value => value + 1);
+        return;
+      }
+      if (!status.enabled || !status.configured) {
+        setError("内容拆解服务暂不可用，请联系管理员检查配置；本次未扣费。");
+        return;
+      }
+      if (analysisInsufficient) {
+        setError("积分不足，请补充积分后再拆解；本次未扣费。");
+        return;
+      }
+    }
     clearHistoricalView();
-    if (!skillRun.run && skillRun.error) skillRun.clear();
+    skillRun.clear();
     inspectBusyRef.current = true;
     const epoch = ++inspectEpochRef.current;
     setLoading(true);
     setError("");
-    setStrategyError("");
-    pendingAccountAutoRunRef.current = null;
     setResult(null);
     setSelectedWork(null);
     try {
@@ -1295,26 +1114,8 @@ export default function AnalysisWorkbench() {
         setError(response.code === 429 ? "请求过于频繁，请稍后再试" : response.message || "链接解析失败，请检查后重试");
         return;
       }
-      if (response.data.kind === "account") pendingAccountAutoRunRef.current = response.data;
       setResult(response.data);
       setSelectedWork(response.data.content ?? response.data.works[0] ?? null);
-      if (response.data.kind === "account" && (focus === DEFAULT_FOCUS || focus === IMAGE_DEFAULT_FOCUS)) {
-        setFocus(ACCOUNT_DEFAULT_FOCUS);
-      } else if (
-        response.data.kind === "content" &&
-        response.data.content &&
-        !isVideoWork(response.data.content) &&
-        focus === DEFAULT_FOCUS
-      ) {
-        setFocus(IMAGE_DEFAULT_FOCUS);
-      } else if (
-        response.data.kind === "content" &&
-        response.data.content &&
-        isVideoWork(response.data.content) &&
-        focus === IMAGE_DEFAULT_FOCUS
-      ) {
-        setFocus(DEFAULT_FOCUS);
-      }
     } finally {
       void refreshBalance();
       if (epoch === inspectEpochRef.current) {
@@ -1323,174 +1124,6 @@ export default function AnalysisWorkbench() {
       }
     }
   };
-
-  const loadAnalysisSkill = async (mode: "account" | "video" | "image"): Promise<SkillVO | null> => {
-    const cache = mode === "account" ? accountSkillRef : mode === "image" ? imageSkillRef : videoSkillRef;
-    if (cache.current) return cache.current;
-    const stableId = mode === "account"
-      ? status?.accountAnalysisSkillId
-      : mode === "image"
-        ? status?.imageAnalysisSkillId
-        : status?.videoAnalysisSkillId;
-    const title = mode === "account" ? "账号拆解" : mode === "image" ? "图片分析" : "视频分析";
-    if (stableId) {
-      const exact = await skillApi.get(stableId, "studio");
-      if (exact.success && exact.data) {
-        cache.current = exact.data;
-        return exact.data;
-      }
-    }
-    const response = await skillApi.list({
-      pageNum: 1,
-      pageSize: 100,
-      keyword: title,
-      kind: "tool",
-      entryPoint: "studio",
-    });
-    const skill = response.data?.records.find((item) => item.title === title) ?? null;
-    if (skill) cache.current = skill;
-    return skill;
-  };
-
-  const startDeepAnalysis = async () => {
-    if (!result || !currentPlatform || analysisBusyRef.current || skillRun.loading) return;
-    if (!result.recordId || !result.pointCost) {
-      setError("这条历史记录未计费。查看原有报告免费；生成新报告请先点击“开始拆解”重新获取数据。");
-      return;
-    }
-    const contentSkillMode = currentWork && isVideoWork(currentWork) ? "video" : "image";
-    const contentImageURLs = currentWork ? workImageSources(currentWork) : [];
-    const contentAssetURL = contentSkillMode === "video" ? currentWork && workVideoSources(currentWork)[0] : contentImageURLs[0];
-    if (result.kind === "content" && !contentAssetURL) return;
-    const skillMode = result.kind === "account" ? "account" : contentSkillMode;
-    const skillLabel = skillMode === "account" ? "账号拆解" : skillMode === "image" ? "图片分析" : "视频分析";
-    analysisBusyRef.current = true;
-    const epoch = ++analysisEpochRef.current;
-    setArchiving(true);
-    setError("");
-    setStrategyError("");
-    const reportStartError = (message: string) => {
-      if (result.kind === "account") setStrategyError(message);
-      else setError(message);
-    };
-    try {
-      if (!await ensureSession()) return;
-      const activity = await socialAnalysisApi.record(result.recordId);
-      if (epoch !== analysisEpochRef.current) return;
-      if (!activity.success || !activity.data) {
-        reportStartError(activity.message || "暂时无法确认本次拆解状态，请稍后重试");
-        return;
-      }
-      if (activity.data.refunded || activity.data.status !== "succeeded" || !activity.data.pointCost) {
-        reportStartError("本次执行已结束或已退款。请点击“开始拆解”重新分析。");
-        void refreshBalance();
-        return;
-      }
-      if (activity.data.analysisRunId && activity.data.analysisRunId !== "0") {
-        // Reopening/double-clicking an existing report restores its run rather
-        // than archiving media again or trying to spend its one-report grant.
-        const restored = await skillRun.resume(activity.data.analysisRunId);
-        if (epoch !== analysisEpochRef.current) return;
-        if (!restored) reportStartError("历史报告加载失败，请重新点击左侧记录查看");
-        return;
-      }
-      clearHistoricalView();
-      const skill = await loadAnalysisSkill(skillMode);
-      if (epoch !== analysisEpochRef.current) return;
-      if (!skill) {
-        reportStartError(`${skillLabel}技能未上架，请联系管理员检查技能配置`);
-        return;
-      }
-      let assets: Array<{ id?: string; type: "video" | "image"; url?: string; name?: string; role?: string; metadata?: Record<string, unknown> }> = [];
-      let prompt = "";
-      const sourceURL = result.sourceUrl;
-      if (result.kind === "content" && currentWork && contentAssetURL) {
-        const mediaCandidates = contentSkillMode === "video"
-          ? workVideoSources(currentWork)
-          : contentImageURLs;
-        const archivedAssets: typeof assets = [];
-        const archivedIDs = new Set<string>();
-        let lastArchive = null as Awaited<ReturnType<typeof fileApi.saveFromUrl>> | null;
-        for (const candidate of mediaCandidates) {
-          const archived = await fileApi.saveFromUrl({
-            url: candidate,
-            fileType: contentSkillMode,
-            category: FileCategory.GENERAL,
-            originalName: contentSkillMode === "video"
-              ? safeFileName(titleOf(currentWork), candidate)
-              : safeImageFileName(titleOf(currentWork), candidate),
-          });
-          if (epoch !== analysisEpochRef.current) return;
-          lastArchive = archived;
-          if (archived.success && archived.data) {
-            if (archivedIDs.has(archived.data.id)) continue;
-            archivedIDs.add(archived.data.id);
-            archivedAssets.push({
-              id: archived.data.id,
-              type: contentSkillMode,
-              url: archived.data.fileUrl,
-              name: archived.data.originalName,
-              role: contentSkillMode === "video" ? "source-video" : `source-image-${archivedAssets.length + 1}`,
-              metadata: { platform: currentPlatform, sourceUrl: sourceURL },
-            });
-            if (contentSkillMode === "video") break;
-            continue;
-          }
-          if (contentSkillMode === "video" && archived.code !== 0 && archived.code !== 400 && archived.code !== 408) break;
-        }
-        if (archivedAssets.length === 0) {
-          reportStartError(`${contentSkillMode === "video" ? "视频" : "图片"}归档失败：${lastArchive?.message || "暂时无法读取素材"}。${contentSkillMode === "video" ? "已尝试可用镜像；" : ""}如果页面已打开较久，请重新解析作品以刷新临时地址。`);
-          return;
-        }
-        if (contentSkillMode === "image" && archivedAssets.length < mediaCandidates.length) {
-          toast.info(`已读取 ${archivedAssets.length}/${mediaCandidates.length} 张图片，将使用可用图片继续分析`);
-        }
-        assets = archivedAssets;
-        prompt = contentPrompt(result, currentWork, focus, contentSkillMode === "video");
-      } else {
-        prompt = accountPrompt(result, focus);
-      }
-      const started = await skillRun.start({
-        skillId: skill.id,
-        entryPoint: "studio",
-        input: {
-          prompt,
-          assets,
-          sourceNodeIds: [],
-          parameters: {
-            platform: currentPlatform,
-            sourceUrl: sourceURL,
-            sourceFetchedAt: result.fetchedAt,
-            analysisMode: skillMode,
-            ...(result.recordId ? { activityRecordId: result.recordId } : {}),
-          },
-        },
-      });
-      if (epoch !== analysisEpochRef.current) return;
-      if (!started) {
-        reportStartError(skillRun.error || `${skillLabel}技能启动失败，请稍后重试`);
-        return;
-      }
-      void skillApi.recordUse(skill.id);
-    } finally {
-      if (epoch === analysisEpochRef.current) {
-        analysisBusyRef.current = false;
-        setArchiving(false);
-      }
-    }
-  };
-
-  useEffect(() => {
-    if (!result || result.kind !== "account" || pendingAccountAutoRunRef.current !== result) return;
-    pendingAccountAutoRunRef.current = null;
-    if (!result.profile && result.works.length === 0) return;
-    queueMicrotask(() => { void startDeepAnalysis(); });
-    // The pending ref is set only by a fresh successful account inspection and
-    // cleared synchronously before launch. Depending on result alone prevents
-    // controller polling renders or Strict Mode replay from starting a second
-    // paid run for the same snapshot.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [result]);
 
   const performRunAction = async (action: SkillRunAction, payload?: SkillRunPanelActionPayload) => {
 	if (action === "retry" && result?.pointCost) {
@@ -1522,7 +1155,7 @@ export default function AnalysisWorkbench() {
     void videoDownload.start(resolved, downloaderCapabilities?.maxFileBytes || 512 * 1024 ** 2, () => {
       setWatchedDownloadRecordId(resolved.recordId || "");
       setHistoryRefresh((value) => value + 1);
-    }, () => { setHistoryRefresh((value) => value + 1); void refreshBalance(); });
+    }, () => { setHistoryRefresh((value) => value + 1); setDownloaderRefresh(value => value + 1); void refreshBalance(); });
   };
 
   const resolveVideoDownload = async (downloadAfterResolve = false) => {
@@ -1542,6 +1175,21 @@ export default function AnalysisWorkbench() {
         (downloadedPreviewUrl || downloadResult.expiresAt * 1000 > Date.now() + 10_000)) {
       setDownloadError("");
       if (downloadAfterResolve) startVideoFile(downloadResult);
+      return;
+    }
+    // Reuse is handled above. These guards also apply to Enter and card actions.
+    if (!downloaderCapabilities && pendingDownloadKey !== `${ownerUserId}:${extractDownloadURL(downloadSource)}`) {
+      setDownloadError("暂时无法获取下载积分价格，请刷新后重试；本次未扣费。");
+      setDownloaderRefresh(value => value + 1);
+      return;
+    }
+    if (downloaderCapabilities?.dailyRemaining === 0 && pendingDownloadKey !== `${ownerUserId}:${extractDownloadURL(downloadSource)}`) {
+      setDownloadError("今日下载次数已用完，北京时间零点重置；本次未扣积分。");
+      setDownloaderRefresh(value => value + 1);
+      return;
+    }
+    if (downloadInsufficient) {
+      setDownloadError("积分不足，请补充积分后再下载。");
       return;
     }
     clearHistoricalView();
@@ -1579,6 +1227,7 @@ export default function AnalysisWorkbench() {
     } finally {
       void refreshBalance();
       setHistoryRefresh((value) => value + 1);
+      setDownloaderRefresh(value => value + 1);
       if (epoch === downloadEpochRef.current) {
         downloadBusyRef.current = false;
         setDownloadBusy(false);
@@ -1607,16 +1256,12 @@ export default function AnalysisWorkbench() {
       const accountRun = storedMode === "account" || (!storedMode && (
         skillRun.run?.skillId === status?.accountAnalysisSkillId || prompt.includes('"recentWorks"')
       ));
-      const imageRun = storedMode === "image" || (!storedMode && skillRun.run?.skillId === status?.imageAnalysisSkillId);
       if (sourceUrl) setURL(sourceUrl);
       setKind(accountRun ? "account" : "content");
-      const wrappedRequest = /<user_request>\s*([\s\S]*?)\s*<\/user_request>/.exec(prompt)?.[1]?.trim();
-      if (accountRun) setFocus(wrappedRequest || ACCOUNT_DEFAULT_FOCUS);
-      else setFocus(wrappedRequest || prompt.split("\n平台：", 1)[0]?.trim() || (imageRun ? IMAGE_DEFAULT_FOCUS : DEFAULT_FOCUS));
     }
     // 重新编辑始终回到拆解页签:运行面板只属于拆解,留在下载页会失去上下文。
     setTab("breakdown");
-    setError("已保留链接与分析重点。点击“开始拆解”将按页面价格开启一次新分析。");
+    setError("已保留链接。点击“开始拆解”将按页面价格重新获取平台数据。");
     clearHistoricalView();
     setResult(null);
     setSelectedWork(null);
@@ -1693,38 +1338,16 @@ export default function AnalysisWorkbench() {
       />
     </div>
   ) : null;
-  const currentAnalysisSource = result
-    ? result.kind === "account"
-      ? result.sourceUrl.trim()
-      : (currentWork?.pageUrl || result.sourceUrl).trim()
-    : "";
-  const activeRunContext = analysisRunContext(skillRun.run?.input);
-  // A restored or previous report must never be rendered beneath a different
-  // account/work. Without this fence, parsing account B after account A makes
-  // A's report look like B's and also keeps B's analysis button disabled.
-  const runMatchesCurrentResult = !result || !skillRun.run
-    ? true
-    : !!activeRunContext.sourceUrl &&
-      (activeRunContext.sourceUrl === currentAnalysisSource || activeRunContext.sourceUrl === result.sourceUrl.trim()) &&
-      activeRunContext.sourceFetchedAt !== null &&
-      activeRunContext.sourceFetchedAt === result.fetchedAt;
-  const contextualRunDetails = runMatchesCurrentResult ? runDetails : null;
-  const contextualSkillError = runMatchesCurrentResult ? skillRun.error : "";
-
   const restoreActivityRecord = async (record: SocialActivityRecordDetailVO, automatic = false) => {
     if (useAuthStore.getState().user?.id !== record.userId) return;
-    pendingAccountAutoRunRef.current = null;
     inspectEpochRef.current += 1;
     inspectBusyRef.current = false;
-    const epoch = ++analysisEpochRef.current;
-    analysisBusyRef.current = false;
+    analysisEpochRef.current += 1;
     downloadEpochRef.current += 1;
     downloadBusyRef.current = false;
     setDownloadBusy(false);
     setLoading(false);
-    setArchiving(false);
     setError("");
-    setStrategyError("");
 
     if (record.type === "download") {
       setDownloadSource(record.sourceUrl);
@@ -1755,23 +1378,8 @@ export default function AnalysisWorkbench() {
     setURL(snapshot.sourceUrl);
     setResult(snapshot);
     setSelectedWork(snapshot.content ?? snapshot.works[0] ?? null);
-    if (snapshot.kind === "account") setFocus(ACCOUNT_DEFAULT_FOCUS);
-    else if (snapshot.content && !isVideoWork(snapshot.content)) setFocus(IMAGE_DEFAULT_FOCUS);
-    else setFocus(DEFAULT_FOCUS);
-
-    if (record.analysisRunId) {
-      // Stop polling a previously selected report before loading another one.
-      skillRun.clear();
-      const restored = await skillRun.resume(record.analysisRunId);
-      if (epoch !== analysisEpochRef.current) return;
-      if (!restored) {
-        const message = "当时的 AI 报告暂时无法恢复，请稍后重试或获取最新数据";
-        if (snapshot.kind === "account") setStrategyError(message);
-        else setError(message);
-      }
-    } else {
-      skillRun.clear();
-    }
+    // Platform history restores only its saved data, with no hidden AI polling.
+    skillRun.clear();
   };
 
   const latestActivity = useLatestActivity(ownerUserId, (record) => restoreActivityRecord(record, true));
@@ -1788,7 +1396,7 @@ export default function AnalysisWorkbench() {
     ? "以最高可用画质下载公开视频，保存到本地。"
     : kind === "account"
       ? "读取账号与近期作品，判断内容表现和可复用规律。"
-      : "还原单个作品数据，并基于真实素材完成深度拆解。";
+      : "汇总作品资料与平台指标，通过图表查看内容表现。";
 
   return (
     <main
@@ -1804,6 +1412,7 @@ export default function AnalysisWorkbench() {
         selectedId={historicalRecord?.id}
         watchId={watchedDownloadRecordId}
         refreshKey={historyRefresh}
+        onBillingChange={refreshDownloadQuota}
         onSelect={(record) => { latestActivity.cancel(); return restoreActivityRecord(record); }}
       />
       <div className={styles.workspaceMain}>
@@ -1862,7 +1471,7 @@ export default function AnalysisWorkbench() {
             {latestActivity.restoring ? <Loader2 className={styles.spin} aria-hidden /> : <CircleAlert aria-hidden />}
             <span>
               <strong>{latestActivity.restoring ? "正在恢复最新记录" : latestActivity.error}</strong>
-              <small>读取已保存的数据与报告，不会重新分析或扣除积分</small>
+              <small>读取已保存的数据快照，不会重新分析或扣除积分</small>
             </span>
             {latestActivity.error ? <button type="button" onClick={latestActivity.retry}>重试恢复</button> : null}
           </div>
@@ -1883,10 +1492,10 @@ export default function AnalysisWorkbench() {
           <div className={styles.panel} role="tabpanel" id="analysis-panel-breakdown" aria-labelledby="analysis-tab-breakdown">
             <section className={`${styles.composer}${result || loading ? ` ${styles.composerWithDashboard}` : ""}`}>
               <div className={styles.modeSwitch} aria-label="拆解对象">
-                <button type="button" aria-pressed={kind === "content"} disabled={loading || archiving} className={kind === "content" ? styles.modeActive : ""} onClick={() => { setKind("content"); setFocus(DEFAULT_FOCUS); setResult(null); setSelectedWork(null); setError(""); setStrategyError(""); clearHistoricalView(); }}>
+                <button type="button" aria-pressed={kind === "content"} disabled={loading} className={kind === "content" ? styles.modeActive : ""} onClick={() => { setKind("content"); setResult(null); setSelectedWork(null); setError(""); clearHistoricalView(); }}>
                   <Film aria-hidden /> 单个作品
                 </button>
-                <button type="button" aria-pressed={kind === "account"} disabled={loading || archiving} className={kind === "account" ? styles.modeActive : ""} onClick={() => { setKind("account"); setFocus(ACCOUNT_DEFAULT_FOCUS); setResult(null); setSelectedWork(null); setError(""); setStrategyError(""); clearHistoricalView(); }}>
+                <button type="button" aria-pressed={kind === "account"} disabled={loading} className={kind === "account" ? styles.modeActive : ""} onClick={() => { setKind("account"); setResult(null); setSelectedWork(null); setError(""); clearHistoricalView(); }}>
                   <UserRoundSearch aria-hidden /> 整个账号
                 </button>
               </div>
@@ -1898,7 +1507,7 @@ export default function AnalysisWorkbench() {
                     value={url}
                     onChange={(event) => { setURL(event.target.value); clearHistoricalView(); }}
                     onKeyDown={(event) => { if (event.key === "Enter") void inspect(); }}
-                    disabled={loading || archiving}
+                    disabled={loading}
                     placeholder={kind === "content" ? "粘贴公开视频链接，自动识别平台" : "粘贴账号主页链接，读取账号与近期作品"}
                     maxLength={4096}
                     autoComplete="off"
@@ -1907,14 +1516,14 @@ export default function AnalysisWorkbench() {
                 </div>
               </label>
               <div className={styles.composerFooter}>
-                <span className={styles.footNote}><ShieldCheck aria-hidden /> {analysisPointCost} 积分 / 次{kind === "account" ? " · 含本次 AI 报告" : ""} · 失败退回</span>
+                <span className={styles.footNote}><ShieldCheck aria-hidden /> {status ? `${analysisPointCost} 积分 / 次 · 失败退回` : statusError ? "暂无法获取积分价格" : user ? "正在获取积分价格" : "登录后查看积分价格"}</span>
                 {initialized && !user ? (
                   <Link className={styles.primaryButton} href="/login">登录后使用 <ChevronRight aria-hidden /></Link>
                 ) : (
                   <button
                     className={styles.primaryButton}
                     type="button"
-                    disabled={analysisInsufficient || !url.trim() || loading || archiving || skillRun.loading || !status?.enabled || !status?.configured}
+                    disabled={!url.trim() || loading || skillRun.loading || (!retryingInspection && (analysisInsufficient || !status?.enabled || !status?.configured))}
                     onClick={() => void inspect()}
                   >
                     {loading ? <Loader2 className={styles.spin} aria-hidden /> : <Sparkles aria-hidden />}
@@ -1950,14 +1559,7 @@ export default function AnalysisWorkbench() {
                   <AccountDashboard
                     key={`${result.sourceUrl}:${result.fetchedAt}`}
                     result={result}
-                    focus={focus}
-                    busy={archiving || skillRun.loading}
-                    runDetails={contextualRunDetails}
-                    skillError={contextualSkillError || strategyError}
-                    historical={historicalRecord?.type === "analysis"}
-                    hasSavedReport={!!historicalRecord?.analysisRunId}
                     downloaderPlatforms={downloaderPlatforms}
-                    onRun={() => void startDeepAnalysis()}
                     onDownloadWork={(work) => {
                       setDownloadSource(work.pageUrl || "");
                       setDownloadResult(null);
@@ -2002,7 +1604,7 @@ export default function AnalysisWorkbench() {
                 {kind === "account" ? <UserRoundSearch aria-hidden /> : <Film aria-hidden />}
                 <strong>{kind === "account" ? "输入账号主页，建立情报快照" : "输入作品链接，查看内容表现"}</strong>
                 <p>{kind === "account"
-                  ? "先读取账号资料与近期公开作品，再生成样本排行、互动构成和可执行的内容策略。"
+                  ? "读取账号资料与近期公开作品，通过样本排行、互动构成和平台专属图表查看账号表现。"
                   : "汇总作品资料、互动指标与平台专属数据，通过图表查看内容表现；历史记录保留当时的数据快照。"}</p>
               </div>
             )}
@@ -2057,11 +1659,16 @@ export default function AnalysisWorkbench() {
                   {initialized && !user ? (
                     <Link className={styles.primaryButton} href="/login">登录后下载 <ChevronRight aria-hidden /></Link>
                   ) : (
-                    <button className={styles.primaryButton} type="button" disabled={(downloadInsufficient && !reusableDownload) || !downloadSource.trim() || !downloaderReady || downloadBusy || videoDownload.busy} onClick={() => void resolveVideoDownload(true)}>
+                    <button className={styles.primaryButton} type="button" disabled={downloadLimitReached || (downloadInsufficient && !reusableDownload) || !downloadSource.trim() || !downloaderReady || downloadBusy || videoDownload.busy} onClick={() => void resolveVideoDownload(true)}>
                       {downloadBusy || videoDownload.busy ? <Loader2 className={styles.spin} aria-hidden /> : <Download aria-hidden />}
-                      {downloadBusy ? "正在获取视频" : videoDownload.busy ? "下载处理中" : retryingDownload ? "重试本次下载" : downloadInsufficient && !reusableDownload ? "积分不足" : "下载视频"}
+                      {downloadBusy ? "正在获取视频" : videoDownload.busy ? "下载处理中" : retryingDownload ? "重试本次下载" : downloadLimitReached ? "今日次数已用完" : downloadInsufficient && !reusableDownload ? "积分不足" : "下载视频"}
                     </button>
                   )}
+                </div>
+                <div className={styles.downloadBilling} aria-label="下载费用与每日次数" aria-live="polite">
+                  <div><span>单次下载</span><strong>{downloaderCapabilities ? `${downloadPointCost} 积分` : !user ? "登录后查看" : downloaderStatusError ? "暂无法获取" : "正在获取费用"}</strong></div>
+                  <div><span>今日剩余</span><strong>{user && downloaderCapabilities ? `${downloaderCapabilities.dailyRemaining ?? "—"} / ${downloaderCapabilities.dailyLimit ?? "—"} 次` : !user ? "登录后查看" : downloaderStatusError ? "暂无法获取" : "正在获取次数"}</strong></div>
+                  {user && <div><span>积分余额</span><strong>{user.points} 积分</strong></div>}
                 </div>
                 <div className={styles.platformRow}>
                   <span className={styles.platformLead}>支持</span>
@@ -2070,10 +1677,12 @@ export default function AnalysisWorkbench() {
                       <span key={platform} className={styles.platformChip}>{DOWNLOAD_PLATFORM_LABEL[platform] || platform}</span>
                     ))
                     : <span className={styles.platformNote}>{downloaderStatusError ? "平台列表读取失败" : downloaderCapabilities ? "暂无已启用平台" : "正在读取已启用平台"}</span>}
-                  <span className={styles.platformNote}>仅公开内容 · 单文件上限 {displayBytes(downloaderCapabilities?.maxFileBytes || 0)} · 下载票据有效 {displayTokenTTL(downloaderCapabilities?.tokenTtlSeconds || 0)}</span>
+                  <span className={styles.platformNote}>仅公开内容{downloaderCapabilities && <> · 单文件上限 {displayBytes(downloaderCapabilities.maxFileBytes)} · 下载凭证最长有效 {displayTokenTTL(downloaderCapabilities.tokenTtlSeconds)}</>}</span>
                 </div>
-                <p className={styles.footNote}>{downloadPointCost} 积分 / 次 · 失败退回 · 已下载文件再次保存免费{user ? ` · 余额 ${user.points} 积分` : ""}</p>
-                {downloadInsufficient && !reusableDownload && <div className={styles.notice}>余额不足，<Link href="/pricing">补充积分</Link>后即可下载。</div>}
+                <p className={styles.footNote}>北京时间零点重置次数 · 下载任务失败后自动退回积分与次数</p>
+                <p className={styles.footNote}>仅本页仍保留的视频可免费再次保存；刷新或关闭页面后重新下载需再次计费。</p>
+                {downloadLimitReached && <div className={styles.notice}><CircleAlert aria-hidden />今日下载次数已用完，北京时间零点后可再次下载；已有下载可继续保存。</div>}
+                {downloadInsufficient && !reusableDownload && !downloadLimitReached && <div className={styles.notice}>余额不足，<Link href="/pricing">补充积分</Link>后即可下载。</div>}
                 {user && downloaderCapabilities && !downloaderReady && (
                   <div className={styles.notice}><CircleAlert aria-hidden /> 视频下载服务当前未启用或尚未就绪，请联系管理员检查下载服务。</div>
                 )}

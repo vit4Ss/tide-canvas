@@ -152,6 +152,12 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 				response.Fail(c, response.CodeBadRequest, "内容拆解开关必须是 0 或 1")
 				return
 			}
+			if key == model.ConfigKeySocialDownloadDailyLimit {
+				if _, ok := model.ParseSocialDownloadDailyLimit(items[i].ConfigValue); !ok {
+					response.Fail(c, response.CodeBadRequest, "每位用户每日下载上限必须是 1-100000 的整数")
+					return
+				}
+			}
 			if key == model.ConfigKeySocialDownloadCost || key == model.ConfigKeySocialAnalysisCost {
 				if _, ok := model.ParseSocialPointCost(items[i].ConfigValue); !ok {
 					response.Fail(c, response.CodeBadRequest, "下载和内容拆解单次积分必须是 1-100000 的整数")

@@ -3,13 +3,14 @@ package model
 import "strconv"
 
 const (
-	ConfigGroupSocialAnalysis    = "内容拆解"
-	ConfigKeySocialTikHubEnabled = "social.tikhub.enabled"
-	ConfigKeySocialTikHubBaseURL = "social.tikhub.baseUrl"
-	ConfigKeySocialTikHubAPIKey  = "social.tikhub.apiKey"
-	DefaultSocialTikHubBaseURL   = "https://api.tikhub.io"
-	ConfigKeySocialDownloadCost  = "social.download.pointCost"
-	ConfigKeySocialAnalysisCost  = "social.analysis.pointCost"
+	ConfigGroupSocialAnalysis         = "内容拆解"
+	ConfigKeySocialTikHubEnabled      = "social.tikhub.enabled"
+	ConfigKeySocialTikHubBaseURL      = "social.tikhub.baseUrl"
+	ConfigKeySocialTikHubAPIKey       = "social.tikhub.apiKey"
+	DefaultSocialTikHubBaseURL        = "https://api.tikhub.io"
+	ConfigKeySocialDownloadCost       = "social.download.pointCost"
+	ConfigKeySocialAnalysisCost       = "social.analysis.pointCost"
+	ConfigKeySocialDownloadDailyLimit = "social.download.dailyLimit"
 )
 
 // SocialAnalysisConfigKeys are protected baseline keys used by the
@@ -20,12 +21,14 @@ var SocialAnalysisConfigKeys = []string{
 	ConfigKeySocialTikHubAPIKey,
 	ConfigKeySocialDownloadCost,
 	ConfigKeySocialAnalysisCost,
+	ConfigKeySocialDownloadDailyLimit,
 }
 
 // SocialAnalysisBaselineConfigs seeds the integration without a credential.
 // Operators enter the API key in the generic configuration screen.
 func SocialAnalysisBaselineConfigs() []SysConfig {
 	return []SysConfig{
+		{ConfigKey: ConfigKeySocialDownloadDailyLimit, ConfigValue: "1", Group: ConfigGroupSocialAnalysis, Description: "每位用户每日下载上限；1-100000 整数，默认 1 次，北京时间零点重置；进行中的下载占用名额，失败退款后释放，继续同一笔下载不重复计次"},
 		{ConfigKey: ConfigKeySocialDownloadCost, ConfigValue: "1", Group: ConfigGroupSocialAnalysis, Description: "视频下载单次积分；1-100000 整数，解析前预扣，失败或未下载过期退回，已收到的文件再次保存不扣费"},
 		{ConfigKey: ConfigKeySocialAnalysisCost, ConfigValue: "1", Group: ConfigGroupSocialAnalysis, Description: "内容拆解单次积分；1-100000 整数，包含本次数据解析及一次 AI 报告，失败退回，查看历史不扣费"},
 		{
@@ -50,6 +53,14 @@ func SocialAnalysisBaselineConfigs() []SysConfig {
 }
 
 func ParseSocialPointCost(raw string) (int, bool) {
+	return parseSocialPositiveInteger(raw)
+}
+
+func ParseSocialDownloadDailyLimit(raw string) (int, bool) {
+	return parseSocialPositiveInteger(raw)
+}
+
+func parseSocialPositiveInteger(raw string) (int, bool) {
 	if raw == "" {
 		return 0, false
 	}

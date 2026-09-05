@@ -31,18 +31,9 @@ test("analysis workbench keeps all six initial platforms and both modes", () => 
 
 test("paid analysis and TikHub parsing are synchronously fenced against duplicate clicks", () => {
   assert.match(workbench, /inspectBusyRef\.current/);
-  assert.match(workbench, /analysisBusyRef\.current/);
   assert.match(workbench, /inspectEpochRef\.current/);
   assert.match(workbench, /analysisEpochRef\.current/);
-  assert.match(workbench, /disabled=\{loading \|\| archiving\}/);
-});
-
-test("video archival retries bounded mirrors and stops on definitive failures", () => {
-  assert.match(workbench, /work\.mediaUrls/);
-  assert.match(workbench, /workVideoSources\(currentWork\)/);
-  assert.match(workbench, /\.slice\(0, 5\)/);
-  assert.match(workbench, /archived\.code !== 0 && archived\.code !== 400 && archived\.code !== 408/);
-  assert.match(workbench, /fileApi\.saveFromUrl/);
+  assert.match(workbench, /disabled=\{loading\}/);
 });
 
 test("skill runs remain account-partitioned, restorable and re-editable", () => {
@@ -50,13 +41,9 @@ test("skill runs remain account-partitioned, restorable and re-editable", () => 
   assert.match(workbench, /ownerUserId/);
   assert.match(workbench, /retainTerminalPointer: true/);
   assert.match(workbench, /setResult\(null\)[\s\S]*setSelectedWork\(null\)[\s\S]*skillRun\.clear\(\)/);
-  assert.match(workbench, /kind === "account"[\s\S]*\? result\.sourceUrl/);
   assert.match(workbench, /textRenderer=\{renderAnalysisMarkdown\}/);
   assert.match(workbench, /img: \(\) => null/);
   assert.match(workbench, /status\?\.imageAnalysisSkillId/);
-  assert.match(workbench, /type: contentSkillMode/);
-  assert.match(workbench, /role: contentSkillMode === "video" \? "source-video" : `source-image-/);
-  assert.match(workbench, /analysisMode: skillMode/);
   assert.match(workbench, /storedMode === "account"/);
   assert.doesNotMatch(workbench, /accountRun =[^;]*prompt\.includes\("<platform_data"\)/);
   assert.match(api, /imageAnalysisSkillId\?: string/);
@@ -86,7 +73,7 @@ test("public video downloader verifies the file before browser saving and shows 
   assert.match(workbench, /videoDownload\.state\.error/);
   assert.match(workbench, /download=\{videoDownload\.state\.name\}/);
   assert.match(workbench, /const downloaderPlatforms = downloaderCapabilities\?\.platforms \?\? \[\]/);
-  assert.match(workbench, /下载票据有效/);
+  assert.match(workbench, /下载凭证最长有效/);
 });
 
 test("workbench keeps two action tabs with a11y wiring", () => {
@@ -279,7 +266,6 @@ test("left history sidebar restores an owned immutable snapshot without re-inspe
   assert.match(workbench, /setHistoryRefresh\(\(value\) => value \+ 1\)/);
   assert.ok(workbench.indexOf("<ActivityHistorySidebar") < workbench.indexOf("styles.workspaceMain"));
   assert.match(workbench, /isSocialInspectSnapshot\(record\.snapshot\)/);
-  assert.match(workbench, /skillRun\.resume\(record\.analysisRunId\)/);
   assert.match(workbench, /正在查看历史快照/);
   assert.match(workbench, /当时调用：/);
   assert.match(workbench, /获取最新数据/);
@@ -324,8 +310,7 @@ test("copyable metadata fields carry an accessible name", () => {
 
 test("account mode renders a real intelligence board instead of a source-and-text split", () => {
   assert.match(workbench, /function AccountDashboard/);
-  assert.match(workbench, /result\.kind === "account"[\s\S]*<AccountDashboard/);
-  for (const section of ["近期作品表现", "近期作品", "账号策略速览", "AccountReportMetrics"]) {
+  for (const section of ["近期作品表现", "近期作品", "PlatformAccountPanels", "AccountVisuals"]) {
     assert.ok(workbench.includes(section), `account board misses ${section}`);
   }
   assert.match(workbench, /buildAccountSnapshot\(result\)/);
@@ -341,6 +326,12 @@ test("account mode renders a real intelligence board instead of a source-and-tex
   assert.doesNotMatch(accountHeroRule, /::before|background: var\(--platform\)/, "account header regained a decorative accent stripe");
 });
 
+test("account data fills the canvas without a report column or automatic AI execution", () => {
+  assert.doesNotMatch(workbench, /账号策略速览|含本次 AI 报告|startDeepAnalysis|pendingAccountAutoRunRef|skillRun\.start\(/);
+  assert.doesNotMatch(css, /accountSummaryRail|"overview summary"|"data summary"/);
+  assert.match(css, /\.accountDashboard \{[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*grid-template-areas: "overview" "data"/);
+});
+
 test("account strategy uses a reader-facing report instead of the workflow inspector", () => {
   const report = workbench.slice(workbench.indexOf("function AccountStrategyReport"), workbench.indexOf("function DownloadPoster"));
   assert.match(report, /账号策略报告/);
@@ -353,17 +344,6 @@ test("account strategy uses a reader-facing report instead of the workflow inspe
   assert.match(css, /\.accountReportContent \.markdown \{[\s\S]*max-height: none;[\s\S]*overflow: visible;/);
 });
 
-test("account inspection automatically starts one strategy run without a second click", () => {
-  assert.match(workbench, /pendingAccountAutoRunRef\.current = response\.data/);
-  assert.match(workbench, /pendingAccountAutoRunRef\.current !== result/);
-  assert.match(workbench, /pendingAccountAutoRunRef\.current = null;[\s\S]*queueMicrotask\(\(\) => \{ void startDeepAnalysis\(\); \}\)/);
-  assert.match(workbench, /正在自动生成账号策略/);
-  assert.match(workbench, /无需再次点击，完成后会在这里展示简短结论/);
-  assert.match(workbench, /activityRecordId: result\.recordId/);
-  assert.match(workbench, /response\.data\.kind === "account" && \(focus === DEFAULT_FOCUS \|\| focus === IMAGE_DEFAULT_FOCUS\)/);
-  assert.doesNotMatch(workbench, /busy \? "正在启动分析" : "生成账号策略"/);
-});
-
 test("single-work mode uses the full width for its factual dashboard", () => {
   assert.match(workbench, /function ContentDashboard/);
   assert.match(workbench, /result=\{result\}[\s\S]*work=\{currentWork\}[\s\S]*canDownload=/);
@@ -373,23 +353,8 @@ test("single-work mode uses the full width for its factual dashboard", () => {
   assert.match(workbench, /buildWorkSnapshot\(work, result\.platform\)/);
   assert.match(workbench, /缺失字段不按 0 处理/);
   assert.match(workbench, /function workImageSources/);
-  assert.match(workbench, /contentImageURLs/);
-  assert.match(workbench, /source-image-/);
   assert.match(css, /\.contentDashboard \{[\s\S]*container-type: inline-size/);
   assert.match(css, /grid-template-areas: "overview" "data"/);
   assert.doesNotMatch(workbench, /视频拆解速览|图文拆解速览|调整分析重点/);
   assert.doesNotMatch(css, /contentReportRail|"overview report"|"data report"/);
-});
-
-test("a restored AI report is shown only beside the account or work that created it", () => {
-  assert.match(workbench, /function analysisRunContext/);
-  assert.match(workbench, /sourceUrl: sourceURL,[\s\S]{0,160}sourceFetchedAt: result\.fetchedAt/);
-  assert.match(workbench, /activeRunContext\.sourceUrl === currentAnalysisSource/);
-  assert.match(workbench, /activeRunContext\.sourceFetchedAt === result\.fetchedAt/);
-  assert.match(workbench, /const contextualRunDetails = runMatchesCurrentResult \? runDetails : null/);
-  assert.match(workbench, /runDetails=\{contextualRunDetails\}/);
-  assert.match(workbench, /\{contextualRunDetails\}/);
-  // A failed create has no run to carry source metadata. Starting another
-  // inspection clears that orphaned error so it cannot leak to the new account.
-  assert.match(workbench, /if \(!skillRun\.run && skillRun\.error\) skillRun\.clear\(\)/);
 });

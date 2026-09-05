@@ -14,3 +14,20 @@ func TestSocialPriceRequiresPositiveBoundedInteger(t *testing.T) {
 		}
 	}
 }
+
+func TestSocialDownloadDailyLimitConfiguration(t *testing.T) {
+	for _, raw := range []string{"", "0", "-1", "1.5", "1e2", " 1", "+1", "100001"} {
+		if _, ok := ParseSocialDownloadDailyLimit(raw); ok {
+			t.Fatalf("accepted %q", raw)
+		}
+	}
+	found := false
+	for _, cfg := range SocialAnalysisBaselineConfigs() {
+		if cfg.ConfigKey == ConfigKeySocialDownloadDailyLimit {
+			found = cfg.ConfigValue == "1"
+		}
+	}
+	if !found {
+		t.Fatal("missing default one-download-per-day configuration")
+	}
+}

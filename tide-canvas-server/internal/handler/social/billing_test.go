@@ -254,6 +254,7 @@ func TestSocialInsufficientNeverCallsPlatform(t *testing.T) {
 }
 func TestSocialRecoveryRefundsUnusedAndAbandonedButNotActiveOrSuccess(t *testing.T) {
 	db := activityTestDB(t)
+	setDownloadDailyLimit(t, db, "10")
 	fundSocialUser(t, db, 42, 10)
 	now := time.Now()
 	var records []model.SocialActivityRecord

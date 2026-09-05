@@ -67,6 +67,24 @@ func BeginSocial(db *gorm.DB, record *model.SocialActivityRecord, requestID stri
 		return found, err
 	}
 	err := db.Transaction(func(tx *gorm.DB) error {
+		if record.ActivityType == model.SocialActivityDownload {
+			// This must precede ALL snapshot reads in the transaction. Holding
+			// the user row serializes quota check + reservation across instances,
+			// including MySQL's default REPEATABLE READ isolation.
+			var user model.User
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&user, "id = ?", record.UserID).Error; err != nil {
+				return err
+			}
+			now := tx.NowFunc()
+			quota, err := DownloadQuota(tx, record.UserID, now)
+			if err != nil {
+				return err
+			}
+			if quota.DailyRemaining == 0 {
+				return quota.limitError()
+			}
+			record.CreateTime = now
+		}
 		price, err := SocialPrice(tx, record.ActivityType)
 		if err != nil {
 			return err

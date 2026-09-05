@@ -19,11 +19,11 @@ function setup(initial = {}) {
   const context = vm.createContext({
     downloadBusyRef: { current: false }, downloadEpochRef: { current: 0 },
     downloadSource: "https://www.douyin.com/video/12345", downloadResult: null,
-    downloadedPreviewUrl: "", historicalRecord: null, downloaderCapabilities: null,
+    downloadedPreviewUrl: "", historicalRecord: null, downloaderCapabilities: {pointCost: 1, dailyRemaining: 1},
     videoDownload: { busy: false, state: {phase:"idle",resultId:""}, start: (file) => downloads.push(file.id) },
     extractDownloadURL: (url) => url, ensureSession: async () => true,
     setWatchedDownloadRecordId() {}, setHistoryRefresh() {}, setDownloaderRefresh() {},
-    refreshBalance: async () => {}, ownerUserId: "owner", downloadPointCost: 1,
+    refreshBalance: async () => {}, ownerUserId: "owner", downloadPointCost: 1, downloadInsufficient: false, pendingDownloadKey: "",
     shouldKeepSocialRequest,
     downloadRequestRef: {current: null}, crypto: {randomUUID: () => ++requestSerial === 1 ? "request-key" : `request-key-${requestSerial}`},
     ...initial,
@@ -41,6 +41,47 @@ function setup(initial = {}) {
   return { context, requests, downloads };
 }
 const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test("missing pricing never starts a new charge, but cached files remain free to save", async () => {
+  const missing = setup({downloaderCapabilities: null});
+  await missing.context.resolve(true);
+  assert.equal(missing.requests.length, 0);
+  assert.match(missing.context.error, /积分价格/);
+  const cached = setup({downloaderCapabilities: null, downloadResult: result({expiresAt: 1}), downloadedPreviewUrl: "blob:local"});
+  await cached.context.resolve(true);
+  assert.equal(cached.requests.length, 0);
+  assert.equal(cached.downloads.length, 1);
+});
+
+test("daily quota blocks new downloads and expired card retries without resolving or charging", async () => {
+  for (const card of [false, true]) {
+    const { context, requests, downloads } = setup({ downloaderCapabilities: {dailyRemaining: 0}, downloadResult: card ? result({expiresAt: 1}) : null });
+    if (card) { context.downloadCard(); await settle(); } else await context.resolve(true);
+    assert.equal(requests.length, 0);
+    assert.equal(downloads.length, 0);
+    assert.match(context.error, /次数已用完/);
+  }
+});
+
+test("an exhausted daily quota still allows the same pending request and prepaid file", async () => {
+  const { context, requests } = setup({downloaderCapabilities: {dailyRemaining: 0}, pendingDownloadKey: "owner:https://www.douyin.com/video/12345"});
+  context.downloadRequestRef.current = {key: context.pendingDownloadKey, id: "reserved-request"};
+  await context.resolve(true);
+  assert.equal(requests[0].clientRequestId, "reserved-request");
+  for (const state of [{downloadResult: result()}, {historicalRecord: {download: result()}}, {downloadResult: result({expiresAt: 1}), downloadedPreviewUrl: "blob:saved"}]) {
+    const run = setup({...state, downloaderCapabilities: {dailyRemaining: 0}, downloadInsufficient: true});
+    await run.context.resolve(true);
+    assert.equal(run.requests.length, 0);
+    assert.equal(run.downloads.length, 1);
+  }
+});
+
+test("insufficient points also block keyboard-triggered new downloads", async () => {
+  const {context, requests} = setup({downloadInsufficient: true});
+  await context.resolve(true);
+  assert.equal(requests.length, 0);
+  assert.match(context.error, /积分不足/);
+});
 
 test("uncertain network retries keep the billing request key and insufficient responses never download", async () => {
   const { context, downloads } = setup();

@@ -94,6 +94,10 @@ export type VideoDownloadQuality = "quality" | "compat" | "speed";
 
 export interface VideoDownloaderCapabilitiesVO {
   pointCost: number;
+  dailyLimit: number;
+  dailyUsed: number;
+  dailyRemaining: number;
+  dailyResetAt: number;
   enabled: boolean;
   platforms: string[];
   maxFileBytes: number;

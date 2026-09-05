@@ -98,10 +98,11 @@ interface ActivityHistorySidebarProps {
   selectedId?: string;
   watchId?: string;
   refreshKey: number;
+  onBillingChange?: () => void;
   onSelect: (record: SocialActivityRecordDetailVO) => void | Promise<void>;
 }
 
-export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSelect }: ActivityHistorySidebarProps) {
+export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSelect, onBillingChange }: ActivityHistorySidebarProps) {
   const ensureSession = useAuthStore((state) => state.ensureSession);
   const refreshBalance = useAuthStore((state) => state.fetchUser);
   const billingStateRef = useRef("");
@@ -148,6 +149,7 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
       if (billingStateRef.current !== billingState) {
         billingStateRef.current = billingState;
         void refreshBalance(true);
+        onBillingChange?.();
       }
       loadedViewRef.current = view;
       setRows((current) => reconcileHistoryRows(current, records));
@@ -165,7 +167,7 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
         setRefreshing(false);
       }
     }
-  }, [ensureSession, refreshBalance, page, type]);
+  }, [ensureSession, refreshBalance, page, type, onBillingChange]);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => void load(true));
