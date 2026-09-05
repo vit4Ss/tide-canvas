@@ -130,7 +130,7 @@ interface RoleForm {
 const MENU_OPTIONS: { key: string; label: string }[] = [
   { key: "discover", label: "发现" },
   { key: "studio", label: "创作" },
-  { key: "analysis", label: "拆解" },
+  { key: "analysis", label: "下载和洞察" },
   { key: "three_d", label: "3D模型" },
   { key: "tools", label: "工具" },
   { key: "chat", label: "生成" },
