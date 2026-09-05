@@ -80,6 +80,7 @@ import { parsePublicationDate } from "./publication-date.js";
 import { PlatformAccountPanels, PlatformWorkDetails } from "./platform-details";
 import { ActivityHistorySidebar } from "./activity-history";
 import { useLatestActivity } from "./use-latest-activity";
+import { useVideoDownload } from "./use-video-download";
 import styles from "./analysis.module.css";
 
 type WorkbenchTab = "breakdown" | "download";
@@ -227,18 +228,6 @@ function displayTokenTTL(seconds: number): string {
 function extractDownloadURL(value: string): string {
   const match = value.trim().match(/https:\/\/[^\s<>"']+/i);
   return match?.[0]?.replace(/[.,;!?，。；！？、）)\]}》】]+$/, "") || "";
-}
-
-function startNativeDownload(downloadUrl: string) {
-  const frame = document.createElement("iframe");
-  frame.hidden = true;
-  frame.referrerPolicy = "no-referrer";
-  frame.src = apiUrl(downloadUrl);
-  document.body.appendChild(frame);
-  // Keep the navigation context alive for the server's full one-hour stream
-  // window. Removing it after the short resolve-token TTL can cancel a slow,
-  // already-authorized large-file download in some browsers.
-  window.setTimeout(() => frame.remove(), 65 * 60 * 1_000);
 }
 
 function titleOf(work: SocialWorkVO): string {
@@ -1173,8 +1162,8 @@ export default function AnalysisWorkbench() {
   const pendingAccountAutoRunRef = useRef<SocialInspectVO | null>(null);
   const downloadBusyRef = useRef(false);
   const downloadEpochRef = useRef(0);
-  const downloadClickRef = useRef({ id: "", at: 0 });
   const ownerUserId = user?.id ?? "";
+  const videoDownload = useVideoDownload(ownerUserId);
   const previousOwnerRef = useRef(ownerUserId);
   const skillRun = useSkillRun({
     storageKey: "tidecanvas.social-analysis.active-run",
@@ -1213,7 +1202,6 @@ export default function AnalysisWorkbench() {
     setDownloadError("");
     setDownloadBusy(false);
     downloadBusyRef.current = false;
-    downloadClickRef.current = { id: "", at: 0 };
     setResult(null);
     setSelectedWork(null);
     setError("");
@@ -1530,14 +1518,22 @@ export default function AnalysisWorkbench() {
     }
   };
 
-  const resolveVideoDownload = async (qualityOverride?: VideoDownloadQuality) => {
-    if (downloadBusyRef.current || !downloadSource.trim()) return;
+  const startVideoFile = (resolved: VideoDownloadResolveVO) => {
+    void videoDownload.start(resolved, downloaderCapabilities?.maxFileBytes || 512 * 1024 ** 2, () => {
+      setWatchedDownloadRecordId(resolved.recordId || "");
+      setHistoryRefresh((value) => value + 1);
+    }, () => setHistoryRefresh((value) => value + 1));
+  };
+
+  const resolveVideoDownload = async (qualityOverride?: VideoDownloadQuality, downloadAfterResolve = false) => {
+    if (downloadBusyRef.current || videoDownload.busy || !downloadSource.trim()) return;
     // 结果面板里切换画质会立即重解析,此时 state 尚未更新,必须用传入值。
     const targetQuality = qualityOverride ?? downloadQuality;
     // A valid preview already has this quality. Repeated clicks (including
     // Enter followed by the button) must not resolve and issue another ticket.
     if (!historicalRecord && downloadResult?.quality === targetQuality && downloadResult.expiresAt * 1000 > Date.now() + 10_000) {
       setDownloadError("");
+      if (downloadAfterResolve) startVideoFile(downloadResult);
       return;
     }
     clearHistoricalView();
@@ -1556,6 +1552,7 @@ export default function AnalysisWorkbench() {
     if (!replaceInPlace) setDownloadResult(null);
     try {
       if (!await ensureSession()) return;
+      if (epoch !== downloadEpochRef.current) return;
       const response = await socialAnalysisApi.resolveDownload({ url: sourceURL, quality: targetQuality });
       if (epoch !== downloadEpochRef.current) return;
       if (!response.success || !response.data) {
@@ -1563,6 +1560,9 @@ export default function AnalysisWorkbench() {
         return;
       }
       setDownloadResult(response.data);
+      // Use this response directly: React state still contains the previous
+      // preview until the next render. Quality/preview refreshes never save.
+      if (downloadAfterResolve) startVideoFile(response.data);
     } finally {
       if (epoch === downloadEpochRef.current) {
         downloadBusyRef.current = false;
@@ -1573,19 +1573,7 @@ export default function AnalysisWorkbench() {
 
   const downloadResolvedVideo = () => {
     if (!downloadResult || downloadBusyRef.current) return;
-    if (downloadResult.expiresAt * 1000 <= Date.now()) {
-      setDownloadResult(null);
-      setDownloadError("下载地址已经过期，请重新解析视频");
-      return;
-    }
-    const now = Date.now();
-    const downloadKey = downloadResult.recordId || downloadResult.downloadUrl;
-    if (downloadClickRef.current.id === downloadKey && now - downloadClickRef.current.at < 2000) return;
-    downloadClickRef.current = { id: downloadKey, at: now };
-    setWatchedDownloadRecordId(downloadResult.recordId || "");
-    startNativeDownload(downloadResult.downloadUrl);
-    setHistoryRefresh((value) => value + 1);
-    toast.info("正在准备视频，完成后将由浏览器下载，可在左侧查看状态");
+    startVideoFile(downloadResult);
   };
 
   const reEditRun = () => {
@@ -2037,6 +2025,26 @@ export default function AnalysisWorkbench() {
                 怎么用 → 贴链接 → 看画面 → 选格式下载 → 取元信息。画质不再在
                 解析前猜,而是拿到真实结果后在格式面板里切换(见 formatSwitch)。 */}
             <div className={styles.downloadColumn}>
+              {videoDownload.state.phase !== "idle" && (
+                <section className={styles.downloadTransfer} role="status" aria-live="polite" data-phase={videoDownload.state.phase}>
+                  <div>
+                    <strong>{videoDownload.state.phase === "preparing" ? "正在准备视频文件"
+                      : videoDownload.state.phase === "receiving" ? "正在接收视频"
+                      : videoDownload.state.phase === "ready" ? "视频已接收，已发起浏览器保存"
+                      : videoDownload.state.phase === "cancelled" ? "已取消下载" : "视频下载失败"}</strong>
+                    <small title={videoDownload.state.name}>{videoDownload.state.name}</small>
+                  </div>
+                  {videoDownload.state.phase === "preparing" && <p>服务器正在获取或处理视频，收到文件后会显示接收进度。</p>}
+                  {videoDownload.state.phase === "receiving" && <>
+                    <p>{displayBytes(videoDownload.state.loaded)}{videoDownload.state.total > 0 ? ` / ${displayBytes(videoDownload.state.total)}` : " · 文件总大小待确认"}</p>
+                    {videoDownload.state.total > 0 && <progress value={videoDownload.state.loaded} max={videoDownload.state.total} aria-label="视频接收进度" />}
+                  </>}
+                  {videoDownload.state.phase === "ready" && <p>文件大小 {displayBytes(videoDownload.state.loaded)}。若浏览器未出现下载，请点击“保存视频”。</p>}
+                  {videoDownload.state.phase === "failed" && <p>{videoDownload.state.error}</p>}
+                  {videoDownload.busy && <button type="button" onClick={videoDownload.cancel}><X aria-hidden />取消下载</button>}
+                  {videoDownload.state.phase === "ready" && <a href={videoDownload.state.savedUrl} download={videoDownload.state.name}><Download aria-hidden />保存视频</a>}
+                </section>
+              )}
               <section className={styles.getter}>
                 <p className={styles.getterSteps}>
                   <span>复制视频分享链接</span><i aria-hidden />
@@ -2050,8 +2058,8 @@ export default function AnalysisWorkbench() {
                   <input
                     value={downloadSource}
                     onChange={(event) => { setDownloadSource(event.target.value); setDownloadResult(null); setDownloadError(""); clearHistoricalView(); }}
-                    onKeyDown={(event) => { if (event.key === "Enter") void resolveVideoDownload(); }}
-                    disabled={downloadBusy}
+                    onKeyDown={(event) => { if (event.key === "Enter") void resolveVideoDownload(undefined, true); }}
+                    disabled={downloadBusy || videoDownload.busy}
                     maxLength={4096}
                     placeholder={downloaderPlatforms.length > 0
                       ? `${downloaderPlatforms.map((platform) => DOWNLOAD_PLATFORM_LABEL[platform] || platform).join("、")}公开视频链接`
@@ -2063,9 +2071,9 @@ export default function AnalysisWorkbench() {
                   {initialized && !user ? (
                     <Link className={styles.primaryButton} href="/login">登录后下载 <ChevronRight aria-hidden /></Link>
                   ) : (
-                    <button className={styles.primaryButton} type="button" disabled={!downloadSource.trim() || !downloaderReady || downloadBusy} onClick={() => void resolveVideoDownload()}>
-                      {downloadBusy ? <Loader2 className={styles.spin} aria-hidden /> : <Download aria-hidden />}
-                      {downloadBusy ? "正在获取视频" : "下载视频"}
+                    <button className={styles.primaryButton} type="button" disabled={!downloadSource.trim() || !downloaderReady || downloadBusy || videoDownload.busy} onClick={() => void resolveVideoDownload(undefined, true)}>
+                      {downloadBusy || videoDownload.busy ? <Loader2 className={styles.spin} aria-hidden /> : <Download aria-hidden />}
+                      {downloadBusy ? "正在获取视频" : videoDownload.busy ? "下载处理中" : "下载视频"}
                     </button>
                   )}
                 </div>
@@ -2124,9 +2132,9 @@ export default function AnalysisWorkbench() {
                           {downloadResult.width > 0 && downloadResult.height > 0 && <i>{downloadResult.width}×{downloadResult.height}</i>}
                         </span>
                       </div>
-                      <button type="button" className={styles.primaryButton} disabled={downloadBusy} onClick={downloadResolvedVideo}>
-                        {downloadBusy ? <Loader2 className={styles.spin} aria-hidden /> : <Download aria-hidden />}
-                        {downloadBusy ? "正在换档" : "下载"}
+                      <button type="button" className={styles.primaryButton} disabled={downloadBusy || videoDownload.busy} onClick={downloadResolvedVideo}>
+                        {downloadBusy || videoDownload.busy ? <Loader2 className={styles.spin} aria-hidden /> : <Download aria-hidden />}
+                        {downloadBusy ? "正在换档" : videoDownload.busy ? "下载处理中" : "下载"}
                       </button>
                     </div>
                     <div className={styles.formatSwitch}>
@@ -2142,7 +2150,7 @@ export default function AnalysisWorkbench() {
                             // 则失败时自动回到真实状态。
                             aria-pressed={downloadResult.quality === option.key}
                             className={downloadResult.quality === option.key ? styles.formatSwitchActive : ""}
-                            disabled={downloadBusy}
+                            disabled={downloadBusy || videoDownload.busy}
                             title={option.detail}
                             onClick={() => { setDownloadQuality(option.key); void resolveVideoDownload(option.key); }}
                           >{option.label}</button>
@@ -2166,8 +2174,8 @@ export default function AnalysisWorkbench() {
               ) : (
                 <div className={styles.downloadPlaceholder}>
                   <span><Download aria-hidden /></span>
-                  <strong>解析后在这里预览并下载</strong>
-                  <p>先确认画面、分辨率与预计大小，再交给浏览器保存到默认目录。下载不消耗积分。</p>
+                  <strong>粘贴链接，一键下载视频</strong>
+                  <p>获取视频后自动开始下载，也可切换画质重新下载。文件交由浏览器保存，下载不消耗积分。</p>
                 </div>
               )}
             </div>

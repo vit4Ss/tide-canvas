@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func (s *Service) fetch(ctx context.Context, raw, referer string) ([]byte, *url.URL, error) {
@@ -54,6 +55,7 @@ func (s *Service) downloadPart(ctx context.Context, part mediaPart, platform, so
 	if part.Size > maxBytes {
 		return failure(400, "视频超过当前下载上限")
 	}
+	var lastErr error
 	for _, raw := range part.URLs {
 		trusted := trustedMedia(raw, platform)
 		if trusted == "" {
@@ -69,10 +71,20 @@ func (s *Service) downloadPart(ctx context.Context, part mediaPart, platform, so
 		if e, ok := err.(*Error); ok && e.Status == 413 {
 			return err
 		}
+		if e, ok := err.(*Error); ok {
+			lastErr = e
+		}
+	}
+	if lastErr != nil {
+		return lastErr
 	}
 	return failure(502, "视频地址暂时不可用，请重新解析后下载")
 }
 func (s *Service) copyMedia(ctx context.Context, raw, source, target string, maxBytes int64) error {
+	// Cancel only this mirror when its body stalls. The parent download remains
+	// usable for the next mirror or the Douyin provider fallback.
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
 		return err
@@ -85,7 +97,7 @@ func (s *Service) copyMedia(ctx context.Context, raw, source, target string, max
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return failure(502, "视频地址暂时不可用")
+		return failure(502, fmt.Sprintf("视频源站未提供可下载文件（HTTP %d），请重新获取视频", resp.StatusCode))
 	}
 	if resp.ContentLength > maxBytes {
 		return failure(413, "视频超过当前下载上限，请选择更低画质")
@@ -98,12 +110,20 @@ func (s *Service) copyMedia(ctx context.Context, raw, source, target string, max
 	if err != nil {
 		return err
 	}
-	n, copyErr := io.Copy(f, io.LimitReader(resp.Body, maxBytes+1))
+	idleTimeout := s.mediaIdleTimeout
+	if idleTimeout <= 0 {
+		idleTimeout = 30 * time.Second
+	}
+	body := &mediaIdleReader{Reader: resp.Body, cancel: cancel, timeout: idleTimeout}
+	n, copyErr := io.Copy(f, io.LimitReader(body, maxBytes+1))
 	closeErr := f.Close()
 	if n > maxBytes {
 		return failure(413, "视频超过当前下载上限，请选择更低画质")
 	}
 	if copyErr != nil {
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
 		return copyErr
 	}
 	if closeErr != nil {
@@ -113,6 +133,23 @@ func (s *Service) copyMedia(ctx context.Context, raw, source, target string, max
 		return failure(502, "平台视频传输不完整，请重试")
 	}
 	return nil
+}
+
+// A total download timeout alone leaves dead CDN connections waiting for many
+// minutes. Arm the idle timer only while reading; steady slow transfers keep
+// working. Closing/cancelling net/http's request interrupts the blocked Read.
+type mediaIdleReader struct {
+	io.Reader
+	cancel  context.CancelCauseFunc
+	timeout time.Duration
+}
+
+func (r *mediaIdleReader) Read(p []byte) (int, error) {
+	timer := time.AfterFunc(r.timeout, func() {
+		r.cancel(failure(502, "视频源站长时间未传输数据，请稍后重新下载"))
+	})
+	defer timer.Stop()
+	return r.Reader.Read(p)
 }
 func (s *Service) downloadDirect(ctx context.Context, plan downloadPlan, quality, dir, target string) error {
 	inputs := []string{}

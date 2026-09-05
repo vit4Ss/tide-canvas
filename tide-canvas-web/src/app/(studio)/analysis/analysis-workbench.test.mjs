@@ -10,6 +10,7 @@ const history = readFileSync(join(here, "activity-history.tsx"), "utf8");
 const api = readFileSync(join(here, "../../../lib/social-analysis-api.ts"), "utf8");
 const rail = readFileSync(join(here, "../../../components/studio/studio-rail.tsx"), "utf8");
 const css = readFileSync(join(here, "analysis.module.css"), "utf8");
+const videoDownload = readFileSync(join(here, "use-video-download.ts"), "utf8");
 
 test("analysis rail entry remains between Studio and 3D", () => {
   const studio = rail.indexOf('href: "/studio"');
@@ -67,7 +68,7 @@ test("browser API exposes no TikHub credential field", () => {
   assert.doesNotMatch(api, /apiKey|accessToken|Authorization/);
 });
 
-test("public video downloader uses local capability discovery and a native hidden-frame download", () => {
+test("public video downloader verifies the file before browser saving and shows progress", () => {
   assert.match(api, /\/api\/social-analysis\/downloader\/platforms/);
   assert.match(api, /\/api\/social-analysis\/downloader\/resolve/);
   assert.match(workbench, /pinterest: "Pinterest"/);
@@ -75,11 +76,17 @@ test("public video downloader uses local capability discovery and a native hidde
   for (const quality of ["quality", "compat", "speed"]) {
     assert.match(workbench, new RegExp(`key: "${quality}"`));
   }
-  assert.match(workbench, /function startNativeDownload/);
-  assert.match(workbench, /document\.createElement\("iframe"\)/);
-  assert.match(workbench, /frame\.src = apiUrl\(downloadUrl\)/);
+  assert.match(workbench, /videoDownload\.start\(resolved/);
+  assert.match(workbench, /if \(downloadAfterResolve\) startVideoFile\(downloadResult\)/);
+  assert.match(workbench, /if \(downloadAfterResolve\) startVideoFile\(response\.data\)/);
+  assert.match(workbench, /onClick=\{\(\) => void resolveVideoDownload\(undefined, true\)\}/);
+  assert.match(workbench, /event\.key === "Enter"\) void resolveVideoDownload\(undefined, true\)/);
+  assert.match(videoDownload, /await receiveVideoDownload\(apiUrl\(result\.downloadUrl\)/);
+  assert.match(videoDownload, /anchor\.download = name/);
+  assert.doesNotMatch(workbench, /document\.createElement\("iframe"\)/);
   assert.doesNotMatch(workbench, /anchor\.rel = "noopener"/);
-  assert.match(workbench, /toast\.info\("正在准备视频，完成后将由浏览器下载，可在左侧查看状态"\)/);
+  assert.match(workbench, /videoDownload\.state\.error/);
+  assert.match(workbench, /download=\{videoDownload\.state\.name\}/);
   assert.match(workbench, /const downloaderPlatforms = downloaderCapabilities\?\.platforms \?\? \[\]/);
   assert.match(workbench, /下载票据有效/);
 });
@@ -268,7 +275,9 @@ test("left history sidebar restores an owned immutable snapshot without re-inspe
   assert.match(workbench, /<ActivityHistorySidebar/);
   assert.match(workbench, /refreshKey=\{historyRefresh\}/);
   assert.match(workbench, /watchId=\{watchedDownloadRecordId\}/);
-  assert.match(history, /watched\.status === "succeeded"/);
+  // Terminal states and bounded retry behavior are exercised by the polling
+  // helper's behavioral tests; this assertion verifies sidebar integration.
+  assert.match(history, /startDownloadHistoryPolling\(watchId, \(\) => load\(true\)/);
   assert.match(workbench, /setHistoryRefresh\(\(value\) => value \+ 1\)/);
   assert.ok(workbench.indexOf("<ActivityHistorySidebar") < workbench.indexOf("styles.workspaceMain"));
   assert.match(workbench, /isSocialInspectSnapshot\(record\.snapshot\)/);
@@ -301,7 +310,7 @@ test("switching quality updates in place and blocks the stale download", () => {
   assert.match(workbench, /if \(!replaceInPlace\) setDownloadResult\(null\);/);
   // 原地更新期间旧的下载地址仍在屏幕上,必须禁用下载,否则拿到的是上一档画质。
   const formatCard = workbench.slice(workbench.indexOf("styles.formatCard"), workbench.indexOf("styles.formatSwitch"));
-  assert.match(formatCard, /disabled=\{downloadBusy\}/);
+  assert.match(formatCard, /disabled=\{downloadBusy \|\| videoDownload\.busy\}/);
   assert.match(formatCard, /data-busy=\{downloadBusy \? "true" : "false"\}/);
   assert.match(css, /\.formatCard\[data-busy="true"\] \.formatSpec/);
   // 选中态必须取自实际解析结果:downloadQuality 在解析前就变了,换档失败时

@@ -64,6 +64,7 @@ type Service struct {
 	run                           commandRunner
 	resolves, downloads, previews chan struct{}
 	douyinFallback                DouyinResolver
+	mediaIdleTimeout              time.Duration
 }
 
 // ResolvedVideo contains only a provider's media result, never its API key.
@@ -114,7 +115,7 @@ func New(cfg config.VideoDownloaderConfig) *Service {
 	if cfg.DownloadTimeout <= 0 || cfg.DownloadTimeout > time.Hour {
 		cfg.DownloadTimeout = 15 * time.Minute
 	}
-	return &Service{cfg: cfg, client: safefetch.NewClient(cfg.DownloadTimeout, nil), run: runCommand, resolves: make(chan struct{}, cfg.MaxConcurrentResolves), downloads: make(chan struct{}, cfg.MaxConcurrent), previews: make(chan struct{}, cfg.MaxConcurrentResolves)}
+	return &Service{cfg: cfg, client: safefetch.NewClient(cfg.DownloadTimeout, nil), run: runCommand, resolves: make(chan struct{}, cfg.MaxConcurrentResolves), downloads: make(chan struct{}, cfg.MaxConcurrent), previews: make(chan struct{}, cfg.MaxConcurrentResolves), mediaIdleTimeout: 30 * time.Second}
 }
 func (s *Service) MaxBytes() int64 { return s.cfg.MaxFileBytes }
 func (s *Service) Ready() bool {

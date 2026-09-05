@@ -7,6 +7,7 @@ import type { SocialActivityRecordDetailVO } from "@/lib/social-analysis-api";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
 import type { SocialActivityRecordVO, SocialActivityType } from "@/types/social-record";
+import { reconcileHistoryRows, startDownloadHistoryPolling } from "./activity-history-polling";
 import styles from "./analysis.module.css";
 
 const PAGE_SIZE = 12;
@@ -103,40 +104,61 @@ interface ActivityHistorySidebarProps {
 export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSelect }: ActivityHistorySidebarProps) {
   const ensureSession = useAuthStore((state) => state.ensureSession);
   const requestRef = useRef(0);
+  const pendingRef = useRef(0);
+  const loadedViewRef = useRef("");
   const openingRef = useRef<string | null>(null);
   const [type, setType] = useState<"" | SocialActivityType>("");
   const [page, setPage] = useState(1);
   const [rows, setRows] = useState<SocialActivityRecordVO[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [pollAttempt, setPollAttempt] = useState(0);
   const [error, setError] = useState("");
   const [openingId, setOpeningId] = useState("");
 
   useEffect(() => () => { openingRef.current = null; }, []);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false): Promise<SocialActivityRecordVO[] | null | undefined> => {
     const requestID = ++requestRef.current;
-    setLoading(true);
-    setError("");
+    pendingRef.current = requestID;
+    const view = `${type}:${page}`;
+    const initialLoad = loadedViewRef.current !== view;
+    // Only a first load or a different filter/page replaces the list with a
+    // skeleton. Polling and new activity must preserve its DOM and scroll.
+    if (initialLoad) setLoading(true);
+    else if (!silent) setRefreshing(true);
+    if (!silent || initialLoad) setError("");
     try {
-      if (!await ensureSession()) return;
+      if (!await ensureSession()) return null;
+      if (requestID !== requestRef.current) return;
       const response = await socialAnalysisApi.records({ pageNum: page, pageSize: PAGE_SIZE, ...(type ? { type } : {}) });
       if (requestID !== requestRef.current) return;
       if (!response.success || !response.data) {
-        setError(response.message || "记录加载失败，请稍后重试");
-        return;
+        if (!silent || initialLoad) setError(response.message || "记录加载失败，请稍后重试");
+        return null;
       }
-      setRows(response.data.records);
+      const records = response.data.records;
+      loadedViewRef.current = view;
+      setRows((current) => reconcileHistoryRows(current, records));
       setTotal(response.data.total);
+      setError("");
+      return records;
     } catch {
-      if (requestID === requestRef.current) setError("记录加载失败，请稍后重试");
+      if (requestID !== requestRef.current) return;
+      if (!silent || initialLoad) setError("记录加载失败，请稍后重试");
+      return null;
     } finally {
-      if (requestID === requestRef.current) setLoading(false);
+      if (pendingRef.current === requestID) pendingRef.current = 0;
+      if (requestID === requestRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [ensureSession, page, type]);
 
   useEffect(() => {
-    const frame = requestAnimationFrame(() => void load());
+    const frame = requestAnimationFrame(() => void load(true));
     return () => {
       cancelAnimationFrame(frame);
       requestRef.current += 1;
@@ -145,11 +167,13 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
 
   useEffect(() => {
     if (!watchId || page !== 1 || type === "analysis") return;
-    const watched = rows.find((row) => row.id === watchId);
-    if (watched && (watched.status === "succeeded" || watched.status === "failed" || watched.status === "expired")) return;
-    const timer = window.setTimeout(() => { void load(); }, 5_000);
-    return () => window.clearTimeout(timer);
-  }, [load, page, rows, type, watchId]);
+    return startDownloadHistoryPolling(watchId, () => load(true), () => document.hidden || pendingRef.current !== 0);
+  }, [load, page, type, watchId, refreshKey, pollAttempt]);
+
+  const refresh = () => {
+    void load();
+    setPollAttempt((value) => value + 1);
+  };
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -186,8 +210,8 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
             <p>回看分析 · 追踪下载</p>
           </div>
         </div>
-        <button type="button" onClick={() => void load()} disabled={loading} aria-label="刷新使用记录" title="刷新使用记录">
-          {loading ? <Loader2 className={styles.spin} aria-hidden /> : <RefreshCw aria-hidden />}
+        <button type="button" onClick={refresh} disabled={loading || refreshing} aria-label="刷新使用记录" title="刷新使用记录">
+          {loading || refreshing ? <Loader2 className={styles.spin} aria-hidden /> : <RefreshCw aria-hidden />}
         </button>
       </header>
 
@@ -220,7 +244,7 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
         <div className={styles.historyEmpty} role="alert">
           <strong>记录暂时无法加载</strong>
           <p>{error}</p>
-          <button type="button" onClick={() => void load()}>重新加载</button>
+          <button type="button" onClick={refresh}>重新加载</button>
         </div>
       ) : rows.length === 0 ? (
         <div className={styles.historyEmpty}>
