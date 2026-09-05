@@ -43,6 +43,17 @@ test("active downloads poll sequentially and each terminal status stops polling"
   }
 });
 
+test("failed paid downloads keep watching until the refund is confirmed", async t => {
+  const tick = clock(t);
+  let calls = 0;
+  const stop = startDownloadHistoryPolling("download-1", async () => [{...record("expired"), pointCost: 3, refunded: ++calls >= 3}], () => false);
+  t.after(stop);
+  for (let i = 0; i < 3; i++) await tick(5_000);
+  assert.equal(calls, 3);
+  await tick(60_000);
+  assert.equal(calls, 3);
+});
+
 test("background tabs and an existing list request pause network polling", async (t) => {
   const tick = clock(t);
   let paused = true;

@@ -189,6 +189,11 @@ export default function AdminAnalysisRecordsPage() {
       },
     },
     {
+      header: "积分",
+      width: 110,
+      cell: (row) => row.pointCost ? `${row.pointCost} 积分${row.refunded ? " · 已退回" : ""}` : "历史未计费",
+    },
+    {
       header: "文件",
       width: 120,
       cell: (row) => row.type === "download"

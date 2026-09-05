@@ -16,8 +16,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 	"tidecanvas/internal/config"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
@@ -72,7 +70,11 @@ func TestLocalAttachmentTransferHasBoundedDeadline(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest("GET", "/download/test?name=video.mp4", nil)
 	c.Set("socialDownloadActivity", videoDownloadActivity{SourceURL: "https://youtu.be/abcdefghijk", Quality: "compat"})
-	h := &handler{downloader: &stubVideoDownloader{}}
+	db := activityTestDB(t)
+	record := paidDownloadFixture(t, db, 1, 2)
+	c.Set(middleware.CtxUserID, record.UserID)
+	c.Set("socialDownloadRecordID", record.ID)
+	h := &handler{db: db, downloader: &stubVideoDownloader{}}
 	h.downloadVideo(c)
 	if w.Code != 200 || w.Body.String() != "video-bytes" || len(w.deadlines) != 2 || w.deadlines[0].IsZero() || !w.deadlines[1].IsZero() {
 		t.Fatalf("attachment/deadline failed: status=%d deadlines=%v body=%q", w.Code, w.deadlines, w.Body.String())
@@ -83,10 +85,7 @@ func TestConcurrentDownloadTicketDoesNotDuplicateWorkOrFailHistory(t *testing.T)
 	gin.SetMode(gin.TestMode)
 	token.Init(config.JWTConfig{Secret: "duplicate-download-test", Issuer: "test"}, nil)
 	db := activityTestDB(t)
-	record := model.SocialActivityRecord{ID: 851, UserID: 852, ActivityType: model.SocialActivityDownload, SourceURL: "https://youtu.be/abcdefghijk", Quality: "compat", Status: model.SocialActivityReady}
-	if err := db.Create(&record).Error; err != nil {
-		t.Fatal(err)
-	}
+	record := paidDownloadFixture(t, db, 851, 852)
 	started, release := make(chan struct{}), make(chan struct{})
 	var startOnce, releaseOnce sync.Once
 	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
@@ -132,8 +131,8 @@ func TestConcurrentDownloadTicketDoesNotDuplicateWorkOrFailHistory(t *testing.T)
 	if completed := <-done; completed.Code != 200 || completed.Body.String() != "complete video" {
 		t.Fatalf("first download failed: %s", completed.Body)
 	}
-	if retried := request(); retried.Code != 200 || calls.Load() != 2 {
-		t.Fatal("completed ticket did not release its in-flight lock")
+	if retried := request(); strings.Contains(retried.Body.String(), "complete video") || calls.Load() != 1 {
+		t.Fatal("completed paid ticket allowed a second server transfer")
 	}
 	if err := db.First(&record, record.ID).Error; err != nil || record.Status != model.SocialActivitySucceeded {
 		t.Fatalf("completed history is incorrect: %+v %v", record, err)
@@ -144,10 +143,7 @@ func TestLocalDownloadFailureAndOwnerIsolation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	token.Init(config.JWTConfig{Secret: "local-download-test", Issuer: "test"}, nil)
 	db := activityTestDB(t)
-	legacy := model.SocialActivityRecord{ID: 801, UserID: 802, ActivityType: model.SocialActivityDownload, SourceURL: "https://youtu.be/abcdefghijk", Quality: "compat", Status: model.SocialActivityReady}
-	if err := db.Create(&legacy).Error; err != nil {
-		t.Fatal(err)
-	}
+	legacy := paidDownloadFixture(t, db, 801, 802)
 	calls := 0
 	h := &handler{db: db, downloader: &stubVideoDownloader{onDownload: func(context.Context, string, string) (*http.Response, error) {
 		calls++
@@ -181,11 +177,14 @@ func TestLocalDownloadFailureAndOwnerIsolation(t *testing.T) {
 func TestLocalDownloadDisabledAndOversizeDoNotIssueTickets(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, disabled := range []bool{true, false} {
-		h := &handler{downloader: &stubVideoDownloader{disabled: disabled, maxBytes: 10}}
+		db := activityTestDB(t)
+		fundSocialUser(t, db, 22, 10)
+		h := &handler{db: db, downloader: &stubVideoDownloader{disabled: disabled, maxBytes: 10}}
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest("POST", "/resolve", strings.NewReader(`{"url":"https://youtu.be/abcdefghijk","quality":"compat"}`))
 		c.Request.Header.Set("Content-Type", "application/json")
+		c.Set(middleware.CtxUserID, idgen.ID(22))
 		h.resolveVideoDownload(c)
 		if strings.Contains(w.Body.String(), "downloadUrl") {
 			t.Fatalf("unusable ticket issued: %s", w.Body)
@@ -237,13 +236,8 @@ func TestVideoDownloadMessagesAndFilename(t *testing.T) {
 func TestVideoDownloadHTTPFlowIssuesBoundTicketAndStreamsAttachment(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	token.Init(config.JWTConfig{Secret: "video-download-test-secret", Issuer: "video-download-test"}, nil)
-	db, err := gorm.Open(sqlite.Open("file:video-download-flow?mode=memory&cache=shared"), &gorm.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AutoMigrate(&model.SocialActivityRecord{}); err != nil {
-		t.Fatal(err)
-	}
+	db := activityTestDB(t)
+	fundSocialUser(t, db, 901, 1)
 	var downloadCalls atomic.Int32
 	backend := &stubVideoDownloader{onDownload: func(ctx context.Context, source, quality string) (*http.Response, error) {
 		downloadCalls.Add(1)
@@ -262,7 +256,7 @@ func TestVideoDownloadHTTPFlowIssuesBoundTicketAndStreamsAttachment(t *testing.T
 	router.GET("/download/:token", videoDownloadTicketAuth(), h.downloadVideo)
 
 	resolveRecorder := httptest.NewRecorder()
-	resolveRequest := httptest.NewRequest(http.MethodPost, "/resolve", bytes.NewReader([]byte(`{"url":"https://www.youtube.com/watch?v=abc12345678","quality":"compat"}`)))
+	resolveRequest := httptest.NewRequest(http.MethodPost, "/resolve", bytes.NewReader([]byte(`{"url":"https://www.youtube.com/watch?v=abc12345678","quality":"compat","clientRequestId":"same-download"}`)))
 	resolveRequest.Header.Set("Content-Type", "application/json")
 	router.ServeHTTP(resolveRecorder, resolveRequest)
 	var resolved response.Result[videoDownloadResolveVO]
@@ -278,22 +272,24 @@ func TestVideoDownloadHTTPFlowIssuesBoundTicketAndStreamsAttachment(t *testing.T
 	if resolved.Data.RecordID == 0 {
 		t.Fatal("resolve response did not include an activity record id")
 	}
+	if socialBalance(t, db, 901) != 0 {
+		t.Fatal("download did not reserve its price")
+	}
 	var activity model.SocialActivityRecord
-	// Reproduce the screenshot: repeatedly preview three qualities. None of
-	// these requests is an actual download, so the history must remain empty.
-	for _, quality := range []string{"quality", "speed", "compat", "quality", "compat"} {
+	// Network retries reuse the same paid reservation and ticket.
+	for range 5 {
 		recorder := httptest.NewRecorder()
-		request := httptest.NewRequest(http.MethodPost, "/resolve", strings.NewReader(`{"url":"https://www.youtube.com/watch?v=abc12345678","quality":"`+quality+`"}`))
+		request := httptest.NewRequest(http.MethodPost, "/resolve", strings.NewReader(`{"url":"https://www.youtube.com/watch?v=abc12345678","quality":"compat","clientRequestId":"same-download"}`))
 		request.Header.Set("Content-Type", "application/json")
 		router.ServeHTTP(recorder, request)
-		var preview response.Result[videoDownloadResolveVO]
-		if err := json.Unmarshal(recorder.Body.Bytes(), &preview); err != nil || !preview.Success {
-			t.Fatalf("quality preview failed: %s err=%v", recorder.Body.String(), err)
+		var replay response.Result[videoDownloadResolveVO]
+		if err := json.Unmarshal(recorder.Body.Bytes(), &replay); err != nil || !replay.Success || replay.Data.RecordID != resolved.Data.RecordID {
+			t.Fatalf("paid replay failed: %s", recorder.Body)
 		}
 	}
 	var count int64
-	if err := db.Model(&model.SocialActivityRecord{}).Count(&count).Error; err != nil || count != 0 {
-		t.Fatalf("previews created %d download records, err=%v", count, err)
+	if err := db.Model(&model.SocialActivityRecord{}).Count(&count).Error; err != nil || count != 1 {
+		t.Fatalf("retries created %d download records, err=%v", count, err)
 	}
 
 	localURL, err := url.Parse(resolved.Data.DownloadURL)
@@ -344,7 +340,7 @@ func TestVideoDownloadHTTPFlowIssuesBoundTicketAndStreamsAttachment(t *testing.T
 	// A repeated request of the same ticket must not create another history row.
 	repeated := httptest.NewRecorder()
 	router.ServeHTTP(repeated, httptest.NewRequest(http.MethodGet, strings.Replace(localURL.Path, "/api/social-analysis/downloader", "", 1)+"?"+localURL.RawQuery, nil))
-	if repeated.Body.String() != "video-bytes" || downloadCalls.Load() != 2 {
+	if repeated.Body.String() == "video-bytes" || downloadCalls.Load() != 1 {
 		t.Fatalf("repeat download failed: %s", repeated.Body.String())
 	}
 	if err := db.Model(&model.SocialActivityRecord{}).Count(&count).Error; err != nil || count != 1 {

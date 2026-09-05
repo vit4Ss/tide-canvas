@@ -412,7 +412,7 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	go func() {
 		defer s.taskCancels.Delete(task.ID)
 		defer cancelTask()
-		s.runTask(taskCtx, task.ID, gh, m, userID, dto, cost, tool)
+		s.runTask(taskCtx, task.ID, gh, m, userID, dto, int(task.PointCost), tool)
 	}()
 
 	vo := toTaskVO(task)
@@ -499,7 +499,7 @@ func (s *service) createSkillRunTask(ctx context.Context, userID idgen.ID, dto g
 		// Keep the global lock order run -> step, matching action/cancel paths.
 		var run model.SkillRun
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id", "user_id", "status", "revision", "worker_id").First(&run, "id = ?", dto.SkillRunID).Error; err != nil {
+			Select("id", "user_id", "status", "revision", "worker_id", "social_activity_id").First(&run, "id = ?", dto.SkillRunID).Error; err != nil {
 			return err
 		}
 		if run.UserID != userID || run.Status != model.SkillRunRunning ||
@@ -550,6 +550,17 @@ func (s *service) createSkillRunTask(ctx context.Context, userID idgen.ID, dto g
 		}
 		if step.AiTaskID != 0 {
 			return errors.New("skill run step task is unavailable")
+		}
+
+		if run.SocialActivityID != 0 {
+			covered, err := points.ClaimSocialReport(tx, run.ID, userID, run.SocialActivityID, task.ID, dto.Handler)
+			if err != nil {
+				return err
+			}
+			if covered {
+				cost = 0
+				task.PointCost = 0
+			}
 		}
 		if err := reserveGenerationSlot(tx, userID, concurrentLimit, task.CreateTime); err != nil {
 			return err

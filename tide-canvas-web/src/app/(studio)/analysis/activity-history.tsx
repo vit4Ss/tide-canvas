@@ -103,6 +103,8 @@ interface ActivityHistorySidebarProps {
 
 export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSelect }: ActivityHistorySidebarProps) {
   const ensureSession = useAuthStore((state) => state.ensureSession);
+  const refreshBalance = useAuthStore((state) => state.fetchUser);
+  const billingStateRef = useRef("");
   const requestRef = useRef(0);
   const pendingRef = useRef(0);
   const loadedViewRef = useRef("");
@@ -139,6 +141,14 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
         return null;
       }
       const records = response.data.records;
+      // A cancelled transfer can refund just after its HTTP callback refreshed
+      // the balance. Refresh once when history confirms the billing change,
+      // without refreshing the account on every download-status poll.
+      const billingState = records.map(row => `${row.id}:${row.pointCost}:${row.refunded}`).join("|");
+      if (billingStateRef.current !== billingState) {
+        billingStateRef.current = billingState;
+        void refreshBalance(true);
+      }
       loadedViewRef.current = view;
       setRows((current) => reconcileHistoryRows(current, records));
       setTotal(response.data.total);
@@ -155,7 +165,7 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
         setRefreshing(false);
       }
     }
-  }, [ensureSession, page, type]);
+  }, [ensureSession, refreshBalance, page, type]);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => void load(true));
@@ -285,6 +295,7 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
                           : row.status === "succeeded" ? <><Check aria-hidden />已完成</>
                           : statusLabel(row.status)}
                       </span>
+                      {!!row.pointCost && <span title={row.refunded ? "本次执行积分已退回" : "本次执行扣除的积分"}>{row.refunded ? `已退 ${row.pointCost}` : `${row.pointCost} 积分`}</span>}
                       {selected ? <span className={styles.historyViewing}>正在查看</span> : null}
                     </span>
                   </button>

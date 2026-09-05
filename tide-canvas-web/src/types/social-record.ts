@@ -28,6 +28,8 @@ export interface SocialActivityRecordVO {
   estimatedBytes?: number;
   downloadedBytes?: number;
   analysisRunId?: string;
+  pointCost?: number;
+  refunded?: boolean;
   errorMessage?: string;
   expiresAt?: string;
   createTime: string;

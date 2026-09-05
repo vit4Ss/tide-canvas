@@ -23,6 +23,7 @@ import (
 	"gorm.io/gorm"
 
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
@@ -64,11 +65,14 @@ var platformLabels = map[platform]string{
 }
 
 type inspectDTO struct {
-	URL  string `json:"url" binding:"required"`
-	Kind string `json:"kind" binding:"required,oneof=content account"`
+	ExpectedPointCost *int   `json:"expectedPointCost" binding:"omitempty,min=1,max=100000"`
+	ClientRequestID   string `json:"clientRequestId" binding:"max=100"`
+	URL               string `json:"url" binding:"required"`
+	Kind              string `json:"kind" binding:"required,oneof=content account"`
 }
 
 type statusVO struct {
+	PointCost              int          `json:"pointCost"`
 	Enabled                bool         `json:"enabled"`
 	Configured             bool         `json:"configured"`
 	VideoAnalysisSkillID   string       `json:"videoAnalysisSkillId"`
@@ -125,6 +129,7 @@ type workVO struct {
 }
 
 type inspectVO struct {
+	PointCost    int        `json:"pointCost"`
 	RecordID     idgen.ID   `json:"recordId,omitempty"`
 	Platform     platform   `json:"platform"`
 	PlatformName string     `json:"platformName"`
@@ -180,6 +185,12 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	g.GET("/downloader/platforms", h.downloaderPlatforms)
 	g.POST("/downloader/resolve", middleware.RateLimit(d, 15, time.Minute), h.resolveVideoDownload)
 	g.POST("/inspect", middleware.RateLimit(d, 20, time.Minute), h.inspect)
+	go func() {
+		h.reconcileCharges()
+		for range time.NewTicker(time.Minute).C {
+			h.reconcileCharges()
+		}
+	}()
 }
 
 func newTikHubHTTPClient() *http.Client {
@@ -238,6 +249,11 @@ func (h *handler) loadSettingsContext(ctx context.Context) (settings, error) {
 }
 
 func (h *handler) status(c *gin.Context) {
+	price, priceErr := points.SocialPrice(h.db, model.SocialActivityAnalysis)
+	if priceErr != nil {
+		writeChargeError(c, priceErr)
+		return
+	}
 	cfg, err := h.loadSettings()
 	if err != nil {
 		response.Fail(c, response.CodeServerError, "failed to load social analysis settings")
@@ -256,7 +272,8 @@ func (h *handler) status(c *gin.Context) {
 		Where("seed_key = ? AND status = 1", "tool-account-analysis").
 		Limit(1).Pluck("id", &accountAnalysisSkillID)
 	response.OK(c, statusVO{
-		Enabled: cfg.enabled, Configured: cfg.apiKey != "",
+		PointCost: price,
+		Enabled:   cfg.enabled, Configured: cfg.apiKey != "",
 		VideoAnalysisSkillID: skillIDString(videoAnalysisSkillID), ImageAnalysisSkillID: skillIDString(imageAnalysisSkillID),
 		AccountAnalysisSkillID: skillIDString(accountAnalysisSkillID),
 		Platforms:              supportedPlatforms(),
@@ -291,10 +308,10 @@ func (h *handler) inspect(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, msg)
 		return
 	}
-	activity := h.beginActivity(model.SocialActivityRecord{
+	activity := &model.SocialActivityRecord{
 		UserID: middleware.CurrentUserID(c), ActivityType: model.SocialActivityAnalysis,
 		Kind: dto.Kind, Platform: string(p), SourceURL: parsed.String(), Status: model.SocialActivityProcessing,
-	})
+	}
 	cfg, err := h.loadSettings()
 	if err != nil {
 		h.failActivity(activity, "读取内容拆解配置失败")
@@ -311,12 +328,24 @@ func (h *handler) inspect(c *gin.Context) {
 		response.Fail(c, response.CodeToolDisabled, "内容拆解服务尚未配置，请联系管理员配置 TikHub API Key")
 		return
 	}
+	existed, chargeErr := points.BeginSocial(h.db, activity, dto.ClientRequestID, dto.ExpectedPointCost)
+	if chargeErr != nil {
+		writeChargeError(c, chargeErr)
+		return
+	}
+	if existed {
+		replaySocial(c, activity)
+		return
+	}
+	defer h.failActivity(activity, "内容拆解未完成，积分已退回")
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Minute)
+	defer cancel()
 
 	var result *inspectVO
 	if dto.Kind == "account" {
-		result, err = h.inspectAccount(c.Request.Context(), cfg, p, parsed)
+		result, err = h.inspectAccount(ctx, cfg, p, parsed)
 	} else {
-		result, err = h.inspectContent(c.Request.Context(), cfg, p, parsed)
+		result, err = h.inspectContent(ctx, cfg, p, parsed)
 	}
 	if err != nil {
 		logger.L().Warn("social analysis inspect failed",
@@ -332,6 +361,7 @@ func (h *handler) inspect(c *gin.Context) {
 		response.Fail(c, response.CodeServerError, "social analysis upstream request failed")
 		return
 	}
+	result.PointCost = activity.PointCost
 	result.Kind = dto.Kind
 	result.SourceURL = parsed.String()
 	result.Platform = p
@@ -355,10 +385,18 @@ func (h *handler) inspect(c *gin.Context) {
 		activityUpdate["snapshot_json"] = string(snapshot)
 	} else if marshalErr != nil {
 		logger.L().Warn("failed to marshal social analysis snapshot", zap.Error(marshalErr))
+		response.Fail(c, response.CodeServerError, "分析结果保存失败")
+		return
 	} else {
 		logger.L().Warn("social analysis snapshot exceeds storage limit", zap.Int("bytes", len(snapshot)))
+		response.Fail(c, response.CodeBadRequest, "分析结果过大，请缩小范围后重试，积分已退回")
+		return
 	}
-	h.updateActivity(activity, activityUpdate)
+	updated := h.db.Model(activity).Where("status = ? AND refunded = ?", model.SocialActivityProcessing, false).Updates(activityUpdate)
+	if updated.Error != nil || updated.RowsAffected != 1 {
+		response.Fail(c, response.CodeServerError, "分析结果保存失败")
+		return
+	}
 	response.OK(c, result)
 }
 

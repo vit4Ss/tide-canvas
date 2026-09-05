@@ -22,6 +22,7 @@ import (
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/handler/ai"
+	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
@@ -319,6 +320,9 @@ func (h *handler) action(c *gin.Context) {
 		response.Fail(c, response.CodeServerError, "failed to reload skill run")
 		return
 	}
+	if err := points.RefundFailedSocialRun(h.svc.db, run.ID); err != nil {
+		logger.L().Error("social report refund failed", zap.Error(err))
+	}
 	vo, err := h.svc.toVO(run)
 	if err != nil {
 		response.Fail(c, response.CodeServerError, "failed to load skill run")
@@ -465,7 +469,7 @@ func (s *service) createRun(ctx context.Context, userID idgen.ID, dto CreateDTO)
 	run := &model.SkillRun{
 		UserID: userID, SkillID: skill.ID, SkillVersionID: version.ID, EntryPoint: entryPoint, TargetType: targetType,
 		ProjectID: projectID, ConversationID: conversationID, Status: model.SkillRunQueued,
-		Progress: 0, Input: string(rawInput), Context: "{}",
+		Progress: 0, Input: string(rawInput), Context: "{}", SocialActivityID: activityRecordID,
 	}
 	run.ClientRequestID = &clientID
 	run.ClientRequestHash = requestHash
@@ -563,6 +567,7 @@ func analysisActivityContext(activityRecordID idgen.ID, parameters map[string]an
 
 func linkAnalysisActivity(db *gorm.DB, activityRecordID, userID, runID idgen.ID, sourceURL, platform, kind string) error {
 	linked := db.Model(&model.SocialActivityRecord{}).
+		Where("status = ? AND refunded = ? AND point_cost > 0", model.SocialActivitySucceeded, false).
 		Where("id = ? AND user_id = ? AND activity_type = ? AND source_url = ? AND platform = ? AND kind = ? AND (analysis_run_id = 0 OR analysis_run_id = ?)",
 			activityRecordID, userID, model.SocialActivityAnalysis, sourceURL, platform, kind, runID).
 		Update("analysis_run_id", runID)
@@ -919,6 +924,9 @@ func (s *service) applyAction(ctx context.Context, run *model.SkillRun, dto Acti
 			}
 			if locked.Status != model.SkillRunFailed && locked.Status != model.SkillRunCancelled {
 				return invalid("only failed or cancelled runs can be retried")
+			}
+			if locked.SocialActivityID != 0 {
+				return invalid("本次拆解已结束，请重新获取数据后分析；失败任务的积分会自动退回")
 			}
 			// Cancellation/failure hides final artifacts without destroying their
 			// declared role. Restore reusable succeeded output before replay; an

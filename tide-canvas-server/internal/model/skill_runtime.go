@@ -89,13 +89,15 @@ func (SkillFile) TableName() string { return "skill_file" }
 // progress, but this row is always authoritative and supports restart recovery.
 type SkillRun struct {
 	BaseModel
-	UserID            idgen.ID `gorm:"column:user_id;not null;index;uniqueIndex:idx_skill_run_user_client,priority:1" json:"userId"`
-	SkillID           idgen.ID `gorm:"column:skill_id;not null;index" json:"skillId"`
-	SkillVersionID    idgen.ID `gorm:"column:skill_version_id;not null;index" json:"skillVersionId"`
-	EntryPoint        string   `gorm:"column:entry_point;size:16;not null;index" json:"entryPoint"`
-	TargetType        string   `gorm:"column:target_type;size:32;index" json:"targetType"`
-	ProjectID         idgen.ID `gorm:"column:project_id;default:0;index" json:"projectId"`
-	ConversationID    idgen.ID `gorm:"column:conversation_id;default:0;index" json:"conversationId"`
+	UserID         idgen.ID `gorm:"column:user_id;not null;index;uniqueIndex:idx_skill_run_user_client,priority:1" json:"userId"`
+	SkillID        idgen.ID `gorm:"column:skill_id;not null;index" json:"skillId"`
+	SkillVersionID idgen.ID `gorm:"column:skill_version_id;not null;index" json:"skillVersionId"`
+	EntryPoint     string   `gorm:"column:entry_point;size:16;not null;index" json:"entryPoint"`
+	TargetType     string   `gorm:"column:target_type;size:32;index" json:"targetType"`
+	ProjectID      idgen.ID `gorm:"column:project_id;default:0;index" json:"projectId"`
+	ConversationID idgen.ID `gorm:"column:conversation_id;default:0;index" json:"conversationId"`
+	// Immutable server-side billing linkage; never inferred from editable input.
+	SocialActivityID  idgen.ID `gorm:"column:social_activity_id;not null;default:0;index" json:"-"`
 	ClientRequestID   *string  `gorm:"column:client_request_id;size:96;uniqueIndex:idx_skill_run_user_client,priority:2" json:"clientRequestId,omitempty"`
 	ClientRequestHash string   `gorm:"column:client_request_hash;size:64" json:"-"`
 	// LastActionRequestID makes confirm/revise/input/retry/cancel replay-safe per

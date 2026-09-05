@@ -24,7 +24,7 @@ func activityTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.User{}, &model.SocialActivityRecord{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.SocialActivityRecord{}, &model.SysConfig{}, &model.PointRecord{}, &model.PointRefundReceipt{}, &model.AiTask{}, &model.SkillRun{}, &model.Skill{}); err != nil {
 		t.Fatal(err)
 	}
 	return db

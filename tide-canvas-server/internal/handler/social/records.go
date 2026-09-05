@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	"tidecanvas/internal/handler/points"
 
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
@@ -31,6 +32,8 @@ var validActivityStatuses = map[string]bool{
 }
 
 type ActivityRecordVO struct {
+	PointCost       int        `json:"pointCost"`
+	Refunded        bool       `json:"refunded"`
 	ID              idgen.ID   `json:"id"`
 	UserID          idgen.ID   `json:"userId"`
 	UserName        string     `json:"userName"`
@@ -58,7 +61,8 @@ type ActivityRecordVO struct {
 
 type ActivityRecordDetailVO struct {
 	ActivityRecordVO
-	Snapshot json.RawMessage `json:"snapshot,omitempty"`
+	Download *videoDownloadResolveVO `json:"download,omitempty"`
+	Snapshot json.RawMessage         `json:"snapshot,omitempty"`
 }
 
 func parseActivityPositive(raw string, fallback int) int {
@@ -115,13 +119,13 @@ func (h *handler) beginActivity(record model.SocialActivityRecord) *model.Social
 	return &record
 }
 
-func (h *handler) updateActivity(record *model.SocialActivityRecord, values map[string]any) {
-	if h == nil || h.db == nil || record == nil || record.ID == 0 || record.UserID == 0 || len(values) == 0 {
+func (h *handler) completeDownloadActivity(record *model.SocialActivityRecord, downloadedBytes int64) {
+	if h == nil || h.db == nil || record == nil || record.ID == 0 || record.UserID == 0 || downloadedBytes <= 0 {
 		return
 	}
 	if err := h.db.Model(&model.SocialActivityRecord{}).
-		Where("id = ? AND user_id = ?", record.ID, record.UserID).
-		Updates(values).Error; err != nil {
+		Where("id = ? AND user_id = ? AND activity_type = ? AND status = ? AND refunded = ?", record.ID, record.UserID, model.SocialActivityDownload, model.SocialActivityDownloading, false).
+		Updates(map[string]any{"status": model.SocialActivitySucceeded, "downloaded_bytes": downloadedBytes, "error_message": "", "completed_at": time.Now()}).Error; err != nil {
 		logger.L().Warn("failed to update social activity record", zap.String("recordId", record.ID.String()), zap.Error(err))
 	}
 }
@@ -130,12 +134,7 @@ func (h *handler) failActivity(record *model.SocialActivityRecord, message strin
 	if h == nil || h.db == nil || record == nil || record.ID == 0 || record.UserID == 0 {
 		return
 	}
-	now := time.Now()
-	if err := h.db.Model(&model.SocialActivityRecord{}).
-		Where("id = ? AND user_id = ? AND status <> ?", record.ID, record.UserID, model.SocialActivitySucceeded).
-		Updates(map[string]any{
-			"status": model.SocialActivityFailed, "error_message": activityString(message, 1000), "completed_at": now,
-		}).Error; err != nil {
+	if err := points.FailSocial(h.db, record.ID, activityString(message, 1000), false); err != nil {
 		logger.L().Warn("failed to mark social activity as failed", zap.String("recordId", record.ID.String()), zap.Error(err))
 	}
 }
@@ -166,7 +165,13 @@ func (h *handler) activityRecordDetail(c *gin.Context) {
 	var user model.User
 	_ = h.db.Unscoped().First(&user, "id = ?", userID).Error
 	detail := ActivityRecordDetailVO{ActivityRecordVO: activityRecordVO(record, user)}
-	if raw := strings.TrimSpace(record.SnapshotJSON); raw != "" && json.Valid([]byte(raw)) {
+	if record.ActivityType == model.SocialActivityDownload && record.PointCost > 0 && !record.Refunded && record.Status == model.SocialActivityReady && record.ExpiresAt != nil && record.ExpiresAt.After(time.Now()) {
+		var download videoDownloadResolveVO
+		if json.Unmarshal([]byte(record.SnapshotJSON), &download) == nil && download.RecordID == record.ID {
+			detail.Download = &download
+		}
+	}
+	if raw := strings.TrimSpace(record.SnapshotJSON); record.ActivityType == model.SocialActivityAnalysis && raw != "" && json.Valid([]byte(raw)) {
 		detail.Snapshot = json.RawMessage(raw)
 	}
 	response.OK(c, detail)
@@ -185,8 +190,11 @@ func closeAbandonedDownloads(db *gorm.DB, ownerID *idgen.ID, now time.Time) {
 	if db == nil {
 		return
 	}
+	if err := points.ReconcileSocialDownloads(db, ownerID, now); err != nil {
+		logger.L().Error("failed to reconcile paid download records", zap.Error(err))
+	}
 	tx := db.Model(&model.SocialActivityRecord{}).Where(
-		"activity_type = ? AND status = ? AND update_time < ?",
+		"point_cost = 0 AND activity_type = ? AND status = ? AND update_time < ?",
 		model.SocialActivityDownload, model.SocialActivityDownloading, now.Add(-videoDownloadMaxTime-time.Minute),
 	)
 	if ownerID != nil {
@@ -237,7 +245,7 @@ func writeActivityRecords(c *gin.Context, db *gorm.DB, ownerID *idgen.ID, allowU
 	expiryNow := time.Now()
 	closeAbandonedDownloads(db, ownerID, expiryNow)
 	expiryTx := db.Model(&model.SocialActivityRecord{}).
-		Where("activity_type = ? AND status = ? AND expires_at IS NOT NULL AND expires_at < ?", model.SocialActivityDownload, model.SocialActivityReady, expiryNow)
+		Where("point_cost = 0 AND activity_type = ? AND status = ? AND expires_at IS NOT NULL AND expires_at < ?", model.SocialActivityDownload, model.SocialActivityReady, expiryNow)
 	if ownerID != nil {
 		expiryTx = expiryTx.Where("user_id = ?", *ownerID)
 	}
@@ -252,7 +260,7 @@ func writeActivityRecords(c *gin.Context, db *gorm.DB, ownerID *idgen.ID, allowU
 		tx = tx.Where("user_id = ?", *ownerID)
 		// Old versions logged every successful preview/quality switch. Keep those
 		// rows available to administrators, but don't present them as downloads.
-		tx = tx.Where("activity_type <> ? OR status NOT IN ?", model.SocialActivityDownload,
+		tx = tx.Where("point_cost > 0 OR activity_type <> ? OR status NOT IN ?", model.SocialActivityDownload,
 			[]string{model.SocialActivityProcessing, model.SocialActivityReady, model.SocialActivityExpired})
 	} else if allowUserFilter {
 		if raw := strings.TrimSpace(c.Query("userId")); raw != "" {
@@ -347,6 +355,7 @@ func activityRecordVO(record model.SocialActivityRecord, user model.User) Activi
 		avatarURL = validHTTPURL(snapshot.Profile.AvatarURL)
 	}
 	return ActivityRecordVO{
+		PointCost: record.PointCost, Refunded: record.Refunded,
 		ID: record.ID, UserID: record.UserID, UserName: activityUserName(user, record.UserID), UserEmail: user.Email,
 		Type: record.ActivityType, Kind: record.Kind, Platform: record.Platform, SourceURL: record.SourceURL,
 		Title: record.Title, AvatarURL: avatarURL, Status: record.Status, Quality: record.Quality,

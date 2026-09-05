@@ -20,7 +20,7 @@ interface AuthState {
   /** 用户名+密码免邮箱注册：成功即持有会话（注册即登录） */
   registerLocal: (dto: RegisterLocalDTO) => Promise<void>;
   logout: () => Promise<void>;
-  fetchUser: () => Promise<void>;
+  fetchUser: (fresh?: boolean) => Promise<void>;
   setUser: (user: UserVO | null) => void;
   /**
    * 确保存在有效会话：
@@ -108,8 +108,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  fetchUser: () => {
-    if (fetchUserPromise) return fetchUserPromise;
+  fetchUser: (fresh = false) => {
+    if (fetchUserPromise) {
+      // A mutation may have committed after the in-flight query read the
+      // balance. Its caller needs one query started after that older request.
+      return fresh ? fetchUserPromise.then(() => get().fetchUser()) : fetchUserPromise;
+    }
     fetchUserPromise = (async () => {
       const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
       if (!token) {

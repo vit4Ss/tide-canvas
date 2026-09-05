@@ -40,6 +40,11 @@ type SocialActivityRecord struct {
 	EstimatedBytes  int64          `gorm:"column:estimated_bytes;not null;default:0" json:"estimatedBytes"`
 	DownloadedBytes int64          `gorm:"column:downloaded_bytes;not null;default:0" json:"downloadedBytes"`
 	AnalysisRunID   idgen.ID       `gorm:"column:analysis_run_id;not null;default:0;index" json:"analysisRunId,omitempty"`
+	PointCost       int            `gorm:"column:point_cost;not null;default:0" json:"pointCost"`
+	Refunded        bool           `gorm:"column:refunded;not null;default:false" json:"refunded"`
+	ReportTaskID    idgen.ID       `gorm:"column:report_task_id;not null;default:0;index" json:"-"`
+	RequestKey      *string        `gorm:"column:request_key;size:160;uniqueIndex" json:"-"`
+	RequestHash     string         `gorm:"column:request_hash;size:64" json:"-"`
 	SnapshotJSON    string         `gorm:"column:snapshot_json;type:longtext" json:"-"`
 	ErrorMessage    string         `gorm:"column:error_message;type:text" json:"errorMessage"`
 	ExpiresAt       *time.Time     `gorm:"column:expires_at;index;index:idx_social_activity_expiry,priority:3" json:"expiresAt,omitempty"`

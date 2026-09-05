@@ -57,7 +57,8 @@ export function startDownloadHistoryPolling(
     }
     failures = 0;
     const watched = rows.find((row) => row.id === watchId);
-    if (watched && ["succeeded", "failed", "expired"].includes(watched.status)) return;
+    if (watched?.status === "succeeded") return;
+    if (watched && ["failed", "expired"].includes(watched.status) && !((watched.pointCost ?? 0) > 0 && !watched.refunded)) return;
     // Allow time for the native download request to create its history row,
     // but do not poll forever if the request never started or left this page.
     missing = watched ? 0 : missing + 1;

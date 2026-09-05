@@ -19,7 +19,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-	"gorm.io/gorm/clause"
+	"tidecanvas/internal/handler/points"
 
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
@@ -40,6 +40,7 @@ const (
 var videoDownloadTokenPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]{1,512}$`)
 
 type downloaderCapabilitiesVO struct {
+	PointCost       int      `json:"pointCost"`
 	Enabled         bool     `json:"enabled"`
 	Platforms       []string `json:"platforms"`
 	MaxFileBytes    int64    `json:"maxFileBytes"`
@@ -47,11 +48,14 @@ type downloaderCapabilitiesVO struct {
 }
 
 type videoDownloadResolveDTO struct {
-	URL     string `json:"url" binding:"required"`
-	Quality string `json:"quality"`
+	ExpectedPointCost *int   `json:"expectedPointCost" binding:"omitempty,min=1,max=100000"`
+	ClientRequestID   string `json:"clientRequestId" binding:"max=100"`
+	URL               string `json:"url" binding:"required"`
+	Quality           string `json:"quality"`
 }
 
 type videoDownloadResolveVO struct {
+	PointCost       int      `json:"pointCost"`
 	ID              string   `json:"id"`
 	Platform        string   `json:"platform"`
 	Title           string   `json:"title"`
@@ -71,9 +75,8 @@ type videoDownloadResolveVO struct {
 	previewSource string
 }
 
-// This preview metadata is bound to the download ticket, but is not persisted
-// until the browser actually requests the attachment. Quality previews therefore
-// don't create download history, and retries of one ticket share one record ID.
+// Metadata is signed together with the paid execution ID. The durable record
+// owns billing and one transfer; callers cannot replace the source or owner.
 type videoDownloadActivity struct {
 	SourceURL       string `json:"u"`
 	Platform        string `json:"p"`
@@ -137,6 +140,12 @@ func (h *handler) downloaderPlatforms(c *gin.Context) {
 		writeVideoDownloaderError(c, err)
 		return
 	}
+	price, err := points.SocialPrice(h.db, model.SocialActivityDownload)
+	if err != nil {
+		writeChargeError(c, err)
+		return
+	}
+	capabilities.PointCost = price
 	response.OK(c, capabilities)
 }
 
@@ -252,7 +261,25 @@ func (h *handler) resolveVideoDownload(c *gin.Context) {
 		response.Fail(c, response.CodeToolDisabled, "视频下载服务当前未启用")
 		return
 	}
-	resolved, err := h.downloader.resolve(c.Request.Context(), sourceURL, quality)
+	activity := &model.SocialActivityRecord{UserID: middleware.CurrentUserID(c), ActivityType: model.SocialActivityDownload, SourceURL: sourceURL, Quality: quality, Status: model.SocialActivityProcessing}
+	existed, chargeErr := points.BeginSocial(h.db, activity, dto.ClientRequestID, dto.ExpectedPointCost)
+	if chargeErr != nil {
+		writeChargeError(c, chargeErr)
+		return
+	}
+	if existed {
+		replaySocial(c, activity)
+		return
+	}
+	prepared := false
+	defer func() {
+		if !prepared {
+			h.failActivity(activity, "视频解析未完成，积分已退回")
+		}
+	}()
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 4*time.Minute)
+	defer cancel()
+	resolved, err := h.downloader.resolve(ctx, sourceURL, quality)
 	if err != nil {
 		writeVideoDownloaderError(c, err)
 		return
@@ -282,7 +309,7 @@ func (h *handler) resolveVideoDownload(c *gin.Context) {
 		ttl = remaining
 	}
 	name := downloadVideoFileName(resolved.Title)
-	recordID := idgen.Next()
+	recordID := activity.ID
 	expiresAt := time.Now().Add(ttl)
 	metadataJSON, _ := json.Marshal(videoDownloadActivity{
 		SourceURL: sourceURL, Platform: resolved.Platform, Title: activityString(resolved.Title, 256),
@@ -302,17 +329,34 @@ func (h *handler) resolveVideoDownload(c *gin.Context) {
 	resolved.RecordID = recordID
 	resolved.DownloadURL = "/api/social-analysis/downloader/download/" + url.PathEscape(resolved.ID) + "?" + query.Encode()
 	resolved.PreviewURL = ""
-	if resolved.previewSource != "" {
-		resolved.PreviewURL, err = issueVideoPreviewURL(middleware.CurrentUserID(c), middleware.CurrentRole(c), resolved.Platform, resolved.previewSource, ttl)
-		if err != nil {
-			logger.L().Warn("failed to issue video preview ticket", zap.Error(err))
-		}
-	}
+	// Playback uses the file already delivered to the browser. Issuing a
+	// standalone full-video preview here would let an unused reservation be
+	// refunded after its video had already been consumed via the preview URL.
 	// Avoid issuing a URL that common reverse proxies cannot accept.
 	if len(metadata) > 8192 || len(resolved.DownloadURL) > 7500 {
 		response.Fail(c, response.CodeBadRequest, "视频链接或标题过长，请使用简短的作品链接重新解析")
 		return
 	}
+	resolved.PointCost = activity.PointCost
+	snapshot, err := json.Marshal(resolved)
+	if err != nil {
+		writeChargeError(c, err)
+		return
+	}
+	updated := h.db.Model(activity).Where("status = ? AND refunded = ?", model.SocialActivityProcessing, false).Updates(map[string]any{
+		"status": model.SocialActivityReady, "title": activityString(resolved.Title, 256), "platform": resolved.Platform,
+		"duration_seconds": resolved.DurationSeconds, "width": resolved.Width, "height": resolved.Height,
+		"estimated_bytes": resolved.EstimatedBytes, "expires_at": expiresAt, "snapshot_json": string(snapshot),
+	})
+	if updated.Error != nil {
+		writeChargeError(c, updated.Error)
+		return
+	}
+	if updated.RowsAffected != 1 {
+		writeChargeError(c, points.ErrSocialUnavailable)
+		return
+	}
+	prepared = true
 	response.OK(c, resolved)
 }
 
@@ -417,35 +461,26 @@ func (h *handler) downloadVideo(c *gin.Context) {
 		}
 		defer h.activeDownloads.Delete(key)
 	}
-	if activity != nil && h.db != nil {
-		if raw, ok := c.Get("socialDownloadActivity"); ok {
-			preview := raw.(videoDownloadActivity)
-			expiresAt := time.Unix(preview.ExpiresAt, 0)
-			record := model.SocialActivityRecord{
-				ID: activity.ID, UserID: activity.UserID, ActivityType: model.SocialActivityDownload,
-				SourceURL: preview.SourceURL, Platform: preview.Platform, Title: preview.Title,
-				Quality: preview.Quality, Status: model.SocialActivityDownloading,
-				DurationSeconds: preview.DurationSeconds, Width: preview.Width, Height: preview.Height,
-				EstimatedBytes: preview.EstimatedBytes, ExpiresAt: &expiresAt,
-			}
-			if err := h.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&record).Error; err != nil {
-				logger.L().Warn("failed to create video download record", zap.Error(err))
-				response.Fail(c, response.CodeServerError, "failed to create video download record")
-				return
-			}
-		}
-		// Also protect legacy tickets, whose records were created at resolve time.
-		if err := h.db.Where("id = ? AND user_id = ? AND activity_type = ?", activity.ID, activity.UserID, model.SocialActivityDownload).First(activity).Error; err != nil {
-			response.Fail(c, response.CodeNotFound, "下载记录不存在，请重新解析")
-			return
-		}
-		if err := h.db.Model(&model.SocialActivityRecord{}).
-			Where("id = ? AND user_id = ? AND status <> ?", activity.ID, activity.UserID, model.SocialActivitySucceeded).
-			Updates(map[string]any{"status": model.SocialActivityDownloading, "error_message": "", "completed_at": nil}).Error; err != nil {
-			response.Fail(c, response.CodeServerError, "failed to update video download record")
-			return
-		}
+	if activity == nil || h.db == nil {
+		response.Fail(c, response.CodeBadRequest, "下载凭证已失效，请重新发起下载")
+		return
 	}
+	if err := h.db.Where("id = ? AND user_id = ? AND activity_type = ?", activity.ID, activity.UserID, model.SocialActivityDownload).First(activity).Error; err != nil {
+		response.Fail(c, response.CodeNotFound, "下载记录不存在，请重新发起下载")
+		return
+	}
+	// One paid ticket can start one attachment transfer across all instances.
+	claimed := h.db.Model(activity).Where("status = ? AND point_cost > 0 AND refunded = ? AND expires_at > ?", model.SocialActivityReady, false, time.Now()).
+		Updates(map[string]any{"status": model.SocialActivityDownloading, "error_message": "", "completed_at": nil})
+	if claimed.Error != nil {
+		writeChargeError(c, claimed.Error)
+		return
+	}
+	if claimed.RowsAffected != 1 {
+		writeChargeError(c, points.ErrSocialUnavailable)
+		return
+	}
+	defer h.failActivity(activity, "下载未完成，积分已退回")
 	if h.downloader == nil {
 		h.failActivity(activity, "视频下载服务尚未配置")
 		response.Fail(c, response.CodeToolDisabled, "视频下载服务尚未配置")
@@ -519,13 +554,9 @@ func (h *handler) downloadVideo(c *gin.Context) {
 		defer controller.SetWriteDeadline(time.Time{})
 	}
 	written, copyErr := io.Copy(c.Writer, io.LimitReader(resp.Body, maxVideoDownloadBytes+1))
-	if copyErr != nil || written > maxVideoDownloadBytes || (resp.ContentLength >= 0 && written != resp.ContentLength) {
+	if copyErr != nil || written == 0 || written > maxVideoDownloadBytes || (resp.ContentLength >= 0 && written != resp.ContentLength) {
 		h.failActivity(activity, "下载连接提前结束")
 		return
 	}
-	completedAt := time.Now()
-	h.updateActivity(activity, map[string]any{
-		"status": model.SocialActivitySucceeded, "downloaded_bytes": written,
-		"error_message": "", "completed_at": completedAt,
-	})
+	h.completeDownloadActivity(activity, written)
 }

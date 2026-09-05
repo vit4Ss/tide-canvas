@@ -18,6 +18,7 @@ export interface SocialPlatformVO {
 }
 
 export interface SocialAnalysisStatusVO {
+  pointCost: number;
   enabled: boolean;
   configured: boolean;
   videoAnalysisSkillId?: string;
@@ -76,6 +77,7 @@ export interface SocialWorkVO {
 }
 
 export interface SocialInspectVO {
+	pointCost?: number;
   recordId?: string;
   platform: SocialPlatform;
   platformName: string;
@@ -91,6 +93,7 @@ export interface SocialInspectVO {
 export type VideoDownloadQuality = "quality" | "compat" | "speed";
 
 export interface VideoDownloaderCapabilitiesVO {
+  pointCost: number;
   enabled: boolean;
   platforms: string[];
   maxFileBytes: number;
@@ -98,6 +101,7 @@ export interface VideoDownloaderCapabilitiesVO {
 }
 
 export interface VideoDownloadResolveVO {
+  pointCost?: number;
   id: string;
   platform: string;
   title: string;
@@ -117,16 +121,17 @@ export interface VideoDownloadResolveVO {
 }
 
 export type SocialActivityRecordDetailVO = SocialActivityRecordVO & {
+	download?: VideoDownloadResolveVO;
   snapshot?: SocialInspectVO;
 };
 
 export const socialAnalysisApi = {
   status: () => http.get<SocialAnalysisStatusVO>("/api/social-analysis/status"),
-  inspect: (data: { url: string; kind: SocialAnalysisKind }) =>
+  inspect: (data: { url: string; kind: SocialAnalysisKind; clientRequestId?: string; expectedPointCost?: number }) =>
     http.post<SocialInspectVO>("/api/social-analysis/inspect", data),
   downloaderPlatforms: () =>
     http.get<VideoDownloaderCapabilitiesVO>("/api/social-analysis/downloader/platforms"),
-  resolveDownload: (data: { url: string; quality: VideoDownloadQuality }) =>
+  resolveDownload: (data: { url: string; quality: VideoDownloadQuality; clientRequestId?: string; expectedPointCost?: number }) =>
     http.post<VideoDownloadResolveVO>("/api/social-analysis/downloader/resolve", data),
   records: (query: SocialActivityRecordQuery = {}) =>
     http.get<PageData<SocialActivityRecordVO>>("/api/social-analysis/records", toParams(query)),

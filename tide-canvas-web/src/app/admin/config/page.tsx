@@ -127,6 +127,8 @@ const BOOL_KEYS: Record<string, { on: string; off: string }> = {
 };
 
 const NUMBER_KEYS: Record<string, { min: number; max?: number; step?: number | "any" }> = {
+  "social.download.pointCost": { min: 1, max: 100000, step: 1 },
+  "social.analysis.pointCost": { min: 1, max: 100000, step: 1 },
   "ai.userConcurrentLimit": { min: 1, max: 100, step: 1 },
   "balance.dlapi.lowBalance": { min: 0, step: "any" },
   "balance.mikoto.lowBalance": { min: 0, step: "any" },
@@ -171,6 +173,8 @@ const BASELINE_KEYS = new Set([
   "social.tikhub.enabled",
   "social.tikhub.baseUrl",
   "social.tikhub.apiKey",
+  "social.download.pointCost",
+  "social.analysis.pointCost",
   "balance.dlapi.enabled",
   "balance.dlapi.userId",
   "balance.dlapi.accessToken",

@@ -16,6 +16,7 @@ import (
 
 	"tidecanvas/internal/handler/ai"
 	filehandler "tidecanvas/internal/handler/file"
+	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/boundedtext"
 	"tidecanvas/internal/pkg/chatattach"
@@ -957,6 +958,11 @@ func (s *service) failStep(run *model.SkillRun, stepID idgen.ID, message string)
 }
 
 func (s *service) failRun(runID idgen.ID, revision int64, message string) {
+	defer func() {
+		if err := points.RefundFailedSocialRun(s.db, runID); err != nil {
+			logger.L().Error("social report refund failed", zap.Error(err))
+		}
+	}()
 	now := time.Now()
 	_ = s.db.Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&model.SkillRun{}).Where("id = ? AND revision = ? AND worker_id = ? AND status = ?", runID, revision, s.workerID, model.SkillRunRunning).Updates(map[string]any{

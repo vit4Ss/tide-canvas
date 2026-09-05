@@ -73,7 +73,7 @@ test("public video downloader verifies the file before browser saving and shows 
   assert.match(api, /\/api\/social-analysis\/downloader\/resolve/);
   assert.match(workbench, /pinterest: "Pinterest"/);
   assert.match(workbench, /instagram: "Instagram"/);
-  assert.match(workbench, /resolveDownload\(\{ url: sourceURL, quality: "quality" \}\)/);
+  assert.match(workbench, /resolveDownload\(\{ url: sourceURL, quality: "quality", clientRequestId: downloadRequestRef\.current\.id, expectedPointCost: downloadPointCost \}\)/);
   assert.match(workbench, /videoDownload\.start\(resolved/);
   assert.match(workbench, /if \(downloadAfterResolve\) startVideoFile\(downloadResult\)/);
   assert.match(workbench, /if \(downloadAfterResolve\) startVideoFile\(response\.data\)/);
@@ -239,7 +239,7 @@ test("stylesheet stays inside the project design system", () => {
     .filter(({ selector, body }) => !/dashed/.test(body) && !/skeleton/i.test(selector))
     .map(({ selector }) => selector);
   const perTab = {
-    breakdownContent: [".composer", ".contentHero", ".contentSignals", ".contentStrategy", ".runPanel"],
+    breakdownContent: [".composer", ".contentHero", ".contentSignals", ".runPanel"],
     breakdownAccount: [".composer", ".accountStrategy", ".runPanel"],
     download: [".getter", ".posterCard", ".formatCard", ".infoCard", ".historicalDownload", ".runPanel"],
   };
@@ -364,19 +364,21 @@ test("account inspection automatically starts one strategy run without a second 
   assert.doesNotMatch(workbench, /busy \? "正在启动分析" : "生成账号策略"/);
 });
 
-test("single-work mode has a factual dashboard and a dedicated timecode report workspace", () => {
+test("single-work mode uses the full width for its factual dashboard", () => {
   assert.match(workbench, /function ContentDashboard/);
   assert.match(workbench, /result=\{result\}[\s\S]*work=\{currentWork\}[\s\S]*canDownload=/);
-  for (const section of ["互动结构", "作品数据口径", "视频拆解速览", "调整分析重点"]) {
+  for (const section of ["互动结构", "作品数据口径"]) {
     assert.ok(workbench.includes(section), `work dashboard misses ${section}`);
   }
   assert.match(workbench, /buildWorkSnapshot\(work, result\.platform\)/);
   assert.match(workbench, /缺失字段不按 0 处理/);
   assert.match(workbench, /function workImageSources/);
   assert.match(workbench, /contentImageURLs/);
-  assert.match(workbench, /开始图文拆解/);
   assert.match(workbench, /source-image-/);
   assert.match(css, /\.contentDashboard \{[\s\S]*container-type: inline-size/);
+  assert.match(css, /grid-template-areas: "overview" "data"/);
+  assert.doesNotMatch(workbench, /视频拆解速览|图文拆解速览|调整分析重点/);
+  assert.doesNotMatch(css, /contentReportRail|"overview report"|"data report"/);
 });
 
 test("a restored AI report is shown only beside the account or work that created it", () => {

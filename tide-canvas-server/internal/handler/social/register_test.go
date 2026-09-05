@@ -582,13 +582,8 @@ func TestYouTubeContentDegradesWhenMetadataFails(t *testing.T) {
 
 func TestInspectHTTPHandlerLoadsServerCredentialWithoutExposingIt(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AutoMigrate(&model.SysConfig{}, &model.SocialActivityRecord{}); err != nil {
-		t.Fatal(err)
-	}
+	db := activityTestDB(t)
+	fundSocialUser(t, db, 7001, 10)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-key" {
 			t.Errorf("upstream authorization = %q", r.Header.Get("Authorization"))

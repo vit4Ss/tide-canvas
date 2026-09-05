@@ -60,7 +60,7 @@ const NAV_TOP: NavItem[] = [
   },
   {
     href: "/analysis",
-    label: "下载和洞察",
+    label: "下载",
     key: "analysis",
     // 分层时间轴：既表示逐帧拆解，也区别于画布的取景框图标。
     icon: (

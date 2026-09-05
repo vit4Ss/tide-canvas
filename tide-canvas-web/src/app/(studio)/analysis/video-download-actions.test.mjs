@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import test from "node:test";
 import ts from "typescript";
+import { shouldKeepSocialRequest } from "./billing-retry.ts";
 
 // Execute the production actions with controlled API/session boundaries.
 const source = readFileSync(new URL("./analysis-workbench.tsx", import.meta.url), "utf8");
@@ -14,19 +15,24 @@ const result = (overrides = {}) => ({ id: "current", quality: "quality", expires
 
 function setup(initial = {}) {
   const requests = [], downloads = [];
+  let requestSerial = 0;
   const context = vm.createContext({
     downloadBusyRef: { current: false }, downloadEpochRef: { current: 0 },
     downloadSource: "https://www.douyin.com/video/12345", downloadResult: null,
     downloadedPreviewUrl: "", historicalRecord: null, downloaderCapabilities: null,
-    videoDownload: { busy: false, start: (file) => downloads.push(file.id) },
+    videoDownload: { busy: false, state: {phase:"idle",resultId:""}, start: (file) => downloads.push(file.id) },
     extractDownloadURL: (url) => url, ensureSession: async () => true,
-    setWatchedDownloadRecordId() {}, setHistoryRefresh() {},
+    setWatchedDownloadRecordId() {}, setHistoryRefresh() {}, setDownloaderRefresh() {},
+    refreshBalance: async () => {}, ownerUserId: "owner", downloadPointCost: 1,
+    shouldKeepSocialRequest,
+    downloadRequestRef: {current: null}, crypto: {randomUUID: () => ++requestSerial === 1 ? "request-key" : `request-key-${requestSerial}`},
     ...initial,
   });
   context.clearHistoricalView = () => { context.historicalRecord = null; };
   context.setDownloadResult = (value) => { context.downloadResult = value; };
   context.setDownloadBusy = (value) => { context.busy = value; };
   context.setDownloadError = (value) => { context.error = value; };
+  context.setPendingDownloadKey = (value) => { context.pendingDownloadKey = value; };
   context.socialAnalysisApi = { resolveDownload: async (request) => {
     requests.push({ ...request });
     return { success: true, data: result({ id: "renewed" }) };
@@ -36,13 +42,62 @@ function setup(initial = {}) {
 }
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
+test("uncertain network retries keep the billing request key and insufficient responses never download", async () => {
+  const { context, downloads } = setup();
+  const keys = [];
+  context.socialAnalysisApi.resolveDownload = async (request) => {
+    keys.push(request.clientRequestId);
+    return { success: false, code: keys.length === 1 ? 0 : 2001, message: "insufficient" };
+  };
+  await context.resolve(true);
+  assert.ok(context.downloadRequestRef.current);
+  await context.resolve(true);
+  assert.equal(keys[0], keys[1]);
+  assert.equal(context.downloadRequestRef.current, null);
+  assert.equal(downloads.length, 0);
+});
+
+test("gateway timeouts preserve a single paid download request until a definitive response", async () => {
+  for (const code of [200, 408, 425, 499, 502, 503, 504, 599]) {
+    const { context, downloads } = setup();
+    const keys = [];
+    context.socialAnalysisApi.resolveDownload = async request => {
+      keys.push(request.clientRequestId);
+      return keys.length === 1 ? {success: false, code} : {success: true, data: result()};
+    };
+    await context.resolve(true);
+    assert.equal(context.pendingDownloadKey, `owner:${context.downloadSource}`);
+    await context.resolve(true);
+    assert.equal(keys[0], keys[1], `request changed after ${code}`);
+    assert.equal(context.pendingDownloadKey, "");
+    assert.deepEqual(downloads, ["current"]);
+  }
+});
+
+test("a failed transfer starts a new paid resolve instead of reusing a refunded ticket", async () => {
+  const { context, requests, downloads } = setup({ downloadResult: result(), videoDownload: { busy: false, state: { resultId: "current", phase: "failed" }, start: () => {} } });
+  await context.resolve(true);
+  assert.equal(requests.length, 1);
+  assert.equal(downloads.length, 0);
+  assert.equal(context.downloadResult.id, "renewed");
+});
+
 test("new and legacy-history downloads always request highest quality", async () => {
   for (const quality of [null, "compat", "speed"]) {
     const { context, requests, downloads } = setup({ historicalRecord: quality ? { quality } : null });
     await context.resolve(true);
-    assert.deepEqual(requests, [{ url: context.downloadSource, quality: "quality" }]);
+    assert.deepEqual(requests, [{ url: context.downloadSource, quality: "quality", clientRequestId: "request-key", expectedPointCost: 1 }]);
     assert.deepEqual(downloads, ["renewed"]);
   }
+});
+
+test("restored paid reservations continue without another resolve or charge", async () => {
+  const reserved = result({ id: "reserved", recordId: "paid-record", pointCost: 1 });
+  const { context, requests, downloads } = setup({ historicalRecord: { type: "download", download: reserved } });
+  await context.resolve(true);
+  assert.equal(requests.length, 0);
+  assert.deepEqual(downloads, ["reserved"]);
+  assert.equal(context.historicalRecord, null);
 });
 
 test("both download buttons reuse received files after the ticket expires", async () => {
@@ -82,10 +137,12 @@ test("late API responses and failed resolutions never start a stale download", a
   const pending = stale.context.resolve(true);
   await settle();
   stale.context.downloadEpochRef.current += 1;
+  stale.context.downloadRequestRef.current = { key: "new-owner", id: "new-owner-request" };
   finish({ success: true, data: result() });
   await pending;
   assert.equal(stale.context.downloadResult, null);
   assert.equal(stale.downloads.length, 0);
+  assert.equal(stale.context.downloadRequestRef.current.id, "new-owner-request");
 
   const failure = setup({ downloadResult: result({ expiresAt: 1 }) });
   failure.context.socialAnalysisApi.resolveDownload = async () => ({ success: false, message: "解析失败" });
