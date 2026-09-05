@@ -171,6 +171,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 		h.downloader = newLocalVideoDownloader(d.Cfg.VideoDownloader, h.resolveDouyinDownload)
 	}
 	api.GET("/social-analysis/downloader/download/:token", videoDownloadTicketAuth(), h.downloadVideo)
+	api.GET("/social-analysis/downloader/preview", h.previewVideo)
 	g := api.Group("/social-analysis")
 	g.Use(middleware.JWTAuth(d))
 	g.GET("/status", h.status)

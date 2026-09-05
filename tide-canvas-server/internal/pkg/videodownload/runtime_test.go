@@ -174,13 +174,27 @@ func TestRealDouyinProviderDownload(t *testing.T) {
 		st, _ := f.Stat()
 		return &http.Response{StatusCode: 200, Request: r, Header: http.Header{"Content-Type": []string{"video/mp4"}}, Body: f, ContentLength: st.Size()}, nil
 	})
+	metadata, err := s.Resolve(ctx, "https://www.douyin.com/video/12345", "speed")
+	if err != nil || metadata.PreviewURL != "https://v.douyinvod.com/real.mp4" {
+		t.Fatalf("missing playable preview: %+v %v", metadata, err)
+	}
+	preview, err := s.Preview(ctx, "douyin", metadata.PreviewURL, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	previewBytes, readErr := io.ReadAll(preview.Body)
+	preview.Body.Close()
+	originalBytes, _ := os.ReadFile(source)
+	if readErr != nil || !bytes.Equal(previewBytes, originalBytes) || calls != 1 || len(s.previews) != 0 {
+		t.Fatal("preview changed video bytes, repeated provider lookup or leaked resources")
+	}
 	f, err := s.Download(ctx, "https://www.douyin.com/video/12345", "speed")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f.Close()
 	out, stderr, err := runCommand(ctx, ffprobe, []string{"-v", "error", "-show_entries", "stream=codec_type,codec_name,height", "-of", "json", f.Name()}, dir, 10<<20)
-	if err != nil || !strings.Contains(string(out), `"height": 480`) || !strings.Contains(string(out), `"codec_name": "h264"`) || !strings.Contains(string(out), `"codec_name": "aac"`) || calls != 1 {
+	if err != nil || !strings.Contains(string(out), `"height": 480`) || !strings.Contains(string(out), `"codec_name": "h264"`) || !strings.Contains(string(out), `"codec_name": "aac"`) || calls != 2 {
 		t.Fatalf("invalid video=%s err=%v stderr=%s calls=%d", out, err, stderr, calls)
 	}
 	f.Close()

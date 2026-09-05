@@ -69,6 +69,11 @@ yt-dlp 官方安装与更新说明：https://github.com/yt-dlp/yt-dlp#installati
 
 ## 验证
 
+解析结果如果有完整的单文件视频，会返回本站签发的 `previewUrl`，供播放器直接预览。
+预览接口支持单段 HTTP Range、绑定媒体 URL 的短期票据，复用公网地址校验；按流传输且受文件大小、时限和独立并发上限约束，不重新解析、不转码、不写入下载历史。
+媒体请求附带对应平台来源，浏览器预览地址沿用前端 API 域名配置。预览失败可单独重试；票据过期后重新获取视频信息。CDN 地址转换中间件透传连接超时设置，避免慢连接长期占用预览名额。
+音视频分离或多分段结果不把某一轨冒充完整预览；浏览器不支持源文件编码或地址过期时，页面显示提示，原有 MP4 下载流程仍可使用。
+
 常规运行 `go test ./...`；安装 ffmpeg 后，会额外执行真实的转码、多段合并、损坏分段、独立音轨和临时文件清理测试。
 `VIDEO_DOWNLOAD_SMOKE_URL` 可指定公开视频运行 `go test ./internal/pkg/videodownload -run TestPublicVideoSmoke -v`，
 同时设置 `VIDEO_DOWNLOAD_SMOKE_FILE=1` 可验证实际 MP4 下载，测试结束会清理文件。

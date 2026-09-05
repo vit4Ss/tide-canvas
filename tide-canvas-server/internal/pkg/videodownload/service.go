@@ -31,6 +31,7 @@ func failure(status int, message string) error { return &Error{status, message} 
 
 type Metadata struct {
 	Platform, SourceURL, Title, CoverURL string
+	PreviewURL                           string
 	DurationSeconds, Width, Height       int
 	EstimatedBytes                       int64
 }
@@ -58,11 +59,11 @@ func (f *File) Close() error {
 }
 
 type Service struct {
-	cfg                 config.VideoDownloaderConfig
-	client              *http.Client
-	run                 commandRunner
-	resolves, downloads chan struct{}
-	douyinFallback      DouyinResolver
+	cfg                           config.VideoDownloaderConfig
+	client                        *http.Client
+	run                           commandRunner
+	resolves, downloads, previews chan struct{}
+	douyinFallback                DouyinResolver
 }
 
 // ResolvedVideo contains only a provider's media result, never its API key.
@@ -113,7 +114,7 @@ func New(cfg config.VideoDownloaderConfig) *Service {
 	if cfg.DownloadTimeout <= 0 || cfg.DownloadTimeout > time.Hour {
 		cfg.DownloadTimeout = 15 * time.Minute
 	}
-	return &Service{cfg: cfg, client: safefetch.NewClient(cfg.DownloadTimeout, nil), run: runCommand, resolves: make(chan struct{}, cfg.MaxConcurrentResolves), downloads: make(chan struct{}, cfg.MaxConcurrent)}
+	return &Service{cfg: cfg, client: safefetch.NewClient(cfg.DownloadTimeout, nil), run: runCommand, resolves: make(chan struct{}, cfg.MaxConcurrentResolves), downloads: make(chan struct{}, cfg.MaxConcurrent), previews: make(chan struct{}, cfg.MaxConcurrentResolves)}
 }
 func (s *Service) MaxBytes() int64 { return s.cfg.MaxFileBytes }
 func (s *Service) Ready() bool {
@@ -162,6 +163,12 @@ func (s *Service) Resolve(ctx context.Context, raw, quality string) (Metadata, e
 	}
 	if plan.EstimatedBytes > s.cfg.MaxFileBytes {
 		return Metadata{}, failure(400, "视频预计大小超过当前单文件下载上限，请选择更低画质")
+	}
+	// A complete single-file source can be previewed without downloading or
+	// merging it. Never present one DASH track or one segment as the whole video.
+	plan.Metadata.PreviewURL = ""
+	if len(plan.Parts) == 1 && plan.Audio == nil && len(plan.Parts[0].URLs) > 0 {
+		plan.Metadata.PreviewURL = trustedMedia(plan.Parts[0].URLs[0], platform)
 	}
 	return outputMetadata(plan.Metadata, quality), nil
 }

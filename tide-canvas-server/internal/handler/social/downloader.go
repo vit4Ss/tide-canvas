@@ -66,7 +66,9 @@ type videoDownloadResolveVO struct {
 	RecordID        idgen.ID `json:"recordId,omitempty"`
 	// CoverURL 是上游可能附带的封面直链,仅用于前端展示确认。上游不给就是空串,
 	// 前端有兜底版式,不影响下载本身。
-	CoverURL string `json:"coverUrl,omitempty"`
+	CoverURL      string `json:"coverUrl,omitempty"`
+	PreviewURL    string `json:"previewUrl,omitempty"`
+	previewSource string
 }
 
 // This preview metadata is bound to the download ticket, but is not persisted
@@ -299,6 +301,13 @@ func (h *handler) resolveVideoDownload(c *gin.Context) {
 	resolved.FileName = name
 	resolved.RecordID = recordID
 	resolved.DownloadURL = "/api/social-analysis/downloader/download/" + url.PathEscape(resolved.ID) + "?" + query.Encode()
+	resolved.PreviewURL = ""
+	if resolved.previewSource != "" {
+		resolved.PreviewURL, err = issueVideoPreviewURL(middleware.CurrentUserID(c), middleware.CurrentRole(c), resolved.Platform, resolved.previewSource, ttl)
+		if err != nil {
+			logger.L().Warn("failed to issue video preview ticket", zap.Error(err))
+		}
+	}
 	// Avoid issuing a URL that common reverse proxies cannot accept.
 	if len(metadata) > 8192 || len(resolved.DownloadURL) > 7500 {
 		response.Fail(c, response.CodeBadRequest, "视频链接或标题过长，请使用简短的作品链接重新解析")

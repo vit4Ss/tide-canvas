@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -88,6 +89,27 @@ func TestDisplayURLRewritesJSON(t *testing.T) {
 	}
 	if hdr.Get("Content-Length") != fmt.Sprint(len(body)) {
 		t.Errorf("Content-Length %q != actual %d", hdr.Get("Content-Length"), len(body))
+	}
+}
+
+// Streaming handlers must still be able to bound blocked writes when CDN
+// rewriting wraps Gin's writer. Exercise the actual net/http connection.
+func TestDisplayURLPreservesResponseController(t *testing.T) {
+	srv := setup(fakeStore{pairs: [][2]string{{oldBase, newBase}}}, func(c *gin.Context) {
+		controller := http.NewResponseController(c.Writer)
+		for _, deadline := range []time.Time{time.Now().Add(time.Minute), {}} {
+			if err := controller.SetWriteDeadline(deadline); err != nil {
+				t.Errorf("set write deadline: %v", err)
+				c.AbortWithStatus(500)
+				return
+			}
+		}
+		c.Data(206, "video/mp4", []byte(oldBase+"/unchanged-media"))
+	})
+	defer srv.Close()
+	code, _, body := get(t, srv.URL+"/x")
+	if code != 206 || body != oldBase+"/unchanged-media" {
+		t.Fatalf("stream changed: status=%d body=%q", code, body)
 	}
 }
 

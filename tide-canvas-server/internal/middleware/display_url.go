@@ -16,6 +16,7 @@ package middleware
 
 import (
 	"bytes"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -79,6 +80,9 @@ type displayURLWriter struct {
 	sent   bool   // 状态行已转发给底层 writer
 	done   bool   // finish 已执行;此后一切写入直通(panic 后 Recovery 补写场景)
 }
+
+// Preserve ResponseController access to connection deadlines for streams.
+func (w *displayURLWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // shouldBuffer reports whether this response is rewrite-eligible JSON.
 func (w *displayURLWriter) shouldBuffer() bool {

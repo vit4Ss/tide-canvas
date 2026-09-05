@@ -544,25 +544,53 @@ function AccountStrategyReport({ run, busy, onAction, onReEdit, onDismiss }: Acc
   );
 }
 
-/* 下载结果的封面主体。上游给了封面就用真图,没给就用平台品牌色铺一层色调场——
-   比一块灰盒子诚实,也让这张卡有真正的主体。品牌色同时是这张卡唯一的强调色。 */
-function DownloadPoster({ result }: { result: VideoDownloadResolveVO }) {
+/* 视频预览使用独立媒体地址，不触发附件下载或创建下载记录。 */
+function DownloadPoster({ result, onDuration, onRefresh, refreshing }: {
+  result: VideoDownloadResolveVO;
+  onDuration: (seconds: number) => void;
+  onRefresh: () => void;
+  refreshing: boolean;
+}) {
   const [failed, setFailed] = useState(false);
+  const [previewError, setPreviewError] = useState("");
   const cover = failed ? "" : result.coverUrl?.trim() || "";
+  const preview = previewError ? "" : result.previewUrl?.trim() || "";
   const tint = DOWNLOAD_PLATFORM_COLOR[result.platform] || "#8b8b93";
   const platformLabel = DOWNLOAD_PLATFORM_LABEL[result.platform] || result.platform;
   const qualityLabel = DOWNLOAD_QUALITY.find((item) => item.key === result.quality)?.label || result.quality;
   return (
     <div className={styles.posterMedia} style={{ "--platform": tint } as React.CSSProperties}>
-      {cover ? (
+      {preview ? (
+        <video
+          src={apiUrl(preview)}
+          poster={cover || undefined}
+          controls
+          controlsList="nodownload"
+          playsInline
+          preload="metadata"
+          aria-label={`${result.title || "视频"}预览`}
+          onLoadedMetadata={(event) => {
+            const seconds = event.currentTarget.duration;
+            if (Number.isFinite(seconds) && seconds > 0) onDuration(Math.round(seconds));
+          }}
+          onError={() => setPreviewError(result.expiresAt * 1000 <= Date.now() ? "预览地址已过期，请重新获取视频" : "暂时无法预览，可下载后播放")}
+        />
+      ) : cover ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={cover} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
       ) : (
-        <span className={styles.posterFallback} aria-hidden><Film /></span>
+        <span className={styles.posterFallback}><Film aria-hidden /><span>暂时无法预览画面</span>{!previewError && <small>可以使用下方下载按钮保存后播放</small>}</span>
       )}
+      {previewError && <div className={styles.previewNotice} role="status">
+        <span>{previewError}</span>
+        <button type="button" disabled={refreshing} onClick={() => {
+          if (result.expiresAt * 1000 <= Date.now()) onRefresh();
+          else setPreviewError("");
+        }}><RotateCcw aria-hidden />重试预览</button>
+      </div>}
       <span className={`${styles.posterChip} ${styles.posterChipPlatform}`}>{platformLabel}</span>
       <span className={`${styles.posterChip} ${styles.posterChipQuality}`}>{qualityLabel}</span>
-      {result.durationSeconds > 0 && (
+      {!preview && result.durationSeconds > 0 && (
         <span className={`${styles.posterChip} ${styles.posterChipDuration}`}>
           <Clock3 aria-hidden />{displayDurationSeconds(result.durationSeconds)}
         </span>
@@ -2013,7 +2041,7 @@ export default function AnalysisWorkbench() {
                 <p className={styles.getterSteps}>
                   <span>复制视频分享链接</span><i aria-hidden />
                   <span>粘贴到下方</span><i aria-hidden />
-                  <span>点击解析视频</span>
+                  <span>点击下载视频</span>
                 </p>
                 <div className={styles.getterField} data-recognized={recognizedSource ? "true" : "false"}>
                   <span className={styles.getterMark} aria-hidden>
@@ -2032,15 +2060,12 @@ export default function AnalysisWorkbench() {
                     spellCheck={false}
                     aria-label="公开视频链接"
                   />
-                  {!!url.trim() && url.trim() !== downloadSource.trim() && (
-                    <button type="button" className={styles.getterBorrow} disabled={downloadBusy} onClick={() => { setDownloadSource(url.trim()); setDownloadResult(null); setDownloadError(""); clearHistoricalView(); }}>用拆解链接</button>
-                  )}
                   {initialized && !user ? (
                     <Link className={styles.primaryButton} href="/login">登录后下载 <ChevronRight aria-hidden /></Link>
                   ) : (
                     <button className={styles.primaryButton} type="button" disabled={!downloadSource.trim() || !downloaderReady || downloadBusy} onClick={() => void resolveVideoDownload()}>
-                      {downloadBusy ? <Loader2 className={styles.spin} aria-hidden /> : <ScanSearch aria-hidden />}
-                      {downloadBusy ? "正在解析" : "解析视频"}
+                      {downloadBusy ? <Loader2 className={styles.spin} aria-hidden /> : <Download aria-hidden />}
+                      {downloadBusy ? "正在获取视频" : "下载视频"}
                     </button>
                   )}
                 </div>
@@ -2078,7 +2103,9 @@ export default function AnalysisWorkbench() {
               {downloadResult ? (
                 <>
                   <section className={styles.posterCard}>
-                    <DownloadPoster result={downloadResult} />
+                    <DownloadPoster key={downloadResult.id} result={downloadResult} refreshing={downloadBusy} onRefresh={() => void resolveVideoDownload()} onDuration={(seconds) => {
+                      setDownloadResult((current) => current?.id === downloadResult.id && !current.durationSeconds ? { ...current, durationSeconds: seconds } : current);
+                    }} />
                   </section>
 
                   {/* 切换画质时结果原地更新,期间旧的下载地址仍在屏幕上——必须禁用

@@ -48,7 +48,10 @@ func (d *localVideoDownloader) resolve(ctx context.Context, source, quality stri
 	if _, err = rand.Read(id); err != nil {
 		return videoDownloadResolveVO{}, err
 	}
-	return videoDownloadResolveVO{ID: "local-" + hex.EncodeToString(id), Platform: m.Platform, Title: truncateText(m.Title, 200), CoverURL: displayImageURL(m.CoverURL), DurationSeconds: m.DurationSeconds, Width: m.Width, Height: m.Height, EstimatedBytes: m.EstimatedBytes, Quality: quality, ExpiresAt: time.Now().Add(videoDownloadTicketMax).Unix()}, nil
+	return videoDownloadResolveVO{ID: "local-" + hex.EncodeToString(id), Platform: m.Platform, Title: truncateText(m.Title, 200), CoverURL: displayImageURL(m.CoverURL), previewSource: m.PreviewURL, DurationSeconds: m.DurationSeconds, Width: m.Width, Height: m.Height, EstimatedBytes: m.EstimatedBytes, Quality: quality, ExpiresAt: time.Now().Add(videoDownloadTicketMax).Unix()}, nil
+}
+func (d *localVideoDownloader) preview(ctx context.Context, platform, source, byteRange string) (*http.Response, error) {
+	return d.engine.Preview(ctx, platform, source, byteRange)
 }
 func (d *localVideoDownloader) download(ctx context.Context, source, quality string) (*http.Response, error) {
 	f, err := d.engine.Download(ctx, source, quality)

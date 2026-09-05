@@ -112,6 +112,8 @@ export interface VideoDownloadResolveVO {
   recordId?: string;
   /** 上游可能附带的封面直链;拿不到就是 undefined,前端走兜底版式。 */
   coverUrl?: string;
+  /** 本站签发的短期视频预览地址，与附件下载、历史记录相互独立。 */
+  previewUrl?: string;
 }
 
 export type SocialActivityRecordDetailVO = SocialActivityRecordVO & {
