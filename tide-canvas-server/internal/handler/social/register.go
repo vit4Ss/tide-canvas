@@ -153,8 +153,10 @@ type handler struct {
 }
 
 type upstreamError struct {
-	message string
-	status  int
+	message    string
+	status     int
+	httpStatus int
+	requestID  string
 }
 
 func (e *upstreamError) Error() string { return e.message }
@@ -651,7 +653,17 @@ func (h *handler) resolveIdentifier(ctx context.Context, cfg settings, path stri
 	return "", &upstreamError{message: "平台未返回可识别的账号 ID"}
 }
 
-func (h *handler) tikhubGet(ctx context.Context, cfg settings, path string, query url.Values) (any, error) {
+func (h *handler) tikhubGet(ctx context.Context, cfg settings, path string, query url.Values) (result any, resultErr error) {
+	var httpStatus int
+	var requestID string
+	defer func() {
+		var upstream *upstreamError
+		if errors.As(resultErr, &upstream) {
+			upstream.httpStatus = httpStatus
+			upstream.requestID = tikHubSafeDiagnostic(requestID, cfg.apiKey)
+			upstream.message = tikHubSafeDiagnostic(upstream.message, cfg.apiKey)
+		}
+	}()
 	base, err := url.Parse(cfg.baseURL)
 	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Hostname() == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
 		return nil, fmt.Errorf("invalid TikHub base URL")
@@ -675,6 +687,8 @@ func (h *handler) tikhubGet(ctx context.Context, cfg settings, path string, quer
 		return nil, &upstreamError{message: "无法连接 TikHub 服务，请稍后重试"}
 	}
 	defer resp.Body.Close()
+	httpStatus = resp.StatusCode
+	requestID = resp.Header.Get("X-Request-ID")
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamBody+1))
 	if err != nil {
 		return nil, &upstreamError{message: "读取 TikHub 响应失败，请稍后重试"}
@@ -688,7 +702,10 @@ func (h *handler) tikhubGet(ctx context.Context, cfg settings, path string, quer
 	decoderErr := decoder.Decode(&envelope)
 	message := ""
 	if decoderErr == nil {
-		message = firstNonEmptyString(envelope, "message_zh", "message", "msg", "detail")
+		message = tikHubResponseMessage(envelope, 0)
+		if value := tikHubResponseRequestID(envelope); value != "" {
+			requestID = value
+		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		message = tikHubStatusMessage(resp.StatusCode, message)

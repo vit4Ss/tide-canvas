@@ -27,8 +27,8 @@ func TestTikHubDownloadSelectsRenditionsForRequestedQuality(t *testing.T) {
 	for _, quality := range []string{"speed", "compat", "quality"} {
 		t.Run(quality, func(t *testing.T) {
 			h, cfg, calls := douyinMock(t, map[string]string{
-				testDouyinHQWeb:                         testDouyinHQBody,
-				"/api/v1/douyin/app/v3/fetch_one_video": `{"code":200,"data":{"aweme_detail":{"aweme_id":"7665967735288892672","video":{"bit_rate":[{"play_addr":{"width":3840,"height":2160,"data_size":100000000,"url_list":["https://v.douyinvod.com/4k.mp4"]}},{"play_addr":{"width":1280,"height":720,"data_size":3000000,"url_list":["https://v.douyinvod.com/720.mp4"]}},{"play_addr":{"width":640,"height":360,"data_size":1000000,"url_list":["https://v.douyinvod.com/360.mp4"]}}]}}}}`,
+				testDouyinHQWeb: testDouyinHQBody,
+				"/api/v1/douyin/app/v3/fetch_one_video_v2": `{"code":200,"data":{"aweme_detail":{"aweme_id":"7665967735288892672","video":{"bit_rate":[{"play_addr":{"width":3840,"height":2160,"data_size":100000000,"url_list":["https://v.douyinvod.com/4k.mp4"]}},{"play_addr":{"width":1280,"height":720,"data_size":3000000,"url_list":["https://v.douyinvod.com/720.mp4"]}},{"play_addr":{"width":640,"height":360,"data_size":1000000,"url_list":["https://v.douyinvod.com/360.mp4"]}}]}}}}`,
 			})
 			video, err := h.fetchDouyinDownload(context.Background(), cfg, testDouyinDownloadSource, quality)
 			want := "https://v.douyinvod.com/original.mp4"
@@ -89,13 +89,15 @@ func TestTikHubDownloadSettingsQueryHonorsCancellation(t *testing.T) {
 
 func TestTikHubDownloadLowQualityUsesOriginalOnlyWhenDetailsHaveNoMedia(t *testing.T) {
 	h, cfg, calls := douyinMock(t, map[string]string{
-		"/api/v1/douyin/app/v3/fetch_one_video": `{"code":200,"data":{"aweme_detail":{"aweme_id":"7665967735288892672","desc":"no media"}}}`,
-		"/api/v1/douyin/web/fetch_one_video":    `{"code":200,"data":{}}`,
-		testDouyinHQWeb:                         testDouyinHQBody,
+		"/api/v1/douyin/app/v3/fetch_one_video":    `{"code":200,"data":{}}`,
+		"/api/v1/douyin/web/fetch_one_video":       `{"code":200,"data":{}}`,
+		"/api/v1/douyin/app/v3/fetch_one_video_v2": `{"code":200,"data":{"aweme_detail":{"aweme_id":"7665967735288892672","desc":"no media"}}}`,
+		"/api/v1/douyin/web/fetch_one_video_v2":    `{"code":200,"data":{}}`,
+		testDouyinHQWeb:                            testDouyinHQBody,
 	})
 	video, err := h.fetchDouyinDownload(context.Background(), cfg, testDouyinDownloadSource, "speed")
 	requests := calls()
-	if err != nil || video == nil || video.URLs[0] != "https://v.douyinvod.com/original.mp4" || len(requests) != 3 || !strings.HasPrefix(requests[0], "/api/v1/douyin/app/v3/fetch_one_video?") || !strings.HasPrefix(requests[2], testDouyinHQWeb+"?") {
+	if err != nil || video == nil || video.URLs[0] != "https://v.douyinvod.com/original.mp4" || len(requests) != 5 || !strings.HasPrefix(requests[0], "/api/v1/douyin/app/v3/fetch_one_video_v2?") || !strings.HasPrefix(requests[4], testDouyinHQWeb+"?") {
 		t.Fatalf("result=%+v err=%v calls=%v", video, err, requests)
 	}
 }
@@ -165,7 +167,7 @@ func TestTikHubDouyinDownloadUsesAppBackupAndNormalPlayURL(t *testing.T) {
 			wantCalls := 2
 			if detail {
 				bodies[testDouyinHQApp] = `{"code":200,"data":{}}`
-				bodies["/api/v1/douyin/app/v3/fetch_one_video"] = `{"code":200,"data":{"aweme_detail":{"aweme_id":"7665967735288892672","desc":"普通播放","video":{"width":640,"height":360,"play_addr":{"url_list":["https://v.douyinvod.com/normal.mp4"]}}}}}`
+				bodies["/api/v1/douyin/app/v3/fetch_one_video_v2"] = `{"code":200,"data":{"aweme_detail":{"aweme_id":"7665967735288892672","desc":"普通播放","video":{"width":640,"height":360,"play_addr":{"url_list":["https://v.douyinvod.com/normal.mp4"]}}}}}`
 				wantCalls = 3
 			}
 			h, cfg, calls := douyinMock(t, bodies)
@@ -203,8 +205,8 @@ func TestTikHubDouyinDownloadStopsOnAccountErrors(t *testing.T) {
 func TestTikHubDouyinDownloadDetailNeedsMediaNotJustMetadata(t *testing.T) {
 	h, cfg, calls := douyinMock(t, map[string]string{
 		testDouyinHQWeb: `{"code":200,"data":{}}`, testDouyinHQApp: `{"code":200,"data":{}}`,
-		"/api/v1/douyin/app/v3/fetch_one_video": `{"code":200,"data":{"aweme_detail":{"aweme_id":"7665967735288892672","desc":"只有标题"}}}`,
-		"/api/v1/douyin/web/fetch_one_video":    `{"code":200,"data":{"aweme_detail":{"aweme_id":"7665967735288892672","desc":"带有视频","video":{"play_addr":{"url_list":["https://v.douyinvod.com/web.mp4"]}}}}}`,
+		"/api/v1/douyin/app/v3/fetch_one_video_v2": `{"code":200,"data":{"aweme_detail":{"aweme_id":"7665967735288892672","desc":"只有标题"}}}`,
+		"/api/v1/douyin/web/fetch_one_video_v2":    `{"code":200,"data":{"aweme_detail":{"aweme_id":"7665967735288892672","desc":"带有视频","video":{"play_addr":{"url_list":["https://v.douyinvod.com/web.mp4"]}}}}}`,
 	})
 	video, err := h.fetchDouyinDownload(context.Background(), cfg, testDouyinDownloadSource, "speed")
 	if err != nil || video == nil || video.URLs[0] != "https://v.douyinvod.com/web.mp4" || len(calls()) != 2 {
@@ -215,7 +217,7 @@ func TestTikHubDouyinDownloadDetailNeedsMediaNotJustMetadata(t *testing.T) {
 func TestTikHubDouyinDownloadStopsOnPrivateWorkAndCancellation(t *testing.T) {
 	h, cfg, calls := douyinMock(t, map[string]string{
 		testDouyinHQWeb: `{"code":200,"data":{}}`, testDouyinHQApp: `{"code":200,"data":{}}`,
-		"/api/v1/douyin/app/v3/fetch_one_video": `{"code":200,"data":{"aweme_detail":null,"filter_list":[{"reason":"5"}]}}`,
+		"/api/v1/douyin/app/v3/fetch_one_video_v2": `{"code":200,"data":{"aweme_detail":null,"filter_list":[{"reason":"5"}]}}`,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
