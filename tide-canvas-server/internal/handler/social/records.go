@@ -40,6 +40,7 @@ type ActivityRecordVO struct {
 	Platform        string     `json:"platform,omitempty"`
 	SourceURL       string     `json:"sourceUrl"`
 	Title           string     `json:"title,omitempty"`
+	AvatarURL       string     `json:"avatarUrl,omitempty"`
 	Status          string     `json:"status"`
 	Quality         string     `json:"quality,omitempty"`
 	DurationSeconds int        `json:"durationSeconds,omitempty"`
@@ -297,22 +298,66 @@ func writeActivityRecords(c *gin.Context, db *gorm.DB, ownerID *idgen.ID, allowU
 		}
 	}
 	rows := make([]ActivityRecordVO, 0, len(records))
+	avatars := activityRecordAvatars(db, records)
 	for i := range records {
 		record := records[i]
 		user := usersByID[record.UserID]
-		rows = append(rows, activityRecordVO(record, user))
+		row := activityRecordVO(record, user)
+		row.AvatarURL = avatars[record.ID]
+		rows = append(rows, row)
 	}
 	response.Page(c, rows, total, page, pageSize)
 }
 
 func activityRecordVO(record model.SocialActivityRecord, user model.User) ActivityRecordVO {
+	var snapshot struct {
+		Profile struct {
+			AvatarURL string `json:"avatarUrl"`
+		} `json:"profile"`
+	}
+	avatarURL := ""
+	if record.ActivityType == model.SocialActivityAnalysis && json.Unmarshal([]byte(record.SnapshotJSON), &snapshot) == nil {
+		avatarURL = validHTTPURL(snapshot.Profile.AvatarURL)
+	}
 	return ActivityRecordVO{
 		ID: record.ID, UserID: record.UserID, UserName: activityUserName(user, record.UserID), UserEmail: user.Email,
 		Type: record.ActivityType, Kind: record.Kind, Platform: record.Platform, SourceURL: record.SourceURL,
-		Title: record.Title, Status: record.Status, Quality: record.Quality,
+		Title: record.Title, AvatarURL: avatarURL, Status: record.Status, Quality: record.Quality,
 		DurationSeconds: record.DurationSeconds, Width: record.Width, Height: record.Height,
 		EstimatedBytes: record.EstimatedBytes, DownloadedBytes: record.DownloadedBytes, AnalysisRunID: record.AnalysisRunID,
 		ErrorMessage: activityString(record.ErrorMessage, 1000), ExpiresAt: record.ExpiresAt, CreateTime: record.CreateTime,
 		UpdateTime: record.UpdateTime, CompletedAt: record.CompletedAt,
 	}
+}
+
+// Extract only avatars for this already-authorized page, including old records.
+// Keep large work snapshots out of list responses and avoid per-record requests.
+func activityRecordAvatars(db *gorm.DB, records []model.SocialActivityRecord) map[idgen.ID]string {
+	avatars := make(map[idgen.ID]string)
+	ids := make([]idgen.ID, 0, len(records))
+	for _, record := range records {
+		if record.ActivityType == model.SocialActivityAnalysis {
+			ids = append(ids, record.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return avatars
+	}
+	extract := "JSON_EXTRACT(CASE WHEN JSON_VALID(snapshot_json) THEN snapshot_json ELSE '{}' END, '$.profile.avatarUrl')"
+	if db.Dialector.Name() == "mysql" {
+		extract = "JSON_UNQUOTE(" + extract + ")"
+	}
+	var previews []struct {
+		ID        idgen.ID
+		AvatarURL string
+	}
+	if err := db.Model(&model.SocialActivityRecord{}).
+		Select("id, COALESCE("+extract+", '') AS avatar_url").Where("id IN ?", ids).Scan(&previews).Error; err != nil {
+		logger.L().Warn("failed to load social activity avatars", zap.Error(err))
+		return avatars
+	}
+	for _, preview := range previews {
+		avatars[preview.ID] = validHTTPURL(preview.AvatarURL)
+	}
+	return avatars
 }

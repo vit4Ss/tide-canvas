@@ -11,7 +11,7 @@
    不再手抄十六进制:主题调整时本页跟随,不会落单。 */
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -30,6 +30,7 @@ import {
   Gauge,
   History,
   Link2,
+  Lightbulb,
   Loader2,
   Pencil,
   RotateCcw,
@@ -66,6 +67,8 @@ import type { SkillVO } from "@/types/skill";
 import { toast } from "@/components/shared/toast";
 import { buildAccountFeatures, buildAccountSnapshot, type AccountWorkDatum } from "./account-insights";
 import { AccountVisuals } from "./account-visuals";
+import { AccountReportMetrics } from "./account-report-metrics";
+import { extractAccountReportBrief } from "./account-report-brief";
 import { buildWorkSnapshot } from "./work-insights";
 import { ActivityHistorySidebar } from "./activity-history";
 import styles from "./analysis.module.css";
@@ -318,6 +321,7 @@ function accountPrompt(result: SocialInspectVO, focus: string): string {
   const render = () => [
     "<user_request>",
     focus.trim() || ACCOUNT_DEFAULT_FOCUS,
+    "先面向普通创作者输出三个简短板块：## 一句话定位、## 值得借鉴、## 下一步建议。每个板块只写一句不超过 70 字的完整结论，不重复罗列统计数字。推测保留‘可能’等限定语，缺少依据时明确说明。之后以 ## 详细分析 展开依据和细节。不要编造分数、评级或平台未提供的数据。",
     "</user_request>",
     "<platform_data untrusted=\"true\">",
     JSON.stringify({ platform: result.platformName, sourceUrl: result.sourceUrl, profile, sampleSummary, recentWorks }),
@@ -443,11 +447,13 @@ interface AccountStrategyReportProps {
 }
 
 function AccountStrategyReport({ run, busy, onAction, onReEdit, onDismiss }: AccountStrategyReportProps) {
+  const [expanded, setExpanded] = useState(false);
   const active = run.status === "queued" || run.status === "running";
   const succeeded = run.status === "succeeded";
   const failed = run.status === "failed";
   const progress = Math.max(0, Math.min(100, Number.isFinite(run.progress) ? run.progress : 0));
   const text = accountReportText(run);
+  const brief = useMemo(() => extractAccountReportBrief(text), [text]);
   const reportTime = run.completeTime || run.updateTime || run.createTime || "";
 
   return (
@@ -464,8 +470,15 @@ function AccountStrategyReport({ run, busy, onAction, onReEdit, onDismiss }: Acc
           <div className={styles.accountReportProgress} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)}><i style={{ transform: `scaleX(${Math.max(.02, progress / 100)})` }} /></div>
         </div>
       ) : succeeded ? (
-        <div className={styles.accountReportContent}>
-          {text ? renderAnalysisMarkdown(text) : <p className={styles.accountReportEmpty}>报告已经完成，但暂时没有可展示的正文。</p>}
+        <div className={styles.accountBriefContent}>
+          {brief.length > 0 && <div className={styles.reportTakeaways}>{brief.map((item) => {
+            const Icon = item.key === "position" ? Target : item.key === "strength" ? Trophy : Lightbulb;
+            return <section key={item.key} data-kind={item.key}><span><Icon aria-hidden /></span><div><h4>{item.label}</h4><p>{item.text}</p></div></section>;
+          })}</div>}
+          {text ? <details className={styles.reportFullDetails} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+            <summary>{brief.length ? "查看完整分析与依据" : "展开完整报告"}<ChevronRight aria-hidden /></summary>
+            {expanded && <div className={styles.accountReportContent}>{renderAnalysisMarkdown(text)}</div>}
+          </details> : <p className={styles.accountReportEmpty}>报告已经完成，但暂时没有可展示的正文。</p>}
         </div>
       ) : (
         <div className={styles.accountReportFailure}>
@@ -679,6 +692,7 @@ interface AccountDashboardProps {
   runDetails: React.ReactNode;
   skillError: string;
   historical: boolean;
+  hasSavedReport: boolean;
   downloaderPlatforms: string[];
   onRun: () => void;
   onDownloadWork: (work: SocialWorkVO) => void;
@@ -691,6 +705,7 @@ function AccountDashboard({
   runDetails,
   skillError,
   historical,
+  hasSavedReport,
   downloaderPlatforms,
   onRun,
   onDownloadWork,
@@ -735,6 +750,7 @@ function AccountDashboard({
 
   return (
     <div className={styles.accountDashboard} style={{ "--platform": meta.color } as React.CSSProperties}>
+      <div className={styles.accountOverview}>
       <header className={styles.accountHero}>
         <div className={styles.accountIdentity}>
           <span className={styles.accountAvatar}><ProfileAvatar url={profile?.avatarUrl} platform={result.platform} /></span>
@@ -753,19 +769,6 @@ function AccountDashboard({
           <a href={result.sourceUrl} target="_blank" rel="noopener noreferrer">查看账号主页 <ArrowUpRight aria-hidden /></a>
         </div>
 
-        <div className={styles.accountFeatureSummary}>
-          <div>
-            <span><ScanSearch aria-hidden />账号特征速览</span>
-            <h3>{features.headline}</h3>
-            <p>{features.takeaway}</p>
-          </div>
-          <div className={styles.accountFeatureTags}>
-            <span><Film aria-hidden /><b>{snapshot.sampleCount}</b> 条作品样本</span>
-            {features.comparable && <span><Trophy aria-hidden /><b>{features.bands[0].count}</b> 条高表现作品</span>}
-            {snapshot.topConcentration !== null && <span><Target aria-hidden />头部播放贡献 <b>{snapshot.topConcentration.toFixed(1)}%</b></span>}
-          </div>
-        </div>
-
         <div className={styles.accountKpiRail} role="list" aria-label="账号关键指标">
           {kpis.map((item) => {
             const Icon = item.label === "粉丝" ? UserRoundSearch : item.label === "中位播放" ? BarChart3 : item.label === "高表现样本率" ? Target : item.label === "最高样本倍数" ? Trophy : Film;
@@ -781,7 +784,8 @@ function AccountDashboard({
           ))}
         </div>
       )}
-
+      </div>
+      <div className={styles.accountData}>
       <AccountSampleTrend works={snapshot.works} medianViews={snapshot.medianViews} onInspect={setInspectedWork} />
 
       <AccountVisuals snapshot={snapshot} onInspect={setInspectedWork} renderCover={(item) => <WorkCover work={item.work} platform={result.platform} />} />
@@ -829,47 +833,27 @@ function AccountDashboard({
       </section>
 
       <p className={styles.scopeNote}>这是当前抓取样本的横截面，不代表粉丝增长趋势或行业基准。可见互动仅汇总已返回的指标，缺失数据以“—”展示。</p>
+      </div>
 
-      <section className={styles.accountStrategy}>
-        <header className={styles.sectionHeader}>
-          <div><h2>AI 账号策略拆解</h2><p>把样本数据转成定位、内容支柱与下一轮测试动作。</p></div>
-          <span>只使用本次公开样本</span>
+      <aside className={`${styles.accountStrategy} ${styles.accountSummaryRail}`} aria-label="账号策略速览">
+        <header className={styles.reportRailHeader}>
+          <div><Sparkles aria-hidden /><h2>账号策略速览</h2></div>
+          <span>{historical ? "历史快照" : "本次分析"}</span>
         </header>
-        <div className={styles.strategyGrid}>
-          <article className={styles.strategyControl}>
-            <div className={styles.strategyScope}>
-              <span><Target aria-hidden />账号定位</span>
-              <span><Trophy aria-hidden />爆款差异</span>
-              <span><BarChart3 aria-hidden />内容支柱</span>
-              <span><CalendarDays aria-hidden />发布节奏</span>
+        <AccountReportMetrics snapshot={snapshot} />
+        <div className={styles.reportRailBody}>
+          {skillError && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{skillError}</span></div>}
+          {skillError && <button type="button" className={styles.primaryButton} disabled={busy} onClick={onRun}>{busy ? "正在重新启动" : "重新生成账号策略"}</button>}
+          {runDetails || (!skillError && (
+            <div className={styles.reportWaiting} role="status" aria-live="polite">
+              {busy ? <Loader2 className={styles.spin} aria-hidden /> : <Sparkles aria-hidden />}
+              <div><strong>{busy ? historical ? "正在读取当时的策略报告" : "正在自动生成账号策略" : historical && !hasSavedReport ? "这条记录未保存 AI 报告" : "当前未展示策略报告"}</strong>
+                <p>{busy ? historical ? "正在恢复已保存的报告，不会重新调用平台或扣费。" : "无需再次点击，完成后会在这里展示简短结论。" : historical && !hasSavedReport ? "上方指标来自当时样本。查看历史不会重新调用或扣费。" : "可从左侧历史记录重新打开已保存的报告。"}</p></div>
             </div>
-            <details className={styles.accountAnalysisScope}><summary>查看本次分析范围</summary><p>{focus}</p></details>
-            {skillError ? (
-              <button type="button" className={styles.primaryButton} disabled={busy} onClick={onRun}>
-                {busy ? <Loader2 className={styles.spin} aria-hidden /> : <ScanSearch aria-hidden />}
-                {busy ? "正在重新启动" : "重新生成账号策略"}
-              </button>
-            ) : (
-              <div className={styles.autoAnalysisState} role="status" aria-live="polite">
-                {busy ? <Loader2 className={styles.spin} aria-hidden /> : runDetails ? <Check aria-hidden /> : <Sparkles aria-hidden />}
-                <span>
-                  <strong>{busy ? historical ? "正在恢复当时的策略报告" : "正在自动生成账号策略" : runDetails ? historical ? "已恢复当时的策略报告" : "账号策略已自动启动" : historical ? "这条历史记录没有关联策略报告" : "解析完成后自动生成"}</strong>
-                  <small>{historical ? "当前展示历史快照，不会重新调用平台或扣除积分。" : "无需再次点击，结果会直接显示在下方。"}</small>
-                </span>
-              </div>
-            )}
-          </article>
-          <div className={styles.strategyOutput}>
-            {skillError && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{skillError}</span></div>}
-            {runDetails || (
-              <div className={styles.strategyEmpty}>
-                <Sparkles aria-hidden />
-                <div><strong>策略报告将在这里展开</strong><p>AI 会引用当前账号资料和 {snapshot.sampleCount} 个作品样本，不会编造平台未返回的指标。</p></div>
-              </div>
-            )}
-          </div>
+          ))}
+          <details className={styles.accountAnalysisScope}><summary>本次分析范围</summary><p>{focus}</p></details>
         </div>
-      </section>
+      </aside>
 
       <AccountWorkInspector
         item={inspectedWork}
@@ -1533,6 +1517,7 @@ export default function AnalysisWorkbench() {
     (!!skillRun.run && skillRun.run.skillId === status?.accountAnalysisSkillId);
   const runDetails = skillRun.run ? accountRunPresentation ? (
     <AccountStrategyReport
+      key={skillRun.run.id}
       run={skillRun.run}
       busy={skillRun.actionBusy}
       onAction={performRunAction}
@@ -1573,7 +1558,7 @@ export default function AnalysisWorkbench() {
   const restoreActivityRecord = async (record: SocialActivityRecordDetailVO) => {
     pendingAccountAutoRunRef.current = null;
     inspectEpochRef.current += 1;
-    analysisEpochRef.current += 1;
+    const epoch = ++analysisEpochRef.current;
     analysisBusyRef.current = false;
     setLoading(false);
     setArchiving(false);
@@ -1619,6 +1604,7 @@ export default function AnalysisWorkbench() {
 
     if (record.analysisRunId) {
       const restored = await skillRun.resume(record.analysisRunId);
+      if (epoch !== analysisEpochRef.current) return;
       if (!restored) {
         const message = "当时的 AI 报告暂时无法恢复，请稍后重试或获取最新数据";
         if (snapshot.kind === "account") setStrategyError(message);
@@ -1653,7 +1639,7 @@ export default function AnalysisWorkbench() {
         onSelect={restoreActivityRecord}
       />
       <div className={styles.workspaceMain}>
-        <div className={styles.canvas}>
+        <div className={`${styles.canvas} ${tab === "breakdown" && result?.kind === "account" ? styles.canvasWide : ""}`}>
         <header className={styles.pageHeader}>
           <h1>{pageHeading}</h1>
           <p>{pageDescription}</p>
@@ -1789,6 +1775,7 @@ export default function AnalysisWorkbench() {
                     runDetails={contextualRunDetails}
                     skillError={contextualSkillError || strategyError}
                     historical={historicalRecord?.type === "analysis"}
+                    hasSavedReport={!!historicalRecord?.analysisRunId}
                     downloaderPlatforms={downloaderPlatforms}
                     onRun={() => void startDeepAnalysis()}
                     onDownloadWork={(work) => {

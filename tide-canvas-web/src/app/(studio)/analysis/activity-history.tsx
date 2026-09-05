@@ -29,6 +29,20 @@ const PLATFORM_MARK: Record<string, string> = {
   tiktok: "♪", kuaishou: "快", pinterest: "P", instagram: "IG",
 };
 
+function RecordAvatar({ row }: { row: SocialActivityRecordVO }) {
+  const [failedUrl, setFailedUrl] = useState("");
+  const avatarUrl = row.avatarUrl?.trim() || "";
+  const showAvatar = /^https?:\/\//i.test(avatarUrl) && avatarUrl !== failedUrl;
+  return (
+    <span className={styles.historyPlatformMark} data-avatar={showAvatar ? "true" : undefined} aria-hidden>
+      {showAvatar ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={avatarUrl} alt="" width={40} height={40} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailedUrl(avatarUrl)} />
+      ) : PLATFORM_MARK[row.platform || ""] || "↗"}
+    </span>
+  );
+}
+
 function formatTime(value: string, full = false): string {
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) return full ? value || "时间未知" : "—";
@@ -223,7 +237,7 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
                       <time dateTime={row.createTime} title={`当时调用：${formatTime(row.createTime, true)}`}>{formatTime(row.createTime)}</time>
                     </span>
                     <span className={styles.historyCopy}>
-                      <span className={styles.historyPlatformMark} aria-hidden>{PLATFORM_MARK[row.platform || ""] || "↗"}</span>
+                      <RecordAvatar row={row} />
                       <span className={styles.historyIdentity}>
                         <strong title={row.title || row.sourceUrl}>{row.title || (row.type === "download" ? "公开视频" : label)}</strong>
                         <span className={styles.historyPlatform}>

@@ -763,7 +763,7 @@
    身份 → 核心表现 → 作品分布 → 作品表 → AI 结论。没有数据的派生模块
    直接不渲染，不用成排破折号占据与真实信息相同的视觉权重。 */
 
-.accountDashboard { display: grid; gap: 24px; min-width: 0; container-type: inline-size; }
+.accountDashboard { display: grid; grid-template-areas: "overview" "summary" "data"; gap: 24px; min-width: 0; container-type: inline-size; }
 
 .accountHero {
   display: grid;
@@ -1235,6 +1235,96 @@
   .trendScale button, .accountTableTools button, .accountTableTools select, .accountAnalysisScope summary { min-height: 44px; }
   .heatmapRow button { height: 44px; }
   .trendHit { r: 24px; }
+}
+
+.canvasWide { width: calc(100% - 64px); }
+.accountOverview, .accountData { display: grid; align-content: start; gap: 24px; min-width: 0; container-type: inline-size; }
+.accountOverview { grid-area: overview; }
+.accountData { grid-area: data; }
+.accountSummaryRail { grid-area: summary; align-self: start; min-width: 0; }
+.accountStrategy.accountSummaryRail { overflow: visible; border-color: color-mix(in oklab, var(--tech) 28%, var(--border)); border-radius: var(--r); background: linear-gradient(155deg, color-mix(in oklab, var(--tech) 4%, var(--surface)), var(--surface) 45%); box-shadow: none; }
+.reportRailHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 20px; border-bottom: 1px solid var(--border); }
+.reportRailHeader > div { display: flex; align-items: center; gap: 8px; }
+.reportRailHeader svg { width: 20px; height: 20px; color: var(--tech); }
+.reportRailHeader h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.reportRailHeader > span { color: var(--text-faint); font-size: 12px; white-space: nowrap; }
+.reportMetrics { padding: 24px 20px 16px; }
+.reportConcentration { display: grid; grid-template-columns: 112px minmax(0, 1fr); align-items: center; gap: 16px; }
+.reportDial { position: relative; width: 112px; height: 112px; }
+.reportDial svg { width: 100%; height: 100%; transform: none; }
+.reportDial circle { fill: none; stroke-width: 7; }
+.reportDial .reportDialTrack { stroke: var(--border-strong); }
+.reportDial .reportDialValue { stroke: var(--tech); stroke-linecap: round; }
+.reportDial .reportDialInner { stroke: color-mix(in oklab, var(--tech) 24%, transparent); stroke-width: 1; stroke-dasharray: 1 5; }
+.reportDial strong { position: absolute; inset: 0; display: grid; place-items: center; color: var(--tech); font-size: 20px; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.reportConcentration > div > span { display: flex; align-items: center; gap: 4px; color: var(--text-faint); font-size: 12px; }
+.reportConcentration > div > span svg { width: 12px; height: 12px; }
+.reportConcentration h3 { margin: 8px 0; font-size: 16px; font-weight: 600; line-height: 1.5; }
+.reportConcentration p { margin: 0; color: var(--text-dim); font-size: 12px; line-height: 1.7; }
+.reportMiniMetrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 24px; padding: 20px 0 0; border-top: 1px solid var(--border); }
+.reportMiniMetrics > div { min-width: 0; }
+.reportMiniMetrics > div + div { padding-left: 16px; border-left: 1px solid var(--border); }
+.reportMiniMetrics > div > span { display: flex; align-items: center; gap: 4px; color: var(--text-dim); font-size: 12px; }
+.reportMiniMetrics svg { width: 12px; height: 12px; color: var(--tech); }
+.reportMiniMetrics strong { display: flex; align-items: baseline; gap: 4px; margin-top: 8px; font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.03em; }
+.reportMiniMetrics strong > svg { width: 16px; height: 16px; }
+.reportMiniMetrics small { display: block; margin-top: 8px; color: var(--text-faint); font-size: 12px; line-height: 1.6; }
+.reportSegmentBar { display: flex; gap: 4px; height: 16px; margin-top: 12px; }
+.reportSegmentBar i { flex: 1; background: var(--border-strong); border-radius: 2px; }
+.reportSegmentBar i[data-filled="true"] { background: var(--tech); }
+.reportComparison { display: grid; gap: 4px; height: 16px; margin-top: 12px; }
+.reportComparison i { display: block; border-radius: 2px; background: color-mix(in oklab, var(--tech) 64%, var(--text)); }
+.reportComparison i + i { background: var(--text-dim); }
+.reportMetricsNote { margin: 16px 0 0; color: var(--text-faint); font-size: 12px; line-height: 1.6; }
+.reportRailBody { padding: 0 20px 20px; }
+.accountSummaryRail .accountReportHeader { flex-direction: row; align-items: center; padding: 16px 0; gap: 12px; border-top: 1px solid var(--border); border-bottom: 0; }
+.accountSummaryRail .accountReportHeader h3 { font-size: 14px; }
+.accountSummaryRail .accountReportHeader small { display: none; }
+.accountSummaryRail .accountReportHeader > span { color: var(--tech); }
+.accountBriefContent { min-width: 0; }
+.reportTakeaways { display: grid; gap: 12px; }
+.reportTakeaways > section { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: var(--r); background: color-mix(in oklab, var(--bg) 40%, transparent); }
+.reportTakeaways > section[data-kind="action"] { border-color: color-mix(in oklab, var(--tech) 28%, var(--border)); background: color-mix(in oklab, var(--tech) 5%, transparent); }
+.reportTakeaways > section > span { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid color-mix(in oklab, var(--tech) 24%, var(--border)); border-radius: var(--r-sm); color: var(--tech); }
+.reportTakeaways svg { width: 16px; height: 16px; }
+.reportTakeaways h4 { margin: 4px 0 8px; color: var(--text-faint); font-size: 12px; font-weight: 500; }
+.reportTakeaways p { margin: 0; color: var(--text); font-size: 14px; line-height: 1.8; overflow-wrap: anywhere; }
+.reportFullDetails { margin-top: 16px; border-top: 1px solid var(--border); }
+.reportFullDetails > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; color: var(--text-dim); font-size: 12px; cursor: pointer; list-style: none; }
+.reportFullDetails > summary::-webkit-details-marker { display: none; }
+.reportFullDetails > summary svg { width: 16px; height: 16px; transition: transform 160ms var(--ease); }
+.reportFullDetails[open] > summary svg { transform: rotate(90deg); }
+.accountSummaryRail .accountReportContent { padding: 8px 0 24px; }
+.accountSummaryRail .accountReportContent .markdown { width: 100%; padding: 0; overflow-wrap: anywhere; }
+.accountSummaryRail .accountReportContent .markdown table { display: block; max-width: 100%; overflow-x: auto; }
+.accountSummaryRail .accountReportFooter { align-items: flex-start; flex-direction: column; gap: 12px; padding-top: 12px; }
+.accountSummaryRail .accountReportFooter > div { justify-content: flex-start; }
+.accountSummaryRail .accountAnalysisScope { margin-top: 16px; padding-top: 8px; border-top: 1px solid var(--border); }
+.accountSummaryRail .accountReportPending, .accountSummaryRail .accountReportFailure { min-height: 160px; padding: 20px 0; }
+.accountSummaryRail .accountReportEmpty { min-height: 0; padding: 20px 0; text-align: left; }
+.reportWaiting { display: flex; align-items: flex-start; gap: 12px; padding: 20px 0; border-top: 1px solid var(--border); }
+.reportWaiting > svg { flex: none; width: 20px; height: 20px; color: var(--tech); }
+.reportWaiting strong { color: var(--text); font-size: 14px; }
+.reportWaiting p { margin: 8px 0 0; color: var(--text-dim); font-size: 12px; line-height: 1.7; }
+.reportFullDetails > summary:focus-visible { outline: 2px solid var(--tech); outline-offset: 2px; }
+
+@container (min-width: 1120px) {
+  .accountDashboard { grid-template-columns: minmax(0, 1fr) clamp(360px, 28%, 448px); grid-template-areas: "overview summary" "data summary"; align-items: start; }
+  /* Keep the fixed generation-history button below the report's scroll area. */
+  .accountSummaryRail { position: sticky; top: 24px; max-height: calc(100dvh - 112px); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+  .accountStrategy.accountSummaryRail { overflow: auto; }
+}
+@container (max-width: 1119px) {
+  .accountSummaryRail .reportMetrics { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px 24px; }
+  .accountSummaryRail .reportMiniMetrics { margin: 0; padding: 0; border-top: 0; }
+  .accountSummaryRail .reportMetricsNote { grid-column: 1 / -1; margin: 0; }
+  .accountSummaryRail .reportTakeaways { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+}
+@container (max-width: 600px) {
+  .accountSummaryRail .reportMetrics, .accountSummaryRail .reportTakeaways { grid-template-columns: minmax(0, 1fr); }
+  .accountSummaryRail .reportMiniMetrics { padding-top: 20px; border-top: 1px solid var(--border); }
+  .reportRailHeader, .reportRailBody { padding-left: 16px; padding-right: 16px; }
+  .reportMetrics { padding: 20px 16px 16px; }
 }
 
 .focusField { display: grid; gap: 8px; }
@@ -1835,7 +1925,7 @@
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  width: 36px;
+  width: 40px;
   height: 40px;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
@@ -1844,6 +1934,8 @@
   font-size: 20px;
   font-weight: 600;
 }
+.historyPlatformMark[data-avatar="true"] { overflow: hidden; border-radius: 50%; }
+.historyPlatformMark img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .historyRow[data-selected="true"] .historyPlatformMark { color: var(--tech); border-color: color-mix(in oklab, var(--tech) 35%, transparent); background: var(--tech-soft); }
 .historyIdentity { display: grid; gap: 4px; min-width: 0; }
 .historyIdentity strong {

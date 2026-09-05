@@ -204,3 +204,57 @@ func TestAdminActivityRecordsSupportUserAndTypeFilters(t *testing.T) {
 		t.Fatalf("numeric user filter failed: %+v body=%s", idResult, idRecorder.Body.String())
 	}
 }
+
+func TestActivityListUsesSnapshotAvatarsWithoutReturningSnapshots(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := activityTestDB(t)
+	ownerID := idgen.ID(5101)
+	avatar := "https://i0.hdslb.com/bfs/face/historical.jpg?size=80"
+	cases := []struct {
+		snapshot string
+		want     string
+	}{
+		{`{"profile":{"avatarUrl":"` + avatar + `"},"works":[{"title":"private-snapshot-work"}]}`, avatar},
+		{`{"profile":{"avatarUrl":null}}`, ""},
+		{`{"profile":{}}`, ""},
+		{`broken-json`, ""},
+		{`{"profile":{"avatarUrl":"javascript:alert(1)"}}`, ""},
+		{`{"profile":{"avatarUrl":"http://127.0.0.1/private.png"}}`, ""},
+		{``, ""},
+	}
+	for i, tc := range cases {
+		record := model.SocialActivityRecord{ID: idgen.ID(5200 + i), UserID: ownerID, ActivityType: model.SocialActivityAnalysis, Kind: "account", Status: model.SocialActivitySucceeded, SnapshotJSON: tc.snapshot}
+		if err := db.Create(&record).Error; err != nil {
+			t.Fatal(err)
+		}
+		if got := activityRecordVO(record, model.User{}).AvatarURL; got != tc.want {
+			t.Fatalf("detail avatar for case %d: got %q, want %q", i, got, tc.want)
+		}
+	}
+	foreign := model.SocialActivityRecord{ID: idgen.ID(5300), UserID: idgen.ID(5102), ActivityType: model.SocialActivityAnalysis, Status: model.SocialActivitySucceeded, SnapshotJSON: `{"profile":{"avatarUrl":"https://example.com/other-user-avatar.jpg"}}`}
+	if err := db.Create(&foreign).Error; err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/records", nil)
+	writeActivityRecords(c, db, &ownerID, false)
+	var result response.Result[response.PageData[ActivityRecordVO]]
+	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.Success || len(result.Data.Records) != len(cases) {
+		t.Fatalf("unexpected list: %s", recorder.Body.String())
+	}
+	for _, row := range result.Data.Records {
+		i := int(row.ID) - 5200
+		if i < 0 || i >= len(cases) || row.AvatarURL != cases[i].want {
+			t.Fatalf("incorrect avatar or leaked record: %+v", row)
+		}
+	}
+	for _, forbidden := range []string{"snapshot", "private-snapshot-work", "other-user-avatar"} {
+		if strings.Contains(recorder.Body.String(), forbidden) {
+			t.Fatalf("list leaked %q", forbidden)
+		}
+	}
+}

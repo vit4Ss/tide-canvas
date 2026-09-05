@@ -18,6 +18,8 @@ export interface SocialActivityRecordVO {
   platform?: string;
   sourceUrl: string;
   title?: string;
+  /** 被分析账号在当时快照中的头像。 */
+  avatarUrl?: string;
   status: SocialActivityStatus;
   quality?: string;
   durationSeconds?: number;
