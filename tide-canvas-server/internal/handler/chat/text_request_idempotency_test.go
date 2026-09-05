@@ -232,7 +232,6 @@ func TestStreamMessageReplayReturnsPersistedAssistant(t *testing.T) {
 
 	svc := &service{
 		repo:          newRepo(db),
-		historyLimit:  20,
 		ctxTokenLimit: 32000,
 		live:          make(map[liveReplyKey]*liveReply),
 	}
@@ -311,7 +310,6 @@ func TestStreamMessageRetryJoinsPersistedUser(t *testing.T) {
 
 	svc := &service{
 		repo:          newRepo(db),
-		historyLimit:  20,
 		ctxTokenLimit: 32000,
 		live:          make(map[liveReplyKey]*liveReply),
 	}
@@ -491,8 +489,8 @@ func TestExpiredTextLeaseIsRecoveredOnceAcrossInstances(t *testing.T) {
 	}
 
 	services := []*service{
-		{repo: newRepo(db), historyLimit: 20, ctxTokenLimit: 32000, live: make(map[liveReplyKey]*liveReply)},
-		{repo: newRepo(db), historyLimit: 20, ctxTokenLimit: 32000, live: make(map[liveReplyKey]*liveReply)},
+		{repo: newRepo(db), ctxTokenLimit: 32000, live: make(map[liveReplyKey]*liveReply)},
+		{repo: newRepo(db), ctxTokenLimit: 32000, live: make(map[liveReplyKey]*liveReply)},
 	}
 	start := make(chan struct{})
 	errs := make(chan error, len(services))
@@ -930,7 +928,7 @@ func TestAssistantPersistenceFailureDoesNotReturnPhantomDone(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Callback().Create().Remove(callbackName) })
 
-	svc := &service{repo: newRepo(db), historyLimit: 20, ctxTokenLimit: 32000, live: make(map[liveReplyKey]*liveReply)}
+	svc := &service{repo: newRepo(db), ctxTokenLimit: 32000, live: make(map[liveReplyKey]*liveReply)}
 	requestID := "chat-request-no-phantom"
 	vo, err := svc.streamMessage(context.Background(), conversationID, ownerID, "hello", nil, "", "", false, requestID, nil)
 	if vo != nil {
@@ -1076,7 +1074,7 @@ func TestListMessagesTerminalizesExpiredTextRequestAndRefundsOnce(t *testing.T) 
 		t.Fatalf("create expired request: %v", err)
 	}
 
-	svc := &service{repo: newRepo(db), historyLimit: 20, ctxTokenLimit: 32000, live: make(map[liveReplyKey]*liveReply)}
+	svc := &service{repo: newRepo(db), ctxTokenLimit: 32000, live: make(map[liveReplyKey]*liveReply)}
 	query := &ListQuery{PageNum: 1, PageSize: 100}
 	query.normalize()
 	for pass := 0; pass < 2; pass++ {
@@ -1150,7 +1148,7 @@ func TestListMessagesDoesNotRefundLiveTextRequest(t *testing.T) {
 		t.Fatalf("create live request: %v", err)
 	}
 
-	svc := &service{repo: newRepo(db), historyLimit: 20, ctxTokenLimit: 32000, live: make(map[liveReplyKey]*liveReply)}
+	svc := &service{repo: newRepo(db), ctxTokenLimit: 32000, live: make(map[liveReplyKey]*liveReply)}
 	query := &ListQuery{PageNum: 1, PageSize: 100}
 	query.normalize()
 	messages, total, err := svc.listMessages(conversationID, ownerID, query)
@@ -1236,12 +1234,12 @@ func TestRecentMessagesAreBoundedByCurrentUserMessage(t *testing.T) {
 		}
 	}
 
-	got, err := newRepo(db).recentMessages(conversationID, 0, rows[2].ID, 20)
+	got, err := newRepo(db).recentMessages(conversationID, rows[2].ID, 3)
 	if err != nil {
 		t.Fatalf("load bounded context: %v", err)
 	}
-	if len(got) != 3 || got[len(got)-1].ID != rows[2].ID {
-		t.Fatalf("bounded context ids = %#v, want exactly through current message %s", got, rows[2].ID.String())
+	if len(got) != 2 || got[len(got)-1].ID != rows[1].ID {
+		t.Fatalf("bounded history = %#v, want exactly before current message %s", got, rows[2].ID.String())
 	}
 	for _, message := range got {
 		if message.ID == rows[3].ID {

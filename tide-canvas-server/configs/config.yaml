@@ -72,8 +72,8 @@ cors:
 # Chat assistant LLM (Anthropic / Claude). Leave apiKey blank to keep the canned
 # placeholder reply; set it (or TIDECANVAS_LLM_APIKEY) to enable real replies.
 llm:
-  historyLimit: 20 # recent messages sent as context
-  contextTokenLimit: 32000 # 会话累计 token 估算上限，达到后需开启新会话
+  historyLimit: 3 # legacy key; model history is fixed at 3 messages
+  contextTokenLimit: 32000 # 最近3条历史文本与本次输入的token估算上限
   # systemPrompt: "" # optional override of the built-in 流光 creative-assistant persona
 
 # Upstream model relay (ScarecrowToken Relay). The admin 模型管理「刷新」按钮 pulls

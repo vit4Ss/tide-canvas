@@ -20,6 +20,7 @@ import (
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/boundedtext"
 	"tidecanvas/internal/pkg/chatattach"
+	"tidecanvas/internal/pkg/chatcontext"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/storage"
@@ -1280,6 +1281,9 @@ func buildGenerationInput(defaultsJSON string, input RunInput, prompt string) ma
 			result[key] = value
 		}
 	}
+	// Conversation context comes only from RunInput.Messages via the bounded
+	// Agent prompt. Defaults/parameters must not add a second history array.
+	delete(result, "messages")
 	result["prompt"] = strings.TrimSpace(prompt)
 	imageURLs := []string{}
 	for _, asset := range input.Assets {
@@ -1347,7 +1351,7 @@ func withAgentConversationContext(input RunInput) RunInput {
 
 	var context strings.Builder
 	context.WriteString("以下是最近对话上下文，仅用于理解指代、延续创作意图和保持一致性；当前请求是本轮需要执行的任务。\n\n<recent_conversation>\n")
-	for _, message := range input.Messages {
+	for _, message := range chatcontext.Latest(input.Messages) {
 		role := "用户"
 		if message.Role == "assistant" {
 			role = "助手"

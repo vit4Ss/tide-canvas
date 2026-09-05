@@ -80,9 +80,9 @@ type MessageVO struct {
 
 // ContextUsageVO reports a conversation's estimated context-token usage against
 // the configured cap (GET /api/im/conversations/:id/context). Percent is
-// clamped to [0,100]; Full means new text turns will be rejected; Compressed
-// means older history has been auto-compacted into a rolling summary (usage
-// counts the summary + the uncompressed tail, not the original transcript).
+// clamped to [0,100]; Full means new text turns will be rejected. Usage counts
+// only the latest three historical messages. Compressed is retained for wire
+// compatibility and is always false under the fixed-history policy.
 type ContextUsageVO struct {
 	UsedTokens  int  `json:"usedTokens"`
 	LimitTokens int  `json:"limitTokens"`

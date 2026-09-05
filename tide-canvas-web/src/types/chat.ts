@@ -73,8 +73,7 @@ export interface MessageVO {
 /** Estimated context-token usage of a conversation vs the server cap
  *  (GET /api/im/conversations/:id/context). `full` means the server will
  *  reject new text turns — the user should start a new conversation.
- *  `compressed`：较早对话已被服务端自动压缩成摘要（usedTokens 按
- *  摘要+未压缩尾部计，不再是原始全文）。 */
+ *  usedTokens 只计最近 3 条历史文本；compressed 为兼容旧客户端保留，固定 false。 */
 export interface ContextUsageVO {
   usedTokens: number;
   limitTokens: number;

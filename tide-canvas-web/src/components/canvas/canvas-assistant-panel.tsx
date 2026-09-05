@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, Bot, ChevronDown, ChevronRight, Expand, FileText, Loader2, Maximize2, Menu, Minimize2, Plus, Sparkles, Wand2, X, Zap } from "lucide-react";
 import { aiApi, uploadFileSmart } from "@/lib/api";
+import { recentTextHistory } from "@/lib/text-history";
 import { referenceKindFromFile, referenceKindFromMeta, resolveModelReferenceLimitBytes, validateKnownFileSize } from "@/lib/upload-limits";
 import { PromptRefEditor } from "./nodes/prompt-ref-editor";
 import { ModelPicker } from "./nodes/model-picker";
@@ -1351,8 +1352,8 @@ export function CanvasAssistantPanel({
     }
 
     const nextActiveSessionId = options?.sessionId || activeSessionId || createSessionId();
-    const completedHistory = currentHistory
-      .flatMap((item): SkillRunMessageInput[] => {
+    const recentHistory = recentTextHistory(currentHistory
+      .flatMap((item): Array<{ message: SkillRunMessageInput; run?: SkillRunVO }> => {
         const recoveredByRequest = item.clientRequestId
           ? runsByRequestId.get(item.clientRequestId)
           : undefined;
@@ -1363,15 +1364,16 @@ export function CanvasAssistantPanel({
             : recoveredByRequest;
           if (!run || run.status !== "succeeded") return [];
           return [{
-            role: "assistant",
-            content: skillRunHistoryContent(run, item.skillTitle),
+            message: { role: "assistant", content: skillRunHistoryContent(run, item.skillTitle) },
+            run,
           }];
         }
         return item.status === "done" && item.content.trim()
-          ? [{ role: item.role, content: messageContentForHistory(item) }]
+          ? [{ message: { role: item.role, content: messageContentForHistory(item) } }]
           : [];
       })
-      .slice(-40);
+    );
+    const completedHistory = recentHistory.map((item) => item.message);
 
     if (currentSkill) {
       if (utf8Length(text) > MAX_SKILL_PROMPT_BYTES) {
@@ -1393,17 +1395,8 @@ export function CanvasAssistantPanel({
         runParameters.textModelId = selectedModel.modelId;
       }
       const previousResultAssets = currentSkillKind === "agent"
-        ? currentHistory
-          .flatMap((item) => {
-            if (item.role !== "assistant") return [];
-            const run = item.skillRunId
-              ? runsById.get(item.skillRunId)
-              : item.clientRequestId
-                ? runsByRequestId.get(item.clientRequestId)
-                : undefined;
-            return run ? [run] : [];
-          })
-          .filter((run): run is SkillRunVO => !!run && run.status === "succeeded")
+        ? recentHistory
+          .flatMap((item) => item.run ? [item.run] : [])
           .flatMap((run) => canvasSkillRunArtifacts(run)
             .filter((artifact) => artifact.isFinal !== false && !!artifact.url)
             .map((artifact) => ({
@@ -1431,7 +1424,7 @@ export function CanvasAssistantPanel({
         toast.error(`当前附件和画布节点共展开为 ${currentAssets.length} 个素材，一次最多使用 ${MAX_SKILL_ASSETS} 个`);
         return;
       }
-      // Current attachments and selected nodes have priority; older Agent results only fill spare slots.
+      // Current attachments and selected nodes take priority over results from the same three-message window.
       input.assets = uniqueSkillAssets([...currentAssets, ...previousResultAssets]).slice(0, MAX_SKILL_ASSETS);
       if (currentSkillKind === "agent") input.messages = trimSkillHistory(completedHistory);
       const errors = validateSkillRunInputValues(currentSkill.inputSchema, input);

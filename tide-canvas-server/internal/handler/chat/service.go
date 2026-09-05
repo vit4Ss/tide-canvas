@@ -18,6 +18,7 @@ import (
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/boundedtext"
 	"tidecanvas/internal/pkg/chatattach"
+	"tidecanvas/internal/pkg/chatcontext"
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
@@ -153,37 +154,6 @@ const llmReplyTimeout = 60 * time.Minute
 // instance leaves a request that another process can eventually reclaim.
 const textTurnLeaseDuration = llmReplyTimeout + 5*time.Minute
 
-// ── 上下文自动压缩（compaction）────────────────────────────────────────────
-// 会话估算 token 越过阈值（默认=上限的 70%，sys_config llm.compressAtTokens
-// 可改）时，把「最近 compactKeepTail 条之外」的历史交给文本模型滚动压缩成
-// 摘要存到会话上（context_summary / summary_upto_id）；后续请求以
-// [system 提示词 + 摘要 + 摘要之后的原文] 作为上下文，会话得以继续而不是
-// 撞硬上限被迫开新会话。压缩失败 fail-open，硬上限仍由 guardContext 兜底。
-
-// compactKeepTail 条最近消息永远保留原文（≈3 轮），保证近场语境不失真。
-const compactKeepTail = 6
-
-// compactAtMessages 按消息条数触发压缩（与 token 阈值互为兜底）：消息多而短
-// 的会话 token 迟迟到不了阈值，但一旦越过上下文窗口（historyWindow 的 200 条
-// 安全阀）中段消息就会静默掉出模型视野——所以在逼近窗口前先压缩。
-const compactAtMessages = 120
-
-// compactSummaryMaxRunes caps the stored summary so a rambling model can't
-// bloat the very context the compaction is supposed to shrink.
-const compactSummaryMaxRunes = 2000
-
-// compactTimeout bounds one summarization call.
-const compactTimeout = 90 * time.Second
-
-// compactSystemPrompt drives the summarization call.
-const compactSystemPrompt = "你是对话上下文压缩器。把给定的对话（可能附带一段既有摘要）压缩成一段中文摘要，" +
-	"用于后续对话的背景注入。必须保留：用户的目标与关键需求、已确认的事实与结论、重要偏好与约定、" +
-	"未决问题；省略寒暄、重复内容与无关细节。若给出了【既有摘要】，把【新增对话】合并进去，" +
-	"输出一段完整的新摘要。直接输出摘要正文，不要任何前缀或解释，长度不超过 500 字。"
-
-// summaryInjectPrefix labels the summary system message sent to the model.
-const summaryInjectPrefix = "以下是本会话较早内容的摘要（原文已压缩，视为已发生的对话背景）：\n"
-
 type service struct {
 	repo *repo
 	// relay is the assistant backend: the ScarecrowToken relay's
@@ -191,8 +161,7 @@ type service struct {
 	// nil when no relay API key is set (回复退化为占位文案)。
 	relay        *relaychat.Client
 	systemPrompt string
-	historyLimit int
-	// ctxTokenLimit caps a conversation's cumulative estimated tokens (see
+	// ctxTokenLimit caps the recent history plus the current prompt (see
 	// tokens.go); text sends beyond it fail with errContextFull.
 	ctxTokenLimit int
 	// docHosts 是启动时存储策略 FetchHosts() 的本站资产 host 列表（CDN/区域/
@@ -211,7 +180,6 @@ type service struct {
 func newService(db *gorm.DB, cfg *config.Config, store storage.StorageStrategy) *service {
 	s := &service{
 		repo:          newRepo(db),
-		historyLimit:  cfg.LLM.HistoryLimit,
 		systemPrompt:  cfg.LLM.SystemPrompt,
 		ctxTokenLimit: cfg.LLM.ContextTokenLimit,
 		relay:         relaychat.New(cfg.Relay.BaseURL, cfg.Relay.APIKey),
@@ -220,9 +188,6 @@ func newService(db *gorm.DB, cfg *config.Config, store storage.StorageStrategy) 
 	if store != nil {
 		s.store = store
 		s.docHosts = store.FetchHosts()
-	}
-	if s.historyLimit <= 0 {
-		s.historyLimit = 20
 	}
 	if s.ctxTokenLimit <= 0 {
 		s.ctxTokenLimit = 32000
@@ -234,18 +199,9 @@ func newService(db *gorm.DB, cfg *config.Config, store storage.StorageStrategy) 
 		Attrs(model.SysConfig{
 			ConfigValue: strconv.Itoa(s.ctxTokenLimit),
 			Group:       "AI 对话",
-			Description: "会话累计上下文 token 估算上限：越过压缩阈值先自动压缩，压缩后仍超限才要求开新会话（保存即生效）",
+			Description: "单次对话上下文 token 估算上限：只计最近 3 条历史文本与本次输入，不再自动压缩（保存即生效）",
 		}).FirstOrCreate(&seed).Error; err != nil {
 		logger.L().Warn("chat: seed context-limit config failed", zap.Error(err))
-	}
-	var seedCompress model.SysConfig
-	if err := db.Where(model.SysConfig{ConfigKey: model.ConfigKeyChatCompressAt}).
-		Attrs(model.SysConfig{
-			ConfigValue: "0",
-			Group:       "AI 对话",
-			Description: "会话上下文自动压缩阈值（估算 token）：达到后把较早对话滚动压缩成摘要；0=自动（上限的 70%），保存即生效",
-		}).FirstOrCreate(&seedCompress).Error; err != nil {
-		logger.L().Warn("chat: seed compress-threshold config failed", zap.Error(err))
 	}
 	if s.relay != nil {
 		logger.L().Info("chat: relay assistant enabled (text models via /v1/chat/completions)")
@@ -442,15 +398,14 @@ func (s *service) persistTurn(conversationID, ownerID idgen.ID, dto PersistTurnD
 	}, nil
 }
 
-// contextTokens sums the estimated tokens of a conversation's EFFECTIVE
-// context: the compaction summary plus the text messages it does not cover.
-// 已被压缩吞掉的原文不再计数——这正是压缩释放上下文预算的机制。
+// contextTokens estimates only the three messages used by the next text turn.
+// Legacy summaries and earlier messages remain stored but are never injected.
 func (s *service) contextTokens(conv *model.IMConversation) (int, error) {
-	rows, err := s.repo.textMessagesAfter(conv.ID, conv.SummaryUptoID)
+	rows, err := s.repo.recentMessages(conv.ID, 0, chatcontext.HistoryLimit)
 	if err != nil {
 		return 0, err
 	}
-	used := estimateTokens(conv.ContextSummary)
+	used := 0
 	for i := range rows {
 		used += estimateTokens(rows[i].Content)
 	}
@@ -472,7 +427,7 @@ func (s *service) contextUsage(conversationID, ownerID idgen.ID) (*ContextUsageV
 	if err != nil {
 		return nil, err
 	}
-	vo := toContextUsageVO(used, s.contextLimit(), strings.TrimSpace(conv.ContextSummary) != "")
+	vo := toContextUsageVO(used, s.contextLimit(), false)
 	return &vo, nil
 }
 
@@ -494,7 +449,7 @@ func (s *service) contextLimit() int {
 // guardContext rejects a new text turn once the conversation's estimated
 // tokens (effective transcript + the new message) exceed the cap. A failed
 // estimate fails open — the cap is a UX guardrail, not billing enforcement.
-// 正常情况下 maybeCompact 会在 70% 阈值先压缩，这里只是最后的兜底。
+// The transcript is retained in storage; it is neither compacted nor re-sent.
 func (s *service) guardContext(conv *model.IMConversation, newContent string) error {
 	used, err := s.contextTokens(conv)
 	if err != nil {
@@ -507,119 +462,7 @@ func (s *service) guardContext(conv *model.IMConversation, newContent string) er
 	return nil
 }
 
-// historyWindow is the max after-summary messages fetched as LLM context. 窗口
-// 必须覆盖 contextTokens 计费的全部范围（摘要之后的所有原文），否则会出现
-// 「第 N 条起既不在摘要里也不进上下文、却仍占着 token 预算」的静默失忆——
-// 消息多而短（或未配置 relay、压缩永不推进）时尤其明显。token 硬上限由
-// guardContext 兜底，所以窗口放大不会失控；200 只是 SQL 取数的安全阀。
-// 配置的 historyLimit 只在配得更大时生效（旧默认 20 正是失忆的根源）。
-func (s *service) historyWindow() int {
-	const floor = 200
-	if s.historyLimit > floor {
-		return s.historyLimit
-	}
-	return floor
-}
-
-// compactThreshold returns the token level that triggers auto-compaction: the
-// admin override (sys_config llm.compressAtTokens) when positive, else 70% of
-// the context cap. Read per send so admin edits apply without a restart.
-func (s *service) compactThreshold() int {
-	var row model.SysConfig
-	if err := s.repo.db.Where("config_key = ?", model.ConfigKeyChatCompressAt).
-		First(&row).Error; err == nil {
-		if n, convErr := strconv.Atoi(strings.TrimSpace(row.ConfigValue)); convErr == nil && n > 0 {
-			return n
-		}
-	}
-	return s.contextLimit() * 7 / 10
-}
-
-// maybeCompact rolls older history into the conversation's summary once the
-// estimated context passes the threshold, keeping the most recent
-// compactKeepTail messages verbatim. Best-effort：任何失败只记日志并返回
-// （fail-open），guardContext 的硬上限仍兜底。成功后就地更新 conv，调用方
-// 直接用压缩后的会话继续构建本次回复的上下文。
-func (s *service) maybeCompact(ctx context.Context, conv *model.IMConversation) {
-	if s.relay == nil {
-		return // 压缩本身需要文本模型；无 relay 时维持旧的硬上限行为
-	}
-	modelKey := s.repo.textModelKey()
-	if modelKey == "" {
-		return
-	}
-	rows, err := s.repo.textMessagesAfter(conv.ID, conv.SummaryUptoID)
-	if err != nil || len(rows) <= compactKeepTail {
-		return
-	}
-	used := estimateTokens(conv.ContextSummary)
-	for i := range rows {
-		used += estimateTokens(rows[i].Content)
-	}
-	// token 或消息条数任一越线都触发压缩（见 compactAtMessages 的注释）。
-	if used <= s.compactThreshold() && len(rows) <= compactAtMessages {
-		return
-	}
-
-	// 压缩对象 = 摘要未覆盖的原文中，除最近 compactKeepTail 条之外的部分；
-	// 连同既有摘要一起交给模型输出合并后的新摘要（滚动式，永远只有一段）。
-	head := rows[:len(rows)-compactKeepTail]
-	var sb strings.Builder
-	if prev := strings.TrimSpace(conv.ContextSummary); prev != "" {
-		sb.WriteString("【既有摘要】\n")
-		sb.WriteString(prev)
-		sb.WriteString("\n\n【新增对话】\n")
-	}
-	for i := range head {
-		role := "用户"
-		if head[i].SenderID == assistantSenderID {
-			role = "助手"
-		}
-		sb.WriteString(role)
-		sb.WriteString("：")
-		sb.WriteString(head[i].Content)
-		sb.WriteString("\n")
-	}
-
-	cctx, cancel := context.WithTimeout(ctx, compactTimeout)
-	defer cancel()
-	start := time.Now()
-	summary, err := s.relay.Chat(cctx, modelKey, []relaychat.Msg{
-		relaychat.TextMsg("system", compactSystemPrompt),
-		relaychat.TextMsg("user", sb.String()),
-	})
-	eventlog.ModelText(conv.OwnerID, "compact", modelKey, "/v1/chat/completions",
-		sb.String(), summary, start, err, 0)
-	if err != nil {
-		logger.L().Warn("chat: context compaction failed, keeping full history",
-			zap.String("model", modelKey), zap.Error(err))
-		return
-	}
-	summary = strings.TrimSpace(summary)
-	if summary == "" {
-		return
-	}
-	if r := []rune(summary); len(r) > compactSummaryMaxRunes {
-		summary = string(r[:compactSummaryMaxRunes])
-	}
-	upto := head[len(head)-1].ID
-	if err := s.repo.saveContextSummary(conv.ID, summary, upto); err != nil {
-		logger.L().Warn("chat: save compaction summary failed", zap.Error(err))
-		return
-	}
-	conv.ContextSummary = summary
-	conv.SummaryUptoID = upto
-	logger.L().Info("chat: context compacted",
-		zap.String("conversation", conv.ID.String()),
-		zap.Int("beforeTokens", used),
-		zap.Int("compressedMsgs", len(head)),
-		zap.Int("summaryTokens", estimateTokens(summary)))
-}
-
-// sendMessage persists the user's message, synchronously generates and persists
-// the assistant reply, and returns the user message VO. Ownership is enforced.
-// ctx 应传请求上下文：客户端断开即取消压缩与生成，不再用 Background 空烧
-// 上游 token（最坏压缩 90s + 生成 60s）。
+// sendMessage persists a user turn, generates its reply and verifies ownership.
 func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen.ID, dto SendMessageDTO) (*MessageVO, error) {
 	conv, err := s.repo.findConversation(conversationID)
 	if err != nil {
@@ -651,8 +494,6 @@ func (s *service) sendMessage(ctx context.Context, conversationID, ownerID idgen
 	if err := s.validateTextAttachments(dto.Attachments, dto.Model); err != nil {
 		return nil, err
 	}
-	// 越过阈值先自动压缩（就地更新 conv），压缩后仍超硬上限才拒绝。
-	s.maybeCompact(ctx, conv)
 	if err := s.guardContext(conv, content); err != nil {
 		return nil, err
 	}
@@ -833,8 +674,6 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 		}
 	}
 	if !resuming {
-		// 越过阈值先自动压缩（就地更新 conv），压缩后仍超硬上限才拒绝。
-		s.maybeCompact(ctx, conv)
 		if err := s.guardContext(conv, content); err != nil {
 			return nil, err
 		}
@@ -1011,8 +850,8 @@ func (s *service) streamMessage(ctx context.Context, conversationID, ownerID idg
 // streamReply streams the assistant reply for the latest user message via the
 // relay text model, forwarding each delta through onDelta. On any error (or when
 // no relay text model is configured) it falls back to the canned reply, emitted
-// as one delta so the client still renders something. 上下文 = system 提示词 +
-// 压缩摘要（如有）+ 摘要之后的原文消息。
+// as one delta so the client still renders something. Context is system
+// instructions, up to three preceding messages, and the current user message.
 func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, ownerID, userMessageID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel, skillPrompt string, webSearch bool, onDelta func(string), charge *textCharge) (string, bool) {
 	// 客户端断开不中止生成：前端切页面/切会话都会 abort SSE，请求上下文随之
 	// 取消；若生成跟着停，回复只落库半截。分离请求上下文让上游把回复生成完整
@@ -1022,39 +861,7 @@ func (s *service) streamReply(ctx context.Context, conv *model.IMConversation, o
 	conversationID := conv.ID
 	if s.relay != nil {
 		if model := s.repo.resolveTextModelKey(requestedModel); model != "" {
-			if rows, err := s.repo.recentMessages(conversationID, conv.SummaryUptoID, userMessageID, s.historyWindow()); err == nil {
-				msgs := make([]relaychat.Msg, 0, len(rows)+2)
-				if p := strings.TrimSpace(s.systemPrompt); p != "" {
-					msgs = append(msgs, relaychat.TextMsg("system", p))
-				}
-				if p := strings.TrimSpace(skillPrompt); p != "" {
-					msgs = append(msgs, relaychat.TextMsg("system", p))
-				}
-				if sum := strings.TrimSpace(conv.ContextSummary); sum != "" {
-					msgs = append(msgs, relaychat.TextMsg("system", summaryInjectPrefix+sum))
-				}
-				for i := range rows {
-					role := "user"
-					if rows[i].SenderID == assistantSenderID {
-						role = "assistant"
-					}
-					msgs = append(msgs, relaychat.TextMsg(role, rows[i].Content))
-				}
-				// attach the uploaded images (image_url part) and documents (file part)
-				// to the latest user message so the model can actually see them —
-				// only the current turn carries attachments; 历史行取自落库消息。
-				if len(imageURLs) > 0 || len(docFiles) > 0 || docNote != "" {
-					combined := userContent
-					if docNote != "" {
-						combined = strings.TrimSpace(userContent + "\n\n" + docNote)
-					}
-					for i := len(msgs) - 1; i >= 0; i-- {
-						if msgs[i].Role == "user" {
-							msgs[i] = relaychat.UserWithAttachments(combined, imageURLs, docFiles)
-							break
-						}
-					}
-				}
+			if msgs, err := s.replyMessages(conversationID, userMessageID, userContent, docNote, docFiles, imageURLs, skillPrompt); err == nil {
 				cctx, cancel := context.WithTimeout(ctx, llmReplyTimeout)
 				defer cancel()
 				start := time.Now()
@@ -1255,14 +1062,14 @@ func (s *service) appendMessage(conversationID, ownerID idgen.ID, dto AppendMess
 // generateReply produces the assistant reply for the latest user message: the
 // recent transcript goes to the relay text model; on any error (or when the
 // relay is unconfigured) it falls back to the canned placeholder so the chat
-// round-trip always completes. 上下文 = system 提示词 + 压缩摘要（如有）+
-// 摘要之后的原文消息。
+// round-trip always completes. Context is system instructions, up to three
+// preceding messages, and the current persisted user message.
 func (s *service) generateReply(ctx context.Context, conv *model.IMConversation, ownerID, userMessageID idgen.ID, userContent string, docNote string, docFiles []relaychat.FileAttachment, imageURLs []string, requestedModel, skillPrompt string, webSearch bool, charge *textCharge) string {
 	if s.relay == nil {
 		return s.buildReply(userContent)
 	}
 
-	rows, err := s.repo.recentMessages(conv.ID, conv.SummaryUptoID, userMessageID, s.historyWindow())
+	msgs, err := s.replyMessages(conv.ID, userMessageID, userContent, docNote, docFiles, imageURLs, skillPrompt)
 	if err != nil {
 		logger.L().Warn("chat: load context failed, using canned reply", zap.Error(err))
 		return s.buildReply(userContent)
@@ -1271,37 +1078,6 @@ func (s *service) generateReply(ctx context.Context, conv *model.IMConversation,
 	// 1) Preferred: relay chat completions, routed to a configured text model.
 	if s.relay != nil {
 		if model := s.repo.resolveTextModelKey(requestedModel); model != "" {
-			msgs := make([]relaychat.Msg, 0, len(rows)+2)
-			if p := strings.TrimSpace(s.systemPrompt); p != "" {
-				msgs = append(msgs, relaychat.TextMsg("system", p))
-			}
-			if p := strings.TrimSpace(skillPrompt); p != "" {
-				msgs = append(msgs, relaychat.TextMsg("system", p))
-			}
-			if sum := strings.TrimSpace(conv.ContextSummary); sum != "" {
-				msgs = append(msgs, relaychat.TextMsg("system", summaryInjectPrefix+sum))
-			}
-			for i := range rows {
-				role := "user"
-				if rows[i].SenderID == assistantSenderID {
-					role = "assistant"
-				}
-				msgs = append(msgs, relaychat.TextMsg(role, rows[i].Content))
-			}
-			// attach the uploaded images (image_url) / documents (file part) to the
-			// latest user message.
-			if len(imageURLs) > 0 || len(docFiles) > 0 || docNote != "" {
-				combined := userContent
-				if docNote != "" {
-					combined = strings.TrimSpace(userContent + "\n\n" + docNote)
-				}
-				for i := len(msgs) - 1; i >= 0; i-- {
-					if msgs[i].Role == "user" {
-						msgs[i] = relaychat.UserWithAttachments(combined, imageURLs, docFiles)
-						break
-					}
-				}
-			}
 			cctx, cancel := context.WithTimeout(ctx, llmReplyTimeout)
 			defer cancel()
 			start := time.Now()

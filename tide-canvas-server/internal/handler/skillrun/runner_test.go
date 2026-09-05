@@ -81,6 +81,42 @@ func TestGenerationInputKeepsMultipleReferenceImages(t *testing.T) {
 	}
 }
 
+func TestAgentParametersCannotAddASecondConversationHistory(t *testing.T) {
+	for _, extraParameters := range []bool{false, true} {
+		input := RunInput{
+			Prompt: "current",
+			Messages: []RunMessage{
+				{Role: "user", Content: "discard"}, {Role: "assistant", Content: "keep1"},
+				{Role: "user", Content: "keep2"}, {Role: "assistant", Content: "keep3"},
+			},
+			Parameters: map[string]any{"temperature": 0.4},
+		}
+		if extraParameters {
+			input.Parameters["messages"] = []RunMessage{{Role: "user", Content: "extra history"}}
+		}
+		bounded := withAgentConversationContext(input)
+		command := buildGenerationInput(`{"messages":[{"role":"user","content":"default history"}]}`, bounded, bounded.Prompt)
+		if _, exists := command["messages"]; exists {
+			t.Fatal("parameters added a second conversation history")
+		}
+		prompt := command["prompt"].(string)
+		for _, content := range []string{"keep1", "keep2", "keep3", "current"} {
+			if strings.Count(prompt, content) != 1 {
+				// The current_request tag includes the word current, so check its body.
+				if content != "current" || !strings.Contains(prompt, "\ncurrent\n") {
+					t.Fatalf("expected context missing or repeated: %s", prompt)
+				}
+			}
+		}
+		if strings.Contains(prompt, "discard") || command["temperature"] != 0.4 {
+			t.Fatalf("bad bounded command: %#v", command)
+		}
+		if _, exists := input.Parameters["messages"]; exists != extraParameters || len(input.Messages) != 4 {
+			t.Fatal("original retry payload was mutated")
+		}
+	}
+}
+
 func TestSkillImageNoteIsGenericAcrossOfficeTools(t *testing.T) {
 	command := map[string]any{"prompt": "create a document"}
 	svc := &service{deps: &app.Deps{Storage: attachmentTestStorage{baseURL: "https://cdn.test"}}}
@@ -156,6 +192,25 @@ func TestAgentConversationContextIsExplicitAndDoesNotMutateCurrentPrompt(t *test
 	}
 	if got := withAgentConversationContext(RunInput{Prompt: "single turn"}).Prompt; got != "single turn" {
 		t.Fatalf("single-turn prompt changed: %q", got)
+	}
+}
+
+func TestAgentConversationContextIncludesOnlyThreeHistoricalMessages(t *testing.T) {
+	input := RunInput{Prompt: "current", Messages: []RunMessage{
+		{Role: "user", Content: "discard-1"}, {Role: "assistant", Content: "discard-2"},
+		{Role: "user", Content: "keep-1"}, {Role: "assistant", Content: "keep-2"}, {Role: "user", Content: "keep-3"},
+	}}
+	got := withAgentConversationContext(input)
+	if strings.Contains(got.Prompt, "discard-") {
+		t.Fatal("old conversation leaked into agent prompt")
+	}
+	for _, text := range []string{"keep-1", "keep-2", "keep-3", "current"} {
+		if !strings.Contains(got.Prompt, text) {
+			t.Fatalf("missing %s", text)
+		}
+	}
+	if input.Prompt != "current" || len(input.Messages) != 5 {
+		t.Fatal("stored input was mutated")
 	}
 }
 

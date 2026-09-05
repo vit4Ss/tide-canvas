@@ -713,6 +713,7 @@ export default function AdminConfigPage() {
                   <div className="set-list">
                     {rows.map((it) => {
                       const managed = MANAGED_ELSEWHERE[it.configKey];
+                      const legacyHistory = it.configKey === "llm.compressAtTokens" || it.configKey === "llm.historyLimit";
                       const isFooterLinks = it.configKey === "site.footerLinks";
                       const boolCfg = BOOL_KEYS[it.configKey];
                       const numberCfg = NUMBER_KEYS[it.configKey];
@@ -725,6 +726,8 @@ export default function AdminConfigPage() {
                       const dirty = it.configKey in edits;
                       const displayLabel = isFooterLinks
                         ? "页脚链接（前台页脚的链接分组）"
+                        : legacyHistory ? "旧版历史上下文配置（已停用）"
+                        : it.configKey === "llm.contextTokenLimit" ? "单次上下文 token 估算上限：最近 3 条历史消息与本次输入"
                         : it.description || it.configKey;
                       const controlLabel = `${displayLabel}（${it.configKey}）`;
                       return (
@@ -736,7 +739,7 @@ export default function AdminConfigPage() {
                             <span className="config-label-line">
                               <span>{displayLabel}</span>
                               {dirty ? <span className="config-dirty-tag">已修改</span> : null}
-                              {!BASELINE_KEYS.has(it.configKey) && (
+                              {!legacyHistory && !BASELINE_KEYS.has(it.configKey) && (
                                 <button
                                   type="button"
                                   className="config-del"
@@ -750,7 +753,9 @@ export default function AdminConfigPage() {
                             </span>
                             <span className="key">{it.configKey}</span>
                           </div>
-                          {managed ? (
+                          {legacyHistory ? (
+                            <span className="set-summary">固定最近 3 条，不再自动压缩</span>
+                          ) : managed ? (
                             <Link href={managed.href} className="set-link" aria-label={`${managed.hint}：${displayLabel}`}>
                               {managed.hint}
                               <ArrowUpRight aria-hidden size={13} />

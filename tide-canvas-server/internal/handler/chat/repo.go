@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/chatcontext"
 	"tidecanvas/internal/pkg/idgen"
 )
 
@@ -690,20 +691,21 @@ func (r *repo) taskOwnedBy(taskID, userID idgen.ID) (bool, error) {
 }
 
 // recentMessages returns up to limit of a conversation's most recent messages in
-// chronological (oldest-first) order, for use as LLM context. Messages already
-// covered by the compaction summary (id <= afterID) are excluded — they enter
-// the prompt as the summary instead. It fetches the newest `limit` rows (DESC)
-// then reverses them so the transcript reads forward.
+// chronological (oldest-first) order, for use as LLM context. beforeID excludes
+// the current user message and later writes; zero means the latest window.
+// Legacy summary boundaries never hide recent text.
 // 只取非空文本：生成 turn 的助手消息 Content=""（结果在 task 上），混进上下文
 // 会成为空 assistant 轮次——部分 OpenAI 兼容上游直接拒绝空 content。
-func (r *repo) recentMessages(conversationID, afterID, throughID idgen.ID, limit int) ([]model.IMMessage, error) {
+func (r *repo) recentMessages(conversationID, beforeID idgen.ID, limit int) ([]model.IMMessage, error) {
 	if limit <= 0 {
-		limit = 20
+		limit = chatcontext.HistoryLimit
 	}
 	var rows []model.IMMessage
 	query := r.db.
-		Where("conversation_id = ? AND id > ? AND content <> '' AND (content_type = ? OR (content_type = ? AND EXISTS (SELECT 1 FROM skill_run_artifact sra WHERE sra.run_id = im_message.skill_run_id AND sra.deleted IS NULL AND sra.is_final = ? AND sra.text_content <> '')))", conversationID, afterID, "text", "skill_run", true).
-		Where("id <= ?", throughID)
+		Where("conversation_id = ? AND content <> '' AND (content_type = ? OR (content_type = ? AND EXISTS (SELECT 1 FROM skill_run_artifact sra WHERE sra.run_id = im_message.skill_run_id AND sra.deleted IS NULL AND sra.is_final = ? AND sra.text_content <> '')))", conversationID, "text", "skill_run", true)
+	if beforeID != 0 {
+		query = query.Where("id < ?", beforeID)
+	}
 	if err := query.
 		Order("create_time DESC").
 		Order("id DESC").
@@ -715,31 +717,6 @@ func (r *repo) recentMessages(conversationID, afterID, throughID idgen.ID, limit
 		rows[i], rows[j] = rows[j], rows[i]
 	}
 	return rows, nil
-}
-
-// textMessagesAfter returns a conversation's text messages with id > afterID,
-// oldest-first (id / sender / content only) — the token-estimate and compaction
-// source. Media messages carry empty content / URLs and are skipped. 上下文由
-// 压缩+上限双重约束，摘要之后的原文消息量始终有限。
-func (r *repo) textMessagesAfter(conversationID, afterID idgen.ID) ([]model.IMMessage, error) {
-	var rows []model.IMMessage
-	err := r.db.Model(&model.IMMessage{}).
-		Select("id", "sender_id", "content").
-		Where("conversation_id = ? AND id > ? AND content <> '' AND (content_type = ? OR (content_type = ? AND EXISTS (SELECT 1 FROM skill_run_artifact sra WHERE sra.run_id = im_message.skill_run_id AND sra.deleted IS NULL AND sra.is_final = ? AND sra.text_content <> '')))", conversationID, afterID, "text", "skill_run", true).
-		Order("id ASC").
-		Find(&rows).Error
-	return rows, err
-}
-
-// saveContextSummary persists the compaction result: the rolled-up summary and
-// the last message id it covers.
-func (r *repo) saveContextSummary(id idgen.ID, summary string, uptoID idgen.ID) error {
-	return r.db.Model(&model.IMConversation{}).
-		Where("id = ?", id).
-		Updates(map[string]any{
-			"context_summary": summary,
-			"summary_upto_id": uptoID,
-		}).Error
 }
 
 // touchConversation updates a conversation's last-message pointer/time so the

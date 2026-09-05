@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/chatcontext"
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/relaychat"
@@ -64,6 +65,7 @@ func (s *service) runSkillTextCompletion(ctx context.Context, taskID, userID idg
 	}
 	defer s.cleanupSkillTextTemporaryFiles(userID, in.TemporaryStorageKeys)
 
+	in.Messages = chatcontext.Latest(in.Messages)
 	msgs := make([]relaychat.Msg, 0, len(in.Messages)+2)
 	if p := strings.TrimSpace(in.SystemPrompt); p != "" {
 		msgs = append(msgs, relaychat.TextMsg("system", p))

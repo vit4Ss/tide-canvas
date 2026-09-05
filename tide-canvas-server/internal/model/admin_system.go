@@ -82,16 +82,13 @@ const ConfigKeyPricingFaq = "pricing.faq"
 const ConfigKeyPricingPromo = "pricing.promo"
 
 // ConfigKeyChatContextTokenLimit is the sys_config key overriding the chat
-// conversation's cumulative context-token cap (llm.contextTokenLimit). Seeded
+// recent history plus current input token cap (llm.contextTokenLimit). Seeded
 // on boot from the config file; edited in the admin 配置管理 screen and read
 // per request by handler/chat, so changes apply WITHOUT a restart.
 const ConfigKeyChatContextTokenLimit = "llm.contextTokenLimit"
 
-// ConfigKeyChatCompressAt is the sys_config key for the chat context
-// auto-compaction threshold in estimated tokens: once a conversation's
-// context passes it, older history is rolled into the conversation summary
-// (handler/chat maybeCompact). 0 = 自动（上限的 70%）. Seeded on boot; read
-// per send so admin edits apply without a restart.
+// ConfigKeyChatCompressAt identifies the inactive legacy compaction setting.
+// Kept for existing records; text calls use three recent messages without summaries.
 const ConfigKeyChatCompressAt = "llm.compressAtTokens"
 
 // ConfigKeyRegisterClosed is the sys_config key for the self-service

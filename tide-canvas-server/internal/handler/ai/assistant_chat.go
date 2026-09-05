@@ -15,6 +15,7 @@ import (
 
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/chatattach"
+	"tidecanvas/internal/pkg/chatcontext"
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/relaychat"
@@ -107,6 +108,7 @@ func (s *service) runAssistantChat(ctx context.Context, taskID, userID idgen.ID,
 		return GenerateResult{}, errors.New("AI 助手未启用：请在模型管理添加文本模型")
 	}
 
+	in.Messages = chatcontext.Latest(in.Messages)
 	msgs := make([]relaychat.Msg, 0, len(in.Messages)+2)
 	msgs = append(msgs, relaychat.Msg{Role: "system", Content: assistantChatSystemPrompt})
 	for _, h := range in.Messages {
