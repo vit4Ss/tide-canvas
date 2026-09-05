@@ -37,7 +37,8 @@ test("paid analysis and TikHub parsing are synchronously fenced against duplicat
 });
 
 test("video archival retries bounded mirrors and stops on definitive failures", () => {
-  assert.match(workbench, /currentWork\.mediaUrls/);
+  assert.match(workbench, /work\.mediaUrls/);
+  assert.match(workbench, /workVideoSources\(currentWork\)/);
   assert.match(workbench, /\.slice\(0, 5\)/);
   assert.match(workbench, /archived\.code !== 0 && archived\.code !== 400 && archived\.code !== 408/);
   assert.match(workbench, /fileApi\.saveFromUrl/);
@@ -360,7 +361,7 @@ test("account inspection automatically starts one strategy run without a second 
 test("single-work mode has a factual dashboard and a dedicated timecode report workspace", () => {
   assert.match(workbench, /function ContentDashboard/);
   assert.match(workbench, /result=\{result\}[\s\S]*work=\{currentWork\}[\s\S]*canDownload=/);
-  for (const section of ["互动结构", "作品数据口径", "AI 视频深度拆解", "时间码报告将在这里展开"]) {
+  for (const section of ["互动结构", "作品数据口径", "视频拆解速览", "调整分析重点"]) {
     assert.ok(workbench.includes(section), `work dashboard misses ${section}`);
   }
   assert.match(workbench, /buildWorkSnapshot\(work\)/);

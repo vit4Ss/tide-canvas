@@ -514,9 +514,15 @@
 
 .contentDashboard {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "overview" "report" "data";
+  align-items: start;
   gap: 24px;
   container-type: inline-size;
 }
+
+.contentOverview { grid-area: overview; display: grid; gap: 16px; min-width: 0; container-type: inline-size; }
+.contentData { grid-area: data; min-width: 0; container-type: inline-size; }
 
 .contentHero,
 .contentSignals,
@@ -1307,6 +1313,74 @@
 .reportWaiting strong { color: var(--text); font-size: 14px; }
 .reportWaiting p { margin: 8px 0 0; color: var(--text-dim); font-size: 12px; line-height: 1.7; }
 .reportFullDetails > summary:focus-visible { outline: 2px solid var(--tech); outline-offset: 2px; }
+
+/* 单个作品的报告：简短结论 → 真实时间片段 → 按需展开的完整依据。 */
+.contentReportRail { grid-area: report; min-width: 0; align-self: start; }
+.contentStrategy.contentReportRail {
+  border-color: color-mix(in oklab, var(--tech) 28%, var(--border));
+  border-radius: var(--r);
+  background: linear-gradient(155deg, color-mix(in oklab, var(--tech) 4%, var(--surface)), var(--surface) 45%);
+}
+.contentReportBody { padding: 20px; }
+.contentReportIntro { padding: 4px 0 24px; }
+.contentReportIntro > span { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 20px; color: var(--tech); border: 1px solid color-mix(in oklab, var(--tech) 32%, var(--border)); border-radius: var(--r); background: var(--tech-soft); }
+.contentReportIntro svg { width: 22px; height: 22px; }
+.contentReportIntro h3 { margin: 0; font-size: 20px; font-weight: 600; line-height: 1.4; }
+.contentReportIntro p { max-width: 64ch; margin: 12px 0 0; color: var(--text-dim); font-size: 14px; line-height: 1.8; }
+.contentReportTopics { display: flex; flex-wrap: wrap; gap: 12px 20px; padding: 16px 0; border-top: 1px solid var(--border); color: var(--text-dim); font-size: 12px; }
+.contentReportTopics > span { display: inline-flex; align-items: center; gap: 8px; }
+.contentReportTopics svg { width: 16px; height: 16px; color: var(--tech); }
+.contentReportBody > .primaryButton { width: 100%; min-height: 44px; justify-content: center; margin-top: 8px; }
+.contentFocusDetails { margin-top: 20px; border-top: 1px solid var(--border); }
+.contentFocusDetails > summary { display: flex; align-items: center; justify-content: space-between; min-height: 44px; list-style: none; color: var(--text-dim); font-size: 12px; cursor: pointer; }
+.contentFocusDetails > summary::-webkit-details-marker { display: none; }
+.contentFocusDetails > summary svg { width: 16px; height: 16px; }
+.contentFocusDetails[open] > summary svg { transform: rotate(90deg); }
+.contentFocusDetails .focusField textarea { min-height: 160px; }
+.contentAnalysisReport { min-width: 0; }
+.contentReportStatus { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 0 0 20px; }
+.contentReportStatus > span { display: inline-flex; align-items: center; gap: 8px; color: var(--text-dim); font-size: 12px; }
+.contentReportStatus i { width: 6px; height: 6px; border-radius: 50%; background: var(--tech); }
+.contentAnalysisReport[data-status="failed"] .contentReportStatus i { background: var(--danger-text); }
+.contentAnalysisReport[data-status="cancelled"] .contentReportStatus i { background: var(--text-faint); }
+.contentReportStatus small { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+.reportTimeline { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
+.reportTimeline > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.reportTimeline h3 { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--text); font-size: 14px; font-weight: 600; }
+.reportTimeline h3 svg { width: 16px; height: 16px; color: var(--tech); }
+.reportTimeline small { color: var(--text-faint); font-size: 12px; }
+.momentNavigation { display: grid; grid-template-columns: repeat(auto-fit, minmax(52px, 1fr)); gap: 8px; margin: 20px 0 16px; }
+.momentNavigation button { display: grid; justify-items: center; gap: 8px; min-height: 64px; padding: 8px 4px; border: 1px solid var(--border); border-radius: var(--r-sm); color: var(--text-dim); background: var(--bg); font-size: 12px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.momentNavigation i { display: grid; place-items: center; width: 24px; height: 24px; color: var(--text-faint); font-size: 12px; font-style: normal; }
+.momentNavigation button[aria-pressed="true"] { color: var(--tech); border-color: var(--tech); background: var(--tech-soft); }
+.momentNavigation button[aria-pressed="true"] i { color: var(--tech); }
+.momentNavigation button:hover { border-color: var(--tech); }
+.momentDetail { position: relative; padding: 16px 16px 20px; border-left: 2px solid var(--tech); background: linear-gradient(100deg, var(--tech-soft), transparent); overflow-wrap: anywhere; }
+.momentDetail time { color: var(--tech); font-size: 12px; font-variant-numeric: tabular-nums; }
+.momentDetail h4 { margin: 12px 0 8px; font-size: 16px; font-weight: 600; }
+.momentDetail p { margin: 0; color: var(--text-dim); font-size: 14px; line-height: 1.8; }
+.reportNoTimeline { margin: 16px 0 0; color: var(--text-faint); font-size: 12px; line-height: 1.7; }
+.contentReportRail .accountReportPending, .contentReportRail .accountReportFailure { min-height: 200px; padding: 20px 0; }
+.contentReportRail .accountReportContent { padding: 8px 0 24px; }
+.contentReportRail .accountReportContent .markdown { width: 100%; padding: 0; overflow-wrap: anywhere; }
+.contentReportRail .accountReportContent .markdown table { display: block; max-width: 100%; overflow-x: auto; }
+.contentReportRail .accountReportFooter { align-items: flex-start; flex-direction: column; gap: 12px; padding-top: 12px; margin-top: 16px; }
+.contentReportRail .accountReportFooter > div { justify-content: flex-start; }
+.contentReportRail .accountReportFooter button { min-height: 44px; }
+.contentReportRail .runPanel { padding: 0; border: 0; box-shadow: none; }
+.momentNavigation button:focus-visible, .contentFocusDetails > summary:focus-visible, .contentReportRail button:focus-visible { outline: 2px solid var(--tech); outline-offset: 3px; }
+
+@container (min-width: 1120px) {
+  .contentDashboard { grid-template-columns: minmax(0, 1fr) clamp(360px, 32%, 480px); grid-template-areas: "overview report" "data report"; }
+  .contentReportRail { position: sticky; top: 24px; max-height: calc(100dvh - 112px); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+}
+@container (max-width: 1119px) {
+  .contentReportRail .reportTakeaways { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+}
+@container (max-width: 600px) {
+  .contentReportBody { padding: 16px; }
+  .contentReportRail .reportTakeaways { grid-template-columns: minmax(0, 1fr); }
+}
 
 @container (min-width: 1120px) {
   .accountDashboard { grid-template-columns: minmax(0, 1fr) clamp(360px, 28%, 448px); grid-template-areas: "overview summary" "data summary"; align-items: start; }

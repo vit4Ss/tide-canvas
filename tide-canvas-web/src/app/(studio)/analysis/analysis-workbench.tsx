@@ -69,6 +69,8 @@ import { buildAccountFeatures, buildAccountSnapshot, type AccountWorkDatum } fro
 import { AccountVisuals } from "./account-visuals";
 import { AccountReportMetrics } from "./account-report-metrics";
 import { extractAccountReportBrief } from "./account-report-brief";
+import { ContentAnalysisReport } from "./content-analysis-report";
+import { CONTENT_REPORT_FORMAT } from "./content-report";
 import { buildWorkSnapshot } from "./work-insights";
 import { ActivityHistorySidebar } from "./activity-history";
 import styles from "./analysis.module.css";
@@ -242,7 +244,11 @@ function titleOf(work: SocialWorkVO): string {
 }
 
 function isVideoWork(work: SocialWorkVO): boolean {
-  return work.mediaType?.toLowerCase().includes("video") === true || !!work.mediaUrl;
+  return work.mediaType?.toLowerCase().includes("video") === true || workVideoSources(work).length > 0;
+}
+
+function workVideoSources(work: SocialWorkVO): string[] {
+  return [...new Set([work.mediaUrl ?? "", ...(work.mediaUrls ?? [])].map(value => value.trim()).filter(Boolean))].slice(0, 5);
 }
 
 function workImageSources(work: SocialWorkVO): string[] {
@@ -342,6 +348,7 @@ function contentPrompt(result: SocialInspectVO, work: SocialWorkVO, focus: strin
     "<user_request>",
     focus.trim() || (videoWork ? DEFAULT_FOCUS : IMAGE_DEFAULT_FOCUS),
     "</user_request>",
+    videoWork ? CONTENT_REPORT_FORMAT : "先输出 ## 一句话看懂、## 视觉焦点、## 值得借鉴，每项一句不超过 70 字的完整结论，保留不确定性；随后用 ## 完整分析 给出依据与细节，不编造评分。",
     "<platform_data untrusted=\"true\">",
     JSON.stringify({
       platform: result.platformName,
@@ -875,6 +882,10 @@ interface ContentDashboardProps {
   runDetails: React.ReactNode;
   skillError: string;
   canDownload: boolean;
+  historical: boolean;
+  hasSavedReport: boolean;
+  editingFocus: boolean;
+  onRefresh: () => void;
   onFocusChange: (value: string) => void;
   onRun: () => void;
   onDownload: () => void;
@@ -888,6 +899,10 @@ function ContentDashboard({
   runDetails,
   skillError,
   canDownload,
+  historical,
+  hasSavedReport,
+  editingFocus,
+  onRefresh,
   onFocusChange,
   onRun,
   onDownload,
@@ -901,11 +916,21 @@ function ContentDashboard({
   const imageURLs = videoWork ? [] : workImageSources(work);
   const mediaLabel = work.mediaType === "image" || imageURLs.length > 0 ? "图文作品" : videoWork ? "视频作品" : "公开作品";
   const selectedImageURL = imageURLs[Math.min(selectedImageIndex, Math.max(0, imageURLs.length - 1))] || work.coverUrl;
-  const analysisAssetAvailable = videoWork ? !!work.mediaUrl : imageURLs.length > 0;
+  const analysisAssetAvailable = videoWork ? workVideoSources(work).length > 0 : imageURLs.length > 0;
   const sourceURL = work.pageUrl || result.sourceUrl;
+  const focusDetailsRef = useRef<HTMLDetailsElement>(null);
+  const focusInputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!editingFocus || runDetails || !focusDetailsRef.current) return;
+    focusDetailsRef.current.open = true;
+    focusInputRef.current?.focus();
+    focusDetailsRef.current.scrollIntoView({ block: "nearest" });
+  }, [editingFocus, runDetails]);
 
   return (
     <div className={styles.contentDashboard} style={{ "--platform": meta.color } as React.CSSProperties}>
+      <div className={styles.contentOverview}>
       <header className={styles.contentHero}>
         <div className={styles.contentMedia} data-kind={videoWork ? "video" : "image"}>
           <WorkCover work={selectedImageURL && !videoWork ? { ...work, coverUrl: selectedImageURL } : work} platform={result.platform} alt={`作品画面：${titleOf(work)}`} />
@@ -954,7 +979,8 @@ function ContentDashboard({
           ))}
         </div>
       )}
-
+      </div>
+      <div className={styles.contentData}>
       <div className={styles.contentSignals}>
         <section className={styles.contentInteraction}>
           <header className={styles.dataPanelHeader}>
@@ -996,44 +1022,38 @@ function ContentDashboard({
           <p>互动率 = 平台已返回的点赞、评论、分享、收藏之和 ÷ 播放量；缺失字段不会按 0 处理。</p>
         </section>
       </div>
+      </div>
 
-      <section className={styles.contentStrategy}>
-        <header className={styles.sectionHeader}>
-          <div><h2>{videoWork ? "AI 视频深度拆解" : "AI 图文深度拆解"}</h2><p>{videoWork ? "归档原片后提取音轨与关键帧，所有判断要求附带时间码证据。" : "基于真实图片分析主体、构图、文案、情绪和传播钩子，区分可见事实与推断。"}</p></div>
-          <span>页面关闭后仍可恢复</span>
+      <aside className={`${styles.contentStrategy} ${styles.contentReportRail}`} aria-label={videoWork ? "视频分析报告" : "图文分析报告"}>
+        <header className={styles.reportRailHeader}>
+          <div><Sparkles aria-hidden /><h2>{videoWork ? "视频拆解速览" : "图文拆解速览"}</h2></div>
+          <span>{historical ? "历史快照" : "本次分析"}</span>
         </header>
-        <div className={styles.strategyGrid}>
-          <article className={styles.strategyControl}>
-            <label className={styles.focusField}>
-              <span>你希望重点分析什么</span>
-              <textarea rows={7} value={focus} onChange={(event) => onFocusChange(event.target.value)} maxLength={4000} />
-              <small>{focus.length} / 4000</small>
-            </label>
-            <div className={styles.strategyScope}>
-              <span><Target aria-hidden />{videoWork ? "开头钩子" : "视觉主体"}</span>
-              <span><Film aria-hidden />{videoWork ? "叙事结构" : "构图层级"}</span>
-              <span><Activity aria-hidden />{videoWork ? "镜头节奏" : "色彩文案"}</span>
-              <span><Sparkles aria-hidden />复用方法</span>
+        <div className={styles.contentReportBody}>
+          {skillError && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{skillError}</span></div>}
+          {runDetails || <>
+            <div className={styles.contentReportIntro} role="status">
+              <span>{busy ? <Loader2 className={styles.spin} aria-hidden /> : !analysisAssetAvailable ? videoWork ? <FileVideo aria-hidden /> : <Film aria-hidden /> : <ScanSearch aria-hidden />}</span>
+              <h3>{busy ? historical ? "正在读取历史报告" : "正在准备分析素材" : editingFocus ? "调整重点，再生成一份报告" : historical && hasSavedReport ? "当前未展示拆解报告" : !analysisAssetAvailable ? videoWork ? "暂时没有可分析的视频素材" : "暂时没有可分析的图片" : videoWork ? "看懂内容，也看懂方法" : "看懂画面，也找到创作思路"}</h3>
+              <p>{busy ? "结果会直接出现在这里，请稍候。" : editingFocus ? "已保留这次作品数据和上次分析重点。修改后点击重新生成，才会开始新的分析。" : historical && hasSavedReport ? "重新点击左侧记录即可恢复已保存的报告，不会重复扣费。" : !analysisAssetAvailable ? "本次平台仅返回了作品信息。上方数据可以查看，深度分析需要可读取的原始素材。" : videoWork ? "提炼视频主题、开场抓手与可借鉴方法，用时间片段回看关键发现。" : "提炼画面主题、视觉焦点与可借鉴方法，完整依据可随时展开。"}</p>
             </div>
-            <button type="button" className={styles.primaryButton} disabled={!analysisAssetAvailable || busy || !!runDetails} onClick={onRun}>
-              {busy ? <Loader2 className={styles.spin} aria-hidden /> : <ScanSearch aria-hidden />}
-              {busy ? "正在归档并启动" : videoWork ? "开始视频拆解" : "开始图文拆解"}
-            </button>
-            {!analysisAssetAvailable && (
-              <div className={styles.notice}><CircleAlert aria-hidden /> 当前平台只返回了作品信息，没有可归档的{videoWork ? "视频直链" : "图片"}；可以查看数据，但暂时无法运行 AI 分析。</div>
-            )}
-          </article>
-          <div className={styles.strategyOutput}>
-            {skillError && <div className={styles.error} role="alert"><CircleAlert aria-hidden /><span>{skillError}</span></div>}
-            {runDetails || (
-              <div className={styles.strategyEmpty}>
-                <ScanSearch aria-hidden />
-                <div><strong>{videoWork ? "时间码报告将在这里展开" : "视觉分析报告将在这里展开"}</strong><p>{videoWork ? "报告将覆盖转写、开头钩子、叙事结构、镜头节奏、情绪变化与可复用方法。" : "报告将覆盖可见主体、视觉层级、构图、色彩光线、文案、情绪与可复用方法。"}</p></div>
-              </div>
-            )}
-          </div>
+            <div className={styles.contentReportTopics} aria-label="分析内容">
+              <span><Target aria-hidden />{videoWork ? "开场抓手" : "视觉焦点"}</span>
+              <span><Clock3 aria-hidden />{videoWork ? "节奏时间线" : "构图层级"}</span>
+              <span><Lightbulb aria-hidden />创作启发</span>
+            </div>
+            {analysisAssetAvailable ? <button type="button" className={styles.primaryButton} disabled={busy} onClick={onRun}>
+              {busy ? <Loader2 className={styles.spin} aria-hidden /> : <Sparkles aria-hidden />}
+              {busy ? "正在准备报告" : editingFocus || (historical && hasSavedReport) ? "重新生成报告" : videoWork ? "开始视频拆解" : "开始图文拆解"}
+            </button> : <button type="button" className={styles.primaryButton} disabled={busy} onClick={onRefresh}><RotateCcw aria-hidden />重新获取素材信息</button>}
+            {analysisAssetAvailable && <p className={styles.reportNoTimeline}>生成报告按现有技能规则消耗积分，查看已保存的报告不重复扣费。</p>}
+          </>}
+          {!runDetails && analysisAssetAvailable && <details ref={focusDetailsRef} className={styles.contentFocusDetails}>
+            <summary>调整分析重点<ChevronRight aria-hidden /></summary>
+            <label className={styles.focusField}><span>你希望重点分析什么</span><textarea ref={focusInputRef} rows={4} value={focus} disabled={busy} onChange={event => onFocusChange(event.target.value)} maxLength={4000} /><small>{focus.length} / 4000</small></label>
+          </details>}
         </div>
-      </section>
+      </aside>
     </div>
   );
 }
@@ -1045,6 +1065,7 @@ export default function AnalysisWorkbench() {
   const [kind, setKind] = useState<SocialAnalysisKind>("content");
   const [url, setURL] = useState("");
   const [focus, setFocus] = useState(DEFAULT_FOCUS);
+  const [editingContentFocus, setEditingContentFocus] = useState(false);
   const [status, setStatus] = useState<SocialAnalysisStatusVO | null>(null);
   const [statusRefresh, setStatusRefresh] = useState(0);
   const [statusChecking, setStatusChecking] = useState(false);
@@ -1071,6 +1092,7 @@ export default function AnalysisWorkbench() {
   const accountSkillRef = useRef<SkillVO | null>(null);
   const inspectBusyRef = useRef(false);
   const analysisBusyRef = useRef(false);
+  const runActionRef = useRef<{ runId: string } | null>(null);
   const inspectEpochRef = useRef(0);
   const analysisEpochRef = useRef(0);
   const pendingAccountAutoRunRef = useRef<SocialInspectVO | null>(null);
@@ -1088,6 +1110,7 @@ export default function AnalysisWorkbench() {
   useEffect(() => {
     if (previousOwnerRef.current === ownerUserId) return;
     previousOwnerRef.current = ownerUserId;
+    setEditingContentFocus(false);
     inspectEpochRef.current += 1;
     analysisEpochRef.current += 1;
     pendingAccountAutoRunRef.current = null;
@@ -1205,6 +1228,7 @@ export default function AnalysisWorkbench() {
 
   const inspect = async () => {
     if (inspectBusyRef.current || !url.trim()) return;
+    setEditingContentFocus(false);
     clearHistoricalView();
     if (!skillRun.run && skillRun.error) skillRun.clear();
     inspectBusyRef.current = true;
@@ -1282,10 +1306,11 @@ export default function AnalysisWorkbench() {
 
   const startDeepAnalysis = async () => {
     if (!result || !currentPlatform || analysisBusyRef.current || skillRun.loading) return;
+    setEditingContentFocus(false);
     clearHistoricalView();
     const contentSkillMode = currentWork && isVideoWork(currentWork) ? "video" : "image";
     const contentImageURLs = currentWork ? workImageSources(currentWork) : [];
-    const contentAssetURL = contentSkillMode === "video" ? currentWork?.mediaUrl : contentImageURLs[0];
+    const contentAssetURL = contentSkillMode === "video" ? currentWork && workVideoSources(currentWork)[0] : contentImageURLs[0];
     if (result.kind === "content" && !contentAssetURL) return;
     const skillMode = result.kind === "account" ? "account" : contentSkillMode;
     const skillLabel = skillMode === "account" ? "账号拆解" : skillMode === "image" ? "图片分析" : "视频分析";
@@ -1313,7 +1338,7 @@ export default function AnalysisWorkbench() {
         : currentWork?.pageUrl || result.sourceUrl || "";
       if (result.kind === "content" && currentWork && contentAssetURL) {
         const mediaCandidates = contentSkillMode === "video"
-          ? [...new Set([contentAssetURL, ...(currentWork.mediaUrls ?? [])].filter(Boolean))].slice(0, 5)
+          ? workVideoSources(currentWork)
           : contentImageURLs;
         const archivedAssets: typeof assets = [];
         const archivedIDs = new Set<string>();
@@ -1400,11 +1425,25 @@ export default function AnalysisWorkbench() {
   }, [result]);
 
   const performRunAction = async (action: SkillRunAction, payload?: SkillRunPanelActionPayload) => {
-    const updated = await skillRun.performAction(action, {
-      ...(payload?.feedback ? { feedback: payload.feedback } : {}),
-      ...(payload?.input ? { input: payload.input } : {}),
-    });
-    if (!updated) setError(skillRun.error || "操作失败，请稍后重试");
+    const runId = skillRun.run?.id;
+    if (!runId || runActionRef.current?.runId === runId) return;
+    const pending = { runId };
+    runActionRef.current = pending;
+    const analysisEpoch = analysisEpochRef.current;
+    const inspectEpoch = inspectEpochRef.current;
+    setError("");
+    try {
+      const updated = await skillRun.performAction(action, {
+        ...(payload?.feedback ? { feedback: payload.feedback } : {}),
+        ...(payload?.input ? { input: payload.input } : {}),
+      });
+      // A double click is a no-op, and a late failure from a previous snapshot
+      // must not overwrite the report the user is now viewing.
+      if (runActionRef.current !== pending || analysisEpoch !== analysisEpochRef.current || inspectEpoch !== inspectEpochRef.current) return;
+      if (!updated) setError("操作失败，请稍后重试");
+    } finally {
+      if (runActionRef.current === pending) runActionRef.current = null;
+    }
   };
 
   const resolveVideoDownload = async (qualityOverride?: VideoDownloadQuality) => {
@@ -1486,9 +1525,24 @@ export default function AnalysisWorkbench() {
       const wrappedRequest = /<user_request>\s*([\s\S]*?)\s*<\/user_request>/.exec(prompt)?.[1]?.trim();
       if (accountRun) setFocus(wrappedRequest || ACCOUNT_DEFAULT_FOCUS);
       else setFocus(wrappedRequest || prompt.split("\n平台：", 1)[0]?.trim() || (imageRun ? IMAGE_DEFAULT_FOCUS : DEFAULT_FOCUS));
+      const context = analysisRunContext(input);
+      const editableContent = !accountRun && result?.kind === "content" && currentWork &&
+        context.sourceUrl === (currentWork.pageUrl || result.sourceUrl).trim() &&
+        context.sourceFetchedAt === result.fetchedAt &&
+        (isVideoWork(currentWork) ? workVideoSources(currentWork).length > 0 : workImageSources(currentWork).length > 0);
+      if (editableContent) {
+        // Editing the current report needs neither a fresh platform request nor
+        // a new paid run. Keep its snapshot and expose the restored focus field.
+        setTab("breakdown");
+        setError("");
+        setEditingContentFocus(true);
+        skillRun.clear();
+        return;
+      }
     }
     // 重新编辑始终回到拆解页签:运行面板只属于拆解,留在下载页会失去上下文。
     setTab("breakdown");
+    setEditingContentFocus(false);
     setError("");
     clearHistoricalView();
     setResult(null);
@@ -1526,6 +1580,11 @@ export default function AnalysisWorkbench() {
 
   const accountRunPresentation = analysisRunMode(skillRun.run?.input) === "account" ||
     (!!skillRun.run && skillRun.run.skillId === status?.accountAnalysisSkillId);
+  const contentRunMode = analysisRunMode(skillRun.run?.input) ||
+    (skillRun.run?.skillId === status?.videoAnalysisSkillId ? "video" :
+      skillRun.run?.skillId === status?.imageAnalysisSkillId ? "image" : "");
+  const contentRunPresentation = (contentRunMode === "video" || contentRunMode === "image") &&
+    skillRun.run?.status !== "waiting_input" && skillRun.run?.status !== "waiting_confirmation";
   const runDetails = skillRun.run ? accountRunPresentation ? (
     <AccountStrategyReport
       key={skillRun.run.id}
@@ -1534,6 +1593,19 @@ export default function AnalysisWorkbench() {
       onAction={performRunAction}
       onReEdit={reEditRun}
       onDismiss={() => skillRun.clear()}
+    />
+  ) : contentRunPresentation ? (
+    <ContentAnalysisReport
+      key={skillRun.run.id}
+      run={skillRun.run}
+      text={accountReportText(skillRun.run)}
+      image={contentRunMode === "image"}
+      busy={skillRun.actionBusy}
+      onAction={performRunAction}
+      onReEdit={reEditRun}
+      onDismiss={() => skillRun.clear()}
+      renderMarkdown={renderAnalysisMarkdown}
+      reportTime={displaySnapshotTime(skillRun.run.completeTime || skillRun.run.updateTime || skillRun.run.createTime || "")}
     />
   ) : (
     <div className={styles.runPanel}>
@@ -1567,6 +1639,7 @@ export default function AnalysisWorkbench() {
   const contextualSkillError = runMatchesCurrentResult ? skillRun.error : "";
 
   const restoreActivityRecord = async (record: SocialActivityRecordDetailVO) => {
+    setEditingContentFocus(false);
     pendingAccountAutoRunRef.current = null;
     inspectEpochRef.current += 1;
     const epoch = ++analysisEpochRef.current;
@@ -1650,7 +1723,7 @@ export default function AnalysisWorkbench() {
         onSelect={restoreActivityRecord}
       />
       <div className={styles.workspaceMain}>
-        <div className={`${styles.canvas} ${tab === "breakdown" && result?.kind === "account" ? styles.canvasWide : ""}`}>
+        <div className={`${styles.canvas} ${tab === "breakdown" && result ? styles.canvasWide : ""}`}>
         <header className={styles.pageHeader}>
           <h1>{pageHeading}</h1>
           <p>{pageDescription}</p>
@@ -1800,13 +1873,17 @@ export default function AnalysisWorkbench() {
                 ) : (
                   currentWork ? (
                     <ContentDashboard
-                      key={currentWork.id || currentWork.pageUrl || result.fetchedAt}
+                      key={`${currentWork.id || currentWork.pageUrl}:${result.fetchedAt}`}
                       result={result}
                       work={currentWork}
                       focus={focus}
                       busy={archiving || skillRun.loading}
                       runDetails={contextualRunDetails}
                       skillError={contextualSkillError}
+                      historical={historicalRecord?.type === "analysis"}
+                      hasSavedReport={!!historicalRecord?.analysisRunId}
+                      editingFocus={editingContentFocus}
+                      onRefresh={() => void inspect()}
                       canDownload={!!currentWork.pageUrl && isVideoWork(currentWork) && downloaderPlatforms.includes(result.platform)}
                       onFocusChange={setFocus}
                       onRun={() => void startDeepAnalysis()}
