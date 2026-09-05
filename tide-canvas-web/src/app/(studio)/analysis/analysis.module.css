@@ -2264,7 +2264,7 @@
   text-align: center;
 }
 
-/* 格式面板:先说清拿到的是什么文件,再给下载与切换。 */
+/* 格式面板：仅展示最高可用画质的文件规格与下载入口。 */
 .formatCard {
   display: grid;
   gap: 16px;
@@ -2323,7 +2323,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.formatSwitch {
+.formatNote {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -2332,38 +2332,12 @@
   border-top: 1px solid var(--border);
 }
 
-.formatSwitch > span {
+.formatNote > span {
   color: var(--text-faint);
   font-size: 12px;
 }
 
-.formatSwitch > div {
-  display: inline-flex;
-  gap: 4px;
-  padding: 4px;
-  border-radius: var(--pill);
-  background: var(--panel);
-}
-
-.formatSwitch button {
-  padding: 4px 12px;
-  border-radius: var(--pill);
-  color: var(--text-faint);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 20px;
-  transition: color 160ms var(--ease), background 160ms var(--ease);
-}
-
-.formatSwitch button:hover:not(:disabled):not(.formatSwitchActive) { color: var(--text-dim); }
-.formatSwitch button:disabled { cursor: default; opacity: .5; }
-
-.formatSwitch button.formatSwitchActive {
-  color: var(--bg);
-  background: var(--accent);
-}
-
-.formatSwitch > small {
+.formatNote > small {
   margin-left: auto;
   color: var(--text-faint);
   font-size: 12px;
@@ -2442,13 +2416,12 @@
   .getterField .primaryButton { justify-content: center; width: 100%; }
   .getterMark { display: none; }
   .formatRow .primaryButton { width: 100%; justify-content: center; }
-  .formatSwitch > small { margin-left: 0; }
+  .formatNote > small { margin-left: 0; }
   .infoRow { grid-template-columns: minmax(0, 1fr) auto; }
   .infoRow > span { grid-column: 1 / -1; }
 }
 
-/* 换档进行中:规格与信息片淡出表示「这组数字正在变」,下载按钮同时禁用
-   (旧地址指向上一档画质,点下去会拿错文件)。 */
+/* 更新文件信息期间禁用下载，防止使用旧地址。 */
 .formatCard[data-busy="true"] .formatSpec {
   opacity: .45;
   transition: opacity 160ms var(--ease);

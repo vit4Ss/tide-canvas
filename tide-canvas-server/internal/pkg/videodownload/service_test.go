@@ -201,6 +201,53 @@ func TestBilibiliPartsAndDASH(t *testing.T) {
 	}
 }
 
+func TestBilibiliHighestQualityPrefersDASHAndFallsBack(t *testing.T) {
+	for _, mode := range []string{"dash", "unavailable", "network-error", "restricted"} {
+		t.Run(mode, func(t *testing.T) {
+			s := testService(t)
+			var formats []string
+			s.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path == "/x/web-interface/view" {
+					return responseFor(r, `{"code":0,"data":{"state":0,"cid":1,"title":"public video","duration":10,"dimension":{"width":3840,"height":2160}}}`, "application/json"), nil
+				}
+				format := r.URL.Query().Get("fnval")
+				formats = append(formats, format)
+				if format == "4048" {
+					switch mode {
+					case "dash":
+						return responseFor(r, `{"code":0,"data":{"dash":{"video":[{"baseUrl":"https://cdn.bilivideo.com/1080.m4s","width":1920,"height":1080,"codecs":"avc1","bandwidth":10000},{"baseUrl":"https://cdn.bilivideo.com/4k.m4s","width":3840,"height":2160,"codecs":"hev1","bandwidth":20000}],"audio":[{"baseUrl":"https://cdn.bilivideo.com/audio.m4s","codecs":"mp4a","bandwidth":100}]}}}`, "application/json"), nil
+					case "restricted":
+						return responseFor(r, `{"code":0,"data":{"is_preview":true}}`, "application/json"), nil
+					case "network-error":
+						return nil, errors.New("DASH temporarily unavailable")
+					default:
+						return responseFor(r, `{"code":0,"data":{}}`, "application/json"), nil
+					}
+				}
+				return responseFor(r, `{"code":0,"data":{"quality":32,"durl":[{"url":"https://cdn.bilivideo.com/480.mp4","size":100}]}}`, "application/json"), nil
+			})
+			plan, err := s.bilibili(context.Background(), "https://www.bilibili.com/video/BV1114y1X7TA", "quality")
+			if mode == "restricted" {
+				requireError(t, err, 400)
+				if strings.Join(formats, ",") != "4048" {
+					t.Fatal("restricted content must not try another format")
+				}
+				return
+			}
+			if err != nil || plan == nil {
+				t.Fatalf("plan %+v, error %v", plan, err)
+			}
+			if mode == "dash" {
+				if strings.Join(formats, ",") != "4048" || plan.Height != 2160 || plan.Audio == nil || !strings.Contains(plan.Parts[0].URLs[0], "/4k.") {
+					t.Fatalf("missed highest public stream: %+v, requests %v", plan, formats)
+				}
+			} else if strings.Join(formats, ",") != "4048,0" || plan.Height != 480 || plan.Audio != nil {
+				t.Fatalf("progressive fallback failed: %+v, requests %v", plan, formats)
+			}
+		})
+	}
+}
+
 func TestExtractorMetadataAndLimits(t *testing.T) {
 	s := testService(t)
 	s.run = func(ctx context.Context, binary string, args []string, dir string, limit int64) ([]byte, []byte, error) {

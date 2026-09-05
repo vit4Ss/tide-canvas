@@ -23,7 +23,7 @@ const PLATFORM_LABEL: Record<string, string> = {
   instagram: "Instagram",
 };
 
-const QUALITY_LABEL: Record<string, string> = { compat: "兼容", quality: "高清", speed: "极速" };
+const QUALITY_LABEL: Record<string, string> = { compat: "兼容", quality: "最高", speed: "极速" };
 
 const PLATFORM_MARK: Record<string, string> = {
   douyin: "抖", bilibili: "B", xiaohongshu: "小", youtube: "▶",

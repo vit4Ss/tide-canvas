@@ -73,14 +73,12 @@ test("public video downloader verifies the file before browser saving and shows 
   assert.match(api, /\/api\/social-analysis\/downloader\/resolve/);
   assert.match(workbench, /pinterest: "Pinterest"/);
   assert.match(workbench, /instagram: "Instagram"/);
-  for (const quality of ["quality", "compat", "speed"]) {
-    assert.match(workbench, new RegExp(`key: "${quality}"`));
-  }
+  assert.match(workbench, /resolveDownload\(\{ url: sourceURL, quality: "quality" \}\)/);
   assert.match(workbench, /videoDownload\.start\(resolved/);
   assert.match(workbench, /if \(downloadAfterResolve\) startVideoFile\(downloadResult\)/);
   assert.match(workbench, /if \(downloadAfterResolve\) startVideoFile\(response\.data\)/);
-  assert.match(workbench, /onClick=\{\(\) => void resolveVideoDownload\(undefined, true\)\}/);
-  assert.match(workbench, /event\.key === "Enter"\) void resolveVideoDownload\(undefined, true\)/);
+  assert.match(workbench, /onClick=\{\(\) => void resolveVideoDownload\(true\)\}/);
+  assert.match(workbench, /event\.key === "Enter"\) void resolveVideoDownload\(true\)/);
   assert.match(videoDownload, /await receiveVideoDownload\(apiUrl\(result\.downloadUrl\)/);
   assert.match(videoDownload, /anchor\.download = name/);
   assert.doesNotMatch(workbench, /document\.createElement\("iframe"\)/);
@@ -304,19 +302,18 @@ test("platform image hosts are hotlink-protected, so every cover omits the refer
   }
 });
 
-test("switching quality updates in place and blocks the stale download", () => {
-  // 此前切换画质会先清空结果,整个结果区卸载再挂载,视觉上「刷一下」。
-  assert.match(workbench, /const replaceInPlace = qualityOverride !== undefined && !!downloadResult;/);
-  assert.match(workbench, /if \(!replaceInPlace\) setDownloadResult\(null\);/);
-  // 原地更新期间旧的下载地址仍在屏幕上,必须禁用下载,否则拿到的是上一档画质。
-  const formatCard = workbench.slice(workbench.indexOf("styles.formatCard"), workbench.indexOf("styles.formatSwitch"));
+test("downloads offer only the highest quality while preserving legacy history labels", () => {
+  assert.doesNotMatch(workbench, /setDownloadQuality|qualityOverride|切换画质|选择兼容画质/);
+  assert.match(workbench, /downloadResult\?\.quality === "quality"/);
+  assert.match(workbench, /DOWNLOAD_QUALITY_LABEL\[historicalRecord\.quality/);
+  assert.match(workbench, /quality: "最高画质", compat: "兼容", speed: "极速"/);
+  const formatCard = workbench.slice(workbench.indexOf("styles.formatCard"), workbench.indexOf("styles.infoCard"));
+  assert.doesNotMatch(formatCard, /aria-pressed|\.map\(/);
+  assert.match(formatCard, /downloadResult\.height/);
+  // Resolve/transfer locks still protect the single download action.
   assert.match(formatCard, /disabled=\{downloadBusy \|\| videoDownload\.busy\}/);
   assert.match(formatCard, /data-busy=\{downloadBusy \? "true" : "false"\}/);
   assert.match(css, /\.formatCard\[data-busy="true"\] \.formatSpec/);
-  // 选中态必须取自实际解析结果:downloadQuality 在解析前就变了,换档失败时
-  // (结果原地保留)会出现「开关显示高清、卡片显示兼容」的自相矛盾。
-  assert.match(workbench, /aria-pressed=\{downloadResult\.quality === option\.key\}/);
-  assert.doesNotMatch(workbench, /aria-pressed=\{downloadQuality === option\.key\}/);
 });
 
 test("copyable metadata fields carry an accessible name", () => {

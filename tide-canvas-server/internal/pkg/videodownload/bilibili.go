@@ -92,7 +92,13 @@ func (s *Service) bilibili(ctx context.Context, source, quality string) (*downlo
 	if quality == "speed" {
 		qn = 32
 	}
-	for _, fnval := range []int{0, 4048} {
+	formats := []int{0, 4048}
+	if quality == "quality" {
+		// Ask for all DASH renditions before accepting the progressive fallback,
+		// which can be lower resolution even when a higher public stream exists.
+		formats = []int{4048, 0}
+	}
+	for _, fnval := range formats {
 		endpoint := fmt.Sprintf("https://api.bilibili.com/x/player/playurl?%s=%s&cid=%s&qn=%d&fnver=0&fnval=%d&fourk=1", key, url.QueryEscape(id), url.QueryEscape(cid), qn, fnval)
 		root, err = s.fetchJSON(ctx, endpoint, source)
 		if err != nil {

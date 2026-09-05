@@ -8,7 +8,7 @@ import { CONTENT_REPORT_FORMAT } from './content-report.ts';
 
 // Execute the actual private prompt builders without importing the browser UI.
 const source = readFileSync(new URL('./analysis-workbench.tsx', import.meta.url), 'utf8');
-const defaults = source.slice(source.indexOf('const DEFAULT_FOCUS ='), source.indexOf('const DOWNLOAD_QUALITY:'));
+const defaults = source.slice(source.indexOf('const DEFAULT_FOCUS ='), source.indexOf('const DOWNLOAD_QUALITY_LABEL:'));
 const builders = source.slice(source.indexOf('function byteLength('), source.indexOf('function analysisRunContext('));
 const context = vm.createContext({ buildAccountSnapshot, CONTENT_REPORT_FORMAT, TextEncoder });
 vm.runInContext(ts.transpileModule(`${defaults}\n${builders}`, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText, context);
