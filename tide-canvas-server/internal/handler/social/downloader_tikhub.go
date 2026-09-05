@@ -30,7 +30,7 @@ func (h *handler) resolveDouyinDownload(ctx context.Context, source, quality str
 	return h.fetchDouyinDownload(ctx, cfg, source, quality)
 }
 
-func (h *handler) fetchDouyinDownload(ctx context.Context, cfg settings, source, quality string) (*videodownload.ResolvedVideo, error) {
+func (h *handler) fetchDouyinDownload(ctx context.Context, cfg settings, source, quality string) (result *videodownload.ResolvedVideo, resultErr error) {
 	u, err := url.Parse(source)
 	if err != nil {
 		return nil, &videodownload.Error{Status: 400, Message: "无效的抖音作品链接"}
@@ -72,11 +72,34 @@ func (h *handler) fetchDouyinDownload(ctx context.Context, cfg settings, source,
 	if quality == "quality" {
 		calls = append(originalCalls, detailCalls...)
 	}
+	startedAt := time.Now()
+	attempts, lastEndpoint := 0, ""
+	defer func() {
+		fields := []zap.Field{zap.String("aweme_id", id), zap.String("quality", quality), zap.Int("attempts", attempts), zap.String("endpoint", lastEndpoint), zap.Duration("elapsed", time.Since(startedAt))}
+		if resultErr != nil {
+			fields = append(fields, zap.String("outcome", "failed"), zap.String("message", tikHubSafeDiagnostic(resultErr.Error(), cfg.apiKey)))
+			logger.L().Warn("douyin download resolver completed", fields...)
+		} else {
+			fields = append(fields, zap.String("outcome", "resolved"))
+			logger.L().Info("douyin download resolver completed", fields...)
+		}
+	}()
 	var lastErr error
-	for _, call := range calls {
+	var alternate *downloadCall
+	v3Attempted := false
+	for i := 0; i < len(calls) || alternate != nil; {
 		if ctx.Err() != nil {
 			break
 		}
+		var call downloadCall
+		if alternate != nil {
+			call, alternate = *alternate, nil
+		} else {
+			call = calls[i]
+			i++
+		}
+		attempts++
+		lastEndpoint = call.path
 		timeout := 10 * time.Second
 		if call.original {
 			timeout = 15 * time.Second
@@ -85,6 +108,7 @@ func (h *handler) fetchDouyinDownload(ctx context.Context, cfg settings, source,
 		started := time.Now()
 		data, err := h.tikhubGet(callCtx, cfg, call.path, call.query)
 		cancel()
+		filterReason := ""
 		if err == nil {
 			item := douyinWorkObject(data, id)
 			if call.original {
@@ -105,13 +129,30 @@ func (h *handler) fetchDouyinDownload(ctx context.Context, cfg settings, source,
 					case "5", "10":
 						return nil, &videodownload.Error{Status: 400, Message: "该抖音作品不是公开内容，暂不支持下载"}
 					case "8":
-						err = &videodownload.Error{Status: 502, Message: "该抖音作品可能已删除或受地区限制，暂时无法下载"}
+						filterReason = "8"
+						err = &videodownload.Error{Status: 502, Message: "抖音详情接口未返回该作品（reason=8），暂未获取到可下载视频"}
+						// TikHub documents V3 specifically for V1/V2 reason=8.
+						// Try it once immediately; a failure still falls through to
+						// the existing Web/detail/original endpoints.
+						if id != "" && !v3Attempted {
+							v3Attempted = true
+							alternate = &downloadCall{upstreamCall{"/api/v1/douyin/app/v3/fetch_one_video_v3", url.Values{"aweme_id": {id}}}, false}
+						}
 					}
 				}
 			}
 		}
-		logDouyinDownloadAttempt(call.path, id, time.Since(started), err)
-		if fatal := douyinDownloadFatal(err); fatal != nil {
+		fatal := douyinDownloadFatal(err)
+		nextEndpoint := ""
+		if ctx.Err() == nil && fatal == nil {
+			if alternate != nil {
+				nextEndpoint = alternate.path
+			} else if i < len(calls) {
+				nextEndpoint = calls[i].path
+			}
+		}
+		logDouyinDownloadAttempt(call.path, id, time.Since(started), err, attempts, filterReason, nextEndpoint)
+		if fatal != nil {
 			return nil, fatal
 		}
 		if err != nil {
@@ -135,17 +176,19 @@ func (h *handler) fetchDouyinDownload(ctx context.Context, cfg settings, source,
 	return nil, &videodownload.Error{Status: 502, Message: message}
 }
 
-func logDouyinDownloadAttempt(path, id string, elapsed time.Duration, err error) {
+func logDouyinDownloadAttempt(path, id string, elapsed time.Duration, err error, attempt int, filterReason, nextEndpoint string) {
 	message := "接口未返回可下载的视频地址"
 	if err != nil {
 		message = safeMessage(err.Error())
 	}
-	fields := []zap.Field{zap.String("endpoint", path), zap.String("aweme_id", id), zap.Duration("elapsed", elapsed), zap.String("message", message)}
+	fields := []zap.Field{zap.String("endpoint", path), zap.String("aweme_id", id), zap.Int("attempt", attempt), zap.Duration("elapsed", elapsed), zap.String("message", message), zap.String("filter_reason", filterReason), zap.String("next_endpoint", nextEndpoint)}
 	var upstream *upstreamError
 	if errors.As(err, &upstream) {
 		fields = append(fields, zap.Int("http_status", upstream.httpStatus), zap.Int("code", upstream.status), zap.String("provider_request_id", upstream.requestID))
 	}
-	logger.L().Warn("douyin download resolver attempt failed", fields...)
+	// An expected fallback is not a terminal failure. The final summary above
+	// records whether an endpoint actually resolved media or all attempts failed.
+	logger.L().Info("douyin download resolver attempt failed", fields...)
 }
 
 func douyinDownloadFatal(err error) error {

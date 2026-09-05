@@ -61,14 +61,15 @@ yt-dlp 官方安装与更新说明：https://github.com/yt-dlp/yt-dlp#installati
 - 高清画质优先 `GET /api/v1/douyin/web/fetch_video_high_quality_play_url`；无有效直链时尝试 App V3 同名接口。
 - 参数为 `aweme_id`（从视频页 / modal_id 提取），或短链 `share_url`，同时传 `region=CN`。取 `data.original_video_url`。
 - 兼容 / 极速画质优先从 App V3 / Web 作品详情选择合适分辨率的播放地址，避免先下载体积过大的原画文件；已识别作品 ID 时依次尝试 App V3 V2、Web V2、App V3 V1、Web V1，短链则使用分享链接接口。详情没有可用播放地址时再尝试原画接口。高清画质的原画接口失败时则反向兜底到作品详情。
+- 已识别作品 ID 且详情返回 `filter_list.reason=8` 时，立即插入一次 `GET /api/v1/douyin/app/v3/fetch_one_video_v3?aweme_id=...`；TikHub 文档明确将其列为 V1/V2 reason=8 的兼容接口。失败后继续原有备用链，不重复调用 V3。reason=8 本身不再被解释为作品已删除；仍校验作品 ID、私密/删除标记、媒体类型和媒体域名。
 - TikHub 只提供解析结果，文件仍由本站下载、转码、校验后输出；API Key 不发送到媒体 CDN 或浏览器。
 - 明确私密、已删除、图文作品直接报错；分享页 HTTP 403 本身不作为作品已删除的证据。
 - 凭证、额度及限流错误保留具体提示并停止重试，包括 HTTP 200 响应体中的业务错误码；单次下载的媒体失败最多再尝试一次解析兜底。
 - 数据库配置查询和各个接口请求均受调用方取消 / 超时控制，页面请求结束后不会继续读取配置或调用剩余接口。
-- 每个失败的 TikHub 下载解析请求记录 `douyin download resolver attempt failed`，包含接口路径、作品 ID、耗时、HTTP 状态、业务码和供应商 `request_id`（如果返回）。支持嵌套 `detail` / `error` 及参数校验错误；不记录请求头、完整响应体、API Key 或签名地址。无详细原因的 HTTP 400 不再直接解释成视频被删除。
+- 每个失败的 TikHub 下载解析请求以 INFO 记录 `douyin download resolver attempt failed`，包含接口路径、作品 ID、尝试序号、耗时、过滤原因和下一接口；HTTP 错误还包含 HTTP 状态、业务码和供应商 `request_id`（如果返回）。最后统一记录 `douyin download resolver completed`，`outcome=resolved` 表示已取得媒体地址，`outcome=failed` 表示解析最终失败。取得媒体地址不代表文件已下载完成。支持嵌套 `detail` / `error` 及参数校验错误；不记录请求头、完整响应体、API Key 或签名地址。无详细原因的 HTTP 400 不再直接解释成视频被删除。
 - 下载不扣本站用户积分，但 TikHub API 调用按供应商账户规则计费。当前解析预览和实际下载分别获取地址，不持久保存临时直链。
 
-接口依据：[TikHub Web 原画接口](https://docs.tikhub.io/312096106e0)、[App V3 原画接口](https://docs.tikhub.io/312096107e0)、[App V3 V2 详情](https://docs.tikhub.io/232379587e0)、[Web V2 详情](https://docs.tikhub.io/205930107e0)、[作品详情及 Web 兼容说明](https://docs.tikhub.io/186826219e0)。
+接口依据：[TikHub Web 原画接口](https://docs.tikhub.io/312096106e0)、[App V3 原画接口](https://docs.tikhub.io/312096107e0)、[App V3 V2 详情](https://docs.tikhub.io/232379587e0)、[Web V2 详情](https://docs.tikhub.io/205930107e0)、[V3 详情及 reason=8 兼容说明](https://docs.tikhub.io/406098636e0)、[作品详情及 Web 兼容说明](https://docs.tikhub.io/186826219e0)。
 
 ## 验证
 

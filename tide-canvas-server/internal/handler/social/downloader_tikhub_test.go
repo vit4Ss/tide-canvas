@@ -22,6 +22,85 @@ const testDouyinDownloadSource = "https://www.douyin.com/jingxuan?modal_id=" + t
 const testDouyinHQBody = `{"code":200,"data":{"video_id":"7665967735288892672","original_video_url":"https://v.douyinvod.com/original.mp4","video_data":{"desc":"测试作品","video":{"width":1920,"height":1080,"duration":42000,"data_size":1000}}}}`
 const testDouyinHQWeb = "/api/v1/douyin/web/fetch_video_high_quality_play_url"
 const testDouyinHQApp = "/api/v1/douyin/app/v3/fetch_video_high_quality_play_url"
+const testDouyinDetailV3 = "/api/v1/douyin/app/v3/fetch_one_video_v3"
+
+func TestTikHubDownloadReasonEightUsesV3Immediately(t *testing.T) {
+	const observedID = "7665717903026588928"
+	const videoJSON = `{"aweme_id":"7665717903026588928","desc":"公开视频","video":{"play_addr":{"url_list":["https://v.douyinvod.com/v3.mp4"]}}}`
+	for _, reason := range []string{`8`, `"8"`} {
+		for _, detail := range []string{videoJSON, `{"aweme_detail":` + videoJSON + `}`, `{"aweme_details":[` + videoJSON + `]}`} {
+			h, cfg, calls := douyinMock(t, map[string]string{
+				"/api/v1/douyin/app/v3/fetch_one_video_v2": `{"code":200,"data":{"aweme_detail":null,"filter_list":[{"aweme_id":"7665717903026588928","reason":` + reason + `}]}}`,
+				testDouyinDetailV3:                         `{"code":200,"data":` + detail + `}`,
+			})
+			video, err := h.fetchDouyinDownload(context.Background(), cfg, "https://www.douyin.com/jingxuan?modal_id="+observedID, "compat")
+			requests := calls()
+			if err != nil || video == nil || video.URLs[0] != "https://v.douyinvod.com/v3.mp4" || len(requests) != 2 || requests[1] != testDouyinDetailV3+"?aweme_id="+observedID {
+				t.Fatalf("reason=8 did not resolve via V3: video=%+v err=%v calls=%v", video, err, requests)
+			}
+		}
+	}
+}
+
+func TestTikHubDownloadV3FailureRetainsExistingFallbacks(t *testing.T) {
+	filtered := `{"code":200,"data":{"aweme_detail":null,"filter_list":[{"aweme_id":"7665967735288892672","reason":8}]}}`
+	for _, v3 := range []string{filtered, `{"code":200,"data":{"aweme_detail":{"aweme_id":"99999","video":{"play_addr":{"url_list":["https://v.douyinvod.com/wrong.mp4"]}}}}}`} {
+		h, cfg, calls := douyinMock(t, map[string]string{
+			"/api/v1/douyin/app/v3/fetch_one_video_v2": filtered,
+			testDouyinDetailV3:                         v3,
+			"/api/v1/douyin/web/fetch_one_video_v2":    filtered,
+			"/api/v1/douyin/app/v3/fetch_one_video":    filtered,
+			"/api/v1/douyin/web/fetch_one_video":       filtered,
+			testDouyinHQWeb:                            testDouyinHQBody,
+		})
+		video, err := h.fetchDouyinDownload(context.Background(), cfg, testDouyinDownloadSource, "compat")
+		requests := calls()
+		if err != nil || video == nil || video.URLs[0] != "https://v.douyinvod.com/original.mp4" || len(requests) != 6 {
+			t.Fatalf("V3 prevented existing fallback: %+v %v %v", video, err, requests)
+		}
+		count := 0
+		for _, call := range requests {
+			if strings.HasPrefix(call, testDouyinDetailV3+"?") {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("V3 retried indefinitely: %v", requests)
+		}
+	}
+}
+
+func TestTikHubDownloadV3HonorsPrivateContentAndProviderErrors(t *testing.T) {
+	for _, response := range []string{
+		`{"code":200,"data":{"aweme_detail":{"aweme_id":"7665967735288892672","status":{"is_private":true},"video":{"play_addr":{"url_list":["https://v.douyinvod.com/private.mp4"]}}}}}`,
+		`{"code":402,"message":"balance insufficient"}`,
+	} {
+		h, cfg, calls := douyinMock(t, map[string]string{
+			"/api/v1/douyin/app/v3/fetch_one_video_v2": `{"code":200,"data":{"filter_list":[{"reason":8}]}}`,
+			testDouyinDetailV3:                         response,
+		})
+		video, err := h.fetchDouyinDownload(context.Background(), cfg, testDouyinDownloadSource, "compat")
+		if err == nil || video != nil || len(calls()) != 2 {
+			t.Fatalf("V3 ignored terminal failure: %+v %v %v", video, err, calls())
+		}
+	}
+}
+
+func TestTikHubDownloadReasonEightIsNotReportedAsDeleted(t *testing.T) {
+	filtered := `{"code":200,"data":{"filter_list":[{"reason":8}]}}`
+	h, cfg, calls := douyinMock(t, map[string]string{
+		"/api/v1/douyin/app/v3/fetch_one_video_v2": filtered,
+		testDouyinDetailV3:                         filtered,
+		"/api/v1/douyin/web/fetch_one_video_v2":    filtered,
+		"/api/v1/douyin/app/v3/fetch_one_video":    filtered,
+		"/api/v1/douyin/web/fetch_one_video":       filtered,
+		testDouyinHQWeb:                            filtered, testDouyinHQApp: filtered,
+	})
+	_, err := h.fetchDouyinDownload(context.Background(), cfg, testDouyinDownloadSource, "compat")
+	if err == nil || !strings.Contains(err.Error(), "reason=8") || strings.Contains(err.Error(), "删除") || len(calls()) != 7 {
+		t.Fatalf("misleading or unbounded reason=8 failure: %v %v", err, calls())
+	}
+}
 
 func TestTikHubDownloadSelectsRenditionsForRequestedQuality(t *testing.T) {
 	for _, quality := range []string{"speed", "compat", "quality"} {
