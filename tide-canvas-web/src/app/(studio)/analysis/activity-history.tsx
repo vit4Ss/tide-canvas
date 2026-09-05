@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, ExternalLink, History, Loader2, LockKeyhole, RefreshCw, ScanSearch, UserRoundSearch } from "lucide-react";
+import { ArrowUpRight, BookOpen, Check, Loader2, RefreshCw } from "lucide-react";
 import { socialAnalysisApi } from "@/lib/social-analysis-api";
 import type { SocialActivityRecordDetailVO } from "@/lib/social-analysis-api";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -24,18 +24,26 @@ const PLATFORM_LABEL: Record<string, string> = {
 
 const QUALITY_LABEL: Record<string, string> = { compat: "兼容", quality: "高清", speed: "极速" };
 
-function formatTime(value: string): string {
+function formatTime(value: string, full = false): string {
   const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) return value || "—";
-  const sameYear = date.getFullYear() === new Date().getFullYear();
+  if (Number.isNaN(date.valueOf())) return full ? value || "时间未知" : "—";
   return date.toLocaleString("zh-CN", {
-    ...(sameYear ? {} : { year: "numeric" }),
-    month: "2-digit",
-    day: "2-digit",
+    ...(full ? { year: "numeric", month: "2-digit", day: "2-digit", second: "2-digit" } as const : {}),
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
   });
+}
+
+function dateGroup(value: string): { key: string; label: string } {
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return { key: "unknown", label: "日期未知" };
+  // Use calendar dates in the reader's timezone, including across year boundaries.
+  const year = date.getFullYear();
+  return {
+    key: `${year}-${date.getMonth() + 1}-${date.getDate()}`,
+    label: `${year === new Date().getFullYear() ? "" : `${year} 年 `}${date.getMonth() + 1} 月 ${date.getDate()} 日`,
+  };
 }
 
 function formatBytes(value?: number): string {
@@ -145,8 +153,8 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
     <aside className={styles.historySidebar} aria-busy={loading} aria-label="我的使用记录">
       <header className={styles.historyHeader}>
         <div>
-          <h2>使用记录</h2>
-          <p><LockKeyhole aria-hidden />仅当前账号可见</p>
+          <h2>记录簿</h2>
+          <p>分析与下载，随时回看</p>
         </div>
         <button type="button" onClick={() => void load()} disabled={loading} aria-label="刷新使用记录" title="刷新使用记录">
           {loading ? <Loader2 className={styles.spin} aria-hidden /> : <RefreshCw aria-hidden />}
@@ -170,7 +178,7 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
       </div>
 
       <div className={styles.historySummary}>
-        <span>{type === "analysis" ? "分析记录" : type === "download" ? "下载记录" : "最近记录"}</span>
+        <span>仅当前账号可见</span>
         <span>{loading ? "加载中…" : error ? "加载失败" : `共 ${total.toLocaleString("zh-CN")} 条`}</span>
       </div>
 
@@ -186,34 +194,48 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
         </div>
       ) : rows.length === 0 ? (
         <div className={styles.historyEmpty}>
-          <History aria-hidden />
+          <BookOpen aria-hidden />
           <strong>还没有使用记录</strong>
           <p>完成一次内容分析，或解析并下载公开视频后，记录会出现在这里。</p>
         </div>
       ) : (
         <div className={styles.historyList}>
-          {rows.map((row) => (
-            <article className={styles.historyRow} data-selected={selectedId === row.id ? "true" : "false"} key={row.id}>
-              <button type="button" className={styles.historyRecordButton} aria-pressed={selectedId === row.id} onClick={() => void openRecord(row)} disabled={!!openingId}>
-                <span className={styles.historyTypeIcon}>
-                  {openingId === row.id ? <Loader2 className={styles.spin} aria-hidden /> : row.type === "download" ? <Download aria-hidden /> : row.kind === "account" ? <UserRoundSearch aria-hidden /> : <ScanSearch aria-hidden />}
-                </span>
-                <span className={styles.historyCopy}>
-                  <strong title={row.title || row.sourceUrl}>{row.title || (row.type === "download" ? "公开视频" : recordLabel(row))}</strong>
-                  <span>
-                    {PLATFORM_LABEL[row.platform || ""] || row.platform || "待识别"}<i aria-hidden>·</i>{recordLabel(row)}
-                    {row.type === "download" && (row.downloadedBytes || row.estimatedBytes) ? <><i aria-hidden>·</i>{formatBytes(row.downloadedBytes || row.estimatedBytes)}</> : null}
-                  </span>
-                </span>
-                {row.errorMessage ? <span className={styles.historyError} title={row.errorMessage}>{row.errorMessage}</span> : null}
-                <span className={styles.historyRecordMeta}>
-                  <span className={styles.historyState} data-status={row.status}><i aria-hidden />{statusLabel(row.status)}</span>
-                  <time dateTime={row.createTime} title={`当时调用：${new Date(row.createTime).toLocaleString("zh-CN")}`}>{formatTime(row.createTime)}</time>
-                </span>
-              </button>
-              <a href={row.sourceUrl} target="_blank" rel="noreferrer" aria-label="打开来源链接" title="打开来源链接"><ExternalLink aria-hidden /></a>
-            </article>
-          ))}
+          {rows.map((row, index) => {
+            const group = dateGroup(row.createTime);
+            const startsGroup = index === 0 || group.key !== dateGroup(rows[index - 1].createTime).key;
+            const selected = selectedId === row.id;
+            const label = recordLabel(row);
+            return (
+              <div key={row.id}>
+                {startsGroup ? <div className={styles.historyDate}><span>{group.label}</span><i aria-hidden /></div> : null}
+                <article className={styles.historyRow} data-selected={selected ? "true" : "false"} data-status={row.status}>
+                  <button type="button" className={styles.historyRecordButton} aria-pressed={selected} onClick={() => void openRecord(row)} disabled={!!openingId}>
+                    <span className={styles.historyRecordMeta}>
+                      <span>{row.type === "download" && row.quality ? `视频下载 · ${label}` : label}</span>
+                      <time dateTime={row.createTime} title={`当时调用：${formatTime(row.createTime, true)}`}>{formatTime(row.createTime)}</time>
+                    </span>
+                    <span className={styles.historyCopy}>
+                      <strong title={row.title || row.sourceUrl}>{row.title || (row.type === "download" ? "公开视频" : label)}</strong>
+                    </span>
+                    {row.errorMessage ? <span className={styles.historyError} title={row.errorMessage}>{row.errorMessage}</span> : null}
+                    <span className={styles.historyRecordFoot}>
+                      <span className={styles.historyPlatform}>
+                        {PLATFORM_LABEL[row.platform || ""] || row.platform || "待识别"}
+                        {row.type === "download" && (row.downloadedBytes || row.estimatedBytes) ? <><i aria-hidden> / </i>{formatBytes(row.downloadedBytes || row.estimatedBytes)}</> : null}
+                      </span>
+                      <span className={styles.historyState} data-status={row.status}>
+                        {openingId === row.id ? <><Loader2 className={styles.spin} aria-hidden />打开中</>
+                          : selected && row.status === "succeeded" ? "正在查看"
+                          : row.status === "succeeded" ? <><Check aria-hidden /><span className={styles.historySuccessLabel}>已完成</span></>
+                          : statusLabel(row.status)}
+                      </span>
+                    </span>
+                  </button>
+                  <a href={row.sourceUrl} target="_blank" rel="noreferrer" aria-label="打开来源链接" title="打开来源链接"><ArrowUpRight aria-hidden /></a>
+                </article>
+              </div>
+            );
+          })}
         </div>
       )}
 

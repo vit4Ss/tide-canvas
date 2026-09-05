@@ -1425,7 +1425,6 @@
   overflow: hidden;
   border-right: 1px solid var(--border);
   background: var(--surface);
-  box-shadow: inset 0 1px 0 color-mix(in oklab, var(--text) 8%, transparent);
 }
 
 .historyHeader {
@@ -1434,26 +1433,25 @@
   justify-content: space-between;
   flex-shrink: 0;
   gap: 16px;
-  padding: 24px 20px 20px;
+  padding: 32px 24px 24px;
 }
 
 .historyHeader h2 {
   margin: 0;
-  font-size: 20px;
-  font-weight: 650;
-  letter-spacing: -.02em;
+  color: var(--text);
+  font-family: "Songti SC", "STSong", "SimSun", serif;
+  font-size: 28px;
+  font-weight: 500;
+  letter-spacing: .08em;
+  line-height: 1.25;
 }
 
 .historyHeader p {
-  display: flex;
-  align-items: center;
-  gap: 4px;
   margin: 8px 0 0;
   color: var(--text-dim);
   font-size: 12px;
+  line-height: 1.6;
 }
-
-.historyHeader p svg { width: 12px; height: 12px; }
 
 .historyHeader > button,
 .historyEmpty button,
@@ -1463,64 +1461,52 @@
   justify-content: center;
   gap: 8px;
   min-height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--r);
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
   color: var(--text-dim);
-  background: var(--surface-raised);
   font-size: 12px;
   white-space: nowrap;
-  transition: color 160ms var(--ease), border-color 160ms var(--ease);
+  transition: color 160ms var(--ease), background 160ms var(--ease);
 }
 
-.historyHeader > button {
-  width: 32px;
-  padding: 0;
-  flex-shrink: 0;
-  background: transparent;
-}
-
+.historyHeader > button { width: 32px; padding: 0; flex-shrink: 0; }
 .historyHeader > button:hover:not(:disabled),
 .historyEmpty button:hover,
-.historyPager button:hover:not(:disabled) {
-  border-color: var(--border-strong);
-  color: var(--text);
-}
-
+.historyPager button:hover:not(:disabled) { background: var(--panel-hover); color: var(--text); }
 .historyHeader > button:disabled,
-.historyPager button:disabled { opacity: .48; cursor: default; }
-.historyHeader > button svg { width: 14px; height: 14px; }
+.historyPager button:disabled { opacity: .4; cursor: default; }
+.historyHeader > button svg { width: 16px; height: 16px; }
 
 .historyFilters {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   flex-shrink: 0;
-  gap: 4px;
-  margin: 0 16px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  background: var(--bg);
+  margin: 0 24px;
+  border-bottom: 1px solid var(--border);
 }
 
 .historyFilters button {
-  min-height: 32px;
+  position: relative;
+  min-height: 40px;
   min-width: 0;
-  padding: 0 4px;
-  border: 1px solid transparent;
-  border-radius: var(--r);
+  padding: 0 4px 12px;
   color: var(--text-dim);
   font-size: 12px;
   white-space: nowrap;
-  transition: color 160ms var(--ease), background 160ms var(--ease), border-color 160ms var(--ease);
+  transition: color 160ms var(--ease);
 }
 
 .historyFilters button:hover { color: var(--text); }
-.historyFilters button.historyFilterActive {
-  border-color: var(--border);
-  color: var(--text);
-  background: var(--surface-raised);
-  font-weight: 600;
+.historyFilters button.historyFilterActive { color: var(--text); font-weight: 600; }
+.historyFilters button.historyFilterActive::after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  left: 16px;
+  right: 16px;
+  height: 2px;
+  background: var(--text);
 }
 
 .historySummary {
@@ -1529,188 +1515,194 @@
   justify-content: space-between;
   flex-shrink: 0;
   gap: 8px;
-  padding: 20px 20px 8px;
+  padding: 16px 24px 8px;
   color: var(--text-dim);
   font-size: 12px;
+  line-height: 20px;
 }
 
 .historyList {
   min-height: 0;
   flex: 1;
-  padding: 4px 12px 16px;
+  padding: 0 16px 24px;
   overflow-y: auto;
   overscroll-behavior-y: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
 
-.historyRow {
-  position: relative;
-  margin-bottom: 4px;
-  border: 1px solid transparent;
-  border-radius: var(--r);
-  transition: background 160ms var(--ease), border-color 160ms var(--ease);
-}
-
-.historyRow:last-child { margin-bottom: 0; }
-.historyRow:hover { background: var(--surface-raised); }
-.historyRow[data-selected="true"] {
-  border-color: var(--border-strong);
-  background: var(--surface-raised);
-}
-
-.historyRow[data-selected="true"]::before {
-  content: "";
-  position: absolute;
-  top: 16px;
-  bottom: 16px;
-  left: -1px;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--tech);
-  pointer-events: none;
-}
-
-.historyRecordButton {
-  width: 100%;
-  min-width: 0;
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  align-items: start;
-  gap: 8px;
-  padding: 12px;
-  border-radius: var(--r);
-  color: inherit;
-  text-align: left;
-}
-
-.historyRecordButton:disabled { cursor: default; }
-
-.historyTypeIcon {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  color: var(--text-dim);
-  background: var(--surface);
-}
-
-.historyTypeIcon svg { width: 14px; height: 14px; }
-.historyRow[data-selected="true"] .historyTypeIcon { color: var(--text); }
-
-.historyCopy { min-width: 0; }
-.historyCopy strong,
-.historyCopy > span,
-.historyError {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.historyCopy strong { padding-right: 24px; font-size: 14px; font-weight: 600; line-height: 20px; }
-.historyCopy > span {
-  margin-top: 4px;
-  color: var(--text-dim);
-  font-size: 12px;
-  line-height: 16px;
-}
-.historyCopy > span i { margin: 0 4px; color: var(--text-faint); font-style: normal; }
-.historyError {
-  grid-column: 1 / -1;
-  color: var(--danger-text);
-  font-size: 12px;
-  line-height: 20px;
-}
-
-.historyRecordMeta {
+.historyDate {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  grid-column: 1 / -1;
-  gap: 4px 8px;
-  min-width: 0;
-  line-height: 20px;
-}
-
-.historyState {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--text-dim);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.historyState i {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--text-faint);
-}
-
-.historyState[data-status="succeeded"] i { background: var(--tech); }
-.historyState[data-status="failed"] { color: var(--danger-text); }
-.historyState[data-status="failed"] i { background: var(--danger-line); }
-.historyState[data-status="expired"] { color: var(--text-faint); }
-
-.historyRecordButton time {
+  gap: 12px;
+  margin: 24px 8px 12px;
   color: var(--text-dim);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.historyList > div:first-child .historyDate { margin-top: 12px; }
+.historyDate i { flex: 1; height: 1px; background: var(--border); }
+
+.historyRow {
+  --record-text: var(--text);
+  --record-muted: var(--text-dim);
+  position: relative;
+  margin-bottom: 4px;
+  border-radius: 2px;
+  color: var(--record-text);
+  transition: background 160ms var(--ease);
+}
+
+.historyRow:hover { background: var(--panel); }
+
+/* One open sheet in the archive; ordinary entries share the dark surface. */
+.historyRow[data-selected="true"] {
+  --record-text: var(--bg);
+  --record-muted: color-mix(in oklab, var(--bg) 68%, var(--text));
+  background: var(--text);
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+}
+.historyRow[data-selected="true"]::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 12px;
+  height: 12px;
+  background: color-mix(in oklab, var(--bg) 18%, var(--text));
+  pointer-events: none;
+}
+
+.historyRecordButton {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 16px;
+  color: inherit;
+  text-align: left;
+}
+.historyRecordButton:disabled { cursor: default; }
+
+.historyRecordMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  color: var(--record-muted);
+  font-size: 12px;
+  line-height: 16px;
+}
+.historyRecordMeta > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.historyRecordMeta time { flex-shrink: 0; font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.historyCopy { min-width: 0; }
+.historyCopy strong {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: 16px;
+  font-weight: 550;
+  line-height: 1.5;
+}
+.historyRow[data-selected="true"] .historyCopy strong { font-weight: 650; }
+
+.historyRecordFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding-right: 24px;
+  color: var(--record-muted);
+  font-size: 12px;
+  line-height: 20px;
+}
+.historyPlatform { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.historyPlatform i { font-style: normal; }
+
+.historyState {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.historyState svg { width: 12px; height: 12px; }
+.historySuccessLabel {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.historyRow[data-status="failed"]:not([data-selected="true"]) .historyState { color: var(--danger-text); }
+.historyError {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-strong);
+  color: var(--record-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
 
 .historyRow > a {
   position: absolute;
-  top: 8px;
   right: 8px;
+  bottom: 8px;
   display: grid;
   width: 32px;
   height: 32px;
   place-items: center;
-  border-radius: var(--r);
-  color: var(--text-faint);
-  transition: color 160ms var(--ease), background 160ms var(--ease);
+  border-radius: var(--r-sm);
+  color: var(--record-muted);
+  transition: color 160ms var(--ease);
 }
-
-.historyRow > a:hover { color: var(--text); background: var(--surface-raised); }
-.historyRow > a svg { width: 14px; height: 14px; }
+.historyRow > a:hover { color: var(--record-text); }
+.historyRow > a svg { width: 16px; height: 16px; }
 
 .historySidebar button:focus-visible,
 .historySidebar a:focus-visible {
   outline: 2px solid var(--tech);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
+/* Inset focus rings remain visible inside the clipped paper edge. */
+.historyRow[data-selected="true"] button:focus-visible,
+.historyRow[data-selected="true"] a:focus-visible { outline-color: var(--record-text); }
 
 .historyEmpty {
   display: grid;
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  place-items: center;
-  align-content: center;
-  padding: 32px 24px;
-  text-align: center;
+  place-items: start;
+  align-content: start;
+  padding: 40px 24px;
+  text-align: left;
 }
+.historyEmpty > svg { width: 24px; height: 24px; margin-bottom: 20px; color: var(--text-dim); }
+.historyEmpty strong { font-size: 16px; font-weight: 550; }
+.historyEmpty p { max-width: 440px; margin: 8px 0 20px; color: var(--text-dim); font-size: 14px; line-height: 1.8; }
+.historyEmpty button { border-color: var(--border); }
 
-.historyEmpty > svg { width: 24px; height: 24px; margin-bottom: 16px; color: var(--text-faint); }
-.historyEmpty strong { font-size: 16px; font-weight: 600; }
-.historyEmpty p { max-width: 440px; margin: 8px 0 20px; color: var(--text-dim); font-size: 14px; line-height: 1.6; }
-
-.historyLoading { display: grid; min-height: 0; overflow: auto; gap: 4px; padding: 4px 12px 16px; }
+.historyLoading { display: grid; min-height: 0; overflow: auto; gap: 4px; padding: 12px 16px 24px; }
 .historyLoading i {
-  height: 96px;
-  border: 1px solid var(--border);
-  border-radius: var(--r);
+  height: 120px;
+  border-bottom: 1px solid var(--border);
   background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--text) 4%, transparent), transparent);
   background-size: 200% 100%;
   animation: historyLoading 1.6s ease-in-out infinite;
 }
-
 @keyframes historyLoading { to { background-position: -200% 0; } }
 
 .historyPager {
@@ -1722,10 +1714,8 @@
   padding: 12px 16px;
   border-top: 1px solid var(--border);
 }
-
 .historyPager > span { color: var(--text-dim); font-size: 12px; white-space: nowrap; }
 .historyPager > div { display: flex; gap: 4px; }
-.historyPager button { padding: 0 8px; }
 
 @media (pointer: coarse) {
   .historyHeader > button,
@@ -1733,7 +1723,7 @@
   .historyEmpty button,
   .historyPager button { min-height: 44px; }
   .historyHeader > button { width: 44px; }
-  .historyRow > a { width: 44px; height: 44px; top: 0; right: 0; }
+  .historyRow > a { width: 44px; height: 44px; right: 0; bottom: 4px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1743,12 +1733,13 @@
 @media (max-width: 900px) {
   .page { display: block; overflow: auto; }
   .workspaceMain { overflow: visible; }
-  .historySidebar { max-height: 520px; border-right: 0; border-bottom: 1px solid var(--border); }
-  .historyHeader { padding: 20px; }
+  .historySidebar { max-height: 540px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .historyHeader { padding: 24px 24px 16px; }
   .historyLoading,
-  .historyList { max-height: 240px; flex: auto; }
+  .historyList { max-height: 260px; flex: auto; }
   .historyEmpty { min-height: 200px; }
 }
+
 
 .getter {
   display: grid;
