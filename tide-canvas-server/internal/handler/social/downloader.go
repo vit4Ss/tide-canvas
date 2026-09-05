@@ -1,12 +1,10 @@
 package social
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -15,7 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
+
 	"time"
 	"unicode/utf8"
 
@@ -28,19 +26,18 @@ import (
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/response"
-	"tidecanvas/internal/pkg/safefetch"
+
 	"tidecanvas/internal/pkg/token"
 )
 
 const (
-	maxDownloaderJSONBody  = 1 << 20
 	maxDownloaderInputBody = 16 << 10
-	maxRelayVideoBytes     = int64(2 << 30)
+	maxVideoDownloadBytes  = int64(2 << 30)
 	videoDownloadTicketMax = 5 * time.Minute
 	videoDownloadMaxTime   = time.Hour
 )
 
-var relayDownloadTokenPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]{1,512}$`)
+var videoDownloadTokenPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]{1,512}$`)
 
 type downloaderCapabilitiesVO struct {
 	Enabled         bool     `json:"enabled"`
@@ -87,253 +84,26 @@ type videoDownloadActivity struct {
 	ExpiresAt       int64  `json:"e"`
 }
 
-type relayVideoDownloader struct {
-	baseURL        string
-	apiKey         string
-	jsonClient     *http.Client
-	downloadClient *http.Client
-	cacheMu        sync.Mutex
-	cached         downloaderCapabilitiesVO
-	cacheUntil     time.Time
+type videoDownloader interface {
+	platforms(context.Context) (downloaderCapabilitiesVO, error)
+	resolve(context.Context, string, string) (videoDownloadResolveVO, error)
+	download(context.Context, string, string) (*http.Response, error)
 }
 
-type relayDownloaderError struct {
-	status  int
-	code    string
-	message string
-	// authored 标记 message 是我们自己写给用户看的中文文案(而非上游原文),
-	// 因此可以原样展示。不加这个标记的话,自撰文案会被下面按状态码分派的
-	// 通用话术盖掉,又变成一处死代码。
+type videoDownloaderError struct {
+	status   int
+	code     string
+	message  string
 	authored bool
 }
 
-func (e *relayDownloaderError) Error() string { return e.message }
+func (e *videoDownloaderError) Error() string { return e.message }
 
-func newRelayVideoDownloader(baseURL, apiKey string) *relayVideoDownloader {
-	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	apiKey = strings.TrimSpace(apiKey)
-	if baseURL == "" || apiKey == "" {
-		return nil
+func decodeVideoDownloaderError(resp *http.Response) error {
+	if resp != nil && resp.Body != nil {
+		resp.Body.Close()
 	}
-	jsonClient := &http.Client{
-		Timeout: 60 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 3 {
-				return errors.New("too many relay redirects")
-			}
-			if len(via) > 0 && !sameOrigin(req.URL, via[0].URL) {
-				return errors.New("cross-origin relay redirect is not allowed")
-			}
-			return nil
-		},
-	}
-	downloadClient := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return errors.New("too many relay download redirects")
-			}
-			if err := safefetch.ValidateParsedURL(req.URL); err != nil {
-				return err
-			}
-			if len(via) > 0 && !sameOrigin(req.URL, via[0].URL) {
-				req.Header.Del("Authorization")
-			}
-			return nil
-		},
-	}
-	return &relayVideoDownloader{baseURL: baseURL, apiKey: apiKey, jsonClient: jsonClient, downloadClient: downloadClient}
-}
-
-func sameOrigin(left, right *url.URL) bool {
-	return left != nil && right != nil && strings.EqualFold(left.Scheme, right.Scheme) && strings.EqualFold(left.Host, right.Host)
-}
-
-func (d *relayVideoDownloader) request(ctx context.Context, method, endpoint string, body any, client *http.Client) (*http.Response, error) {
-	if d == nil {
-		return nil, &relayDownloaderError{status: http.StatusServiceUnavailable, code: "disabled", message: "视频下载服务尚未配置，请联系管理员配置 Relay API Key", authored: true}
-	}
-	base, err := url.Parse(d.baseURL)
-	if err != nil || base.Hostname() == "" || base.User != nil || (base.Scheme != "http" && base.Scheme != "https") || base.RawQuery != "" || base.Fragment != "" {
-		return nil, errors.New("invalid relay base URL")
-	}
-	var reader io.Reader
-	if body != nil {
-		encoded, marshalErr := json.Marshal(body)
-		if marshalErr != nil {
-			return nil, marshalErr
-		}
-		reader = bytes.NewReader(encoded)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, d.baseURL+endpoint, reader)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+d.apiKey)
-	if strings.Contains(endpoint, "/video-downloader/download/") {
-		req.Header.Set("Accept", "video/*,application/octet-stream;q=0.9,*/*;q=0.1")
-	} else {
-		req.Header.Set("Accept", "application/json")
-	}
-	req.Header.Set("User-Agent", "FlowingLight-VideoDownloader/1.0")
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	return client.Do(req)
-}
-
-func decodeRelayDownloaderError(resp *http.Response) error {
-	if resp == nil {
-		return &relayDownloaderError{status: http.StatusBadGateway, code: "upstream_error", message: "视频下载服务暂时不可用"}
-	}
-	defer resp.Body.Close()
-	payload := struct {
-		Error string `json:"error"`
-		Code  string `json:"code"`
-	}{}
-	_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&payload)
-	message := strings.TrimSpace(payload.Error)
-	if message == "" {
-		message = fmt.Sprintf("视频下载服务返回 HTTP %d", resp.StatusCode)
-	}
-	return &relayDownloaderError{status: resp.StatusCode, code: strings.TrimSpace(payload.Code), message: message}
-}
-
-func (d *relayVideoDownloader) platforms(ctx context.Context) (downloaderCapabilitiesVO, error) {
-	if d == nil {
-		return downloaderCapabilitiesVO{Platforms: []string{}}, nil
-	}
-	now := time.Now()
-	d.cacheMu.Lock()
-	if now.Before(d.cacheUntil) {
-		cached := d.cached
-		cached.Platforms = append([]string{}, cached.Platforms...)
-		d.cacheMu.Unlock()
-		return cached, nil
-	}
-	d.cacheMu.Unlock()
-	resp, err := d.request(ctx, http.MethodGet, "/v1/tools/video-downloader/platforms", nil, d.jsonClient)
-	if err != nil {
-		return downloaderCapabilitiesVO{}, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return downloaderCapabilitiesVO{}, decodeRelayDownloaderError(resp)
-	}
-	defer resp.Body.Close()
-	var payload struct {
-		Enabled         bool     `json:"enabled"`
-		Platforms       []string `json:"platforms"`
-		MaxFileBytes    int64    `json:"max_file_bytes"`
-		TokenTTLSeconds int      `json:"token_ttl_seconds"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxDownloaderJSONBody)).Decode(&payload); err != nil {
-		return downloaderCapabilitiesVO{}, errors.New("invalid relay downloader capabilities")
-	}
-	platforms := make([]string, 0, len(payload.Platforms))
-	seen := map[string]bool{}
-	for _, platform := range payload.Platforms {
-		platform = strings.ToLower(strings.TrimSpace(platform))
-		if platform == "" || len(platform) > 32 || seen[platform] {
-			continue
-		}
-		seen[platform] = true
-		platforms = append(platforms, platform)
-	}
-	capabilities := downloaderCapabilitiesVO{
-		Enabled: payload.Enabled, Platforms: platforms,
-		MaxFileBytes: payload.MaxFileBytes, TokenTTLSeconds: payload.TokenTTLSeconds,
-	}
-	if capabilities.MaxFileBytes <= 0 || capabilities.MaxFileBytes > maxRelayVideoBytes {
-		capabilities.MaxFileBytes = 512 << 20
-	}
-	if capabilities.TokenTTLSeconds <= 0 || capabilities.TokenTTLSeconds > 3600 {
-		capabilities.TokenTTLSeconds = 600
-	}
-	// The browser receives an application-issued ticket, not the Relay token.
-	// Report the shorter effective lifetime so the UI does not over-promise.
-	if localMax := int(videoDownloadTicketMax / time.Second); capabilities.TokenTTLSeconds > localMax {
-		capabilities.TokenTTLSeconds = localMax
-	}
-	d.cacheMu.Lock()
-	d.cached = capabilities
-	d.cacheUntil = now.Add(time.Minute)
-	d.cacheMu.Unlock()
-	return capabilities, nil
-}
-
-func (d *relayVideoDownloader) resolve(ctx context.Context, sourceURL, quality string) (videoDownloadResolveVO, error) {
-	resp, err := d.request(ctx, http.MethodPost, "/v1/tools/video-downloader/resolve", map[string]string{"url": sourceURL, "quality": quality}, d.jsonClient)
-	if err != nil {
-		return videoDownloadResolveVO{}, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return videoDownloadResolveVO{}, decodeRelayDownloaderError(resp)
-	}
-	defer resp.Body.Close()
-	var payload struct {
-		ID              string `json:"id"`
-		Platform        string `json:"platform"`
-		Title           string `json:"title"`
-		DurationSeconds int    `json:"duration_seconds"`
-		Width           int    `json:"width"`
-		Height          int    `json:"height"`
-		EstimatedBytes  int64  `json:"estimated_bytes"`
-		Quality         string `json:"quality"`
-		ExpiresAt       int64  `json:"expires_at"`
-		// 封面不在文档化契约里,但各平台的解析结果常带一个。列出常见键名择一取用:
-		// 拿到就让用户在下载前看见画面确认是这条视频,拿不到不影响任何功能。
-		Cover        string `json:"cover"`
-		CoverURL     string `json:"cover_url"`
-		Thumbnail    string `json:"thumbnail"`
-		ThumbnailURL string `json:"thumbnail_url"`
-		Poster       string `json:"poster"`
-		ImageURL     string `json:"image_url"`
-	}
-	// 这几处严格校验此前都抛裸 error,最终被 response.Fail 的 500 统一话术抹成
-	// 「请联系客服」——用户看不出是自己链接的问题还是服务的问题,排查也只能靠猜。
-	// 现在一律带上可读原因与足够的日志字段。
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxDownloaderJSONBody)).Decode(&payload); err != nil {
-		logger.L().Warn("relay downloader returned an undecodable payload", zap.Error(err))
-		return videoDownloadResolveVO{}, &relayDownloaderError{status: http.StatusBadGateway, code: "invalid_response", message: "视频解析服务返回了无法识别的结果，请稍后重试或更换链接", authored: true}
-	}
-	payload.ID = strings.TrimSpace(payload.ID)
-	if !relayDownloadTokenPattern.MatchString(payload.ID) {
-		logger.L().Warn("relay downloader returned an unusable download token",
-			zap.String("token", truncateText(payload.ID, 64)), zap.Int("length", len(payload.ID)))
-		return videoDownloadResolveVO{}, &relayDownloaderError{status: http.StatusBadGateway, code: "invalid_token", message: "视频解析服务返回了无法使用的下载凭证，请稍后重试或更换链接", authored: true}
-	}
-	payload.Platform = strings.ToLower(strings.TrimSpace(payload.Platform))
-	payload.Title = truncateText(payload.Title, 200)
-	// 体积超限单独拎出来:这是关于这条视频的事实,用户换个短一点的视频就能解决,
-	// 与「上游返回了怪数据」不是一回事,不该共用同一句提示。
-	if payload.EstimatedBytes > maxRelayVideoBytes {
-		return videoDownloadResolveVO{}, &relayDownloaderError{
-			status: http.StatusBadRequest, code: "too_large",
-			message: fmt.Sprintf("视频体积约 %s，超过本站 %s 的下载上限", humanBytes(payload.EstimatedBytes), humanBytes(maxRelayVideoBytes)),
-		}
-	}
-	if payload.Platform == "" || len(payload.Platform) > 32 || payload.DurationSeconds < 0 || payload.DurationSeconds > 7*24*60*60 || payload.Width < 0 || payload.Width > 100000 || payload.Height < 0 || payload.Height > 100000 || payload.EstimatedBytes < 0 {
-		logger.L().Warn("relay downloader returned out-of-range metadata",
-			zap.String("platform", truncateText(payload.Platform, 64)),
-			zap.Int("durationSeconds", payload.DurationSeconds),
-			zap.Int("width", payload.Width), zap.Int("height", payload.Height),
-			zap.Int64("estimatedBytes", payload.EstimatedBytes))
-		return videoDownloadResolveVO{}, &relayDownloaderError{status: http.StatusBadGateway, code: "invalid_metadata", message: "视频解析结果异常，该视频可能暂不支持解析", authored: true}
-	}
-	if payload.ExpiresAt <= time.Now().Unix() {
-		return videoDownloadResolveVO{}, &relayDownloaderError{status: http.StatusBadRequest, code: "expired", message: "视频解析令牌已过期，请重新解析"}
-	}
-	resolvedQuality := strings.ToLower(strings.TrimSpace(payload.Quality))
-	if resolvedQuality != "quality" && resolvedQuality != "compat" && resolvedQuality != "speed" {
-		resolvedQuality = quality
-	}
-	return videoDownloadResolveVO{
-		ID: payload.ID, Platform: payload.Platform, Title: payload.Title,
-		DurationSeconds: payload.DurationSeconds, Width: payload.Width, Height: payload.Height,
-		EstimatedBytes: payload.EstimatedBytes, Quality: resolvedQuality,
-		ExpiresAt: payload.ExpiresAt,
-		CoverURL: displayImageURL(payload.Cover, payload.CoverURL, payload.Thumbnail,
-			payload.ThumbnailURL, payload.Poster, payload.ImageURL),
-	}, nil
+	return &videoDownloaderError{status: http.StatusBadGateway, message: "下载结果不是有效视频，请重新解析后重试", authored: true}
 }
 
 // displayImageURL 从若干候选里挑第一个可以安全交给浏览器 <img> 的地址。
@@ -355,13 +125,6 @@ func displayImageURL(candidates ...string) string {
 	return ""
 }
 
-func (d *relayVideoDownloader) download(ctx context.Context, id string) (*http.Response, error) {
-	if !relayDownloadTokenPattern.MatchString(id) {
-		return nil, &relayDownloaderError{status: http.StatusBadRequest, code: "bad_request", message: "下载令牌格式无效"}
-	}
-	return d.request(ctx, http.MethodGet, "/v1/tools/video-downloader/download/"+url.PathEscape(id), nil, d.downloadClient)
-}
-
 func (h *handler) downloaderPlatforms(c *gin.Context) {
 	if h.downloader == nil {
 		response.OK(c, downloaderCapabilitiesVO{Platforms: []string{}})
@@ -369,32 +132,18 @@ func (h *handler) downloaderPlatforms(c *gin.Context) {
 	}
 	capabilities, err := h.downloader.platforms(c.Request.Context())
 	if err != nil {
-		writeRelayDownloaderError(c, err)
+		writeVideoDownloaderError(c, err)
 		return
 	}
 	response.OK(c, capabilities)
 }
 
-// writeRelayDownloaderError 把上游下载器的失败翻译成用户看得懂、且能据此行动的
+// writeVideoDownloaderError 把本地下载器的失败翻译成用户看得懂、且能据此行动的
 // 提示。注意 response.Fail 对 CodeServerError 会强制抹成统一话术「请联系客服」
 // (见 response.Fail 的注释),所以凡是我们已经有像样文案的情形都不能走 500——
 // 否则文案是死代码,用户面对一句无从下手的话。只有真正的内部错误才留给 500。
-// humanBytes 把字节数写成用户读得懂的量级,只用于面向用户的提示文案。
-func humanBytes(value int64) string {
-	const unit = 1024
-	if value < unit {
-		return fmt.Sprintf("%d B", value)
-	}
-	div, exp := int64(unit), 0
-	for n := value / unit; n >= unit && exp < 3; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %s", float64(value)/float64(div), [...]string{"KB", "MB", "GB", "TB"}[exp])
-}
-
-func writeRelayDownloaderError(c *gin.Context, err error) {
-	var upstream *relayDownloaderError
+func writeVideoDownloaderError(c *gin.Context, err error) {
+	var upstream *videoDownloaderError
 	if errors.As(err, &upstream) {
 		switch {
 		case upstream.status == http.StatusBadRequest:
@@ -409,13 +158,13 @@ func writeRelayDownloaderError(c *gin.Context, err error) {
 			response.Fail(c, response.CodeRateLimited, "视频下载请求过于频繁，请稍后重试")
 		case upstream.status == http.StatusUnauthorized || upstream.status == http.StatusForbidden:
 			// 我方凭证问题,用户重试多少次都没用,直接指向管理员。
-			logger.L().Warn("relay downloader rejected our credentials",
+			logger.L().Warn("local video downloader rejected our credentials",
 				zap.Int("status", upstream.status), zap.String("code", upstream.code), zap.String("message", upstream.message))
-			response.Fail(c, response.CodeToolDisabled, "视频下载服务鉴权失败，请联系管理员检查 Relay API Key")
+			response.Fail(c, response.CodeToolDisabled, "视频平台拒绝了下载请求，请确认视频可以公开访问")
 		case upstream.status >= http.StatusInternalServerError:
 			// 上游 5xx 与网络故障:用户稍后重试或换个链接就可能成功,这是明确的
 			// 下一步,不是「联系客服」。真实原因照旧落日志供排查。
-			logger.L().Warn("relay downloader upstream failure",
+			logger.L().Warn("local video downloader upstream failure",
 				zap.Int("status", upstream.status), zap.String("code", upstream.code), zap.String("message", upstream.message))
 			message := "视频解析服务暂时不可用，请稍后重试；若同一链接持续失败，多半是该视频暂不支持解析"
 			if upstream.authored && upstream.message != "" {
@@ -424,7 +173,7 @@ func writeRelayDownloaderError(c *gin.Context, err error) {
 			response.Fail(c, response.CodeToolDisabled, message)
 		case upstream.status >= http.StatusBadRequest:
 			// 其余 4xx(如 402/415/422)基本都在说这条链接本身的问题,原文比兜底话术有用。
-			logger.L().Warn("relay downloader rejected the source",
+			logger.L().Warn("local video downloader rejected the source",
 				zap.Int("status", upstream.status), zap.String("code", upstream.code), zap.String("message", upstream.message))
 			response.Fail(c, response.CodeBadRequest, safeMessage(upstream.message))
 		default:
@@ -450,33 +199,8 @@ func validPublicDownloadSource(raw string) string {
 	return parsed.String()
 }
 
-func inferDownloadPlatform(raw string) string {
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return ""
-	}
-	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
-	match := func(domain string) bool { return host == domain || strings.HasSuffix(host, "."+domain) }
-	switch {
-	case match("pinterest.com"), match("pin.it"):
-		return "pinterest"
-	case match("bilibili.com"), match("b23.tv"):
-		return "bilibili"
-	case match("kuaishou.com"):
-		return "kuaishou"
-	case match("tiktok.com"):
-		return "tiktok"
-	case match("instagram.com"):
-		return "instagram"
-	case match("youtube.com"), match("youtu.be"):
-		return "youtube"
-	default:
-		return ""
-	}
-}
-
 func downloadActivityError(err error) string {
-	var upstream *relayDownloaderError
+	var upstream *videoDownloaderError
 	if errors.As(err, &upstream) {
 		if upstream.authored {
 			return activityString(upstream.message, 1000)
@@ -514,12 +238,12 @@ func (h *handler) resolveVideoDownload(c *gin.Context) {
 		return
 	}
 	if h.downloader == nil {
-		response.Fail(c, response.CodeToolDisabled, "视频下载服务尚未配置，请联系管理员配置 Relay API Key")
+		response.Fail(c, response.CodeToolDisabled, "视频下载组件尚未就绪，请联系管理员检查下载服务")
 		return
 	}
 	capabilities, err := h.downloader.platforms(c.Request.Context())
 	if err != nil {
-		writeRelayDownloaderError(c, err)
+		writeVideoDownloaderError(c, err)
 		return
 	}
 	if !capabilities.Enabled {
@@ -528,7 +252,7 @@ func (h *handler) resolveVideoDownload(c *gin.Context) {
 	}
 	resolved, err := h.downloader.resolve(c.Request.Context(), sourceURL, quality)
 	if err != nil {
-		writeRelayDownloaderError(c, err)
+		writeVideoDownloaderError(c, err)
 		return
 	}
 	platformAllowed := false
@@ -565,7 +289,7 @@ func (h *handler) resolveVideoDownload(c *gin.Context) {
 		ExpiresAt: expiresAt.Unix(),
 	})
 	metadata := base64.RawURLEncoding.EncodeToString(metadataJSON)
-	ticket, err := token.IssueDownloadTicket(middleware.CurrentUserID(c), middleware.CurrentRole(c), relayVideoActivityResource(resolved.ID, recordID, metadata), name, ttl)
+	ticket, err := token.IssueDownloadTicket(middleware.CurrentUserID(c), middleware.CurrentRole(c), videoActivityResource(resolved.ID, recordID, metadata), name, ttl)
 	if err != nil {
 		response.Fail(c, response.CodeServerError, "failed to issue video download ticket")
 		return
@@ -583,15 +307,15 @@ func (h *handler) resolveVideoDownload(c *gin.Context) {
 	response.OK(c, resolved)
 }
 
-func relayVideoActivityResource(id string, recordID idgen.ID, metadata string) string {
-	resource := relayVideoTicketResource(id, recordID)
+func videoActivityResource(id string, recordID idgen.ID, metadata string) string {
+	resource := videoTicketResource(id, recordID)
 	if metadata != "" {
 		resource += ":meta:" + metadata
 	}
 	return resource
 }
 
-func relayVideoTicketResource(id string, recordIDs ...idgen.ID) string {
+func videoTicketResource(id string, recordIDs ...idgen.ID) string {
 	resource := "relay-video-download:" + id
 	if len(recordIDs) > 0 && recordIDs[0] != 0 {
 		resource += ":" + recordIDs[0].String()
@@ -635,12 +359,12 @@ func videoDownloadTicketAuth() gin.HandlerFunc {
 			}
 			recordID = parsedRecordID
 		}
-		if !relayDownloadTokenPattern.MatchString(id) || len(ticket) == 0 || len(ticket) > 4096 || len(metadata) > 8192 || utf8.RuneCountInString(name) > 140 {
+		if !videoDownloadTokenPattern.MatchString(id) || len(ticket) == 0 || len(ticket) > 4096 || len(metadata) > 8192 || utf8.RuneCountInString(name) > 140 {
 			response.Fail(c, response.CodeUnauthorized, "下载地址无效或已过期，请重新解析")
 			c.Abort()
 			return
 		}
-		claims, err := token.ParseDownloadTicket(ticket, relayVideoActivityResource(id, recordID, metadata), name)
+		claims, err := token.ParseDownloadTicket(ticket, videoActivityResource(id, recordID, metadata), name)
 		if err != nil {
 			response.Fail(c, response.CodeUnauthorized, "下载地址无效或已过期，请重新解析")
 			c.Abort()
@@ -667,7 +391,6 @@ func videoDownloadTicketAuth() gin.HandlerFunc {
 }
 
 func (h *handler) downloadVideo(c *gin.Context) {
-	id := strings.TrimSpace(c.Param("token"))
 	name := downloadVideoFileName(c.Query("name"))
 	recordID, _ := c.Get("socialDownloadRecordID")
 	activity := &model.SocialActivityRecord{UserID: middleware.CurrentUserID(c)}
@@ -676,6 +399,14 @@ func (h *handler) downloadVideo(c *gin.Context) {
 	}
 	if activity.ID == 0 {
 		activity = nil
+	}
+	if activity != nil {
+		key := [2]idgen.ID{activity.UserID, activity.ID}
+		if _, active := h.activeDownloads.LoadOrStore(key, struct{}{}); active {
+			response.Fail(c, response.CodeRateLimited, "视频正在准备或下载中，请等待当前任务完成")
+			return
+		}
+		defer h.activeDownloads.Delete(key)
 	}
 	if activity != nil && h.db != nil {
 		if raw, ok := c.Get("socialDownloadActivity"); ok {
@@ -713,20 +444,34 @@ func (h *handler) downloadVideo(c *gin.Context) {
 	}
 	downloadCtx, cancel := context.WithTimeout(c.Request.Context(), videoDownloadMaxTime)
 	defer cancel()
-	resp, err := h.downloader.download(downloadCtx, id)
+	var sourceURL, quality string
+	if raw, ok := c.Get("socialDownloadActivity"); ok {
+		preview := raw.(videoDownloadActivity)
+		sourceURL, quality = preview.SourceURL, preview.Quality
+	} else if activity != nil {
+		// Existing signed tickets with database-backed metadata remain usable
+		// across the migration; no request is sent to the previous Relay.
+		sourceURL, quality = activity.SourceURL, activity.Quality
+	}
+	if sourceURL == "" {
+		h.failActivity(activity, "下载信息已失效，请重新解析")
+		response.Fail(c, response.CodeBadRequest, "下载信息已失效，请重新解析")
+		return
+	}
+	resp, err := h.downloader.download(downloadCtx, sourceURL, quality)
 	if err != nil {
 		h.failActivity(activity, downloadActivityError(err))
-		writeRelayDownloaderError(c, err)
+		writeVideoDownloaderError(c, err)
 		return
 	}
 	if resp.StatusCode != http.StatusOK {
-		upstreamErr := decodeRelayDownloaderError(resp)
+		upstreamErr := decodeVideoDownloaderError(resp)
 		h.failActivity(activity, downloadActivityError(upstreamErr))
-		writeRelayDownloaderError(c, upstreamErr)
+		writeVideoDownloaderError(c, upstreamErr)
 		return
 	}
 	defer resp.Body.Close()
-	if resp.ContentLength > maxRelayVideoBytes {
+	if resp.ContentLength > maxVideoDownloadBytes {
 		h.failActivity(activity, "视频文件超过本站下载上限")
 		response.Fail(c, response.CodeBadRequest, "视频文件超过本站下载上限")
 		return
@@ -734,9 +479,9 @@ func (h *handler) downloadVideo(c *gin.Context) {
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
 	mediaType := strings.ToLower(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0]))
 	if mediaType == "application/json" || strings.HasSuffix(mediaType, "+json") || strings.HasPrefix(mediaType, "text/") {
-		upstreamErr := decodeRelayDownloaderError(resp)
+		upstreamErr := decodeVideoDownloaderError(resp)
 		h.failActivity(activity, downloadActivityError(upstreamErr))
-		writeRelayDownloaderError(c, upstreamErr)
+		writeVideoDownloaderError(c, upstreamErr)
 		return
 	}
 	if resp.ContentLength == 0 {
@@ -757,8 +502,15 @@ func (h *handler) downloadVideo(c *gin.Context) {
 		c.Header("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
 	}
 	c.Status(http.StatusOK)
-	written, copyErr := io.Copy(c.Writer, io.LimitReader(resp.Body, maxRelayVideoBytes+1))
-	if copyErr != nil || written > maxRelayVideoBytes || (resp.ContentLength >= 0 && written != resp.ContentLength) {
+	// Local files do not observe context cancellation while a slow client blocks
+	// a socket write. Bound the attachment transfer as well as its preparation.
+	controller := http.NewResponseController(c.Writer)
+	if deadline, ok := downloadCtx.Deadline(); ok {
+		_ = controller.SetWriteDeadline(deadline)
+		defer controller.SetWriteDeadline(time.Time{})
+	}
+	written, copyErr := io.Copy(c.Writer, io.LimitReader(resp.Body, maxVideoDownloadBytes+1))
+	if copyErr != nil || written > maxVideoDownloadBytes || (resp.ContentLength >= 0 && written != resp.ContentLength) {
 		h.failActivity(activity, "下载连接提前结束")
 		return
 	}

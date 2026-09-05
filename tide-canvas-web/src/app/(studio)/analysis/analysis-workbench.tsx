@@ -4,7 +4,7 @@
 
    两件事共用一个入口:「内容拆解」把公开链接还原成平台事实再交给 AI 拆方法,
    「视频下载」把公开视频取回本地；左侧栏集中回看当前账号的使用记录。
-   两项操作各自依赖不同的后端服务(TikHub 解析 / Relay 下载器),因此并列为
+   两项操作各自依赖不同的后端服务(TikHub 解析 / 本站视频下载器),因此并列为
    顶层操作页签——一次只做一件事，历史快照在右侧原位复现。
 
    配色全部走 imini 主题 token(--bg/--surface/--border/--text/--accent),
@@ -106,6 +106,7 @@ const DOWNLOAD_QUALITY: Array<{ key: VideoDownloadQuality; label: string; detail
 /* 下载器支持的平台与拆解侧不完全重合(多了 Pinterest / Instagram),
    品牌色单独列一份:它是这张结果卡唯一的强调色来源。 */
 const DOWNLOAD_PLATFORM_COLOR: Record<string, string> = {
+  douyin: "#00d4d8",
   pinterest: "#e60023",
   bilibili: "#00aeec",
   kuaishou: "#ff5000",
@@ -115,6 +116,7 @@ const DOWNLOAD_PLATFORM_COLOR: Record<string, string> = {
 };
 
 const DOWNLOAD_PLATFORM_LABEL: Record<string, string> = {
+  douyin: "抖音",
   pinterest: "Pinterest",
   bilibili: "哔哩哔哩",
   kuaishou: "快手",
@@ -1256,7 +1258,7 @@ export default function AnalysisWorkbench() {
         ? downloaderReady ? "下载器可用" : "下载器未启用"
         : "正在检查";
   // 两个页签共用同一套状态词汇,值随当前页签背后的服务切换:拆解看 TikHub
-  // 解析,下载看 Relay 下载器。此前两块各写一遍状态,是重复与错位的来源。
+  // 解析,下载看本站下载器。此前两块各写一遍状态,是重复与错位的来源。
   const serviceReady = tab === "breakdown" ? !!status?.enabled && !!status?.configured : downloaderReady;
   const serviceLabel = tab === "breakdown" ? statusLabel : downloaderStateLabel;
   const serviceBusy = tab === "breakdown"
@@ -1555,7 +1557,7 @@ export default function AnalysisWorkbench() {
     setWatchedDownloadRecordId(downloadResult.recordId || "");
     startNativeDownload(downloadResult.downloadUrl);
     setHistoryRefresh((value) => value + 1);
-    toast.success("已交给浏览器下载，请查看默认下载目录");
+    toast.info("正在准备视频，完成后将由浏览器下载，可在左侧查看状态");
   };
 
   const reEditRun = () => {
@@ -2052,7 +2054,7 @@ export default function AnalysisWorkbench() {
                   <span className={styles.platformNote}>仅公开内容 · 单文件上限 {displayBytes(downloaderCapabilities?.maxFileBytes || 0)} · 下载票据有效 {displayTokenTTL(downloaderCapabilities?.tokenTtlSeconds || 0)}</span>
                 </div>
                 {user && downloaderCapabilities && !downloaderReady && (
-                  <div className={styles.notice}><CircleAlert aria-hidden /> 视频下载服务当前未启用，请联系管理员检查 Relay API Key 与下载器开关。</div>
+                  <div className={styles.notice}><CircleAlert aria-hidden /> 视频下载服务当前未启用或尚未就绪，请联系管理员检查下载服务。</div>
                 )}
                 {user && downloaderStatusError && (
                   <div className={styles.notice}><CircleAlert aria-hidden /> 暂时无法读取下载器能力，可点击右上角状态重新检查。</div>

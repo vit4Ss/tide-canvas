@@ -146,7 +146,10 @@ type settings struct {
 type handler struct {
 	db         *gorm.DB
 	httpcli    *http.Client
-	downloader *relayVideoDownloader
+	downloader videoDownloader
+	// A second request for the same ticket must not run another transcode or
+	// turn the first request's still-active history record into a failure.
+	activeDownloads sync.Map
 }
 
 type upstreamError struct{ message string }
@@ -155,9 +158,9 @@ func (e *upstreamError) Error() string { return e.message }
 
 // Register mounts the social-analysis workbench API.
 func Register(api *gin.RouterGroup, d *app.Deps) {
-	downloader := (*relayVideoDownloader)(nil)
+	var downloader videoDownloader
 	if d != nil && d.Cfg != nil {
-		downloader = newRelayVideoDownloader(d.Cfg.Relay.BaseURL, d.Cfg.Relay.APIKey)
+		downloader = newLocalVideoDownloader(d.Cfg.VideoDownloader)
 	}
 	h := &handler{
 		db:         d.DB,

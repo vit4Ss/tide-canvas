@@ -59,6 +59,49 @@ func TestSuccessfulActivityCannotBeDowngradedByLateFailure(t *testing.T) {
 	}
 }
 
+func TestAbandonedDownloadRecoveryPreservesActiveAndOtherUserRecords(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := activityTestDB(t)
+	owner := idgen.ID(9401)
+	now := time.Now()
+	expiredTicket := now.Add(-10 * time.Minute)
+	rows := []model.SocialActivityRecord{
+		{ID: 9411, UserID: owner, ActivityType: model.SocialActivityDownload, Status: model.SocialActivityDownloading, UpdateTime: now.Add(-2 * time.Hour)},
+		{ID: 9412, UserID: owner, ActivityType: model.SocialActivityDownload, Status: model.SocialActivityDownloading, UpdateTime: now.Add(-30 * time.Minute), ExpiresAt: &expiredTicket},
+		{ID: 9413, UserID: owner, ActivityType: model.SocialActivityDownload, Status: model.SocialActivitySucceeded, UpdateTime: now.Add(-2 * time.Hour)},
+		{ID: 9414, UserID: owner + 1, ActivityType: model.SocialActivityDownload, Status: model.SocialActivityDownloading, UpdateTime: now.Add(-2 * time.Hour)},
+		{ID: 9415, UserID: owner, ActivityType: model.SocialActivityAnalysis, Status: model.SocialActivityProcessing, UpdateTime: now.Add(-2 * time.Hour)},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/records", nil)
+	writeActivityRecords(c, db, &owner, false)
+	for _, before := range rows {
+		var after model.SocialActivityRecord
+		if err := db.First(&after, before.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		want := before.Status
+		if before.ID == 9411 {
+			want = model.SocialActivityFailed
+			if after.CompletedAt == nil || !strings.Contains(after.ErrorMessage, "中断或超时") {
+				t.Fatal("abandoned download has no actionable final state")
+			}
+		}
+		if after.Status != want {
+			t.Fatalf("record %s status=%s want=%s", before.ID, after.Status, want)
+		}
+	}
+	closeAbandonedDownloads(db, nil, now)
+	var other model.SocialActivityRecord
+	if err := db.First(&other, idgen.ID(9414)).Error; err != nil || other.Status != model.SocialActivityFailed {
+		t.Fatal("admin could not recover the other abandoned download", err)
+	}
+}
+
 func TestActivityRecordsAreAlwaysScopedToCurrentUser(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := activityTestDB(t)

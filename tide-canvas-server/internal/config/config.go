@@ -31,21 +31,38 @@ type Config struct {
 	// TIDECANVAS_ENV at load time; it is not read from the yaml files.
 	Env string `mapstructure:"-"`
 
-	Server     ServerConfig     `mapstructure:"server"`
-	MySQL      MySQLConfig      `mapstructure:"mysql"`
-	Redis      RedisConfig      `mapstructure:"redis"`
-	JWT        JWTConfig        `mapstructure:"jwt"`
-	Storage    StorageConfig    `mapstructure:"storage"`
-	CORS       CORSConfig       `mapstructure:"cors"`
-	Email      EmailConfig      `mapstructure:"email"`
-	LLM        LLMConfig        `mapstructure:"llm"`
-	Relay      RelayConfig      `mapstructure:"relay"`
-	WorldLabs  WorldLabsConfig  `mapstructure:"worldLabs"`
-	Eliandapay EliandapayConfig `mapstructure:"eliandapay"`
+	Server          ServerConfig          `mapstructure:"server"`
+	MySQL           MySQLConfig           `mapstructure:"mysql"`
+	Redis           RedisConfig           `mapstructure:"redis"`
+	JWT             JWTConfig             `mapstructure:"jwt"`
+	Storage         StorageConfig         `mapstructure:"storage"`
+	CORS            CORSConfig            `mapstructure:"cors"`
+	Email           EmailConfig           `mapstructure:"email"`
+	LLM             LLMConfig             `mapstructure:"llm"`
+	Relay           RelayConfig           `mapstructure:"relay"`
+	VideoDownloader VideoDownloaderConfig `mapstructure:"videoDownloader"`
+	WorldLabs       WorldLabsConfig       `mapstructure:"worldLabs"`
+	Eliandapay      EliandapayConfig      `mapstructure:"eliandapay"`
 	// BalanceMonitor contains the supplier endpoints and DLAPI deployment
 	// credential. The four JWT-backed supplier credentials are stored in
 	// sys_config and overlaid by the admin balance monitor at request time.
 	BalanceMonitor BalanceMonitorConfig `mapstructure:"balanceMonitor"`
+}
+
+// VideoDownloaderConfig controls the local public-video download engine.
+// It does not use the model Relay's address or credentials.
+type VideoDownloaderConfig struct {
+	Enabled               bool          `mapstructure:"enabled"`
+	Command               string        `mapstructure:"command"`
+	FFmpegCommand         string        `mapstructure:"ffmpegCommand"`
+	FFprobeCommand        string        `mapstructure:"ffprobeCommand"`
+	JSRuntime             string        `mapstructure:"jsRuntime"`
+	TempDir               string        `mapstructure:"tempDir"`
+	MaxFileBytes          int64         `mapstructure:"maxFileBytes"`
+	MaxConcurrent         int           `mapstructure:"maxConcurrent"`
+	MaxConcurrentResolves int           `mapstructure:"maxConcurrentResolves"`
+	ResolveTimeout        time.Duration `mapstructure:"resolveTimeout"`
+	DownloadTimeout       time.Duration `mapstructure:"downloadTimeout"`
 }
 
 // BalanceMonitorConfig groups the upstream accounts shown on the admin
@@ -447,6 +464,17 @@ func setDefaults(v *viper.Viper) {
 	// never send local development traffic to the production relay.
 	v.SetDefault("relay.baseUrl", testRelayBaseURL)
 	v.SetDefault("relay.apiKey", "")
+	v.SetDefault("videoDownloader.enabled", true)
+	v.SetDefault("videoDownloader.command", "yt-dlp")
+	v.SetDefault("videoDownloader.ffmpegCommand", "ffmpeg")
+	v.SetDefault("videoDownloader.ffprobeCommand", "ffprobe")
+	v.SetDefault("videoDownloader.jsRuntime", "node")
+	v.SetDefault("videoDownloader.tempDir", "")
+	v.SetDefault("videoDownloader.maxFileBytes", int64(512<<20))
+	v.SetDefault("videoDownloader.maxConcurrent", 2)
+	v.SetDefault("videoDownloader.maxConcurrentResolves", 4)
+	v.SetDefault("videoDownloader.resolveTimeout", "60s")
+	v.SetDefault("videoDownloader.downloadTimeout", "15m")
 	v.SetDefault("worldLabs.baseUrl", "https://api.worldlabs.ai")
 	v.SetDefault("worldLabs.apiKey", "")
 	v.SetDefault("worldLabs.pollInterval", "5s")
@@ -495,7 +523,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("balanceMonitor.ccgo2.exchangeRate", 1)
 	v.SetDefault("balanceMonitor.ccgo2.uiRequest", true)
 	v.SetDefault("balanceMonitor.dimensio.name", "Dimensio")
-	v.SetDefault("balanceMonitor.dimensio.baseUrl", "https://jimeng.dimensio.cn")
+	v.SetDefault("balanceMonitor.dimensio.baseUrl", "https://modelhub.cc")
 	v.SetDefault("balanceMonitor.dimensio.unit", "积分")
 	v.SetDefault("balanceMonitor.secureskill.name", "secure-skill")
 	v.SetDefault("balanceMonitor.secureskill.baseUrl", "https://token.secure-skill.com")

@@ -153,6 +153,7 @@ func (h *handler) activityRecordDetail(c *gin.Context) {
 		return
 	}
 	userID := middleware.CurrentUserID(c)
+	closeAbandonedDownloads(h.db, &userID, time.Now())
 	var record model.SocialActivityRecord
 	if err := h.db.Where("id = ? AND user_id = ?", recordID, userID).First(&record).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -175,6 +176,27 @@ func (h *handler) activityRecordDetail(c *gin.Context) {
 // group supplies authentication and the analysis_records module permission.
 func AdminActivityRecords(c *gin.Context, db *gorm.DB) {
 	writeActivityRecords(c, db, nil, true)
+}
+
+// A killed backend cannot run its failure defer. Recover those records only
+// after the hard preparation+stream deadline, with a grace period; the short
+// download-ticket expiry must never terminate an already-authorized transfer.
+func closeAbandonedDownloads(db *gorm.DB, ownerID *idgen.ID, now time.Time) {
+	if db == nil {
+		return
+	}
+	tx := db.Model(&model.SocialActivityRecord{}).Where(
+		"activity_type = ? AND status = ? AND update_time < ?",
+		model.SocialActivityDownload, model.SocialActivityDownloading, now.Add(-videoDownloadMaxTime-time.Minute),
+	)
+	if ownerID != nil {
+		tx = tx.Where("user_id = ?", *ownerID)
+	}
+	if err := tx.Updates(map[string]any{
+		"status": model.SocialActivityFailed, "error_message": "下载已中断或超时，请重新解析后下载", "completed_at": now,
+	}).Error; err != nil {
+		logger.L().Warn("failed to close abandoned video downloads", zap.Error(err))
+	}
 }
 
 func writeActivityRecords(c *gin.Context, db *gorm.DB, ownerID *idgen.ID, allowUserFilter bool) {
@@ -213,6 +235,7 @@ func writeActivityRecords(c *gin.Context, db *gorm.DB, ownerID *idgen.ID, allowU
 	}
 
 	expiryNow := time.Now()
+	closeAbandonedDownloads(db, ownerID, expiryNow)
 	expiryTx := db.Model(&model.SocialActivityRecord{}).
 		Where("activity_type = ? AND status = ? AND expires_at IS NOT NULL AND expires_at < ?", model.SocialActivityDownload, model.SocialActivityReady, expiryNow)
 	if ownerID != nil {

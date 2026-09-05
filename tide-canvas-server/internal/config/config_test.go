@@ -6,6 +6,22 @@ import (
 	"time"
 )
 
+func TestLocalVideoDownloaderConfigOverrides(t *testing.T) {
+	t.Setenv("TIDECANVAS_ENV", "test")
+	t.Setenv("TIDECANVAS_VIDEODOWNLOADER_ENABLED", "false")
+	t.Setenv("TIDECANVAS_VIDEODOWNLOADER_MAXFILEBYTES", "12345678")
+	t.Setenv("TIDECANVAS_VIDEODOWNLOADER_MAXCONCURRENT", "3")
+	t.Setenv("TIDECANVAS_VIDEODOWNLOADER_DOWNLOADTIMEOUT", "9m")
+	t.Setenv("TIDECANVAS_VIDEODOWNLOADER_COMMAND", "/opt/tools/yt-dlp")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.VideoDownloader.Enabled || cfg.VideoDownloader.MaxFileBytes != 12345678 || cfg.VideoDownloader.MaxConcurrent != 3 || cfg.VideoDownloader.DownloadTimeout != 9*time.Minute || cfg.VideoDownloader.Command != "/opt/tools/yt-dlp" {
+		t.Fatalf("local downloader overrides lost: %+v", cfg.VideoDownloader)
+	}
+}
+
 // Load() searches "../../configs" from this package directory, so these tests
 // exercise the real config.yaml + config.<env>.yaml layering.
 

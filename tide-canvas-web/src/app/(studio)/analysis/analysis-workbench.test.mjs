@@ -67,7 +67,7 @@ test("browser API exposes no TikHub credential field", () => {
   assert.doesNotMatch(api, /apiKey|accessToken|Authorization/);
 });
 
-test("public video downloader uses Relay capability discovery and a native hidden-frame download", () => {
+test("public video downloader uses local capability discovery and a native hidden-frame download", () => {
   assert.match(api, /\/api\/social-analysis\/downloader\/platforms/);
   assert.match(api, /\/api\/social-analysis\/downloader\/resolve/);
   assert.match(workbench, /pinterest: "Pinterest"/);
@@ -79,7 +79,7 @@ test("public video downloader uses Relay capability discovery and a native hidde
   assert.match(workbench, /document\.createElement\("iframe"\)/);
   assert.match(workbench, /frame\.src = apiUrl\(downloadUrl\)/);
   assert.doesNotMatch(workbench, /anchor\.rel = "noopener"/);
-  assert.match(workbench, /已交给浏览器下载，请查看默认下载目录/);
+  assert.match(workbench, /toast\.info\("正在准备视频，完成后将由浏览器下载，可在左侧查看状态"\)/);
   assert.match(workbench, /const downloaderPlatforms = downloaderCapabilities\?\.platforms \?\? \[\]/);
   assert.match(workbench, /下载票据有效/);
 });
@@ -106,7 +106,7 @@ test("workbench keeps two action tabs with a11y wiring", () => {
 });
 
 test("service state is stated once and follows the active tab", () => {
-  // Each tab is backed by a different service (TikHub parse / Relay downloader);
+  // Each tab is backed by a different service (TikHub parse / local downloader);
   // one control with a tab-aware value replaces the two duplicated indicators.
   assert.match(workbench, /const serviceReady = tab === "breakdown"/);
   assert.match(workbench, /const serviceLabel = tab === "breakdown" \? statusLabel : downloaderStateLabel/);

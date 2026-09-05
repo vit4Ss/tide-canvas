@@ -128,7 +128,7 @@ balanceMonitor:
     uiRequest: true
   dimensio:
     name: Dimensio
-    baseUrl: https://jimeng.dimensio.cn
+    baseUrl: https://modelhub.cc
     unit: 积分
   # Uniart 是另一个 New API 面板：系统访问令牌长期有效，用户 ID、令牌与
   # 预警线在管理后台「配置管理 → 供应商余额」维护。
