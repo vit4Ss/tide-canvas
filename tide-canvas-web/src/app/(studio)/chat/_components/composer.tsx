@@ -192,9 +192,6 @@ export function Composer({
 
   return (
     <div className="chat-composer">
-      {!toolSkill && selModel?.type === "text" && (
-        <div className="chat-ctx-note">每次仅携带最近 3 条历史消息，当前输入另计</div>
-      )}
       {!toolSkill && selModel?.type === "text" && ctxUsage && ctxUsage.percent >= 80 && (
         <div className={`chat-ctx-warn${ctxUsage.full ? " full" : ""}`}>
           <span>
