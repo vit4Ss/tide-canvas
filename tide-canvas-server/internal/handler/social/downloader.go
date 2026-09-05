@@ -3,6 +3,7 @@ package social
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"gorm.io/gorm/clause"
 
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
@@ -68,6 +70,21 @@ type videoDownloadResolveVO struct {
 	// CoverURL 是上游可能附带的封面直链,仅用于前端展示确认。上游不给就是空串,
 	// 前端有兜底版式,不影响下载本身。
 	CoverURL string `json:"coverUrl,omitempty"`
+}
+
+// This preview metadata is bound to the download ticket, but is not persisted
+// until the browser actually requests the attachment. Quality previews therefore
+// don't create download history, and retries of one ticket share one record ID.
+type videoDownloadActivity struct {
+	SourceURL       string `json:"u"`
+	Platform        string `json:"p"`
+	Title           string `json:"t"`
+	Quality         string `json:"q"`
+	DurationSeconds int    `json:"d"`
+	Width           int    `json:"w"`
+	Height          int    `json:"h"`
+	EstimatedBytes  int64  `json:"b"`
+	ExpiresAt       int64  `json:"e"`
 }
 
 type relayVideoDownloader struct {
@@ -496,30 +513,21 @@ func (h *handler) resolveVideoDownload(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "下载质量只能是 quality、compat 或 speed")
 		return
 	}
-	activity := h.beginActivity(model.SocialActivityRecord{
-		UserID: middleware.CurrentUserID(c), ActivityType: model.SocialActivityDownload,
-		Platform: inferDownloadPlatform(sourceURL), SourceURL: sourceURL, Status: model.SocialActivityProcessing,
-		Quality: quality,
-	})
 	if h.downloader == nil {
-		h.failActivity(activity, "视频下载服务尚未配置")
 		response.Fail(c, response.CodeToolDisabled, "视频下载服务尚未配置，请联系管理员配置 Relay API Key")
 		return
 	}
 	capabilities, err := h.downloader.platforms(c.Request.Context())
 	if err != nil {
-		h.failActivity(activity, downloadActivityError(err))
 		writeRelayDownloaderError(c, err)
 		return
 	}
 	if !capabilities.Enabled {
-		h.failActivity(activity, "视频下载服务当前未启用")
 		response.Fail(c, response.CodeToolDisabled, "视频下载服务当前未启用")
 		return
 	}
 	resolved, err := h.downloader.resolve(c.Request.Context(), sourceURL, quality)
 	if err != nil {
-		h.failActivity(activity, downloadActivityError(err))
 		writeRelayDownloaderError(c, err)
 		return
 	}
@@ -531,18 +539,15 @@ func (h *handler) resolveVideoDownload(c *gin.Context) {
 		}
 	}
 	if !platformAllowed {
-		h.failActivity(activity, "该平台的视频下载渠道当前未启用")
 		response.Fail(c, response.CodeToolDisabled, "该平台的视频下载渠道当前未启用")
 		return
 	}
 	if resolved.EstimatedBytes > 0 && capabilities.MaxFileBytes > 0 && resolved.EstimatedBytes > capabilities.MaxFileBytes {
-		h.failActivity(activity, "视频预计大小超过当前单文件下载上限")
 		response.Fail(c, response.CodeBadRequest, "视频预计大小超过当前单文件下载上限")
 		return
 	}
 	remaining := time.Until(time.Unix(resolved.ExpiresAt, 0))
 	if remaining <= 10*time.Second {
-		h.failActivity(activity, "视频解析令牌即将过期")
 		response.Fail(c, response.CodeBadRequest, "视频解析令牌即将过期，请重新解析")
 		return
 	}
@@ -551,32 +556,39 @@ func (h *handler) resolveVideoDownload(c *gin.Context) {
 		ttl = remaining
 	}
 	name := downloadVideoFileName(resolved.Title)
-	recordID := idgen.ID(0)
-	if activity != nil {
-		recordID = activity.ID
-	}
-	ticket, err := token.IssueDownloadTicket(middleware.CurrentUserID(c), middleware.CurrentRole(c), relayVideoTicketResource(resolved.ID, recordID), name, ttl)
+	recordID := idgen.Next()
+	expiresAt := time.Now().Add(ttl)
+	metadataJSON, _ := json.Marshal(videoDownloadActivity{
+		SourceURL: sourceURL, Platform: resolved.Platform, Title: activityString(resolved.Title, 256),
+		Quality: resolved.Quality, DurationSeconds: resolved.DurationSeconds,
+		Width: resolved.Width, Height: resolved.Height, EstimatedBytes: resolved.EstimatedBytes,
+		ExpiresAt: expiresAt.Unix(),
+	})
+	metadata := base64.RawURLEncoding.EncodeToString(metadataJSON)
+	ticket, err := token.IssueDownloadTicket(middleware.CurrentUserID(c), middleware.CurrentRole(c), relayVideoActivityResource(resolved.ID, recordID, metadata), name, ttl)
 	if err != nil {
-		h.failActivity(activity, "下载地址签发失败")
 		response.Fail(c, response.CodeServerError, "failed to issue video download ticket")
 		return
 	}
-	query := url.Values{"ticket": {ticket}, "name": {name}}
-	if recordID != 0 {
-		query.Set("record", recordID.String())
-	}
-	expiresAt := time.Now().Add(ttl)
-	h.updateActivity(activity, map[string]any{
-		"status": model.SocialActivityReady, "platform": resolved.Platform, "title": resolved.Title,
-		"quality": resolved.Quality, "duration_seconds": resolved.DurationSeconds,
-		"width": resolved.Width, "height": resolved.Height, "estimated_bytes": resolved.EstimatedBytes,
-		"error_message": "", "expires_at": expiresAt, "completed_at": nil,
-	})
+	query := url.Values{"ticket": {ticket}, "name": {name}, "record": {recordID.String()}, "meta": {metadata}}
 	resolved.ExpiresAt = expiresAt.Unix()
 	resolved.FileName = name
 	resolved.RecordID = recordID
 	resolved.DownloadURL = "/api/social-analysis/downloader/download/" + url.PathEscape(resolved.ID) + "?" + query.Encode()
+	// Avoid issuing a URL that common reverse proxies cannot accept.
+	if len(metadata) > 8192 || len(resolved.DownloadURL) > 7500 {
+		response.Fail(c, response.CodeBadRequest, "视频链接或标题过长，请使用简短的作品链接重新解析")
+		return
+	}
 	response.OK(c, resolved)
+}
+
+func relayVideoActivityResource(id string, recordID idgen.ID, metadata string) string {
+	resource := relayVideoTicketResource(id, recordID)
+	if metadata != "" {
+		resource += ":meta:" + metadata
+	}
+	return resource
 }
 
 func relayVideoTicketResource(id string, recordIDs ...idgen.ID) string {
@@ -612,6 +624,7 @@ func videoDownloadTicketAuth() gin.HandlerFunc {
 		id := strings.TrimSpace(c.Param("token"))
 		name := strings.TrimSpace(c.Query("name"))
 		ticket := strings.TrimSpace(c.Query("ticket"))
+		metadata := strings.TrimSpace(c.Query("meta"))
 		recordID := idgen.ID(0)
 		if rawRecordID := strings.TrimSpace(c.Query("record")); rawRecordID != "" {
 			parsedRecordID, err := idgen.Parse(rawRecordID)
@@ -622,16 +635,26 @@ func videoDownloadTicketAuth() gin.HandlerFunc {
 			}
 			recordID = parsedRecordID
 		}
-		if !relayDownloadTokenPattern.MatchString(id) || len(ticket) == 0 || len(ticket) > 4096 || utf8.RuneCountInString(name) > 140 {
+		if !relayDownloadTokenPattern.MatchString(id) || len(ticket) == 0 || len(ticket) > 4096 || len(metadata) > 8192 || utf8.RuneCountInString(name) > 140 {
 			response.Fail(c, response.CodeUnauthorized, "下载地址无效或已过期，请重新解析")
 			c.Abort()
 			return
 		}
-		claims, err := token.ParseDownloadTicket(ticket, relayVideoTicketResource(id, recordID), name)
+		claims, err := token.ParseDownloadTicket(ticket, relayVideoActivityResource(id, recordID, metadata), name)
 		if err != nil {
 			response.Fail(c, response.CodeUnauthorized, "下载地址无效或已过期，请重新解析")
 			c.Abort()
 			return
+		}
+		if metadata != "" {
+			decoded, decodeErr := base64.RawURLEncoding.DecodeString(metadata)
+			var preview videoDownloadActivity
+			if decodeErr != nil || recordID == 0 || json.Unmarshal(decoded, &preview) != nil || validPublicDownloadSource(preview.SourceURL) == "" {
+				response.Fail(c, response.CodeUnauthorized, "下载信息无效，请重新解析")
+				c.Abort()
+				return
+			}
+			c.Set("socialDownloadActivity", preview)
 		}
 		c.Set(middleware.CtxUserID, claims.UserID)
 		c.Set(middleware.CtxRole, claims.Role)
@@ -653,6 +676,35 @@ func (h *handler) downloadVideo(c *gin.Context) {
 	}
 	if activity.ID == 0 {
 		activity = nil
+	}
+	if activity != nil && h.db != nil {
+		if raw, ok := c.Get("socialDownloadActivity"); ok {
+			preview := raw.(videoDownloadActivity)
+			expiresAt := time.Unix(preview.ExpiresAt, 0)
+			record := model.SocialActivityRecord{
+				ID: activity.ID, UserID: activity.UserID, ActivityType: model.SocialActivityDownload,
+				SourceURL: preview.SourceURL, Platform: preview.Platform, Title: preview.Title,
+				Quality: preview.Quality, Status: model.SocialActivityDownloading,
+				DurationSeconds: preview.DurationSeconds, Width: preview.Width, Height: preview.Height,
+				EstimatedBytes: preview.EstimatedBytes, ExpiresAt: &expiresAt,
+			}
+			if err := h.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&record).Error; err != nil {
+				logger.L().Warn("failed to create video download record", zap.Error(err))
+				response.Fail(c, response.CodeServerError, "failed to create video download record")
+				return
+			}
+		}
+		// Also protect legacy tickets, whose records were created at resolve time.
+		if err := h.db.Where("id = ? AND user_id = ? AND activity_type = ?", activity.ID, activity.UserID, model.SocialActivityDownload).First(activity).Error; err != nil {
+			response.Fail(c, response.CodeNotFound, "下载记录不存在，请重新解析")
+			return
+		}
+		if err := h.db.Model(&model.SocialActivityRecord{}).
+			Where("id = ? AND user_id = ? AND status <> ?", activity.ID, activity.UserID, model.SocialActivitySucceeded).
+			Updates(map[string]any{"status": model.SocialActivityDownloading, "error_message": "", "completed_at": nil}).Error; err != nil {
+			response.Fail(c, response.CodeServerError, "failed to update video download record")
+			return
+		}
 	}
 	if h.downloader == nil {
 		h.failActivity(activity, "视频下载服务尚未配置")
@@ -703,11 +755,6 @@ func (h *handler) downloadVideo(c *gin.Context) {
 	c.Header("Content-Disposition", disposition)
 	if resp.ContentLength >= 0 {
 		c.Header("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
-	}
-	if activity != nil && h.db != nil {
-		_ = h.db.Model(&model.SocialActivityRecord{}).
-			Where("id = ? AND user_id = ? AND status <> ?", activity.ID, activity.UserID, model.SocialActivitySucceeded).
-			Updates(map[string]any{"status": model.SocialActivityDownloading, "error_message": "", "completed_at": nil}).Error
 	}
 	c.Status(http.StatusOK)
 	written, copyErr := io.Copy(c.Writer, io.LimitReader(resp.Body, maxRelayVideoBytes+1))

@@ -227,6 +227,10 @@ func writeActivityRecords(c *gin.Context, db *gorm.DB, ownerID *idgen.ID, allowU
 	tx := db.Model(&model.SocialActivityRecord{})
 	if ownerID != nil {
 		tx = tx.Where("user_id = ?", *ownerID)
+		// Old versions logged every successful preview/quality switch. Keep those
+		// rows available to administrators, but don't present them as downloads.
+		tx = tx.Where("activity_type <> ? OR status NOT IN ?", model.SocialActivityDownload,
+			[]string{model.SocialActivityProcessing, model.SocialActivityReady, model.SocialActivityExpired})
 	} else if allowUserFilter {
 		if raw := strings.TrimSpace(c.Query("userId")); raw != "" {
 			userID, err := idgen.Parse(raw)

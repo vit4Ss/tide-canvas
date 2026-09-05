@@ -218,7 +218,7 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
         <div className={styles.historyEmpty}>
           <History aria-hidden />
           <strong>还没有使用记录</strong>
-          <p>完成一次内容分析，或解析并下载公开视频后，记录会出现在这里。</p>
+          <p>完成内容分析或开始下载视频后，记录会出现在这里。仅解析、切换画质不会新增下载记录。</p>
         </div>
       ) : (
         <div className={styles.historyList}>

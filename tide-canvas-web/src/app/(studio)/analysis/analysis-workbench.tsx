@@ -1076,6 +1076,7 @@ export default function AnalysisWorkbench() {
   const pendingAccountAutoRunRef = useRef<SocialInspectVO | null>(null);
   const downloadBusyRef = useRef(false);
   const downloadEpochRef = useRef(0);
+  const downloadClickRef = useRef({ id: "", at: 0 });
   const ownerUserId = user?.id ?? "";
   const previousOwnerRef = useRef(ownerUserId);
   const skillRun = useSkillRun({
@@ -1105,6 +1106,7 @@ export default function AnalysisWorkbench() {
     setDownloadError("");
     setDownloadBusy(false);
     downloadBusyRef.current = false;
+    downloadClickRef.current = { id: "", at: 0 };
     setResult(null);
     setSelectedWork(null);
     setError("");
@@ -1407,10 +1409,15 @@ export default function AnalysisWorkbench() {
 
   const resolveVideoDownload = async (qualityOverride?: VideoDownloadQuality) => {
     if (downloadBusyRef.current || !downloadSource.trim()) return;
-    clearHistoricalView();
-    setWatchedDownloadRecordId("");
     // 结果面板里切换画质会立即重解析,此时 state 尚未更新,必须用传入值。
     const targetQuality = qualityOverride ?? downloadQuality;
+    // A valid preview already has this quality. Repeated clicks (including
+    // Enter followed by the button) must not resolve and issue another ticket.
+    if (!historicalRecord && downloadResult?.quality === targetQuality && downloadResult.expiresAt * 1000 > Date.now() + 10_000) {
+      setDownloadError("");
+      return;
+    }
+    clearHistoricalView();
     // 切换画质是在已有结果上换一档,保留当前结果原地更新;清空会让结果区卸载、
     // 掉进 busy 分支再挂载,视觉上就是「刷一下」。
     const replaceInPlace = qualityOverride !== undefined && !!downloadResult;
@@ -1428,7 +1435,6 @@ export default function AnalysisWorkbench() {
       if (!await ensureSession()) return;
       const response = await socialAnalysisApi.resolveDownload({ url: sourceURL, quality: targetQuality });
       if (epoch !== downloadEpochRef.current) return;
-      setHistoryRefresh((value) => value + 1);
       if (!response.success || !response.data) {
         setDownloadError(response.code === 429 ? "请求过于频繁，请稍后再试" : response.message || "视频解析失败，请检查链接后重试");
         return;
@@ -1443,14 +1449,19 @@ export default function AnalysisWorkbench() {
   };
 
   const downloadResolvedVideo = () => {
-    if (!downloadResult) return;
+    if (!downloadResult || downloadBusyRef.current) return;
     if (downloadResult.expiresAt * 1000 <= Date.now()) {
       setDownloadResult(null);
       setDownloadError("下载地址已经过期，请重新解析视频");
       return;
     }
+    const now = Date.now();
+    const downloadKey = downloadResult.recordId || downloadResult.downloadUrl;
+    if (downloadClickRef.current.id === downloadKey && now - downloadClickRef.current.at < 2000) return;
+    downloadClickRef.current = { id: downloadKey, at: now };
     setWatchedDownloadRecordId(downloadResult.recordId || "");
     startNativeDownload(downloadResult.downloadUrl);
+    setHistoryRefresh((value) => value + 1);
     toast.success("已交给浏览器下载，请查看默认下载目录");
   };
 

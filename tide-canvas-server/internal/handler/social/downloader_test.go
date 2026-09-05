@@ -3,6 +3,7 @@ package social
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -142,8 +143,21 @@ func TestVideoDownloadHTTPFlowIssuesBoundTicketAndStreamsAttachment(t *testing.T
 		t.Fatal("resolve response did not include an activity record id")
 	}
 	var activity model.SocialActivityRecord
-	if err := db.First(&activity, "id = ?", resolved.Data.RecordID).Error; err != nil || activity.Status != model.SocialActivityReady {
-		t.Fatalf("resolved activity = %+v err=%v", activity, err)
+	// Reproduce the screenshot: repeatedly preview three qualities. None of
+	// these requests is an actual download, so the history must remain empty.
+	for _, quality := range []string{"quality", "speed", "compat", "quality", "compat"} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/resolve", strings.NewReader(`{"url":"https://www.youtube.com/watch?v=abc12345678","quality":"`+quality+`"}`))
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(recorder, request)
+		var preview response.Result[videoDownloadResolveVO]
+		if err := json.Unmarshal(recorder.Body.Bytes(), &preview); err != nil || !preview.Success {
+			t.Fatalf("quality preview failed: %s err=%v", recorder.Body.String(), err)
+		}
+	}
+	var count int64
+	if err := db.Model(&model.SocialActivityRecord{}).Count(&count).Error; err != nil || count != 0 {
+		t.Fatalf("previews created %d download records, err=%v", count, err)
 	}
 
 	localURL, err := url.Parse(resolved.Data.DownloadURL)
@@ -162,6 +176,9 @@ func TestVideoDownloadHTTPFlowIssuesBoundTicketAndStreamsAttachment(t *testing.T
 	if err := db.First(&activity, "id = ?", resolved.Data.RecordID).Error; err != nil || activity.Status != model.SocialActivitySucceeded || activity.DownloadedBytes != 11 {
 		t.Fatalf("completed activity = %+v err=%v", activity, err)
 	}
+	if activity.UserID != 901 || activity.SourceURL != "https://www.youtube.com/watch?v=abc12345678" || activity.Quality != "compat" || activity.EstimatedBytes != 11 || activity.Title != "测试 / 视频" {
+		t.Fatalf("download did not retain the signed preview metadata: %+v", activity)
+	}
 
 	tamperedQuery := localURL.Query()
 	tamperedQuery.Set("name", "other.mp4")
@@ -178,6 +195,99 @@ func TestVideoDownloadHTTPFlowIssuesBoundTicketAndStreamsAttachment(t *testing.T
 	router.ServeHTTP(tamperedRecordRecorder, tamperedRecordRequest)
 	if tamperedRecordRecorder.Code != http.StatusUnauthorized || downloadCalls.Load() != 1 {
 		t.Fatalf("tampered record binding status=%d downloadCalls=%d", tamperedRecordRecorder.Code, downloadCalls.Load())
+	}
+	for _, metadata := range []string{"", base64.RawURLEncoding.EncodeToString([]byte(`{"u":"https://www.youtube.com/watch?v=changed"}`))} {
+		query := localURL.Query()
+		query.Set("meta", metadata)
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, strings.Replace(localURL.Path, "/api/social-analysis/downloader", "", 1)+"?"+query.Encode(), nil))
+		if recorder.Code != http.StatusUnauthorized || downloadCalls.Load() != 1 {
+			t.Fatalf("tampered/removed metadata was accepted: status=%d calls=%d", recorder.Code, downloadCalls.Load())
+		}
+	}
+	// A repeated request of the same ticket must not create another history row.
+	repeated := httptest.NewRecorder()
+	router.ServeHTTP(repeated, httptest.NewRequest(http.MethodGet, strings.Replace(localURL.Path, "/api/social-analysis/downloader", "", 1)+"?"+localURL.RawQuery, nil))
+	if repeated.Body.String() != "video-bytes" || downloadCalls.Load() != 2 {
+		t.Fatalf("repeat download failed: %s", repeated.Body.String())
+	}
+	if err := db.Model(&model.SocialActivityRecord{}).Count(&count).Error; err != nil || count != 1 {
+		t.Fatalf("repeat download duplicated history: count=%d err=%v", count, err)
+	}
+}
+
+func TestDownloadHistoryRetainsFailuresAndSupportsLegacyTickets(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	token.Init(config.JWTConfig{Secret: "download-history-failures", Issuer: "download-history"}, nil)
+	db := activityTestDB(t)
+	owner := idgen.ID(801)
+	legacy := model.SocialActivityRecord{ID: idgen.ID(802), UserID: owner, ActivityType: model.SocialActivityDownload, Status: model.SocialActivityReady, SourceURL: "https://youtu.be/old-video", Title: "旧版视频", Quality: "compat"}
+	if err := db.Create(&legacy).Error; err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	var unavailable atomic.Bool
+	unavailable.Store(true)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if unavailable.Load() {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"temporarily unavailable"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("video-bytes"))
+	}))
+	defer upstream.Close()
+	h := &handler{db: db, downloader: newRelayVideoDownloader(upstream.URL, "relay-key")}
+	router := gin.New()
+	router.GET("/download/:token", videoDownloadTicketAuth(), h.downloadVideo)
+	download := func(uid, recordID idgen.ID, metadata string) *httptest.ResponseRecorder {
+		t.Helper()
+		ticket, err := token.IssueDownloadTicket(uid, 0, relayVideoActivityResource("temporary-token", recordID, metadata), "video.mp4", time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		query := url.Values{"ticket": {ticket}, "name": {"video.mp4"}, "record": {recordID.String()}}
+		if metadata != "" {
+			query.Set("meta", metadata)
+		}
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/download/temporary-token?"+query.Encode(), nil))
+		return recorder
+	}
+	// Even a valid legacy capability for another user cannot touch this record.
+	if got := download(idgen.ID(999), legacy.ID, ""); got.Code != http.StatusNotFound || calls.Load() != 0 {
+		t.Fatalf("foreign record was accepted: %d %s", got.Code, got.Body.String())
+	}
+	download(owner, legacy.ID, "")
+	var saved model.SocialActivityRecord
+	if err := db.First(&saved, "id = ?", legacy.ID).Error; err != nil || saved.Status != model.SocialActivityFailed || saved.ErrorMessage == "" {
+		t.Fatalf("legacy download failure not recorded: %+v err=%v", saved, err)
+	}
+	preview := videoDownloadActivity{SourceURL: "https://www.youtube.com/watch?v=new-video", Platform: "youtube", Title: "新视频", Quality: "speed", Width: 640, Height: 480, EstimatedBytes: 11, ExpiresAt: time.Now().Add(time.Minute).Unix()}
+	encoded, _ := json.Marshal(preview)
+	metadata := base64.RawURLEncoding.EncodeToString(encoded)
+	newID := idgen.ID(803)
+	download(owner, newID, metadata)
+	saved = model.SocialActivityRecord{}
+	if err := db.First(&saved, "id = ?", newID).Error; err != nil || saved.Status != model.SocialActivityFailed || saved.Title != preview.Title || saved.Quality != preview.Quality || saved.UserID != owner {
+		t.Fatalf("new download failure lost metadata: %+v err=%v", saved, err)
+	}
+	unavailable.Store(false)
+	if got := download(owner, newID, metadata); got.Body.String() != "video-bytes" {
+		t.Fatalf("retry failed: %s", got.Body.String())
+	}
+	unavailable.Store(true)
+	download(owner, newID, metadata)
+	saved = model.SocialActivityRecord{}
+	if err := db.First(&saved, "id = ?", newID).Error; err != nil || saved.Status != model.SocialActivitySucceeded || saved.DownloadedBytes != 11 {
+		t.Fatalf("failed replay downgraded completed download: %+v err=%v", saved, err)
+	}
+	var count int64
+	if err := db.Model(&model.SocialActivityRecord{}).Count(&count).Error; err != nil || count != 2 {
+		t.Fatalf("retries created additional history: %d err=%v", count, err)
 	}
 }
 

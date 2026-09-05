@@ -75,6 +75,7 @@ func TestActivityRecordsAreAlwaysScopedToCurrentUser(t *testing.T) {
 		{ID: idgen.ID(1201), UserID: users[0].ID, ActivityType: model.SocialActivityAnalysis, Platform: "douyin", SourceURL: "https://www.douyin.com/video/1", Title: "Alice analysis", Status: model.SocialActivitySucceeded, CompletedAt: &now},
 		{ID: idgen.ID(1202), UserID: users[0].ID, ActivityType: model.SocialActivityDownload, Platform: "youtube", SourceURL: "https://www.youtube.com/watch?v=alice", Title: "Alice download", Status: model.SocialActivityReady, ExpiresAt: &expiredAt},
 		{ID: idgen.ID(1203), UserID: users[1].ID, ActivityType: model.SocialActivityDownload, Platform: "bilibili", SourceURL: "https://www.bilibili.com/video/bob", Title: "Bob secret", Status: model.SocialActivityReady, ExpiresAt: &expiredAt},
+		{ID: idgen.ID(1204), UserID: users[0].ID, ActivityType: model.SocialActivityDownload, Platform: "youtube", Title: "Alice completed download", Status: model.SocialActivitySucceeded},
 	}
 	if err := db.Create(&records).Error; err != nil {
 		t.Fatal(err)
@@ -97,21 +98,52 @@ func TestActivityRecordsAreAlwaysScopedToCurrentUser(t *testing.T) {
 	if got := recorder.Header().Get("Cache-Control"); got != "private, no-store" {
 		t.Fatalf("record response cache control = %q", got)
 	}
-	foundExpired := false
 	for _, row := range result.Data.Records {
 		if row.UserID != users[0].ID || row.Title == "Bob secret" {
 			t.Fatalf("cross-user activity leaked: %+v", row)
 		}
-		if row.ID == idgen.ID(1202) && row.Status == model.SocialActivityExpired {
-			foundExpired = true
+		if row.ID == idgen.ID(1202) {
+			t.Fatalf("unused old preview appeared in download history: %+v", row)
 		}
 	}
-	if !foundExpired {
-		t.Fatalf("expired ready record was not normalized: %+v", result.Data.Records)
+	var expired model.SocialActivityRecord
+	if err := db.First(&expired, "id = ?", idgen.ID(1202)).Error; err != nil || expired.Status != model.SocialActivityExpired {
+		t.Fatalf("old preview was not retained and expired: %+v err=%v", expired, err)
 	}
 	var otherUserRecord model.SocialActivityRecord
 	if err := db.First(&otherUserRecord, "id = ?", idgen.ID(1203)).Error; err != nil || otherUserRecord.Status != model.SocialActivityReady {
 		t.Fatalf("current-user list mutated another user's record: %+v err=%v", otherUserRecord, err)
+	}
+}
+
+func TestOldDownloadPreviewsAreHiddenOnlyFromUserHistory(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := activityTestDB(t)
+	owner := idgen.ID(8101)
+	for i, status := range []string{model.SocialActivityReady, model.SocialActivityExpired, model.SocialActivityProcessing, model.SocialActivityDownloading, model.SocialActivityFailed, model.SocialActivitySucceeded} {
+		record := model.SocialActivityRecord{ID: idgen.ID(8200 + i), UserID: owner, ActivityType: model.SocialActivityDownload, Status: status}
+		if err := db.Create(&record).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Create(&model.SocialActivityRecord{ID: idgen.ID(8300), UserID: owner, ActivityType: model.SocialActivityAnalysis, Status: model.SocialActivityProcessing}).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, admin := range []bool{false, true} {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodGet, "/records", nil)
+		ownerFilter := &owner
+		want := 4
+		if admin {
+			ownerFilter = nil
+			want = 7
+		}
+		writeActivityRecords(c, db, ownerFilter, admin)
+		var result response.Result[response.PageData[ActivityRecordVO]]
+		if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil || !result.Success || int(result.Data.Total) != want || len(result.Data.Records) != want {
+			t.Fatalf("admin=%v incorrect history: %s err=%v", admin, recorder.Body.String(), err)
+		}
 	}
 }
 
