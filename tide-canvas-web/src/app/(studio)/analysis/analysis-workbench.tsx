@@ -64,7 +64,8 @@ import { skillRunError, type SkillRunAction, type SkillRunVO } from "@/types/ski
 import { FileCategory } from "@/types/file";
 import type { SkillVO } from "@/types/skill";
 import { toast } from "@/components/shared/toast";
-import { buildAccountSnapshot, type AccountWorkDatum } from "./account-insights";
+import { buildAccountFeatures, buildAccountSnapshot, type AccountWorkDatum } from "./account-insights";
+import { AccountVisuals } from "./account-visuals";
 import { buildWorkSnapshot } from "./work-insights";
 import { ActivityHistorySidebar } from "./activity-history";
 import styles from "./analysis.module.css";
@@ -473,7 +474,7 @@ function AccountStrategyReport({ run, busy, onAction, onReEdit, onDismiss }: Acc
         </div>
       )}
 
-      <footer className={styles.accountReportFooter}>
+      <div className={styles.accountReportFooter}>
         <span>{reportTime ? `${succeeded ? "生成于" : "开始于"} ${displaySnapshotTime(reportTime)}` : ""}{run.pointCost && run.pointCost > 0 ? ` · 使用 ${run.pointCost} 积分` : ""}</span>
         <div>
           {active ? <button type="button" disabled={busy} onClick={() => void onAction("cancel")}>停止生成</button> : null}
@@ -481,7 +482,7 @@ function AccountStrategyReport({ run, busy, onAction, onReEdit, onDismiss }: Acc
           {succeeded ? <button type="button" disabled={busy} onClick={() => void onReEdit()}><Pencil aria-hidden />重新编辑</button> : null}
           {!active ? <button type="button" disabled={busy} onClick={onDismiss}>关闭报告</button> : null}
         </div>
-      </footer>
+      </div>
     </article>
   );
 }
@@ -563,49 +564,46 @@ function ResultSkeleton() {
   );
 }
 
-function AccountSampleTrend({ works, medianViews }: { works: AccountWorkDatum[]; medianViews: number | null }) {
-  const points = works
-    .filter((item) => item.publishedAtMs !== null && item.views !== null)
-    .sort((a, b) => (a.publishedAtMs ?? 0) - (b.publishedAtMs ?? 0));
-  if (points.length < 2) return null;
-  const width = 1000;
-  const height = 220;
-  const left = 24;
-  const right = 16;
-  const top = 16;
-  const bottom = 28;
-  const plotWidth = width - left - right;
-  const plotHeight = height - top - bottom;
-  const minTime = points[0].publishedAtMs ?? 0;
-  const maxTime = points.at(-1)?.publishedAtMs ?? minTime;
-  const maxViews = Math.max(1, ...points.map((item) => item.views ?? 0));
-  const x = (time: number, index: number) => maxTime === minTime
-    ? left + (index / Math.max(1, points.length - 1)) * plotWidth
-    : left + ((time - minTime) / (maxTime - minTime)) * plotWidth;
-  const y = (views: number) => top + plotHeight - (views / maxViews) * plotHeight;
-  const coordinates = points.map((item, index) => ({
-    x: x(item.publishedAtMs ?? minTime, index),
-    y: y(item.views ?? 0),
-  }));
+function AccountSampleTrend({ works, medianViews, onInspect }: { works: AccountWorkDatum[]; medianViews: number | null; onInspect: (item: AccountWorkDatum) => void }) {
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [logScale, setLogScale] = useState(false);
+  const points = works.filter((item) => item.publishedAtMs !== null && item.views !== null).sort((a, b) => a.publishedAtMs! - b.publishedAtMs!);
+  if (points.length < 2) return <section className={styles.sampleTrend}><header className={styles.sectionHeader}><div><h2>近期作品表现</h2><p>按发布时间对照每条作品的播放量。</p></div></header><p className={styles.visualEmpty}>至少需要两条同时包含播放量和发布时间的作品，才能展示分布曲线。已有作品仍可在下方查看。</p></section>;
+  const width = 1000, height = 220, left = 16, right = 16, top = 16, bottom = 28;
+  const plotWidth = width - left - right, plotHeight = height - top - bottom;
+  const minTime = points[0].publishedAtMs!, maxTime = points.at(-1)!.publishedAtMs!;
+  const peakViews = Math.max(0, ...points.map((item) => item.views!));
+  const maxViews = Math.max(1, peakViews);
+  const selected = points.find((item) => item.index === selectedIndex) ?? points.reduce((best, item) => item.views! > best.views! ? item : best);
+  const x = (time: number, index: number) => left + (maxTime === minTime ? index / (points.length - 1) : (time - minTime) / (maxTime - minTime)) * plotWidth;
+  const y = (views: number) => top + plotHeight - (logScale ? Math.log1p(views) / Math.log1p(maxViews) : views / maxViews) * plotHeight;
+  const coordinates = points.map((item, index) => ({ x: x(item.publishedAtMs!, index), y: y(item.views!) }));
   const line = coordinates.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
-  const area = `${left},${top + plotHeight} ${line} ${coordinates.at(-1)?.x ?? left},${top + plotHeight}`;
-  const medianY = medianViews !== null ? y(Math.min(maxViews, medianViews)) : null;
+  const area = `${left},${top + plotHeight} ${line} ${coordinates.at(-1)!.x},${top + plotHeight}`;
+  const medianY = medianViews !== null && medianViews <= maxViews ? y(medianViews) : null;
   return (
     <section className={styles.sampleTrend}>
       <header className={styles.sectionHeader}>
         <div><h2>近期作品表现</h2><p>按作品发布时间观察播放分布，不等同于账号历史增长。</p></div>
-        <span>{points.length} 个有效样本 · 峰值 {displayCompactMetric(maxViews)}</span>
+        <div className={styles.trendScale} role="group" aria-label="播放刻度"><button type="button" aria-pressed={!logScale} onClick={() => setLogScale(false)}>原始播放</button><button type="button" aria-pressed={logScale} onClick={() => setLogScale(true)}>对数刻度</button></div>
       </header>
+      <div className={styles.trendReadout}>
+        <div><small>{points.length} 条有效样本 · 峰值 {displayCompactMetric(peakViews)}</small><strong>{displayCompactMetric(selected.views)}<span> 次播放</span></strong></div>
+        <button type="button" onClick={() => onInspect(selected)}><span>{titleOf(selected.work)}</span><small>{displayDateTime(selected.work.publishedAt)} · 查看作品 <ArrowUpRight aria-hidden /></small></button>
+      </div>
       <div className={styles.trendCanvas}>
-        <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img" aria-label="近期作品播放量走势">
+        <div className={styles.trendYAxis} aria-hidden>{[1, .75, .5, .25, 0].map((ratio) => <span key={ratio}>{displayCompactMetric(logScale ? Math.expm1(Math.log1p(maxViews) * ratio) : maxViews * ratio)}</span>)}</div>
+        <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="group" aria-label="近期作品播放量走势，点选节点查看作品">
           <title>近期作品播放量走势</title>
-          {[0, .25, .5, .75, 1].map((ratio) => (
-            <line key={ratio} className={styles.trendGridLine} x1={left} x2={width - right} y1={top + plotHeight * ratio} y2={top + plotHeight * ratio} />
-          ))}
+          {[0, .25, .5, .75, 1].map((ratio) => <line key={ratio} className={styles.trendGridLine} x1={left} x2={width - right} y1={top + plotHeight * ratio} y2={top + plotHeight * ratio} />)}
           <polygon className={styles.trendArea} points={area} />
           {medianY !== null && <line className={styles.trendMedian} x1={left} x2={width - right} y1={medianY} y2={medianY} />}
           <polyline className={styles.trendLine} points={line} />
-          {coordinates.map((point, index) => <circle key={`${point.x}-${index}`} className={styles.trendPoint} cx={point.x} cy={point.y} r="4" />)}
+          {coordinates.map((point, index) => <g key={points[index].index}>
+            {selected.index === points[index].index && <line className={styles.trendCursor} x1={point.x} x2={point.x} y1={top} y2={top + plotHeight} />}
+            <circle className={styles.trendPoint} data-active={selected.index === points[index].index} cx={point.x} cy={point.y} r={selected.index === points[index].index ? 6 : 4} />
+            <circle className={styles.trendHit} cx={point.x} cy={point.y} r="16" tabIndex={0} role="button" aria-label={`${titleOf(points[index].work)}，${displayCompactMetric(points[index].views)} 次播放，查看详情`} onMouseEnter={() => setSelectedIndex(points[index].index)} onFocus={() => setSelectedIndex(points[index].index)} onClick={() => { setSelectedIndex(points[index].index); onInspect(points[index]); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onInspect(points[index]); } }} />
+          </g>)}
         </svg>
         <div className={styles.trendAxis}>
           <span>{displayDate(points[0].work.publishedAt)}</span>
@@ -613,6 +611,7 @@ function AccountSampleTrend({ works, medianViews }: { works: AccountWorkDatum[];
           <span>{displayDate(points.at(-1)?.work.publishedAt)}</span>
         </div>
       </div>
+      <p className={styles.visualNote}>{logScale ? "对数刻度压缩高播放峰值，便于观察普通作品的差异；节点与提示仍显示实际播放量。" : "悬停或聚焦节点查看播放数据，点击打开作品。峰值差距大时可切换对数刻度。"}</p>
     </section>
   );
 }
@@ -663,10 +662,10 @@ function AccountWorkInspector({
             <strong>{relative === null ? "表现基准暂不可用" : relative >= 2 ? "显著高于账号样本基准" : relative < .6 ? "低于账号样本基准" : "接近账号样本基准"}</strong>
             <p>{relative === null ? "需要至少两个具备播放数据的作品才能形成可靠中位基准。" : `该作品播放量约为账号样本中位数的 ${relative.toFixed(2)} 倍。这里只描述相关数据，不推断因果。`}</p>
           </div>
-          <footer>
+          <div className={styles.workInspectorActions}>
             {item.work.pageUrl && <a href={item.work.pageUrl} target="_blank" rel="noopener noreferrer">查看原作品 <ArrowUpRight aria-hidden /></a>}
             {canDownload && <button type="button" onClick={onDownload}><Download aria-hidden /> 下载原片</button>}
-          </footer>
+          </div>
         </div>
       )}
     </dialog>
@@ -697,10 +696,19 @@ function AccountDashboard({
   onDownloadWork,
 }: AccountDashboardProps) {
   const [inspectedWork, setInspectedWork] = useState<AccountWorkDatum | null>(null);
+  const [workOrder, setWorkOrder] = useState<"recent" | "views" | "interactions">("recent");
+  const [highOnly, setHighOnly] = useState(false);
   const snapshot = buildAccountSnapshot(result);
+  const features = buildAccountFeatures(snapshot);
   const meta = platformMeta(result.platform);
   const profile = result.profile;
-  const interactionTotal = snapshot.interactionParts.reduce((sum, item) => sum + item.value, 0);
+  const filteredWorks = snapshot.works
+    .filter((item) => !highOnly || !features.comparable || (item.views !== null && item.views >= snapshot.medianViews! * 2))
+    .sort((a, b) => {
+      if (workOrder === "views") return (b.views ?? -1) - (a.views ?? -1) || a.index - b.index;
+      if (workOrder === "interactions") return (b.hasInteractionData ? b.interactions : -1) - (a.hasInteractionData ? a.interactions : -1) || a.index - b.index;
+      return (b.publishedAtMs ?? 0) - (a.publishedAtMs ?? 0) || a.index - b.index;
+    });
   const publishedRange = snapshot.firstPublishedAt !== null && snapshot.lastPublishedAt !== null
     ? `${displayDate(String(snapshot.firstPublishedAt))} — ${displayDate(String(snapshot.lastPublishedAt))}`
     : "发布时间不完整";
@@ -720,7 +728,6 @@ function AccountDashboard({
   const kpis = [
     profile?.followers ? { label: "粉丝", value: displayCount(profile.followers), note: "平台累计" } : null,
     snapshot.medianViews !== null ? { label: "中位播放", value: displayCompactMetric(snapshot.medianViews), note: `${snapshot.measuredViews} 个有效样本` } : null,
-    snapshot.medianEngagementRate !== null ? { label: "中位可见互动率", value: displayPercent(snapshot.medianEngagementRate), note: "已返回互动 ÷ 播放" } : null,
     snapshot.highPerformanceRate !== null ? { label: "高表现样本率", value: displayPercent(snapshot.highPerformanceRate), note: "播放 ≥ 2× 中位数" } : null,
     snapshot.topPerformanceMultiple !== null ? { label: "最高样本倍数", value: `${snapshot.topPerformanceMultiple.toFixed(2)}×`, note: "相对中位播放" } : null,
     { label: "分析样本", value: String(snapshot.sampleCount), note: "近期公开作品" },
@@ -746,10 +753,24 @@ function AccountDashboard({
           <a href={result.sourceUrl} target="_blank" rel="noopener noreferrer">查看账号主页 <ArrowUpRight aria-hidden /></a>
         </div>
 
+        <div className={styles.accountFeatureSummary}>
+          <div>
+            <span><ScanSearch aria-hidden />账号特征速览</span>
+            <h3>{features.headline}</h3>
+            <p>{features.takeaway}</p>
+          </div>
+          <div className={styles.accountFeatureTags}>
+            <span><Film aria-hidden /><b>{snapshot.sampleCount}</b> 条作品样本</span>
+            {features.comparable && <span><Trophy aria-hidden /><b>{features.bands[0].count}</b> 条高表现作品</span>}
+            {snapshot.topConcentration !== null && <span><Target aria-hidden />头部播放贡献 <b>{snapshot.topConcentration.toFixed(1)}%</b></span>}
+          </div>
+        </div>
+
         <div className={styles.accountKpiRail} role="list" aria-label="账号关键指标">
-          {kpis.map((item) => (
-            <div role="listitem" key={item.label}><strong>{item.value}</strong><small>{item.label}</small><span>{item.note}</span></div>
-          ))}
+          {kpis.map((item) => {
+            const Icon = item.label === "粉丝" ? UserRoundSearch : item.label === "中位播放" ? BarChart3 : item.label === "高表现样本率" ? Target : item.label === "最高样本倍数" ? Trophy : Film;
+            return <div role="listitem" key={item.label}><small><Icon aria-hidden />{item.label}</small><strong>{item.value}</strong><span>{item.note}</span></div>;
+          })}
         </div>
       </header>
 
@@ -761,32 +782,44 @@ function AccountDashboard({
         </div>
       )}
 
-      <AccountSampleTrend works={snapshot.works} medianViews={snapshot.medianViews} />
+      <AccountSampleTrend works={snapshot.works} medianViews={snapshot.medianViews} onInspect={setInspectedWork} />
+
+      <AccountVisuals snapshot={snapshot} onInspect={setInspectedWork} renderCover={(item) => <WorkCover work={item.work} platform={result.platform} />} />
 
       <section className={styles.accountWorksTable}>
         <header className={styles.sectionHeader}>
-          <div><h2>近期作品</h2><p>以账号样本中位播放为基准，点击作品查看详情。</p></div>
+          <div><h2>近期作品</h2><p>对照播放、可见互动和相对表现，点击作品查看详情。</p></div>
           <span>{snapshot.sampleCount} 个样本 · {publishedRange}</span>
         </header>
+        {snapshot.works.length > 0 && (
+          <div className={styles.accountTableTools}>
+            <div role="group" aria-label="作品筛选">
+              <button type="button" aria-pressed={!highOnly || !features.comparable} onClick={() => setHighOnly(false)}>全部作品</button>
+              <button type="button" aria-pressed={highOnly && features.comparable} disabled={!features.comparable} onClick={() => setHighOnly(true)}>高表现作品 {features.comparable ? features.bands[0].count : ""}</button>
+            </div>
+            <label>排序<select aria-label="作品排序" value={workOrder} onChange={(event) => setWorkOrder(event.target.value as typeof workOrder)}><option value="recent">最近发布</option><option value="views">播放优先</option><option value="interactions">互动优先</option></select></label>
+          </div>
+        )}
         {snapshot.works.length > 0 ? (
           <div className={styles.accountTableWrap}>
             <table>
-              <thead><tr><th>作品</th><th>发布时间</th><th>播放</th><th>点赞</th><th>评论</th><th>互动率</th><th>相对表现</th></tr></thead>
+              <thead><tr><th>作品</th><th>发布时间</th><th>播放</th><th>点赞</th><th>评论</th><th>可见互动率</th><th>相对表现</th></tr></thead>
               <tbody>
-                {snapshot.works.map((item) => {
+                {filteredWorks.map((item) => {
                   const multiple = snapshot.measuredViews > 1 && item.views !== null && snapshot.medianViews && snapshot.medianViews > 0 ? item.views / snapshot.medianViews : null;
                   return (
                     <tr key={item.work.id || `${item.work.pageUrl}-${item.index}`} data-clickable onClick={() => setInspectedWork(item)}>
                       <td><button type="button" className={styles.accountWorkTitle} onClick={() => setInspectedWork(item)} title={titleOf(item.work)}><span><WorkCover work={item.work} platform={result.platform} /></span><b>{titleOf(item.work)}</b></button></td>
                       <td>{displayDateTime(item.work.publishedAt) || "—"}</td>
-                      <td>{displayCompactMetric(item.views)}</td>
+                      <td className={styles.tableViewValue}>{displayCompactMetric(item.views)}</td>
                       <td>{displayCompactMetric(item.likes)}</td>
                       <td>{displayCompactMetric(item.comments)}</td>
                       <td>{displayPercent(item.engagementRate)}</td>
-                      <td><span className={styles.relativePerformance} data-level={multiple !== null && multiple >= 2 ? "high" : multiple !== null && multiple < .6 ? "low" : "normal"}>{multiple === null ? "—" : `${multiple.toFixed(2)}×`}</span></td>
+                      <td><span className={styles.relativePerformance} data-level={multiple !== null && multiple >= 2 ? "high" : multiple !== null && multiple < .6 ? "low" : "normal"}>{multiple === null ? "—" : `${multiple >= 2 ? "高于日常 · " : ""}${multiple.toFixed(2)}×`}</span></td>
                     </tr>
                   );
                 })}
+                {filteredWorks.length === 0 && <tr><td colSpan={7}><p className={styles.inlineEmpty}>本次样本暂没有达到中位播放两倍的作品。</p></td></tr>}
               </tbody>
             </table>
           </div>
@@ -795,21 +828,7 @@ function AccountDashboard({
         )}
       </section>
 
-      {snapshot.measuredInteractions > 0 && interactionTotal > 0 && (
-        <section className={styles.accountEvidence}>
-          <header className={styles.sectionHeader}>
-            <div><h2>互动构成</h2><p>仅汇总平台在当前样本中实际返回的互动字段。</p></div>
-            <span>{displayCompactMetric(snapshot.totalInteractions)} 次可见互动</span>
-          </header>
-          <div className={styles.interactionTrack} role="img" aria-label={snapshot.interactionParts.map((item) => `${item.label}${displayCompactMetric(item.measured ? item.value : null)}`).join("，")}>
-            {snapshot.interactionParts.filter((item) => item.value > 0).map((item) => <i key={item.key} data-part={item.key} style={{ flexGrow: item.value }} />)}
-          </div>
-          <div className={styles.interactionLegend}>
-            {snapshot.interactionParts.map((item) => <span key={item.key} data-part={item.key}><i />{item.label}<strong>{displayCompactMetric(item.measured ? item.value : null)}</strong></span>)}
-          </div>
-          <p className={styles.scopeNote}>这是当前抓取样本的横截面，不代表粉丝增长趋势或行业基准。</p>
-        </section>
-      )}
+      <p className={styles.scopeNote}>这是当前抓取样本的横截面，不代表粉丝增长趋势或行业基准。可见互动仅汇总已返回的指标，缺失数据以“—”展示。</p>
 
       <section className={styles.accountStrategy}>
         <header className={styles.sectionHeader}>
@@ -818,17 +837,13 @@ function AccountDashboard({
         </header>
         <div className={styles.strategyGrid}>
           <article className={styles.strategyControl}>
-            <label className={styles.focusField}>
-              <span>本次自动分析重点</span>
-              <textarea rows={7} value={focus} readOnly aria-readonly="true" />
-              <small>{focus.length} / 4000</small>
-            </label>
             <div className={styles.strategyScope}>
               <span><Target aria-hidden />账号定位</span>
               <span><Trophy aria-hidden />爆款差异</span>
               <span><BarChart3 aria-hidden />内容支柱</span>
               <span><CalendarDays aria-hidden />发布节奏</span>
             </div>
+            <details className={styles.accountAnalysisScope}><summary>查看本次分析范围</summary><p>{focus}</p></details>
             {skillError ? (
               <button type="button" className={styles.primaryButton} disabled={busy} onClick={onRun}>
                 {busy ? <Loader2 className={styles.spin} aria-hidden /> : <ScanSearch aria-hidden />}
@@ -839,7 +854,7 @@ function AccountDashboard({
                 {busy ? <Loader2 className={styles.spin} aria-hidden /> : runDetails ? <Check aria-hidden /> : <Sparkles aria-hidden />}
                 <span>
                   <strong>{busy ? historical ? "正在恢复当时的策略报告" : "正在自动生成账号策略" : runDetails ? historical ? "已恢复当时的策略报告" : "账号策略已自动启动" : historical ? "这条历史记录没有关联策略报告" : "解析完成后自动生成"}</strong>
-                  <small>{historical ? "当前展示历史快照，不会重新调用平台或扣除积分。" : "无需再次点击，结果会直接显示在右侧。"}</small>
+                  <small>{historical ? "当前展示历史快照，不会重新调用平台或扣除积分。" : "无需再次点击，结果会直接显示在下方。"}</small>
                 </span>
               </div>
             )}

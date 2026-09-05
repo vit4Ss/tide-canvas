@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildAccountSnapshot, parseMetricNumber } from "./account-insights.ts";
+import { buildAccountFeatures, buildAccountSnapshot, parseMetricNumber } from "./account-insights.ts";
 
 function resultWith(works, profile = { followers: "10,000" }) {
   return {
@@ -79,4 +79,50 @@ test("explicit zero interaction data stays distinct from an unavailable metric",
   assert.equal(snapshot.interactionParts.find((item) => item.key === "like")?.measured, 1);
   assert.equal(snapshot.interactionParts.find((item) => item.key === "comment")?.measured, 0);
   assert.equal(snapshot.engagementRate, null);
+});
+
+test("visual performance bands exclude missing data and respect boundary values", () => {
+  const snapshot = buildAccountSnapshot(resultWith([0, 59, 60, 100, 100, 100, 199, 200, 500, null].map((play, i) => ({ id: String(i), stats: play === null ? {} : { play: String(play) } }))));
+  const features = buildAccountFeatures(snapshot);
+  assert.equal(snapshot.medianViews, 100);
+  assert.deepEqual(features.bands.map(part => part.count), [2, 5, 2]);
+  assert.equal(features.bands.reduce((sum, part) => sum + part.count, 0), snapshot.measuredViews);
+  assert.equal(features.top.work.id, '8');
+  assert.match(features.takeaway, /2 条作品/);
+});
+
+test("empty, single, and zero-play samples never invent a comparison", () => {
+  for (const works of [[], [{stats:{play:'100'}}], [{stats:{play:'0'}}, {stats:{play:'0'}}], [{stats:{like:'8'}}, {stats:{}}]]) {
+    const features = buildAccountFeatures(buildAccountSnapshot(resultWith(works.map(work => ({ stats: {}, ...work })))));
+    assert.equal(features.comparable, false);
+    assert.ok(features.bands.every(part => part.count === 0));
+    assert.match(features.headline, /样本还在积累/);
+  }
+});
+
+test("heatmap uses explicit local times and excludes date-only or invalid timestamps", () => {
+  const monday = new Date(2026, 8, 7, 17, 30);
+  const works = [
+    { publishedAt: String(monday.getTime()) },
+    { publishedAt: monday.toISOString() },
+    { publishedAt: '2026-09-07' },
+    { publishedAt: 'invalid' },
+    { publishedAt: '' },
+  ];
+  const features = buildAccountFeatures(buildAccountSnapshot(resultWith(works.map(work => ({ stats: {}, ...work })))));
+  assert.equal(features.timedSamples, 2);
+  assert.equal(features.maxTimingCount, 2);
+  assert.equal(features.timing[4][0].count, 2);
+  assert.equal(features.timing.flat().reduce((sum, cell) => sum + cell.count, 0), 2);
+});
+
+test("complete interaction coverage requires all four returned fields, including explicit zero", () => {
+  const snapshot = buildAccountSnapshot(resultWith([
+    { stats: { like: '0', comment: '0', share: '0', favorite: '0' } },
+    { stats: { comment: '0' } },
+    { stats: {} },
+  ]));
+  assert.equal(buildAccountFeatures(snapshot).completeInteractionSamples, 1);
+  assert.equal(snapshot.interactionParts.find(part => part.key === 'comment').measured, 2);
+  assert.equal(snapshot.totalInteractions, 0);
 });

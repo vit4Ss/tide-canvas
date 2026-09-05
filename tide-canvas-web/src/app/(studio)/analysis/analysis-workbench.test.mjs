@@ -318,7 +318,7 @@ test("copyable metadata fields carry an accessible name", () => {
 test("account mode renders a real intelligence board instead of a source-and-text split", () => {
   assert.match(workbench, /function AccountDashboard/);
   assert.match(workbench, /result\.kind === "account"[\s\S]*<AccountDashboard/);
-  for (const section of ["近期作品表现", "近期作品", "互动构成", "AI 账号策略拆解"]) {
+  for (const section of ["近期作品表现", "近期作品", "账号特征速览", "AI 账号策略拆解"]) {
     assert.ok(workbench.includes(section), `account board misses ${section}`);
   }
   assert.match(workbench, /buildAccountSnapshot\(result\)/);
@@ -351,7 +351,7 @@ test("account inspection automatically starts one strategy run without a second 
   assert.match(workbench, /pendingAccountAutoRunRef\.current !== result/);
   assert.match(workbench, /pendingAccountAutoRunRef\.current = null;[\s\S]*queueMicrotask\(\(\) => \{ void startDeepAnalysis\(\); \}\)/);
   assert.match(workbench, /正在自动生成账号策略/);
-  assert.match(workbench, /无需再次点击，结果会直接显示在右侧/);
+  assert.match(workbench, /无需再次点击，结果会直接显示在下方/);
   assert.match(workbench, /activityRecordId: result\.recordId/);
   assert.match(workbench, /response\.data\.kind === "account" && \(focus === DEFAULT_FOCUS \|\| focus === IMAGE_DEFAULT_FOCUS\)/);
   assert.doesNotMatch(workbench, /busy \? "正在启动分析" : "生成账号策略"/);

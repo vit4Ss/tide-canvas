@@ -182,3 +182,54 @@ export function buildAccountSnapshot(result: SocialInspectVO): AccountSnapshot {
     ],
   };
 }
+
+/** Visual summaries use the same snapshot as the report and history replay. */
+export function buildAccountFeatures(snapshot: AccountSnapshot) {
+  const comparable = snapshot.measuredViews > 1 && snapshot.medianViews !== null && snapshot.medianViews > 0;
+  const bands = [
+    { key: "high", label: "高于日常", rule: "≥ 2× 中位播放", count: 0 },
+    { key: "regular", label: "日常区间", rule: "0.6–2× 中位播放", count: 0 },
+    { key: "low", label: "低于日常", rule: "< 0.6× 中位播放", count: 0 },
+  ];
+  if (comparable) {
+    for (const item of snapshot.works) {
+      if (item.views === null) continue;
+      const multiple = item.views / snapshot.medianViews!;
+      bands[multiple >= 2 ? 0 : multiple >= .6 ? 1 : 2].count += 1;
+    }
+  }
+
+  const timing = Array.from({ length: 6 }, (_, slot) =>
+    Array.from({ length: 7 }, (_, day) => ({ slot, day, count: 0 })),
+  );
+  let timedSamples = 0;
+  for (const item of snapshot.works) {
+    const source = item.work.publishedAt?.trim() || "";
+    // A date without a time is not a midnight publication. Leave it out.
+    const precise = /^\d{10,13}$/.test(source) || /[T\s]\d{2}:\d{2}/.test(source);
+    if (!precise || item.publishedAtMs === null) continue;
+    const date = new Date(item.publishedAtMs);
+    const day = (date.getDay() + 6) % 7;
+    const slot = Math.floor(date.getHours() / 4);
+    timing[slot][day].count += 1;
+    timedSamples += 1;
+  }
+  const maxTimingCount = Math.max(0, ...timing.flat().map((cell) => cell.count));
+  const completeInteractionSamples = snapshot.works.filter((item) =>
+    [item.likes, item.comments, item.shares, item.favorites].every((value) => value !== null),
+  ).length;
+  const top = snapshot.rankedWorks[0] ?? null;
+  const headline = !comparable ? "样本还在积累，先了解已有作品"
+    : snapshot.topConcentration !== null && snapshot.topConcentration >= 50 ? "播放表现集中在头部作品"
+    : snapshot.topPerformanceMultiple !== null && snapshot.topPerformanceMultiple >= 2 ? "部分作品明显高于日常表现"
+    : "头部作品与日常表现接近";
+  const takeaway = !comparable
+    ? "获得至少两条有播放量、且中位播放大于零的作品后，可比较表现差异。"
+    : snapshot.topConcentration !== null && snapshot.topConcentration >= 50
+      ? `播放最高的一条贡献了本次样本 ${snapshot.topConcentration.toFixed(1)}% 的播放，值得优先对照它的选题、标题与开场。`
+      : bands[0].count > 0
+        ? `${bands[0].count} 条作品达到日常中位播放的两倍以上，可以对比这些作品的共同点。`
+        : "当前样本没有达到中位播放两倍的作品，可以从表现靠前的作品寻找小幅优化方向。";
+
+  return { comparable, bands, timing, timedSamples, maxTimingCount, completeInteractionSamples, headline, takeaway, top };
+}

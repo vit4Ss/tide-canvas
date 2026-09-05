@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUpRight, BookOpen, Check, Loader2, RefreshCw } from "lucide-react";
+import { ArrowUpRight, Check, History, Loader2, RefreshCw } from "lucide-react";
 import { socialAnalysisApi } from "@/lib/social-analysis-api";
 import type { SocialActivityRecordDetailVO } from "@/lib/social-analysis-api";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -23,6 +23,11 @@ const PLATFORM_LABEL: Record<string, string> = {
 };
 
 const QUALITY_LABEL: Record<string, string> = { compat: "兼容", quality: "高清", speed: "极速" };
+
+const PLATFORM_MARK: Record<string, string> = {
+  douyin: "抖", bilibili: "B", xiaohongshu: "小", youtube: "▶",
+  tiktok: "♪", kuaishou: "快", pinterest: "P", instagram: "IG",
+};
 
 function formatTime(value: string, full = false): string {
   const date = new Date(value);
@@ -152,9 +157,12 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
   return (
     <aside className={styles.historySidebar} aria-busy={loading} aria-label="我的使用记录">
       <header className={styles.historyHeader}>
-        <div>
-          <h2>记录簿</h2>
-          <p>分析与下载，随时回看</p>
+        <div className={styles.historyHeading}>
+          <span className={styles.historyHeadingIcon}><History aria-hidden /></span>
+          <div>
+            <h2>历史记录</h2>
+            <p>回看分析 · 追踪下载</p>
+          </div>
         </div>
         <button type="button" onClick={() => void load()} disabled={loading} aria-label="刷新使用记录" title="刷新使用记录">
           {loading ? <Loader2 className={styles.spin} aria-hidden /> : <RefreshCw aria-hidden />}
@@ -194,7 +202,7 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
         </div>
       ) : rows.length === 0 ? (
         <div className={styles.historyEmpty}>
-          <BookOpen aria-hidden />
+          <History aria-hidden />
           <strong>还没有使用记录</strong>
           <p>完成一次内容分析，或解析并下载公开视频后，记录会出现在这里。</p>
         </div>
@@ -206,7 +214,7 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
             const selected = selectedId === row.id;
             const label = recordLabel(row);
             return (
-              <div key={row.id}>
+              <div className={styles.historyEntry} key={row.id}>
                 {startsGroup ? <div className={styles.historyDate}><span>{group.label}</span><i aria-hidden /></div> : null}
                 <article className={styles.historyRow} data-selected={selected ? "true" : "false"} data-status={row.status}>
                   <button type="button" className={styles.historyRecordButton} aria-pressed={selected} onClick={() => void openRecord(row)} disabled={!!openingId}>
@@ -215,20 +223,23 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
                       <time dateTime={row.createTime} title={`当时调用：${formatTime(row.createTime, true)}`}>{formatTime(row.createTime)}</time>
                     </span>
                     <span className={styles.historyCopy}>
-                      <strong title={row.title || row.sourceUrl}>{row.title || (row.type === "download" ? "公开视频" : label)}</strong>
+                      <span className={styles.historyPlatformMark} aria-hidden>{PLATFORM_MARK[row.platform || ""] || "↗"}</span>
+                      <span className={styles.historyIdentity}>
+                        <strong title={row.title || row.sourceUrl}>{row.title || (row.type === "download" ? "公开视频" : label)}</strong>
+                        <span className={styles.historyPlatform}>
+                          {PLATFORM_LABEL[row.platform || ""] || row.platform || "待识别"}
+                          {row.type === "download" && (row.downloadedBytes || row.estimatedBytes) ? <><i aria-hidden> / </i>{formatBytes(row.downloadedBytes || row.estimatedBytes)}</> : null}
+                        </span>
+                      </span>
                     </span>
                     {row.errorMessage ? <span className={styles.historyError} title={row.errorMessage}>{row.errorMessage}</span> : null}
                     <span className={styles.historyRecordFoot}>
-                      <span className={styles.historyPlatform}>
-                        {PLATFORM_LABEL[row.platform || ""] || row.platform || "待识别"}
-                        {row.type === "download" && (row.downloadedBytes || row.estimatedBytes) ? <><i aria-hidden> / </i>{formatBytes(row.downloadedBytes || row.estimatedBytes)}</> : null}
-                      </span>
                       <span className={styles.historyState} data-status={row.status}>
                         {openingId === row.id ? <><Loader2 className={styles.spin} aria-hidden />打开中</>
-                          : selected && row.status === "succeeded" ? "正在查看"
-                          : row.status === "succeeded" ? <><Check aria-hidden /><span className={styles.historySuccessLabel}>已完成</span></>
+                          : row.status === "succeeded" ? <><Check aria-hidden />已完成</>
                           : statusLabel(row.status)}
                       </span>
+                      {selected ? <span className={styles.historyViewing}>正在查看</span> : null}
                     </span>
                   </button>
                   <a href={row.sourceUrl} target="_blank" rel="noreferrer" aria-label="打开来源链接" title="打开来源链接"><ArrowUpRight aria-hidden /></a>
