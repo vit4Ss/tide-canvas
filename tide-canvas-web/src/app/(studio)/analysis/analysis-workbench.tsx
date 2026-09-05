@@ -533,9 +533,10 @@ function AccountStrategyReport({ run, busy, onAction, onReEdit, onDismiss }: Acc
   );
 }
 
-/* 视频预览使用独立媒体地址，不触发附件下载或创建下载记录。 */
-function DownloadPoster({ result, onDuration, onRefresh, refreshing }: {
+/* 优先播放当前下载已接收的 MP4；不额外请求文件或创建下载记录。 */
+function DownloadPoster({ result, localPreviewUrl, onDuration, onRefresh, refreshing }: {
   result: VideoDownloadResolveVO;
+  localPreviewUrl: string;
   onDuration: (seconds: number) => void;
   onRefresh: () => void;
   refreshing: boolean;
@@ -543,7 +544,7 @@ function DownloadPoster({ result, onDuration, onRefresh, refreshing }: {
   const [failed, setFailed] = useState(false);
   const [previewError, setPreviewError] = useState("");
   const cover = failed ? "" : result.coverUrl?.trim() || "";
-  const preview = previewError ? "" : result.previewUrl?.trim() || "";
+  const preview = previewError ? "" : localPreviewUrl || (result.previewUrl?.trim() ? apiUrl(result.previewUrl.trim()) : "");
   const tint = DOWNLOAD_PLATFORM_COLOR[result.platform] || "#8b8b93";
   const platformLabel = DOWNLOAD_PLATFORM_LABEL[result.platform] || result.platform;
   const qualityLabel = DOWNLOAD_QUALITY.find((item) => item.key === result.quality)?.label || result.quality;
@@ -551,29 +552,30 @@ function DownloadPoster({ result, onDuration, onRefresh, refreshing }: {
     <div className={styles.posterMedia} style={{ "--platform": tint } as React.CSSProperties}>
       {preview ? (
         <video
-          src={apiUrl(preview)}
+          src={preview}
           poster={cover || undefined}
           controls
           controlsList="nodownload"
           playsInline
-          preload="metadata"
+          preload={localPreviewUrl ? "auto" : "metadata"}
           aria-label={`${result.title || "视频"}预览`}
           onLoadedMetadata={(event) => {
             const seconds = event.currentTarget.duration;
             if (Number.isFinite(seconds) && seconds > 0) onDuration(Math.round(seconds));
           }}
-          onError={() => setPreviewError(result.expiresAt * 1000 <= Date.now() ? "预览地址已过期，请重新获取视频" : "暂时无法预览，可下载后播放")}
+          onError={() => setPreviewError(localPreviewUrl ? "当前浏览器无法播放此视频，可用下载文件播放，或选择兼容画质"
+            : result.expiresAt * 1000 <= Date.now() ? "预览地址已过期，请重新获取视频" : "源视频预览失败，可先下载后在这里播放")}
         />
       ) : cover ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={cover} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
       ) : (
-        <span className={styles.posterFallback}><Film aria-hidden /><span>暂时无法预览画面</span>{!previewError && <small>可以使用下方下载按钮保存后播放</small>}</span>
+        <span className={styles.posterFallback}><Film aria-hidden /><span>暂时无法预览画面</span>{!previewError && <small>下载完成后会在这里加载视频</small>}</span>
       )}
       {previewError && <div className={styles.previewNotice} role="status">
         <span>{previewError}</span>
         <button type="button" disabled={refreshing} onClick={() => {
-          if (result.expiresAt * 1000 <= Date.now()) onRefresh();
+          if (!localPreviewUrl && result.expiresAt * 1000 <= Date.now()) onRefresh();
           else setPreviewError("");
         }}><RotateCcw aria-hidden />重试预览</button>
       </div>}
@@ -1164,6 +1166,10 @@ export default function AnalysisWorkbench() {
   const downloadEpochRef = useRef(0);
   const ownerUserId = user?.id ?? "";
   const videoDownload = useVideoDownload(ownerUserId);
+  // A received file belongs to one exact resolve result (including quality).
+  // Do not display a previous video's Blob while the user selects another one.
+  const downloadedPreviewUrl = videoDownload.state.phase === "ready" && videoDownload.state.resultId === downloadResult?.id
+    ? videoDownload.state.savedUrl : "";
   const previousOwnerRef = useRef(ownerUserId);
   const skillRun = useSkillRun({
     storageKey: "tidecanvas.social-analysis.active-run",
@@ -2111,7 +2117,7 @@ export default function AnalysisWorkbench() {
               {downloadResult ? (
                 <>
                   <section className={styles.posterCard}>
-                    <DownloadPoster key={downloadResult.id} result={downloadResult} refreshing={downloadBusy} onRefresh={() => void resolveVideoDownload()} onDuration={(seconds) => {
+                    <DownloadPoster key={`${downloadResult.id}:${downloadedPreviewUrl}`} result={downloadResult} localPreviewUrl={downloadedPreviewUrl} refreshing={downloadBusy} onRefresh={() => void resolveVideoDownload()} onDuration={(seconds) => {
                       setDownloadResult((current) => current?.id === downloadResult.id && !current.durationSeconds ? { ...current, durationSeconds: seconds } : current);
                     }} />
                   </section>
