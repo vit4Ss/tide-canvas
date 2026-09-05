@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, ExternalLink, History, Loader2, RefreshCw, ScanSearch } from "lucide-react";
+import { Download, ExternalLink, History, Loader2, LockKeyhole, RefreshCw, ScanSearch, UserRoundSearch } from "lucide-react";
 import { socialAnalysisApi } from "@/lib/social-analysis-api";
 import type { SocialActivityRecordDetailVO } from "@/lib/social-analysis-api";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -145,13 +145,11 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
     <aside className={styles.historySidebar} aria-busy={loading} aria-label="我的使用记录">
       <header className={styles.historyHeader}>
         <div>
-          <small>HISTORY</small>
           <h2>使用记录</h2>
-          <p>仅当前账号可见</p>
+          <p><LockKeyhole aria-hidden />仅当前账号可见</p>
         </div>
-        <button type="button" onClick={() => void load()} disabled={loading} aria-label="刷新使用记录">
+        <button type="button" onClick={() => void load()} disabled={loading} aria-label="刷新使用记录" title="刷新使用记录">
           {loading ? <Loader2 className={styles.spin} aria-hidden /> : <RefreshCw aria-hidden />}
-          刷新
         </button>
       </header>
 
@@ -169,12 +167,16 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
             onClick={() => { setType(value); setPage(1); }}
           >{label}</button>
         ))}
-        <span>{total.toLocaleString("zh-CN")} 条记录</span>
+      </div>
+
+      <div className={styles.historySummary}>
+        <span>{type === "analysis" ? "分析记录" : type === "download" ? "下载记录" : "最近记录"}</span>
+        <span>{loading ? "加载中…" : error ? "加载失败" : `共 ${total.toLocaleString("zh-CN")} 条`}</span>
       </div>
 
       {loading ? (
         <div className={styles.historyLoading} role="status" aria-label="正在加载使用记录">
-          {[0, 1, 2, 3].map((item) => <i key={item} />)}
+          {[0, 1, 2, 3].map((item) => <i key={item} aria-hidden />)}
         </div>
       ) : error ? (
         <div className={styles.historyEmpty} role="alert">
@@ -193,34 +195,36 @@ export function ActivityHistorySidebar({ selectedId, watchId, refreshKey, onSele
           {rows.map((row) => (
             <article className={styles.historyRow} data-selected={selectedId === row.id ? "true" : "false"} key={row.id}>
               <button type="button" className={styles.historyRecordButton} aria-pressed={selectedId === row.id} onClick={() => void openRecord(row)} disabled={!!openingId}>
-                <span className={styles.historyTypeIcon} data-type={row.type}>
-                  {openingId === row.id ? <Loader2 className={styles.spin} aria-hidden /> : row.type === "download" ? <Download aria-hidden /> : <ScanSearch aria-hidden />}
+                <span className={styles.historyTypeIcon}>
+                  {openingId === row.id ? <Loader2 className={styles.spin} aria-hidden /> : row.type === "download" ? <Download aria-hidden /> : row.kind === "account" ? <UserRoundSearch aria-hidden /> : <ScanSearch aria-hidden />}
                 </span>
                 <span className={styles.historyCopy}>
-                  <strong title={row.title || row.sourceUrl}>{row.title || (row.type === "download" ? "公开视频" : "内容分析")}</strong>
+                  <strong title={row.title || row.sourceUrl}>{row.title || (row.type === "download" ? "公开视频" : recordLabel(row))}</strong>
                   <span>
                     {PLATFORM_LABEL[row.platform || ""] || row.platform || "待识别"}<i aria-hidden>·</i>{recordLabel(row)}
                     {row.type === "download" && (row.downloadedBytes || row.estimatedBytes) ? <><i aria-hidden>·</i>{formatBytes(row.downloadedBytes || row.estimatedBytes)}</> : null}
                   </span>
-                  {row.errorMessage ? <em title={row.errorMessage}>{row.errorMessage}</em> : null}
                 </span>
-                <span className={styles.historyState} data-status={row.status}><i aria-hidden />{statusLabel(row.status)}</span>
-                <time dateTime={row.createTime}>{formatTime(row.createTime)}</time>
+                {row.errorMessage ? <span className={styles.historyError} title={row.errorMessage}>{row.errorMessage}</span> : null}
+                <span className={styles.historyRecordMeta}>
+                  <span className={styles.historyState} data-status={row.status}><i aria-hidden />{statusLabel(row.status)}</span>
+                  <time dateTime={row.createTime} title={`当时调用：${new Date(row.createTime).toLocaleString("zh-CN")}`}>{formatTime(row.createTime)}</time>
+                </span>
               </button>
-              <a href={row.sourceUrl} target="_blank" rel="noreferrer" aria-label="打开来源链接"><ExternalLink aria-hidden /></a>
+              <a href={row.sourceUrl} target="_blank" rel="noreferrer" aria-label="打开来源链接" title="打开来源链接"><ExternalLink aria-hidden /></a>
             </article>
           ))}
         </div>
       )}
 
       {!loading && !error && total > PAGE_SIZE ? (
-        <footer className={styles.historyPager}>
+        <nav className={styles.historyPager} aria-label="使用记录分页">
           <span>第 {page} / {pageCount} 页</span>
           <div>
             <button type="button" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>上一页</button>
             <button type="button" disabled={page >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>下一页</button>
           </div>
-        </footer>
+        </nav>
       ) : null}
     </aside>
   );

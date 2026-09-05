@@ -1430,20 +1430,11 @@
 
 .historyHeader {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 24px;
-  padding: 20px;
-  border-bottom: 1px solid var(--border);
-}
-
-.historyHeader small {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--text-faint);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .08em;
+  flex-shrink: 0;
+  gap: 16px;
+  padding: 24px 20px 20px;
 }
 
 .historyHeader h2 {
@@ -1454,10 +1445,15 @@
 }
 
 .historyHeader p {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   margin: 8px 0 0;
   color: var(--text-dim);
-  font-size: 14px;
+  font-size: 12px;
 }
+
+.historyHeader p svg { width: 12px; height: 12px; }
 
 .historyHeader > button,
 .historyEmpty button,
@@ -1473,7 +1469,15 @@
   color: var(--text-dim);
   background: var(--surface-raised);
   font-size: 12px;
+  white-space: nowrap;
   transition: color 160ms var(--ease), border-color 160ms var(--ease);
+}
+
+.historyHeader > button {
+  width: 32px;
+  padding: 0;
+  flex-shrink: 0;
+  background: transparent;
 }
 
 .historyHeader > button:hover:not(:disabled),
@@ -1488,20 +1492,26 @@
 .historyHeader > button svg { width: 14px; height: 14px; }
 
 .historyFilters {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--border);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  flex-shrink: 0;
+  gap: 4px;
+  margin: 0 16px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--bg);
 }
 
 .historyFilters button {
   min-height: 32px;
-  padding: 0 12px;
+  min-width: 0;
+  padding: 0 4px;
   border: 1px solid transparent;
   border-radius: var(--r);
   color: var(--text-dim);
   font-size: 12px;
+  white-space: nowrap;
   transition: color 160ms var(--ease), background 160ms var(--ease), border-color 160ms var(--ease);
 }
 
@@ -1510,96 +1520,129 @@
   border-color: var(--border);
   color: var(--text);
   background: var(--surface-raised);
+  font-weight: 600;
 }
 
-.historyFilters > span {
-  margin-left: auto;
-  color: var(--text-faint);
+.historySummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 20px 20px 8px;
+  color: var(--text-dim);
   font-size: 12px;
 }
 
 .historyList {
   min-height: 0;
   flex: 1;
-  overflow: auto;
+  padding: 4px 12px 16px;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 .historyRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--border);
+  position: relative;
+  margin-bottom: 4px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  transition: background 160ms var(--ease), border-color 160ms var(--ease);
 }
 
-.historyRow:last-child { border-bottom: 0; }
-.historyRow[data-selected="true"] { background: var(--surface-raised); }
+.historyRow:last-child { margin-bottom: 0; }
+.historyRow:hover { background: var(--surface-raised); }
+.historyRow[data-selected="true"] {
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
+}
+
+.historyRow[data-selected="true"]::before {
+  content: "";
+  position: absolute;
+  top: 16px;
+  bottom: 16px;
+  left: -1px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--tech);
+  pointer-events: none;
+}
 
 .historyRecordButton {
+  width: 100%;
   min-width: 0;
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr);
-  align-items: center;
-  gap: 4px 12px;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
   padding: 12px;
   border-radius: var(--r);
   color: inherit;
   text-align: left;
-  transition: background 160ms var(--ease);
 }
 
-.historyRecordButton:hover:not(:disabled) { background: var(--surface-raised); }
 .historyRecordButton:disabled { cursor: default; }
 
 .historyTypeIcon {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   place-items: center;
   border: 1px solid var(--border);
   border-radius: var(--r);
   color: var(--text-dim);
-  background: var(--surface-raised);
-  grid-column: 1;
-  grid-row: 1 / span 3;
+  background: var(--surface);
 }
 
 .historyTypeIcon svg { width: 14px; height: 14px; }
-.historyTypeIcon[data-type="analysis"] { color: var(--text); }
+.historyRow[data-selected="true"] .historyTypeIcon { color: var(--text); }
 
-.historyCopy { min-width: 0; grid-column: 2; }
+.historyCopy { min-width: 0; }
 .historyCopy strong,
 .historyCopy > span,
-.historyCopy em {
+.historyError {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.historyCopy strong { font-size: 14px; font-weight: 600; }
+.historyCopy strong { padding-right: 24px; font-size: 14px; font-weight: 600; line-height: 20px; }
 .historyCopy > span {
   margin-top: 4px;
   color: var(--text-dim);
   font-size: 12px;
+  line-height: 16px;
 }
-.historyCopy > span i { margin: 0 8px; color: var(--text-faint); font-style: normal; }
-.historyCopy em {
-  margin-top: 4px;
+.historyCopy > span i { margin: 0 4px; color: var(--text-faint); font-style: normal; }
+.historyError {
+  grid-column: 1 / -1;
   color: var(--danger-text);
   font-size: 12px;
-  font-style: normal;
+  line-height: 20px;
+}
+
+.historyRecordMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  grid-column: 1 / -1;
+  gap: 4px 8px;
+  min-width: 0;
+  line-height: 20px;
 }
 
 .historyState {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   color: var(--text-dim);
   font-size: 12px;
   white-space: nowrap;
-  grid-column: 2;
 }
 
 .historyState i {
@@ -1615,13 +1658,16 @@
 .historyState[data-status="expired"] { color: var(--text-faint); }
 
 .historyRecordButton time {
-  color: var(--text-faint);
+  color: var(--text-dim);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  grid-column: 2;
 }
 
 .historyRow > a {
+  position: absolute;
+  top: 8px;
+  right: 8px;
   display: grid;
   width: 32px;
   height: 32px;
@@ -1634,12 +1680,20 @@
 .historyRow > a:hover { color: var(--text); background: var(--surface-raised); }
 .historyRow > a svg { width: 14px; height: 14px; }
 
+.historySidebar button:focus-visible,
+.historySidebar a:focus-visible {
+  outline: 2px solid var(--tech);
+  outline-offset: 2px;
+}
+
 .historyEmpty {
   display: grid;
-  min-height: 320px;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
   place-items: center;
   align-content: center;
-  padding: 40px;
+  padding: 32px 24px;
   text-align: center;
 }
 
@@ -1647,10 +1701,11 @@
 .historyEmpty strong { font-size: 16px; font-weight: 600; }
 .historyEmpty p { max-width: 440px; margin: 8px 0 20px; color: var(--text-dim); font-size: 14px; line-height: 1.6; }
 
-.historyLoading { display: grid; padding: 0 24px; }
+.historyLoading { display: grid; min-height: 0; overflow: auto; gap: 4px; padding: 4px 12px 16px; }
 .historyLoading i {
-  height: 80px;
-  border-bottom: 1px solid var(--border);
+  height: 96px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
   background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--text) 4%, transparent), transparent);
   background-size: 200% 100%;
   animation: historyLoading 1.6s ease-in-out infinite;
@@ -1662,25 +1717,37 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 12px 24px;
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 12px 16px;
   border-top: 1px solid var(--border);
 }
 
-.historyPager > span { color: var(--text-faint); font-size: 12px; }
-.historyPager > div { display: flex; gap: 8px; }
+.historyPager > span { color: var(--text-dim); font-size: 12px; white-space: nowrap; }
+.historyPager > div { display: flex; gap: 4px; }
+.historyPager button { padding: 0 8px; }
+
+@media (pointer: coarse) {
+  .historyHeader > button,
+  .historyFilters button,
+  .historyEmpty button,
+  .historyPager button { min-height: 44px; }
+  .historyHeader > button { width: 44px; }
+  .historyRow > a { width: 44px; height: 44px; top: 0; right: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .historyLoading i { animation: none; }
+}
 
 @media (max-width: 900px) {
   .page { display: block; overflow: auto; }
   .workspaceMain { overflow: visible; }
-  .historySidebar { max-height: 440px; border-right: 0; border-bottom: 1px solid var(--border); }
-  .historyHeader { align-items: flex-start; padding: 20px; }
-  .historyFilters { overflow-x: auto; padding: 12px 20px; }
-  .historyFilters > span { display: none; }
+  .historySidebar { max-height: 520px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .historyHeader { padding: 20px; }
   .historyLoading,
-  .historyList { max-height: 240px; overflow: auto; }
+  .historyList { max-height: 240px; flex: auto; }
   .historyEmpty { min-height: 200px; }
-  .historyPager { padding: 12px 20px; }
 }
 
 .getter {
