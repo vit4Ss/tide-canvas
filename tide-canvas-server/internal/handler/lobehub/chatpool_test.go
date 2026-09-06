@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"tidecanvas/internal/model"
@@ -411,5 +414,104 @@ func TestTheCatalogueAdvertisesTheNamespacedID(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), `"flowinglight/test-model"`) {
 		t.Fatalf("the catalogue still advertises a bare id: %s", w.Body.String())
+	}
+}
+
+// bindTo runs a binding against a stub LobeHub whose inbox reports the given
+// model, and returns every tRPC body the sync sent.
+func bindTo(t *testing.T, inboxModel string, alreadyBound bool) []string {
+	t.Helper()
+	var bodies []string
+	var mainID string
+	lobe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/auth/get-session":
+			fmt.Fprint(w, `{"user":{"id":"lobe-user"}}`)
+		case "/api/auth/list-accounts":
+			fmt.Fprintf(w, `[{"providerId":"generic-oidc","accountId":"%s"}]`, mainID)
+		case "/trpc/lambda/agent.getBuiltinAgent":
+			fmt.Fprintf(w, `{"result":{"data":{"json":{"id":"inbox-agent","model":%q,"provider":"flowinglight"}}}}`, inboxModel)
+		default:
+			raw, _ := io.ReadAll(r.Body)
+			bodies = append(bodies, r.URL.Path+" "+string(raw))
+			fmt.Fprint(w, `{"result":{"data":{"json":null}}}`)
+		}
+	}))
+	defer lobe.Close()
+
+	f := setup(t, lobe.URL, "")
+	mainID = f.user.ID.String()
+	if alreadyBound {
+		// A user who bound before this build: the mapping already exists, so the
+		// sync takes the "not a first binding" path.
+		connected := time.Now()
+		if err := f.s.d.DB.Create(&model.LobeHubLink{UserID: f.user.ID, LobeUserID: "lobe-user", ConnectedAt: &connected}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	launch := jsonMap(t, f.request("POST", "/api/lobehub/launch", fmt.Sprintf(`{"accountId":"%s"}`, f.user.ID), f.jwt, nil))["data"].(map[string]any)["url"].(string)
+	u, _ := url.Parse(launch)
+	w := f.request("POST", "/api/lobehub/bind", `{"ticket":"`+u.Query().Get("ticket")+`"}`, "",
+		map[string]string{"Origin": lobe.URL, "Cookie": "session=valid"})
+	if w.Code != 200 {
+		t.Fatalf("binding failed: %d %s", w.Code, w.Body.String())
+	}
+	return bodies
+}
+
+func sentTo(bodies []string, procedure string) (string, bool) {
+	for _, body := range bodies {
+		if strings.HasPrefix(body, "/trpc/lambda/"+procedure+" ") {
+			return body, true
+		}
+	}
+	return "", false
+}
+
+// A user who bound before the ids were namespaced still has an assistant
+// pointing at the old bare id. That model is gone from LobeHub's list after the
+// sync, so every message would fail until the reference is repaired.
+func TestAStaleAssistantModelIsRepairedOnAReturningBinding(t *testing.T) {
+	bodies := bindTo(t, "test-model", true)
+
+	config, ok := sentTo(bodies, "agent.updateAgentConfig")
+	if !ok {
+		t.Fatalf("the assistant was left pointing at a model that is gone: %v", bodies)
+	}
+	if !strings.Contains(config, `"flowinglight/test-model"`) {
+		t.Fatalf("the assistant was re-pointed at the wrong id: %s", config)
+	}
+	// The system agents carry the same stale id and are repaired in one pass.
+	if settings, ok := sentTo(bodies, "user.updateSettings"); !ok {
+		t.Fatalf("the system assistants kept the stale id: %v", bodies)
+	} else if strings.Contains(strings.ReplaceAll(settings, "flowinglight/test-model", ""), "test-model") {
+		t.Fatalf("a stale id survived the repair: %s", settings)
+	}
+}
+
+// A model the user picked that is still on offer is their decision. Re-entering
+// the chat must not move them off it.
+func TestAnOfferedAssistantModelIsLeftAlone(t *testing.T) {
+	bodies := bindTo(t, "flowinglight/test-model", true)
+	if body, ok := sentTo(bodies, "agent.updateAgentConfig"); ok {
+		t.Fatalf("a returning user was moved off the model they had chosen: %s", body)
+	}
+	if body, ok := sentTo(bodies, "user.updateSettings"); ok {
+		t.Fatalf("a returning user had their assistant settings overwritten: %s", body)
+	}
+}
+
+// A first binding configures the defaults regardless of what the inbox says.
+func TestAFirstBindingStillSetsTheDefaults(t *testing.T) {
+	bodies := bindTo(t, "", false)
+	for _, procedure := range []string{"user.updateSettings", "agent.updateAgentConfig"} {
+		body, ok := sentTo(bodies, procedure)
+		if !ok {
+			t.Fatalf("a first binding skipped %s: %v", procedure, bodies)
+		}
+		if !strings.Contains(body, `"flowinglight/test-model"`) {
+			t.Fatalf("%s did not name the advertised id: %s", procedure, body)
+		}
 	}
 }

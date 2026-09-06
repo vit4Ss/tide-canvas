@@ -326,11 +326,14 @@ func (s *service) bind(c *gin.Context) {
 	}
 	if err == nil {
 		// Drop what a previous sync left behind before pushing the current list.
-		// batchUpdateAiModels only upserts, so a model the operator has stopped
-		// offering — or one synced under an older id — would otherwise stay in
-		// the picker and fail at send time. Only models this sync created carry
-		// source "remote", so nothing the user added by hand is touched. A
-		// refusal here is not fatal: a stale extra entry beats no chat at all.
+		// batchUpdateAiModels only upserts, and on conflict it keeps the row's
+		// existing displayName (COALESCE) and enabled flag — so a re-sync could
+		// never correct a price already shown in the picker, and a model the
+		// operator stopped offering, or one synced under an older id, stayed
+		// there and failed at send time. Deleting first makes the push
+		// authoritative. Only rows this sync created carry source "remote", so
+		// nothing the user added by hand is touched, and a refusal here is not
+		// fatal: a stale extra entry beats no chat at all.
 		if clearErr := s.rpc(c.Request.Context(), cookie, "aiModel.clearRemoteModels", gin.H{"providerId": provider}); clearErr != nil {
 			logger.L().Warn("could not clear previously synced chat models", zap.Error(clearErr))
 		}
@@ -338,6 +341,10 @@ func (s *service) bind(c *gin.Context) {
 		ids := []string{}
 		for i := range routes {
 			r := &routes[i]
+			// Abilities stay to what this gateway actually serves. "search" in
+			// particular must not be declared: LobeHub routes any model with the
+			// search toggle on to /v1/responses, which this gateway does not
+			// implement — the same path the namespaced id exists to avoid.
 			items = append(items, gin.H{"id": advertisedID(r.model.ModelKey), "type": "chat", "displayName": r.displayName(), "enabled": true, "source": "remote", "abilities": gin.H{"functionCall": s.cfg.SupportsTools, "vision": r.model.Vision}})
 			ids = append(ids, advertisedID(r.model.ModelKey))
 		}
@@ -348,24 +355,54 @@ func (s *service) bind(c *gin.Context) {
 		if err == nil {
 			s.hideForeignProviders(c.Request.Context(), cookie, provider)
 		}
-		if err == nil && firstBinding {
-			systemAgents := gin.H{}
-			for _, name := range []string{"topic", "historyCompress", "translation", "agentMeta", "thread", "generationTopic", "followUpAction", "inputCompletion", "promptRewrite", "topicAutoSummary", "goal", "expertise", "onboardingUnderstanding", "onboardingTaskRecommender"} {
-				// Keep explicit translation/rewrite actions available, while avoiding
-				// automatic title, suggestion and compression calls on first entry.
-				enabled := name == "translation" || name == "promptRewrite"
-				systemAgents[name] = gin.H{"model": routes[0].model.ModelKey, "provider": provider, "enabled": enabled}
+		if err == nil {
+			// Agents name a model by the id LobeHub knows it under, which is the
+			// namespaced one. A bare key here would point every default agent at
+			// a model that is not in its list.
+			defaultModel := advertisedID(routes[0].model.ModelKey)
+			offered := map[string]bool{}
+			for i := range routes {
+				offered[advertisedID(routes[i].model.ModelKey)] = true
 			}
-			err = s.rpc(c.Request.Context(), cookie, "user.updateSettings", gin.H{"defaultAgent": gin.H{"config": gin.H{"model": routes[0].model.ModelKey, "provider": provider}}, "general": gin.H{"language": "zh-CN"}, "systemAgent": systemAgents})
-			if err == nil {
-				raw, queryErr := s.rpcQuery(c.Request.Context(), cookie, "agent.getBuiltinAgent", gin.H{"slug": "inbox"})
-				var inbox struct {
-					ID string `json:"id"`
+			// The inbox is the assistant the user actually chats with, and it
+			// stores its model as an id. Read it on every binding, not only the
+			// first: when the main site stops offering that model — or the id it
+			// is advertised under changes — the reference dangles and every
+			// message fails on a model LobeHub no longer has. A model that is
+			// still offered is the user's own choice and is left alone.
+			raw, queryErr := s.rpcQuery(c.Request.Context(), cookie, "agent.getBuiltinAgent", gin.H{"slug": "inbox"})
+			var inbox struct {
+				ID    string `json:"id"`
+				Model string `json:"model"`
+			}
+			readable := queryErr == nil && json.Unmarshal(raw, &inbox) == nil && inbox.ID != ""
+			dangling := readable && inbox.Model != "" && !offered[inbox.Model]
+
+			if firstBinding || dangling {
+				systemAgents := gin.H{}
+				for _, name := range []string{"topic", "historyCompress", "translation", "agentMeta", "thread", "generationTopic", "followUpAction", "inputCompletion", "promptRewrite", "topicAutoSummary", "goal", "expertise", "onboardingUnderstanding", "onboardingTaskRecommender"} {
+					// Keep explicit translation/rewrite actions available, while avoiding
+					// automatic title, suggestion and compression calls on first entry.
+					enabled := name == "translation" || name == "promptRewrite"
+					systemAgents[name] = gin.H{"model": defaultModel, "provider": provider, "enabled": enabled}
 				}
-				if queryErr != nil || json.Unmarshal(raw, &inbox) != nil || inbox.ID == "" {
+				// These carry the same stale id as the inbox, so they are
+				// repaired in the same pass rather than left to fail later.
+				repair := s.rpc(c.Request.Context(), cookie, "user.updateSettings", gin.H{"defaultAgent": gin.H{"config": gin.H{"model": defaultModel, "provider": provider}}, "general": gin.H{"language": "zh-CN"}, "systemAgent": systemAgents})
+				if repair == nil && readable {
+					repair = s.rpc(c.Request.Context(), cookie, "agent.updateAgentConfig", gin.H{"agentId": inbox.ID, "value": gin.H{"model": defaultModel, "provider": provider}})
+				}
+				switch {
+				case !firstBinding:
+					// A repair is best effort: the user can still pick a model
+					// by hand, and failing the binding would lock them out.
+					if repair != nil {
+						logger.L().Warn("could not re-point the chat assistant at an offered model", zap.Error(repair))
+					}
+				case !readable:
 					err = errors.New("LobeHub inbox configuration unavailable")
-				} else {
-					err = s.rpc(c.Request.Context(), cookie, "agent.updateAgentConfig", gin.H{"agentId": inbox.ID, "value": gin.H{"model": routes[0].model.ModelKey, "provider": provider}})
+				default:
+					err = repair
 				}
 			}
 		}

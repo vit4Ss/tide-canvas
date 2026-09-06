@@ -332,6 +332,7 @@ func TestGatewayRejectsInsufficientBalanceBeforeUpstream(t *testing.T) {
 func TestBindVerifiesActualLobeIdentityAndKeepsKeyServerSide(t *testing.T) {
 	var mainID string
 	var rpcCalls []string
+	var rpcBodies []string
 	var keyTransferred string
 	lobe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -350,6 +351,7 @@ func TestBindVerifiesActualLobeIdentityAndKeepsKeyServerSide(t *testing.T) {
 		default:
 			rpcCalls = append(rpcCalls, r.URL.Path)
 			raw, _ := io.ReadAll(r.Body)
+			rpcBodies = append(rpcBodies, r.URL.Path+" "+string(raw))
 			if strings.Contains(r.URL.Path, "updateAiProviderConfig") {
 				var input map[string]any
 				_ = json.Unmarshal(raw, &input)
@@ -392,6 +394,19 @@ func TestBindVerifiesActualLobeIdentityAndKeepsKeyServerSide(t *testing.T) {
 			t.Fatalf("binding skipped %s: %v", procedure, rpcCalls)
 		}
 	}
+	// Every model this sync names — the catalogue, the connectivity check, the
+	// default agent, the system agents — must use the id LobeHub will know it
+	// under. A bare key anywhere points LobeHub at a model that is not in its
+	// list, and for an OpenAI-looking key it also puts the call back on the
+	// /v1/responses path this gateway does not serve.
+	for _, body := range rpcBodies {
+		// Remove the namespaced form first: whatever mention of the key is left
+		// is a bare one, even when the same payload got the other mentions right.
+		if strings.Contains(strings.ReplaceAll(body, "flowinglight/test-model", ""), "test-model") {
+			t.Fatalf("a sync payload named the model by its bare key: %s", body)
+		}
+	}
+
 	// Clearing has to come before the push, or the sync deletes what it just
 	// wrote and the user is left with an empty model picker.
 	clear := slices.Index(rpcCalls, "/trpc/lambda/aiModel.clearRemoteModels")

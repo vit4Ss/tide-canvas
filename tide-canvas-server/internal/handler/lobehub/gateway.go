@@ -791,7 +791,9 @@ func (s *service) chat(c *gin.Context) {
 		raw, _ := json.Marshal(out.json(modelName))
 		auditResponse = string(raw)
 	}
-	eventlog.ModelText(uid, "chat", modelName, "/api/integrations/v1/chat/completions", eventlog.SanitizeDataURIs(string(payload)), auditResponse, started, callErr, cost, eventlog.ModelTextBillingRef{ID: row.ID, Type: "ledger"})
+	// The canonical key, not whatever the caller spelled: the namespaced id and
+	// the bare one are the same model, and the audit should say so once.
+	eventlog.ModelText(uid, "chat", route.model.ModelKey, "/api/integrations/v1/chat/completions", eventlog.SanitizeDataURIs(string(payload)), auditResponse, started, callErr, cost, eventlog.ModelTextBillingRef{ID: row.ID, Type: "ledger"})
 	if code != "" {
 		message := "回复未完整生成，积分已退回，请重新发起或继续提问"
 		if out.hasOutput() {
