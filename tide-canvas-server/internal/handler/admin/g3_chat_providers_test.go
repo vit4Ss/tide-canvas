@@ -195,7 +195,9 @@ func TestChatModelDiscoveryOnlyAdds(t *testing.T) {
 		fmt.Fprint(w, `{"data":[{"id":"kept"},{"id":"fresh"},{"id":"fresh"},{"id":""}]}`)
 	}))
 	defer upstream.Close()
-	f.endpoint(upstream.URL, "sk-fetch")
+	// The operator pasted the address exactly as their provider documents it,
+	// with the version segment already on the end.
+	f.endpoint(upstream.URL+"/v1", "sk-fetch")
 
 	const price = `{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"2","outputPointsPerMillion":"8"}}`
 	kept := model.ChatModel{

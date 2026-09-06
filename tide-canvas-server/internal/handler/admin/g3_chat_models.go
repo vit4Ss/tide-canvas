@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/chatupstream"
 	"tidecanvas/internal/pkg/response"
 	"tidecanvas/internal/pkg/tokenbilling"
 )
@@ -112,7 +113,7 @@ func (h *chatProvidersHandler) fetchModels(c *gin.Context) {
 // remoteModels reads GET {base}/v1/models. The body is capped so a broken or
 // hostile endpoint cannot exhaust memory here.
 func (h *chatProvidersHandler) remoteModels(ctx context.Context, baseURL, apiKey string) ([]string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(baseURL, "/")+"/v1/models", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", chatupstream.Endpoint(baseURL, "models"), nil)
 	if err != nil {
 		return nil, errors.New("地址无效")
 	}

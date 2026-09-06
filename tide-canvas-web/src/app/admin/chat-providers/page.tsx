@@ -343,7 +343,7 @@ function EndpointList({ provider, busy, run }: { provider: ChatProviderVO; busy:
       )}
 
       <FormGrid>
-        <Field label="接入地址" span={2} hint="https 开头，可带路径前缀，不要写到 /v1 之后">
+        <Field label="接入地址" span={2} hint="https 开头。供应商文档里的 base_url 直接粘贴即可，带不带 /v1 都行">
           <input inputMode="url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com" />
         </Field>
         <Field label="API Key" hint="保存后不再回显">

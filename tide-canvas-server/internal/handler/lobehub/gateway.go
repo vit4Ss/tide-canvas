@@ -22,6 +22,7 @@ import (
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/chatcontext"
+	"tidecanvas/internal/pkg/chatupstream"
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
@@ -431,7 +432,7 @@ func (s *service) readUpstream(ctx context.Context, endpoints []chatEndpoint, pa
 	var resp *http.Response
 	var lastErr error
 	for i, endpoint := range endpoints {
-		req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(endpoint.baseURL, "/")+"/v1/chat/completions", bytes.NewReader(payload))
+		req, err := http.NewRequestWithContext(ctx, "POST", chatupstream.Endpoint(endpoint.baseURL, "chat/completions"), bytes.NewReader(payload))
 		if err != nil {
 			send(upstreamFrame{err: err})
 			return

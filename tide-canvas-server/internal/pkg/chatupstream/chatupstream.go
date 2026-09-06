@@ -108,3 +108,18 @@ func NormalizeBaseURL(raw string) (string, error) {
 	}
 	return strings.TrimRight(parsed.Scheme+"://"+parsed.Host+parsed.Path, "/"), nil
 }
+
+// Endpoint builds an OpenAI-style URL under a provider's base address.
+//
+// Providers document that address both ways — "https://host" and
+// "https://host/v1" — and an operator pastes whichever their provider printed.
+// Appending "/v1" unconditionally turns the second form into "/v1/v1/models",
+// which the upstream answers with an error that looks like the provider is
+// down. So the version segment is added only when it is not already there.
+func Endpoint(baseURL, path string) string {
+	base := strings.TrimRight(baseURL, "/")
+	if !strings.HasSuffix(base, "/v1") {
+		base += "/v1"
+	}
+	return base + "/" + strings.TrimLeft(path, "/")
+}

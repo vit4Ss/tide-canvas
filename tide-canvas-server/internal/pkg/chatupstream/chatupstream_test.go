@@ -67,3 +67,26 @@ func TestBaseURLMustBeAPlainHTTPSOrigin(t *testing.T) {
 		}
 	}
 }
+
+// Relays document their base address both ways, and an operator pastes what
+// their provider printed. Both must reach the same URL — appending a second
+// "/v1" produces an upstream error that reads as "the provider is down".
+func TestEndpointDoesNotDoubleTheVersionSegment(t *testing.T) {
+	cases := []struct{ base, want string }{
+		{"https://ccgoai.club/v1", "https://ccgoai.club/v1/models"},
+		{"https://ccgoai.club/v1/", "https://ccgoai.club/v1/models"},
+		{"https://ccgoai.club", "https://ccgoai.club/v1/models"},
+		{"https://ccgoai.club/", "https://ccgoai.club/v1/models"},
+		// A relay mounted under a prefix keeps it; only the version is deduped.
+		{"https://host/proxy/openai", "https://host/proxy/openai/v1/models"},
+		{"https://host/proxy/openai/v1", "https://host/proxy/openai/v1/models"},
+	}
+	for _, c := range cases {
+		if got := Endpoint(c.base, "models"); got != c.want {
+			t.Errorf("Endpoint(%q) = %q, want %q", c.base, got, c.want)
+		}
+	}
+	if got := Endpoint("https://ccgoai.club/v1", "chat/completions"); got != "https://ccgoai.club/v1/chat/completions" {
+		t.Errorf("chat path = %q", got)
+	}
+}
