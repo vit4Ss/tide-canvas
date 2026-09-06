@@ -31,6 +31,12 @@ import (
 
 const maxGatewayResponse = 8 << 20
 
+// maxGatewayRequest bounds one chat request. LobeHub inlines every attached
+// image as base64 (LLM_VISION_IMAGE_USE_BASE64=1 in its compose), about 4 MiB
+// each after its own compression, and the history window keeps three earlier
+// messages that may carry images too. 16 MiB failed on a handful of pictures.
+const maxGatewayRequest = 64 << 20
+
 var errBusy = errors.New("gateway concurrency limit")
 var errDaily = errors.New("gateway daily limit")
 var errQuota = errors.New("gateway account quota")
@@ -503,11 +509,20 @@ func (s *service) readUpstream(ctx context.Context, endpoints []chatEndpoint, pa
 }
 
 func (s *service) chat(c *gin.Context) {
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<20)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxGatewayRequest)
 	var body map[string]any
 	decoder := json.NewDecoder(c.Request.Body)
-	if decoder.Decode(&body) != nil {
-		gatewayError(c, 400, "invalid_request", "请求格式无效或超过大小限制")
+	if err := decoder.Decode(&body); err != nil {
+		// Too large and malformed are different problems for the person on the
+		// other end: one is fixed by attaching fewer pictures, the other is a
+		// client bug. Say which.
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			gatewayError(c, 413, "request_too_large",
+				fmt.Sprintf("请求超过 %d MiB 上限，请减少附带的图片数量或尺寸", maxGatewayRequest>>20))
+			return
+		}
+		gatewayError(c, 400, "invalid_request", "请求格式无效")
 		return
 	}
 	var trailing any

@@ -515,3 +515,36 @@ func TestAFirstBindingStillSetsTheDefaults(t *testing.T) {
 		}
 	}
 }
+
+// A request that is too big and one that is malformed are different problems
+// for the user — fewer pictures fixes one, nothing they do fixes the other —
+// so they must not share an error.
+func TestTooLargeAndMalformedRequestsAreToldApart(t *testing.T) {
+	f := setup(t, "", "")
+
+	// Well-formed JSON, just past the cap: an image-laden message.
+	filler := strings.Repeat("a", maxGatewayRequest+1024)
+	huge := `{"model":"test-model","messages":[{"role":"user","content":"` + filler + `"}]}`
+	w := f.request("POST", "/api/integrations/v1/chat/completions", huge, f.apiKey, nil)
+	if w.Code != 413 || !strings.Contains(w.Body.String(), "request_too_large") {
+		t.Fatalf("an oversized request was not reported as such: %d %s", w.Code, w.Body.String()[:min(200, w.Body.Len())])
+	}
+	if !strings.Contains(w.Body.String(), "64 MiB") {
+		t.Fatalf("the message does not tell the user the limit: %s", w.Body.String())
+	}
+
+	w = f.request("POST", "/api/integrations/v1/chat/completions", `{"model": "test-model", "messages": [`, f.apiKey, nil)
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_request") {
+		t.Fatalf("malformed JSON was not a 400: %d %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "大小") {
+		t.Fatalf("malformed JSON was blamed on size: %s", w.Body.String())
+	}
+
+	// Neither refusal may move money: they happen before any reservation.
+	var user model.User
+	f.s.d.DB.First(&user, "id = ?", f.user.ID)
+	if user.Points != 20 || user.PointHeldMicros != 0 {
+		t.Fatalf("a refused request moved money: %+v", user)
+	}
+}
