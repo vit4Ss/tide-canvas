@@ -212,7 +212,50 @@ systemctl reload nginx
 
 工具返回图片/文件时，apirouter 保留 `tool_call_id`、图片精度及文件标识，Responses 通路将它们转换成结构化内容数组，不把整个结果变成 Java 字符串。该形式对应 [OpenAI 官方 SDK 的 FunctionCallOutput 定义](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/response_input_param.py)；具体模型仍需支持所使用的模态。
 
-计费和限额只覆盖 `flowinglight` 的主站网关。**用户自带 Key（BYOK）已被关闭**：每次连接都会停用其他 provider，用户即使手动开启，下次进入也会被再次停用。若日后要放开，去掉绑定流程里的 `hideForeignProviders` 调用即可；那些调用不消耗主站积分。语音、绘图等专用协议接口不由本次文本模型网关提供，需在 LobeHub 配置相应服务；图片输入也取决于主站模型的文件能力配置和上游实际支持。
+计费和限额只覆盖 `flowinglight` 的主站网关。**用户自带 Key（BYOK）已被关闭**：每次连接都会停用其他 provider，用户即使手动开启，下次进入也会被再次停用。若日后要放开，去掉绑定流程里的 `hideForeignProviders` 调用即可；那些调用不消耗主站积分。语音、绘图等专用协议接口不由本次文本模型网关提供，需在 LobeHub 配置相应服务；图片输入见下节「聊天里的附件上传」。
+
+## 聊天里的附件上传
+
+默认**不开放**：`prepare.py` 的 `FEATURE_FLAGS` 关掉 `knowledge_base`，LobeHub 的附件按钮
+（`ChatInput/ActionBar/Upload`）在该标志为假时整个不渲染。这是有意的——上传链路依赖
+LobeHub 自己的对象存储，与主站网关无关，网关只转发消息。
+
+要开放，需要同时满足四项，缺一项的表现都是「点了没反应」而界面不报错：
+
+| 要求 | 不满足时的现象 | 怎么确认 |
+| --- | --- | --- |
+| `FEATURE_FLAGS` 里**不要**带 `-knowledge_base` | 附件按钮根本不出现 | `config.getGlobalConfig` 的 `enableKnowledgeBase` |
+| LobeHub 配好 S3（`S3_SECRET_ACCESS_KEY` 等） | 同上，按钮不出现 | 同上接口的 `enableUploadFileToServer` |
+| 后台该模型的「图片」开关打开 | 菜单里「上传图片」是灰的，悬停有提示 | `/admin/chat-providers` 模型表 |
+| **S3 配了 CORS，允许从 LobeHub 域名 `PUT`** | 选完文件后毫无反应，只有浏览器 console 有报错 | 开发者工具 Network 里那条 PUT |
+
+最后一项最容易漏。浏览器是**直传**对象存储的：LobeHub 通过 `upload.createS3PreSignedUrl`
+换一个预签名地址，再由页面 `XMLHttpRequest` 直接 `PUT` 过去，不经服务端中转。所以桶必须允许
+跨域写，例如：
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://<LobeHub 域名>"],
+    "AllowedMethods": ["PUT", "GET", "HEAD"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3000
+  }
+]
+```
+
+（MinIO 也可用 `MINIO_API_CORS_ALLOW_ORIGIN` 设置。）
+
+**不需要**把桶设成公开可读。`S3_SET_ACL` 未开启时 LobeHub 用预签名 URL 取文件
+（`getFullFileUrl`），公开读策略只在 `S3_SET_ACL=1` 且配了 `S3_PUBLIC_DOMAIN` 时才走到。
+给 `arn:aws:s3:::<bucket>/*` 加 `Principal: "*"` 的 `s3:GetObject` 会让所有用户上传的文件
+对全网可读，且并不能解决上传失败。
+
+还有一点与本集成有关：图片进入对话后，其 URL 会经主站网关原样转给第三方中转站，
+**由中转站从它那一侧去拉取**。如果 S3 端点或 `S3_PUBLIC_DOMAIN` 只在内网可达
+（例如 `http://minio:9000`），上传会成功、缩略图也正常，但模型看不到图片。
+
 
 ## 6. 验收与排错
 
