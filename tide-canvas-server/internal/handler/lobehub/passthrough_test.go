@@ -185,3 +185,69 @@ func TestTheRequestReachesTheProviderAsTheClientBuiltIt(t *testing.T) {
 		t.Fatalf("the provider was called with %v, want its own model key", got["model"])
 	}
 }
+
+// A CDN or proxy in front of the provider answers a bad day with an HTML page.
+// Its source is not a message; the user is told what happened instead.
+func TestAnHTMLErrorPageIsNotShownAsTheReason(t *testing.T) {
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(502)
+		fmt.Fprint(w, "<!DOCTYPE html><html><head><title>502 Bad Gateway</title></head><body>cloudflare</body></html>")
+	}))
+	defer cdn.Close()
+
+	f := setup(t, "", cdn.URL)
+	w := f.request("POST", "/api/integrations/v1/chat/completions", untrimmedPrompt, f.apiKey, nil)
+	body := w.Body.String()
+	if strings.Contains(body, "<html") || strings.Contains(body, "DOCTYPE") {
+		t.Fatalf("HTML source was shown to the user: %s", body)
+	}
+	if w.Code != 502 || !strings.Contains(body, "HTTP 502") {
+		t.Fatalf("the user was not told what happened: %d %s", w.Code, body)
+	}
+}
+
+// Relays spell their refusals differently. Each shape still yields the reason.
+func TestOtherErrorBodyShapesStillYieldTheReason(t *testing.T) {
+	for _, tc := range []struct{ body, want string }{
+		{`{"error":{"msg":"quota exceeded for key"}}`, "quota exceeded for key"},
+		{`{"detail":"Model gpt-x is not enabled for this key"}`, "Model gpt-x is not enabled for this key"},
+		{`{"error":"plain string error"}`, "plain string error"},
+		{`just text, no json`, "just text, no json"},
+	} {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(400)
+			fmt.Fprint(w, tc.body)
+		}))
+		f := setup(t, "", upstream.URL)
+		w := f.request("POST", "/api/integrations/v1/chat/completions", untrimmedPrompt, f.apiKey, nil)
+		upstream.Close()
+		if !strings.Contains(w.Body.String(), tc.want) {
+			t.Errorf("body %s: reason %q not surfaced in %s", tc.body, tc.want, w.Body.String())
+		}
+	}
+}
+
+// A relay that does not carry the model answers 404. Another address of the
+// same provider may carry it, so the call moves on; only when every address
+// says so does the user hear it.
+func TestAModelMissingOnOneAddressIsTriedOnTheNext(t *testing.T) {
+	var backupCalls atomic.Int32
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		fmt.Fprint(w, `{"error":{"message":"The model does not exist"}}`)
+	}))
+	defer primary.Close()
+	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backupCalls.Add(1)
+		fmt.Fprint(w, okWithUsage)
+	}))
+	defer backup.Close()
+
+	f := setup(t, "", primary.URL)
+	addEndpoint(t, f, backup.URL, "backup-secret", 1)
+	w := f.request("POST", "/api/integrations/v1/chat/completions", untrimmedPrompt, f.apiKey, nil)
+	if w.Code != 200 || backupCalls.Load() != 1 {
+		t.Fatalf("a 404 on one address did not move to the next: %d calls, %d %s", backupCalls.Load(), w.Code, w.Body.String())
+	}
+}

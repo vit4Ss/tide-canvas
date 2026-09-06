@@ -24,7 +24,7 @@ def atomic_private(path, text):
             temporary.unlink(missing_ok=True)
 
 
-def init(main_url, lobe_url, supports_tools=False):
+def init(main_url, lobe_url):
     for value in (main_url, lobe_url):
         parsed = urlsplit(value)
         if parsed.scheme != "https" or not parsed.netloc or parsed.path not in ("", "/") or parsed.query or parsed.fragment or parsed.username:
@@ -64,7 +64,6 @@ def init(main_url, lobe_url, supports_tools=False):
         "TIDECANVAS_LOBEHUB_MAXCONCURRENT": "2",
         "TIDECANVAS_LOBEHUB_DAILYLIMIT": "0",
         # Enable only after deploying the companion apirouter protocol changes.
-        "TIDECANVAS_LOBEHUB_SUPPORTSTOOLS": str(supports_tools).lower(),
     }
     lobe = {
         "AUTH_SSO_PROVIDERS": "generic-oidc",
@@ -139,12 +138,11 @@ if __name__ == "__main__":
     setup = sub.add_parser("init")
     setup.add_argument("--main-url", default="https://test-flowlight.tcmzhan.com")
     setup.add_argument("--lobe-url", default="https://test-lobehub.tcmzhan.com")
-    setup.add_argument("--supports-tools", action="store_true", help="Use only after deploying the apirouter protocol update")
     merge = sub.add_parser("merge-env")
     merge.add_argument("--target", required=True)
     merge.add_argument("--fragment", required=True)
     args = parser.parse_args()
     if args.command == "init":
-        init(args.main_url, args.lobe_url, args.supports_tools)
+        init(args.main_url, args.lobe_url)
     else:
         merge_env(args.target, args.fragment)

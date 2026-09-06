@@ -18,11 +18,11 @@ class PrepareTest(unittest.TestCase):
                 private = Path(tmp) / "private"
                 secret = (private / "client-secret").read_text()
                 key = (private / "oidc-private.pem").read_bytes()
-                prepare.init("https://main.example", "https://chat.example", True)
+                prepare.init("https://main.example", "https://chat.example")
             self.assertEqual(secret, (private / "client-secret").read_text())
             self.assertEqual(key, (private / "oidc-private.pem").read_bytes())
             self.assertNotIn(secret, output.getvalue())
-            self.assertIn("SUPPORTSTOOLS=true", (private / "main.env").read_text())
+            self.assertNotIn("SUPPORTSTOOLS", (private / "main.env").read_text())
 
     def test_merge_preserves_lobe_encryption_secrets_and_backup(self):
         with tempfile.TemporaryDirectory() as tmp:

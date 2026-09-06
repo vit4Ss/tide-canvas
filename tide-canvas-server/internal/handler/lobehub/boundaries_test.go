@@ -68,7 +68,6 @@ func TestGatewayToolCycleAndInvalidInputs(t *testing.T) {
 	}))
 	defer up.Close()
 	f := setup(t, "", up.URL)
-	f.s.cfg.SupportsTools = true
 	body := `{"model":"test-model","tools":[{"type":"function","function":{"name":"search","parameters":{"type":"object"}}}],"messages":[{"role":"system","content":"rules"},{"role":"user","content":"find"},{"role":"assistant","tool_calls":[{"id":"call_previous","type":"function","function":{"name":"search","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_previous","content":"result"}]}`
 	w := f.request("POST", "/api/integrations/v1/chat/completions", body, f.apiKey, nil)
 	if w.Code != 200 {

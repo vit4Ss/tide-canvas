@@ -56,7 +56,7 @@ git apply /path/to/apirouter-compat.patch
 
 用原有发布流程更新 apirouter、主站后端和前端。主站首次启动会迁移 `lobehub_grant`、`lobehub_link`、`model_gateway_request` 三张新表；原用户和默认 Key 不变。先备份数据库，再按正常发布流程执行迁移。
 
-只部署主站时，保持 `TIDECANVAS_LOBEHUB_SUPPORTSTOOLS=false`，可先接通普通聊天。部署兼容版 apirouter 并确认上游模型支持工具后，再设为 `true`；仅打开开关不能补足上游的工具能力。
+工具调用没有开关：网关把 `tools` 原样转给上游，模型支持与否由上游决定，不支持时上游的拒绝原文会直接显示给用户。
 
 ## 2. 生成接入密钥和主站配置
 
@@ -469,7 +469,7 @@ docker compose up -d
 | Key 轮换后 401 | 从主站重新进入，等待 Key 同步完成 |
 | `SYNC_IN_PROGRESS` | 另一个页面正在同步；稍后从主站重试，进程中断遗留的同步锁最多等待 3 分钟 |
 | 回复中断 | 查看模型日志及返回错误；部分输出收费、无有效输出退款；不要仅依据 HTTP 200 判断 SSE 生成成功 |
-| 工具不可用 | 先确认 apirouter 兼容改动已发布，再启用 SUPPORTSTOOLS，并确认实际模型支持 function calling |
+| 工具不可用 | 网关不拦截工具调用；看聊天里显示的上游原文，通常是该模型不支持 function calling，换支持的模型即可 |
 | 选择器里仍出现其他 provider 的模型 | 该 provider 拒绝被停用（LobeHub 保护的官方 provider），或本次连接读取 provider 列表失败；查后端日志的 `LobeHub kept a provider enabled` / `could not read the LobeHub provider list` |
 
 为了避免将不可信的旧本地账号按邮箱误合并，OIDC 返回稳定的身份别名邮箱，`email_verified=false`。它仅用于账号映射，不是用户收信地址。客户端密钥和 RSA 私钥都应备份；普通更新不要更换它们，也不要更换现有 LobeHub 加密密钥。

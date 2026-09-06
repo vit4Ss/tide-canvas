@@ -341,14 +341,18 @@ func (s *service) bind(c *gin.Context) {
 		ids := []string{}
 		for i := range routes {
 			r := &routes[i]
-			// Abilities stay to what this gateway actually serves. Note also what
-			// is deliberately not sent: a model carrying settings.searchImpl gets
+			// functionCall is declared for every model: the gateway forwards tool
+			// definitions untouched, so whether tools work is the provider's
+			// answer, and a model that cannot use them says so in its own words
+			// when LobeHub tries. Vision stays per model because LobeHub gates
+			// the attachment button on it before anything is sent.
+			// Note also what is deliberately not sent: a model carrying settings.searchImpl gets
 			// LobeHub's model-native web search, which sets enabledSearch and
 			// routes the call to /v1/responses — the endpoint this gateway does
 			// not implement and the namespaced id exists to avoid. Without it the
 			// search toggle uses the function-call tool instead, over
 			// /v1/chat/completions, which needs functionCall to be on.
-			items = append(items, gin.H{"id": advertisedID(r.model.ModelKey), "type": "chat", "displayName": r.displayName(), "enabled": true, "source": "remote", "abilities": gin.H{"functionCall": s.cfg.SupportsTools, "vision": r.model.Vision}})
+			items = append(items, gin.H{"id": advertisedID(r.model.ModelKey), "type": "chat", "displayName": r.displayName(), "enabled": true, "source": "remote", "abilities": gin.H{"functionCall": true, "vision": r.model.Vision}})
 			ids = append(ids, advertisedID(r.model.ModelKey))
 		}
 		err = s.rpc(c.Request.Context(), cookie, "aiModel.batchUpdateAiModels", gin.H{"id": provider, "models": items})

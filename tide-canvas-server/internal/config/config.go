@@ -62,7 +62,6 @@ type LobeHubConfig struct {
 	SigningKeyFile string `mapstructure:"signingKeyFile"`
 	MaxConcurrent  int    `mapstructure:"maxConcurrent"`
 	DailyLimit     int    `mapstructure:"dailyLimit"`
-	SupportsTools  bool   `mapstructure:"supportsTools"`
 }
 
 // VideoDownloaderConfig controls the local public-video download engine.
@@ -484,7 +483,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("lobehub.signingKeyFile", "")
 	v.SetDefault("lobehub.maxConcurrent", 2)
 	v.SetDefault("lobehub.dailyLimit", 0)
-	v.SetDefault("lobehub.supportsTools", false)
 	v.SetDefault("lobehub.requireTokenPricing", true)
 
 	// Missing/empty TIDECANVAS_ENV resolves to test, so the safe default must

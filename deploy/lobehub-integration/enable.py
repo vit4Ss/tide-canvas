@@ -262,7 +262,7 @@ PRESERVED_MAIN_KEYS = (
 )
 
 
-def apply_configuration(before, tools=False):
+def apply_configuration(before):
     private = ROOT / "private"
     private.mkdir(mode=0o700, exist_ok=True)
     os.chmod(private, 0o700)
@@ -271,7 +271,7 @@ def apply_configuration(before, tools=False):
     touched = {"main": False, "lobe": False, "nginx": False}
     print("已备份配置：", backups.directory, flush=True)
     try:
-        prepare.init(MAIN_URL, LOBE_URL, tools or old_main.get("TIDECANVAS_LOBEHUB_SUPPORTSTOOLS") == "true")
+        prepare.init(MAIN_URL, LOBE_URL)
         main = env_values((private / "main.env").read_text(encoding="utf-8"))
         for key in PRESERVED_MAIN_KEYS:
             if key in old_main:
@@ -326,7 +326,6 @@ def apply_configuration(before, tools=False):
 def main():
     parser = argparse.ArgumentParser(description="一键接通现有香港测试服务器的 LobeHub")
     parser.add_argument("--check", action="store_true", help="仅检查现有部署，不修改配置")
-    parser.add_argument("--tools", action="store_true", help="已部署新版 apirouter 后启用工具调用")
     args = parser.parse_args()
     if not hasattr(os, "geteuid") or os.geteuid() != 0:
         raise SetupError("请在香港测试服务器上使用 root 执行")
@@ -353,7 +352,7 @@ def main():
         except BlockingIOError:
             raise SetupError("已有启用脚本正在执行，请等待它结束") from None
         before = preflight()
-        apply_configuration(before, tools=args.tools)
+        apply_configuration(before)
 
 
 if __name__ == "__main__":

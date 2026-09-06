@@ -492,11 +492,19 @@ func redactKeys(text string, endpoints []chatEndpoint) string {
 }
 
 // endpointProblem reports whether a refusal is about this address — its
-// credential, its quota, its availability — so the next address may still
-// serve. Anything else is about the request, which every address would refuse
-// the same way; that answer goes straight back to the user.
+// credential, its balance, its quota, its availability, what it carries — so
+// the next address may still serve. Anything else is about the request, which
+// every address would refuse the same way; that answer goes straight back.
+//
+// 402 is how relays report an exhausted balance on that key. 404 is included
+// because a relay that does not carry the model answers with it, and another
+// address of the same provider may; if every address says so, the user sees it.
 func endpointProblem(status int) bool {
-	return status == 401 || status == 403 || status == 429 || status >= 500
+	switch status {
+	case 401, 402, 403, 404, 408, 429:
+		return true
+	}
+	return status >= 500
 }
 
 // upstreamErrorMessage reads what a provider said when it refused, in the
@@ -506,21 +514,35 @@ func upstreamErrorMessage(body io.Reader, status int) string {
 	var parsed struct {
 		Error   any    `json:"error"`
 		Message string `json:"message"`
+		Detail  string `json:"detail"`
 	}
 	text := ""
 	if json.Unmarshal(raw, &parsed) == nil {
 		switch e := parsed.Error.(type) {
 		case map[string]any:
-			text, _ = e["message"].(string)
+			// OpenAI puts it under message; some relays under msg.
+			for _, key := range []string{"message", "msg"} {
+				if text, _ = e[key].(string); text != "" {
+					break
+				}
+			}
 		case string:
 			text = e
 		}
 		if text == "" {
 			text = parsed.Message
 		}
+		if text == "" {
+			text = parsed.Detail // FastAPI-style relays
+		}
 	}
 	if text == "" {
 		text = strings.TrimSpace(string(raw))
+		// A CDN or proxy in front of the provider answers with an HTML page.
+		// Its source is not a message for anyone; say what happened instead.
+		if strings.HasPrefix(text, "<") {
+			text = ""
+		}
 	}
 	if runes := []rune(text); len(runes) > 2000 {
 		text = string(runes[:2000]) + "…"
