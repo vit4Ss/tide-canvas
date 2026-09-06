@@ -43,6 +43,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	RegisterSkills(mod("skills"), d)
 	RegisterBlog(mod("blog"), d)
 	RegisterModels(mod("models"), d)
+	RegisterChatProviders(mod("models"), d)
 	RegisterFloors(mod("floors"), d)
 	RegisterTools(mod("tools"), d)
 	RegisterCanvasNodes(mod("canvas"), d)

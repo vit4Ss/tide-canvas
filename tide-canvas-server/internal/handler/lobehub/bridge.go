@@ -21,7 +21,6 @@ import (
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/response"
-	"tidecanvas/internal/pkg/tokenbilling"
 )
 
 //go:embed bridge.html
@@ -240,9 +239,9 @@ func (s *service) bind(c *gin.Context) {
 		c.JSON(403, gin.H{"message": "主站账号不可用"})
 		return
 	}
-	models, err := s.models(c.Request.Context())
-	if err != nil || len(models) == 0 {
-		c.JSON(503, gin.H{"message": "主站暂未开放文本模型"})
+	routes, err := s.offeredModels(c.Request.Context())
+	if err != nil || len(routes) == 0 {
+		c.JSON(503, gin.H{"message": "主站暂未开放 AI 聊天模型，请在后台配置供应商与模型单价"})
 		return
 	}
 	// Claim before configuration so simultaneous tabs cannot race two different
@@ -316,7 +315,7 @@ func (s *service) bind(c *gin.Context) {
 		name  string
 		input any
 	}{
-		{"aiProvider.updateAiProviderConfig", gin.H{"id": provider, "value": gin.H{"keyVaults": gin.H{"apiKey": key, "baseURL": s.mainOrigin + "/api/integrations/v1"}, "fetchOnClient": false, "config": gin.H{"enableResponseApi": false}, "checkModel": models[0].ModelKey}}},
+		{"aiProvider.updateAiProviderConfig", gin.H{"id": provider, "value": gin.H{"keyVaults": gin.H{"apiKey": key, "baseURL": s.mainOrigin + "/api/integrations/v1"}, "fetchOnClient": false, "config": gin.H{"enableResponseApi": false}, "checkModel": routes[0].model.ModelKey}}},
 		{"aiProvider.updateAiProvider", gin.H{"id": provider, "value": gin.H{"name": "流光主站", "description": "使用主站积分的模型服务", "settings": gin.H{"sdkType": "openai", "showModelFetcher": true, "supportResponsesApi": false}}}},
 		{"aiProvider.toggleProviderEnabled", gin.H{"id": provider, "enabled": true}},
 	}
@@ -328,11 +327,10 @@ func (s *service) bind(c *gin.Context) {
 	if err == nil {
 		items := []any{}
 		ids := []string{}
-		for _, m := range models {
-			var capabilities map[string]any
-			_ = json.Unmarshal([]byte(m.Config), &capabilities)
-			items = append(items, gin.H{"id": m.ModelKey, "type": "chat", "displayName": syncedModelName(m), "enabled": true, "source": "remote", "abilities": gin.H{"functionCall": s.cfg.SupportsTools, "vision": capabilities["fileUpload"] == true}})
-			ids = append(ids, m.ModelKey)
+		for i := range routes {
+			r := &routes[i]
+			items = append(items, gin.H{"id": r.model.ModelKey, "type": "chat", "displayName": r.displayName(), "enabled": true, "source": "remote", "abilities": gin.H{"functionCall": s.cfg.SupportsTools, "vision": r.model.Vision}})
+			ids = append(ids, r.model.ModelKey)
 		}
 		err = s.rpc(c.Request.Context(), cookie, "aiModel.batchUpdateAiModels", gin.H{"id": provider, "models": items})
 		if err == nil {
@@ -347,9 +345,9 @@ func (s *service) bind(c *gin.Context) {
 				// Keep explicit translation/rewrite actions available, while avoiding
 				// automatic title, suggestion and compression calls on first entry.
 				enabled := name == "translation" || name == "promptRewrite"
-				systemAgents[name] = gin.H{"model": models[0].ModelKey, "provider": provider, "enabled": enabled}
+				systemAgents[name] = gin.H{"model": routes[0].model.ModelKey, "provider": provider, "enabled": enabled}
 			}
-			err = s.rpc(c.Request.Context(), cookie, "user.updateSettings", gin.H{"defaultAgent": gin.H{"config": gin.H{"model": models[0].ModelKey, "provider": provider}}, "general": gin.H{"language": "zh-CN"}, "systemAgent": systemAgents})
+			err = s.rpc(c.Request.Context(), cookie, "user.updateSettings", gin.H{"defaultAgent": gin.H{"config": gin.H{"model": routes[0].model.ModelKey, "provider": provider}}, "general": gin.H{"language": "zh-CN"}, "systemAgent": systemAgents})
 			if err == nil {
 				raw, queryErr := s.rpcQuery(c.Request.Context(), cookie, "agent.getBuiltinAgent", gin.H{"slug": "inbox"})
 				var inbox struct {
@@ -358,7 +356,7 @@ func (s *service) bind(c *gin.Context) {
 				if queryErr != nil || json.Unmarshal(raw, &inbox) != nil || inbox.ID == "" {
 					err = errors.New("LobeHub inbox configuration unavailable")
 				} else {
-					err = s.rpc(c.Request.Context(), cookie, "agent.updateAgentConfig", gin.H{"agentId": inbox.ID, "value": gin.H{"model": models[0].ModelKey, "provider": provider}})
+					err = s.rpc(c.Request.Context(), cookie, "agent.updateAgentConfig", gin.H{"agentId": inbox.ID, "value": gin.H{"model": routes[0].model.ModelKey, "provider": provider}})
 				}
 			}
 		}
@@ -415,35 +413,4 @@ func (s *service) hideForeignProviders(ctx context.Context, cookie, keep string)
 			logger.L().Info("LobeHub kept a provider enabled", zap.String("provider", row.ID))
 		}
 	}
-}
-
-// syncedModelName is what LobeHub's model picker shows. It is written at sync
-// time, so a price change reaches the picker on the user's next connect.
-func syncedModelName(m model.MarketModel) string {
-	if pricing, err := tokenbilling.Parse(m.Config); err == nil {
-		return pricing.Label(m.Name)
-	}
-	return fmt.Sprintf("%s · %d 积分/次", m.Name, m.Price.IntPart())
-}
-
-func (s *service) models(ctx context.Context) ([]model.MarketModel, error) {
-	var rows []model.MarketModel
-	err := s.d.DB.WithContext(ctx).Where("type = ? AND status = 1 AND model_key <> ''", "text").Order(modelSelectionOrder).Find(&rows).Error
-	seen := map[string]bool{}
-	out := []model.MarketModel{}
-	for _, row := range rows {
-		if seen[row.ModelKey] {
-			continue
-		}
-		seen[row.ModelKey] = true
-		// Each model carries its own billing mode. Only one that an operator
-		// switched to token billing and then mispriced is withheld: it would
-		// fail at call time, and falling back to its per-call price would bill
-		// the rate they meant to replace.
-		if _, err := tokenbilling.Parse(row.Config); errors.Is(err, tokenbilling.ErrPricing) {
-			continue
-		}
-		out = append(out, row)
-	}
-	return out, err
 }

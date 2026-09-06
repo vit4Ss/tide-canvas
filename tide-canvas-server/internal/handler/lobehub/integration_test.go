@@ -23,7 +23,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/shopspring/decimal"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	gormlog "gorm.io/gorm/logger"
@@ -54,14 +53,17 @@ func setup(t *testing.T, lobeURL, relayURL string) *fixture {
 	pool, _ := db.DB()
 	pool.SetMaxOpenConns(1)
 	t.Cleanup(func() { pool.Close() })
-	if err := db.AutoMigrate(&model.User{}, &model.UserAPIKey{}, &model.LobeHubGrant{}, &model.LobeHubLink{}, &model.ModelGatewayRequest{}, &model.MarketModel{}, &model.PointRecord{}, &model.PointRefundReceipt{}, &model.AiTask{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.UserAPIKey{}, &model.LobeHubGrant{}, &model.LobeHubLink{}, &model.ModelGatewayRequest{}, &model.ChatProvider{}, &model.ChatEndpoint{}, &model.ChatModel{}, &model.PointRecord{}, &model.PointRefundReceipt{}, &model.AiTask{}); err != nil {
 		t.Fatal(err)
 	}
 	user := model.User{ID: idgen.Next(), Username: "alice", Email: "alice@example.test", Status: 1, Points: 20}
 	if err := db.Create(&user).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&model.MarketModel{Name: "Test Model", ModelKey: "test-model", Type: "text", Status: 1, Price: decimal.NewFromInt(3)}).Error; err != nil {
+	// One provider, one address, one priced model — the smallest supply chain
+	// AI chat will serve. Tests that need more add to it.
+	provider := model.ChatProvider{Name: "Test Provider", Enabled: true}
+	if err := db.Create(&provider).Error; err != nil {
 		t.Fatal(err)
 	}
 	keys, _ := userkey.New(db, "test-key-vault-secret")
@@ -89,6 +91,24 @@ func setup(t *testing.T, lobeURL, relayURL string) *fixture {
 	d := &app.Deps{DB: db, Cfg: cfg, UserKeys: keys}
 	s, err := newService(d)
 	if err != nil {
+		t.Fatal(err)
+	}
+	// The endpoint's credential is sealed with the service's own vault, and its
+	// address is the test upstream (loopback http, which only the admin form
+	// refuses — the gateway calls whatever is stored).
+	sealed, err := s.upstreams.Seal("upstream-secret-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if relayURL == "" {
+		// A closed loopback port, for tests that never reach the upstream: a
+		// call to it fails to connect, which is what an absent provider does.
+		relayURL = "http://127.0.0.1:1"
+	}
+	if err := db.Create(&model.ChatEndpoint{ProviderID: provider.ID, Label: "primary", BaseURL: relayURL, APIKey: sealed, Enabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.ChatModel{ProviderID: provider.ID, ModelKey: "test-model", Name: "Test Model", Enabled: true, Pricing: tokenTestPricing}).Error; err != nil {
 		t.Fatal(err)
 	}
 	token.Init(config.JWTConfig{Secret: "jwt-unit-test-secret"}, nil)
@@ -199,7 +219,7 @@ func TestGatewayChargesOnceAndKeepsPartialOutputBilling(t *testing.T) {
 				fmt.Fprint(w, "data: {\"id\":\"result\",\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n")
 				switch ending {
 				case "stop", "length":
-					fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"%s\"}]}\n\ndata: [DONE]\n\n", ending)
+					fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"%s\"}]}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":100,\"total_tokens\":200}}\n\ndata: [DONE]\n\n", ending)
 				case "error":
 					fmt.Fprint(w, "data: {\"error\":{\"message\":\"upstream-secret-only\"}}\n\n")
 				}
@@ -219,14 +239,21 @@ func TestGatewayChargesOnceAndKeepsPartialOutputBilling(t *testing.T) {
 			w := f.request("POST", "/api/integrations/v1/chat/completions", string(body), f.apiKey, headers)
 			var user model.User
 			f.s.d.DB.First(&user, "id = ?", f.user.ID)
-			if ending == "stop" {
-				if user.Points != 17 || !strings.Contains(w.Body.String(), "hello") {
-					t.Fatalf("success balance=%d body=%s", user.Points, w.Body.String())
+			// An ending that reports usage is charged for it and releases the
+			// rest of the hold: 100 input + 100 output = 0.04 积分. "eof" and
+			// "error" report none, so the hold stays for manual review instead
+			// of the cost being guessed.
+			if ending == "stop" || ending == "length" {
+				if user.PointBalance() != 19.96 || user.PointHeldMicros != 0 {
+					t.Fatalf("%s: balance=%v held=%d body=%s", ending, user.PointBalance(), user.PointHeldMicros, w.Body.String())
 				}
-			} else {
-				if user.Points != 17 || !strings.Contains(w.Body.String(), "incomplete_response") {
-					t.Fatalf("partial output billing differs from main chat: balance=%d body=%s", user.Points, w.Body.String())
-				}
+			} else if user.PointHeldMicros != 400_000 || user.Points != 20 {
+				t.Fatalf("%s: usage was absent, so nothing may be charged: balance=%v held=%d", ending, user.PointBalance(), user.PointHeldMicros)
+			}
+			expect := map[string]string{"stop": "hello", "length": "incomplete_response",
+				"eof": "token_usage_unavailable", "error": "token_usage_unavailable"}[ending]
+			if !strings.Contains(w.Body.String(), expect) {
+				t.Fatalf("%s: expected %q in %s", ending, expect, w.Body.String())
 			}
 			if strings.Contains(w.Body.String(), "upstream-secret-only") {
 				t.Fatal("upstream secret leaked")
@@ -243,8 +270,8 @@ func TestGatewayChargesOnceAndKeepsPartialOutputBilling(t *testing.T) {
 				t.Fatal("idempotent retry repeated the provider call")
 			}
 			f.s.d.DB.First(&user, "id = ?", f.user.ID)
-			if ending == "stop" && user.Points != 17 {
-				t.Fatal("retry charged again")
+			if ending == "stop" && (user.PointBalance() != 19.96 || user.PointHeldMicros != 0) {
+				t.Fatalf("retry charged again: balance=%v held=%d", user.PointBalance(), user.PointHeldMicros)
 			}
 		})
 	}
@@ -259,7 +286,7 @@ func TestGatewayRefundsNoOutputAndCountsAccountQuota(t *testing.T) {
 			fmt.Fprint(w, "data: {\"error\":{\"message\":\"unavailable\"}}\n\n")
 			return
 		}
-		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":100,\"total_tokens\":200}}\n\ndata: [DONE]\n\n")
 	}))
 	defer up.Close()
 	f := setup(t, "", up.URL)

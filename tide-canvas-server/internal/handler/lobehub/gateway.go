@@ -94,20 +94,20 @@ func partialGatewayFrames(frames string) string {
 	return result.String()
 }
 func (s *service) listModels(c *gin.Context) {
-	rows, err := s.models(c.Request.Context())
+	routes, err := s.offeredModels(c.Request.Context())
 	if err != nil {
 		gatewayError(c, 503, "unavailable", "模型列表暂不可用")
 		return
 	}
 	data := []any{}
-	for _, m := range rows {
-		item := gin.H{"id": m.ModelKey, "object": "model", "created": m.CreateTime.Unix(), "owned_by": "flowinglight", "name": m.Name}
-		if pricing, err := tokenbilling.Parse(m.Config); err == nil {
-			item["token_pricing"] = pricing
-		} else {
-			item["point_cost"] = m.Price.IntPart()
-		}
-		data = append(data, item)
+	for i := range routes {
+		r := &routes[i]
+		// The provider and its addresses stay server-side; a caller only needs
+		// the model id and what it costs.
+		data = append(data, gin.H{
+			"id": r.model.ModelKey, "object": "model", "created": r.model.CreateTime.Unix(),
+			"owned_by": "flowinglight", "name": r.displayNameOnly(), "token_pricing": r.pricing,
+		})
 	}
 	c.JSON(200, gin.H{"object": "list", "data": data})
 }
@@ -154,7 +154,9 @@ func trimGatewayHistory(messages []any) ([]any, error) {
 	return out, nil
 }
 
-func (s *service) reserve(ctx context.Context, uid idgen.ID, requestKey, bodyHash string, m model.MarketModel, outputLimit ...int64) (*model.ModelGatewayRequest, bool, error) {
+// reserve holds the worst-case cost of one call. Every AI chat model is token
+// priced, so there is a single billing mode here.
+func (s *service) reserve(ctx context.Context, uid idgen.ID, requestKey, bodyHash string, route *chatRoute, outputLimit ...int64) (*model.ModelGatewayRequest, bool, error) {
 	var row model.ModelGatewayRequest
 	fresh := false
 	err := s.d.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -204,52 +206,38 @@ func (s *service) reserve(ctx context.Context, uid idgen.ID, requestKey, bodyHas
 				return errDaily
 			}
 		}
-		cost := int(m.Price.IntPart())
-		if cost < 0 {
-			cost = 0
+		pricing := route.pricing
+		outputCap := pricing.MaxOutput
+		if len(outputLimit) > 0 {
+			outputCap = outputLimit[0]
 		}
-		row = model.ModelGatewayRequest{UserID: uid, RequestKey: requestKey, BodyHash: bodyHash, ModelKey: m.ModelKey, Cost: cost, Status: "pending", ExpiresAt: time.Now().Add(65 * time.Minute)}
-		pricing, pricingErr := tokenbilling.Parse(m.Config)
-		if pricingErr == nil {
-			limit := pricing.MaxOutput
-			if len(outputLimit) > 0 {
-				limit = outputLimit[0]
-			}
-			if limit < 1 || limit > pricing.MaxOutput {
-				return tokenbilling.ErrLimit
-			}
-			reserved, err := pricing.Reserve(limit)
-			if err != nil {
-				return err
-			}
-			row.BillingMode = "token"
-			row.Cost = 0
-			row.ReservedMicros = reserved
-			row.PricingSnapshot = pricingSnapshot(pricing)
-			row.MaxOutputTokens = limit
-			var key model.UserAPIKey
-			if err := tx.First(&key, "user_id = ?", uid).Error; err != nil {
-				return err
-			}
-			row.KeyRevision = key.Revision
-			if revision, ok := ctx.Value(gatewayKeyRevision).(uint64); ok {
-				row.KeyRevision = revision
-			}
-		} else if !errors.Is(pricingErr, tokenbilling.ErrNotConfigured) {
-			return pricingErr
+		if outputCap < 1 || outputCap > pricing.MaxOutput {
+			return tokenbilling.ErrLimit
+		}
+		reserved, err := pricing.Reserve(outputCap)
+		if err != nil {
+			return err
+		}
+		row = model.ModelGatewayRequest{
+			UserID: uid, RequestKey: requestKey, BodyHash: bodyHash, ModelKey: route.model.ModelKey,
+			Status: "pending", ExpiresAt: time.Now().Add(65 * time.Minute),
+			BillingMode: "token", ReservedMicros: reserved,
+			PricingSnapshot: pricingSnapshot(pricing), MaxOutputTokens: outputCap,
+		}
+		var key model.UserAPIKey
+		if err := tx.First(&key, "user_id = ?", uid).Error; err != nil {
+			return err
+		}
+		row.KeyRevision = key.Revision
+		if revision, ok := ctx.Value(gatewayKeyRevision).(uint64); ok {
+			row.KeyRevision = revision
 		}
 		row.ID = idgen.Next()
 		if err := tx.Create(&row).Error; err != nil {
 			return err
 		}
-		if row.BillingMode == "token" {
-			if err := points.HoldMicros(tx, uid, row.ReservedMicros); err != nil {
-				return err
-			}
-		} else {
-			if err := points.Consume(tx, uid, cost, "AI 聊天："+m.Name, row.ID); err != nil {
-				return err
-			}
+		if err := points.HoldMicros(tx, uid, row.ReservedMicros); err != nil {
+			return err
 		}
 		fresh = true
 		return nil
@@ -427,7 +415,7 @@ func (out *completion) json(modelName string) gin.H {
 	return gin.H{"id": id, "object": "chat.completion", "created": time.Now().Unix(), "model": modelName, "choices": []any{gin.H{"index": 0, "message": msg, "finish_reason": finish}}, "usage": out.usage}
 }
 
-func (s *service) readUpstream(ctx context.Context, payload []byte, events chan<- upstreamFrame) {
+func (s *service) readUpstream(ctx context.Context, endpoints []chatEndpoint, payload []byte, events chan<- upstreamFrame) {
 	defer close(events)
 	send := func(f upstreamFrame) bool {
 		select {
@@ -437,28 +425,47 @@ func (s *service) readUpstream(ctx context.Context, payload []byte, events chan<
 			return false
 		}
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.ResponseHeaderTimeout = 15 * time.Minute
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(s.d.Cfg.Relay.BaseURL, "/")+"/v1/chat/completions", bytes.NewReader(payload))
-	if err != nil {
-		send(upstreamFrame{err: err})
-		return
+	// Walk the provider's addresses until one accepts the call. Failover stops
+	// the moment a response starts: once bytes are on their way to the user,
+	// retrying elsewhere would repeat text and charge for both attempts.
+	var resp *http.Response
+	var lastErr error
+	for i, endpoint := range endpoints {
+		req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(endpoint.baseURL, "/")+"/v1/chat/completions", bytes.NewReader(payload))
+		if err != nil {
+			send(upstreamFrame{err: err})
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+endpoint.apiKey)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "text/event-stream")
+		attempt, err := s.upstream.Do(req)
+		if err != nil {
+			lastErr = errors.New("upstream connection failed")
+			s.noteEndpoint(endpoint.id, "连接失败")
+			continue
+		}
+		if attempt.StatusCode != 200 {
+			attempt.Body.Close()
+			lastErr = fmt.Errorf("upstream HTTP %d", attempt.StatusCode)
+			s.noteEndpoint(endpoint.id, fmt.Sprintf("HTTP %d", attempt.StatusCode))
+			continue
+		}
+		if i > 0 {
+			logger.L().Info("chat call moved to a backup endpoint", zap.String("endpoint", endpoint.label))
+		}
+		s.noteEndpoint(endpoint.id, "")
+		resp = attempt
+		break
 	}
-	req.Header.Set("Authorization", "Bearer "+s.d.Cfg.Relay.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	resp, err := client.Do(req)
-	if err != nil {
-		send(upstreamFrame{err: errors.New("upstream connection failed")})
+	if resp == nil {
+		if lastErr == nil {
+			lastErr = errors.New("upstream connection failed")
+		}
+		send(upstreamFrame{err: lastErr})
 		return
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		send(upstreamFrame{err: fmt.Errorf("upstream HTTP %d", resp.StatusCode)})
-		return
-	}
 	scan := bufio.NewScanner(resp.Body)
 	scan.Buffer(make([]byte, 64<<10), 2<<20)
 	for scan.Scan() {
@@ -475,8 +482,12 @@ func (s *service) readUpstream(ctx context.Context, payload []byte, events chan<
 			send(upstreamFrame{err: errors.New("upstream returned an invalid event")})
 			return
 		}
-		if s.d.Cfg.Relay.APIKey != "" {
-			data = strings.ReplaceAll(data, s.d.Cfg.Relay.APIKey, "[REDACTED]")
+		// An upstream that echoes its own credential back in an error must not
+		// forward it to the user, so scrub every key this call could have used.
+		for _, endpoint := range endpoints {
+			if endpoint.apiKey != "" {
+				data = strings.ReplaceAll(data, endpoint.apiKey, "[REDACTED]")
+			}
 		}
 		if !send(upstreamFrame{data: data}) {
 			return
@@ -491,10 +502,6 @@ func (s *service) readUpstream(ctx context.Context, payload []byte, events chan<
 }
 
 func (s *service) chat(c *gin.Context) {
-	if s.d.Cfg.Relay.APIKey == "" {
-		gatewayError(c, 503, "unavailable", "模型服务尚未配置")
-		return
-	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<20)
 	var body map[string]any
 	decoder := json.NewDecoder(c.Request.Body)
@@ -533,11 +540,16 @@ func (s *service) chat(c *gin.Context) {
 		gatewayError(c, 400, "invalid_request", "消息格式无效")
 		return
 	}
-	var m model.MarketModel
-	if err := s.d.DB.WithContext(c.Request.Context()).Where("model_key = ? AND type = ? AND status = 1", modelName, "text").Order(modelSelectionOrder).First(&m).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			gatewayError(c, 404, "model_not_available", "该文本模型未开放")
-		} else {
+	// Resolve the model to its provider and credentialed addresses before any
+	// money moves: a model we cannot reach must not be charged for.
+	route, err := s.routeFor(c.Request.Context(), modelName)
+	if err != nil {
+		switch {
+		case errors.Is(err, errNoChatModel):
+			gatewayError(c, 404, "model_not_available", "该模型未开放给 AI 聊天")
+		case errors.Is(err, errNoEndpoint):
+			gatewayError(c, 503, "upstream_unavailable", "该模型的供应商没有可用的接入地址，请联系管理员")
+		default:
 			gatewayError(c, 503, "unavailable", "模型配置暂不可用")
 		}
 		return
@@ -548,15 +560,11 @@ func (s *service) chat(c *gin.Context) {
 	uid := middleware.CurrentUserID(c)
 	body["user"] = uid.String()
 	fingerprint, _ := json.Marshal(body)
+	// A model only reaches this point with usable pricing — offeredModels drops
+	// the rest — so token billing always applies here.
+	pricing := route.pricing
 	maxOutput := int64(0)
-	// A model without token pricing keeps its per-call price; one whose token
-	// pricing is switched on but unusable is refused rather than repriced.
-	pricing, pricingErr := tokenbilling.Parse(m.Config)
-	if pricingErr != nil && !errors.Is(pricingErr, tokenbilling.ErrNotConfigured) {
-		gatewayError(c, 503, "token_pricing_invalid", "该模型的 Token 单价配置有误，请联系管理员")
-		return
-	}
-	if pricingErr == nil {
+	{
 		maxOutput = pricing.MaxOutput
 		field := "max_completion_tokens"
 		if body["max_tokens"] != nil && body["max_completion_tokens"] == nil {
@@ -607,7 +615,7 @@ func (s *service) chat(c *gin.Context) {
 	if revision, ok := c.Get("integration.keyRevision"); ok {
 		requestContext = context.WithValue(requestContext, gatewayKeyRevision, revision)
 	}
-	row, fresh, err := s.reserve(requestContext, uid, hash(requestKey), hash(string(fingerprint)), m, maxOutput)
+	row, fresh, err := s.reserve(requestContext, uid, hash(requestKey), hash(string(fingerprint)), route, maxOutput)
 	if err != nil {
 		switch {
 		case errors.Is(err, points.ErrInsufficient):
@@ -683,7 +691,7 @@ func (s *service) chat(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 60*time.Minute)
 	defer cancel()
 	events := make(chan upstreamFrame, 8)
-	go s.readUpstream(ctx, payload, events)
+	go s.readUpstream(ctx, route.endpoints, payload, events)
 	connected := true
 	emit := func(data string) {
 		if !stream || !connected {

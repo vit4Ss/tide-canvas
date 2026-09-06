@@ -22,9 +22,11 @@ func TestRecoveryAdvancesPastUnrecoverableAccountsAndRefundsOnlyOnce(t *testing.
 			t.Fatal(err)
 		}
 	}
-	var selected model.MarketModel
-	f.s.d.DB.First(&selected)
-	valid, _, err := f.s.reserve(context.Background(), f.user.ID, "recover-valid", "body", selected)
+	route, err := f.s.routeFor(context.Background(), "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid, _, err := f.s.reserve(context.Background(), f.user.ID, "recover-valid", "body", route)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,12 +43,17 @@ func TestRecoveryAdvancesPastUnrecoverableAccountsAndRefundsOnlyOnce(t *testing.
 	_, _ = f.s.reconcilePage(context.Background(), cursor)
 	var user model.User
 	f.s.d.DB.First(&user, "id = ?", f.user.ID)
-	var refunds int64
-	f.s.d.DB.Model(&model.PointRecord{}).Where("ref_id = ? AND change_type = ?", valid.ID, "refund").Count(&refunds)
 	var pending int64
 	f.s.d.DB.Model(&model.ModelGatewayRequest{}).Where("status = ?", "pending").Count(&pending)
-	if user.Points != 20 || refunds != 1 || pending != 100 {
-		t.Fatalf("recovery balance=%d refunds=%d pending=%d", user.Points, refunds, pending)
+	var recovered model.ModelGatewayRequest
+	f.s.d.DB.First(&recovered, "id = ?", valid.ID)
+	// An interrupted worker leaves a reservation, not a charge, so recovery
+	// releases the hold and the balance is whole again.
+	if user.Points != 20 || user.PointHeldMicros != 0 || pending != 100 {
+		t.Fatalf("recovery balance=%d held=%d pending=%d", user.Points, user.PointHeldMicros, pending)
+	}
+	if recovered.Status == "pending" {
+		t.Fatal("the expired reservation was left pending")
 	}
 }
 

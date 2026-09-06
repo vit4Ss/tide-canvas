@@ -1,0 +1,154 @@
+/* /admin/chat-providers — 供应商 / 接入地址 / 模型三层结构。
+   只补这一页需要的排布，颜色、按钮、输入框都沿用 admin.css 的既有变量与类。 */
+
+.cp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.cp-provider {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.cp-provider > header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cp-provider > header > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.cp-provider h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-title);
+}
+
+.cp-provider header p {
+  margin: 4px 0 0;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.cp-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.cp-section {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+}
+
+.cp-section:first-of-type {
+  border-top: 0;
+}
+
+.cp-section h4 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.cp-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.cp-section-head h4 {
+  margin: 0;
+}
+
+.cp-none {
+  margin: 0 0 12px;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+.cp-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+.cp-table th {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-faint);
+  font-weight: 500;
+  text-align: left;
+}
+
+.cp-table td {
+  padding: 12px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.cp-table td small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.cp-table input {
+  width: 100%;
+  min-width: 0;
+}
+
+.cp-key {
+  max-width: 180px;
+}
+
+.cp-price {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cp-price input {
+  width: 92px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-price span {
+  color: var(--text-faint);
+}
+
+.cp-ok {
+  color: var(--ok, #5aa46a);
+}
+
+.cp-bad {
+  display: block;
+  color: var(--danger, #d85b64);
+}
+
+.cp-idle {
+  color: var(--text-faint);
+}
+
+@media (max-width: 900px) {
+  .cp-table {
+    display: block;
+    overflow-x: auto;
+  }
+}

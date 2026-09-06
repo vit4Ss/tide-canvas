@@ -1,0 +1,69 @@
+package chatupstream
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestSealedKeyRoundTripsAndResistsTampering(t *testing.T) {
+	v := New("unit-secret")
+	sealed, err := v.Seal("sk-live-abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sealed, "sk-live-abc") {
+		t.Fatalf("the credential survives in the stored value: %s", sealed)
+	}
+	if got, err := v.Open(sealed); err != nil || got != "sk-live-abc" {
+		t.Fatalf("round trip failed: %q %v", got, err)
+	}
+	// A rotated vault secret must fail loudly; the caller then refuses the model
+	// rather than falling back to the shared relay.
+	if _, err := New("другой").Open(sealed); err == nil {
+		t.Fatal("a foreign vault opened the credential")
+	}
+	for _, broken := range []string{"", "plain-text", "v1:@@@", "v1:" + strings.Repeat("A", 8)} {
+		if _, err := v.Open(broken); err == nil {
+			t.Fatalf("%q was accepted", broken)
+		}
+	}
+}
+
+func TestTheMaskIsNeverStoredAsACredential(t *testing.T) {
+	v := New("unit-secret")
+	for _, refused := range []string{"", "   ", Masked, "sk-a\nsk-b", strings.Repeat("k", 4097)} {
+		if _, err := v.Seal(refused); err == nil {
+			t.Fatalf("%q was sealed as a credential", refused)
+		}
+	}
+}
+
+func TestBaseURLMustBeAPlainHTTPSOrigin(t *testing.T) {
+	for raw, want := range map[string]string{
+		"https://api.openai.com":      "https://api.openai.com",
+		"https://api.example.com/":    "https://api.example.com",
+		"https://api.example.com/v1/": "https://api.example.com/v1",
+		" https://api.example.com ":   "https://api.example.com",
+		"":                            "",
+	} {
+		got, err := NormalizeBaseURL(raw)
+		if err != nil || got != want {
+			t.Fatalf("%q -> %q (%v), want %q", raw, got, err, want)
+		}
+	}
+	for _, refused := range []string{
+		"http://api.example.com",            // plaintext would expose the key
+		"https://user:pass@api.example.com", // credentials in the URL
+		"https://api.example.com?token=x",   // query could redirect the call
+		"https://api.example.com/../evil",   // traversal
+		"ftp://api.example.com",
+		"//api.example.com",
+		"javascript:alert(1)",
+		"https://",
+		"https://" + strings.Repeat("a", 512),
+	} {
+		if _, err := NormalizeBaseURL(refused); err == nil {
+			t.Fatalf("%q was accepted as a base URL", refused)
+		}
+	}
+}

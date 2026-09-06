@@ -15,12 +15,14 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/config"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/chatupstream"
 	"tidecanvas/internal/pkg/idgen"
 )
 
@@ -30,10 +32,6 @@ var errBindingBusy = errors.New("account configuration is already being synchron
 var errLobeLogin = errors.New("LobeHub login required")
 var errLobeUnavailable = errors.New("LobeHub identity service unavailable")
 
-// model_key is not unique in the market table. Display, synchronization and
-// billing must select the same enabled row, including a deterministic tie-break.
-const modelSelectionOrder = "sort_order ASC, update_time DESC, id ASC"
-
 type service struct {
 	d          *app.Deps
 	cfg        config.LobeHubConfig
@@ -41,6 +39,18 @@ type service struct {
 	kid        string
 	http       *http.Client
 	mainOrigin string
+	// Seals the third-party credentials this site calls upstream with. Keyed off
+	// the JWT secret, like the user key vault.
+	upstreams chatupstream.Vault
+	// The client that talks to the third-party providers. One per service, not
+	// one per call: a fresh transport each time would redo the TCP and TLS
+	// handshake for every message the user sends. The long header timeout is
+	// for reasoning models, which can think for minutes before the first token.
+	upstream *http.Client
+	// When each address last had a success written down. A healthy address is
+	// used on every call, and writing "still fine" each time would put a DB
+	// write on the hot path for a timestamp nobody reads that precisely.
+	okWritten sync.Map // idgen.ID -> time.Time
 }
 
 func newService(d *app.Deps) (*service, error) {
@@ -103,8 +113,11 @@ func newService(d *app.Deps) (*service, error) {
 	}
 	pub, _ := x509.MarshalPKIXPublicKey(&rsaKey.PublicKey)
 	digest := sha256.Sum256(pub)
-	return &service{d: d, cfg: cfg, signer: rsaKey, kid: hex.EncodeToString(digest[:12]), mainOrigin: issuer.Scheme + "://" + issuer.Host,
-		http: &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	upstreamTransport := http.DefaultTransport.(*http.Transport).Clone()
+	upstreamTransport.ResponseHeaderTimeout = 15 * time.Minute
+	return &service{d: d, cfg: cfg, signer: rsaKey, kid: hex.EncodeToString(digest[:12]), mainOrigin: issuer.Scheme + "://" + issuer.Host, upstreams: chatupstream.New(d.Cfg.JWT.Secret),
+		upstream: &http.Client{Transport: upstreamTransport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		http:     &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
 func hash(value string) string {

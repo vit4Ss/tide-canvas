@@ -9,15 +9,15 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/shopspring/decimal"
 	"tidecanvas/internal/model"
 )
 
 const tokenTestPricing = `{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"100","outputPointsPerMillion":"300","cachedInputPointsPerMillion":"20","maxInputTokens":1000,"maxOutputTokens":1000}}`
 
-func enableTestTokenPricing(t *testing.T, f *fixture) {
+// repriceTestModel changes what the fixture's model costs.
+func repriceTestModel(t *testing.T, f *fixture, pricing string) {
 	t.Helper()
-	if err := f.s.d.DB.Model(&model.MarketModel{}).Where("model_key = ?", "test-model").Update("config", tokenTestPricing).Error; err != nil {
+	if err := f.s.d.DB.Model(&model.ChatModel{}).Where("model_key = ?", "test-model").Update("pricing", pricing).Error; err != nil {
 		t.Fatal(err)
 	}
 }
@@ -35,7 +35,6 @@ func TestTokenGatewayChargesActualMicrosAndReplayKeepsPriceSnapshot(t *testing.T
 	}))
 	defer up.Close()
 	f := setup(t, "", up.URL)
-	enableTestTokenPricing(t, f)
 	headers := map[string]string{"Idempotency-Key": "token-charge"}
 	w := f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, headers)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "0.068400") {
@@ -46,7 +45,7 @@ func TestTokenGatewayChargesActualMicrosAndReplayKeepsPriceSnapshot(t *testing.T
 	if user.PointBalance() != 19.9316 || user.PointHeldMicros != 0 {
 		t.Fatalf("wrong actual balance: %+v", user)
 	}
-	f.s.d.DB.Model(&model.MarketModel{}).Where("model_key = ?", "test-model").Update("config", strings.ReplaceAll(tokenTestPricing, "300", "900"))
+	repriceTestModel(t, f, strings.ReplaceAll(tokenTestPricing, "300", "900"))
 	w = f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, headers)
 	if w.Code != 200 || calls.Load() != 1 || !strings.Contains(w.Body.String(), "0.068400") {
 		t.Fatal("replay repriced or charged again")
@@ -64,7 +63,6 @@ func TestMissingTokenUsageWaitsForReviewInsteadOfGuessingCost(t *testing.T) {
 	}))
 	defer up.Close()
 	f := setup(t, "", up.URL)
-	enableTestTokenPricing(t, f)
 	w := f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, nil)
 	if w.Code != 502 || !strings.Contains(w.Body.String(), "token_usage_unavailable") {
 		t.Fatal(w.Body.String())
@@ -84,7 +82,6 @@ func TestInputOnlyUsageIsChargedEvenWhenTheProviderReportsFailure(t *testing.T) 
 	}))
 	defer up.Close()
 	f := setup(t, "", up.URL)
-	enableTestTokenPricing(t, f)
 	w := f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, nil)
 	if w.Code != 502 || !strings.Contains(w.Body.String(), "0.010000") {
 		t.Fatal(w.Body.String())
@@ -96,68 +93,59 @@ func TestInputOnlyUsageIsChargedEvenWhenTheProviderReportsFailure(t *testing.T) 
 	}
 }
 
-// Billing is decided per model: pricing one model must not disturb another.
-// Both stay in the catalogue, each advertising the price it will actually be
-// charged at.
-func TestEachModelKeepsItsOwnBillingMode(t *testing.T) {
+// Every AI chat model is token priced. One left unpriced — or priced with
+// numbers that cannot be read — is not offered and cannot be called, because
+// there would be no way to charge for it.
+func TestAnUnpricedModelIsNeitherOfferedNorCallable(t *testing.T) {
+	var upstreamCalls atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+		upstreamCalls.Add(1)
+		fmt.Fprint(w, "data: [DONE]\n\n")
 	}))
 	defer up.Close()
-	f := setup(t, "", up.URL)
-	enableTestTokenPricing(t, f)
-	legacy := model.MarketModel{Name: "Legacy Model", ModelKey: "legacy-model", Type: "text", Status: 1, SortOrder: 5, Price: decimal.NewFromInt(9)}
-	if err := f.s.d.DB.Create(&legacy).Error; err != nil {
-		t.Fatal(err)
-	}
 
-	models := jsonMap(t, f.request("GET", "/api/integrations/v1/models", "", f.apiKey, nil))["data"].([]any)
-	modes := map[string]map[string]any{}
-	for _, row := range models {
-		item := row.(map[string]any)
-		modes[item["id"].(string)] = item
-	}
-	if len(modes) != 2 {
-		t.Fatalf("both models must stay available: %v", modes)
-	}
-	if modes["test-model"]["token_pricing"] == nil || modes["test-model"]["point_cost"] != nil {
-		t.Fatalf("the priced model must advertise token pricing: %v", modes["test-model"])
-	}
-	if modes["legacy-model"]["point_cost"] != float64(9) || modes["legacy-model"]["token_pricing"] != nil {
-		t.Fatalf("the unpriced model must keep its per-call price: %v", modes["legacy-model"])
-	}
+	for _, pricing := range []string{"", `{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"abc","outputPointsPerMillion":"300"}}`} {
+		f := setup(t, "", up.URL)
+		repriceTestModel(t, f, pricing)
 
-	// The unpriced model still bills per call, in whole points, no reservation.
-	w := f.request("POST", "/api/integrations/v1/chat/completions", strings.ReplaceAll(testPrompt, "test-model", "legacy-model"), f.apiKey, nil)
-	if w.Code != 200 {
-		t.Fatalf("a per-call model was refused: %d %s", w.Code, w.Body.String())
+		if body := f.request("GET", "/api/integrations/v1/models", "", f.apiKey, nil).Body.String(); strings.Contains(body, "test-model") {
+			t.Fatalf("pricing %q: an unbillable model was offered: %s", pricing, body)
+		}
+		w := f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, nil)
+		if w.Code == 200 || !strings.Contains(w.Body.String(), "model_not_available") {
+			t.Fatalf("pricing %q: an unbillable model was callable: %d %s", pricing, w.Code, w.Body.String())
+		}
+		var user model.User
+		f.s.d.DB.First(&user, "id = ?", f.user.ID)
+		if user.Points != 20 || user.PointHeldMicros != 0 {
+			t.Fatalf("pricing %q: a refused model still moved points: %+v", pricing, user)
+		}
 	}
-	var user model.User
-	f.s.d.DB.First(&user, "id = ?", f.user.ID)
-	if user.Points != 11 || user.PointHeldMicros != 0 {
-		t.Fatalf("per-call charge is wrong: %+v", user)
+	if upstreamCalls.Load() != 0 {
+		t.Fatal("an unbillable model still reached an upstream")
 	}
 }
 
-// A model an operator switched to token billing and then mispriced must not be
-// offered or charged: silently reverting to its per-call price would bill the
-// very rate they were replacing.
-func TestMispricedTokenModelIsWithheldRatherThanBilledPerCall(t *testing.T) {
-	f := setup(t, "", "")
-	broken := `{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"abc","outputPointsPerMillion":"300"}}`
-	if err := f.s.d.DB.Model(&model.MarketModel{}).Where("model_key = ?", "test-model").Update("config", broken).Error; err != nil {
-		t.Fatal(err)
-	}
-	if body := f.request("GET", "/api/integrations/v1/models", "", f.apiKey, nil).Body.String(); strings.Contains(body, "test-model") {
-		t.Fatalf("a mispriced model was offered: %s", body)
-	}
-	w := f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, nil)
-	if w.Code == 200 || !strings.Contains(w.Body.String(), "token_pricing_invalid") {
-		t.Fatalf("a mispriced model was billed: %d %s", w.Code, w.Body.String())
-	}
-	var user model.User
-	f.s.d.DB.First(&user, "id = ?", f.user.ID)
-	if user.Points != 20 || user.PointHeldMicros != 0 {
-		t.Fatalf("a refused model still moved points: %+v", user)
+// A disabled model, or one whose provider is switched off, disappears from the
+// catalogue as a whole — the provider switch is how an operator takes a whole
+// supplier out of service.
+func TestDisablingAModelOrItsProviderWithdrawsIt(t *testing.T) {
+	for _, disable := range []string{"model", "provider"} {
+		f := setup(t, "", "")
+		var err error
+		if disable == "model" {
+			err = f.s.d.DB.Model(&model.ChatModel{}).Where("model_key = ?", "test-model").Update("enabled", false).Error
+		} else {
+			err = f.s.d.DB.Model(&model.ChatProvider{}).Where("1 = 1").Update("enabled", false).Error
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if body := f.request("GET", "/api/integrations/v1/models", "", f.apiKey, nil).Body.String(); strings.Contains(body, "test-model") {
+			t.Fatalf("disabling the %s left the model on offer: %s", disable, body)
+		}
+		if w := f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, nil); w.Code == 200 {
+			t.Fatalf("disabling the %s left the model callable", disable)
+		}
 	}
 }

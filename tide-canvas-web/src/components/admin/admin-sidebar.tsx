@@ -51,6 +51,7 @@ export const ADMIN_NAV: AdminNavEntry[] = [
   { label: "技能管理", href: "/admin/skills", icon: "spark", perm: "skills", description: "技能广场的模板、分类与上下架" },
   { label: "模型管理", href: "/admin/models", icon: "model", perm: "models", description: "模型目录、供应商、能力与上下架" },
   { label: "模型状态", href: "/admin/model-status", icon: "pulse", perm: "models", description: "已上架模型的可用性与时延探测" },
+  { label: "AI 聊天供应商", href: "/admin/chat-providers", icon: "model", perm: "models", description: "AI 聊天直连的第三方服务、备用地址与模型单价" },
   { label: "工具管理", href: "/admin/tools", icon: "toolkit", perm: "tools", description: "智能工具能力、提示词与入口配置" },
   { label: "节点配置", href: "/admin/canvas-nodes", icon: "nodes", perm: "canvas", description: "画布节点入口、顶部功能与展示顺序" },
   { group: "商业" },

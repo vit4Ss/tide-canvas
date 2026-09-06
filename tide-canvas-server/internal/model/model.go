@@ -53,6 +53,9 @@ func Models() []any {
 		// Marketplace.
 		&ModelCategory{},
 		&MarketModel{},
+		&ChatProvider{},
+		&ChatEndpoint{},
+		&ChatModel{},
 		// IM.
 		&IMConversation{},
 		&IMConversationMember{},

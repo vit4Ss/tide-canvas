@@ -181,25 +181,7 @@ function initialUpscaleRates(config: ModelConfig): Record<string, number | strin
   return Object.fromEntries(resolutions.map((resolution) => [resolution, legacy]));
 }
 
-/** AI 聊天的 Token 定价：每个文本模型自己决定按 Token 还是按次计费。 */
-function tokenPricingState(model: AdminModelVO): "off" | "on" | "broken" {
-  const pricing = model.config?.tokenPricing;
-  if (model.type !== "text" || !pricing?.enabled) return "off";
-  const rate = (value?: string) => {
-    const text = String(value ?? "").trim();
-    return text !== "" && Number.isFinite(Number(text)) && Number(text) >= 0;
-  };
-  return rate(pricing.inputPointsPerMillion) && rate(pricing.outputPointsPerMillion) ? "on" : "broken";
-}
-
 function billingLabel(model: AdminModelVO): string {
-  const token = tokenPricingState(model);
-  // 填错的单价会让该模型在 AI 聊天里被拒绝，而不是退回按次价格——列表要能一眼看出。
-  if (token === "broken") return "Token 单价填写有误";
-  if (token === "on") {
-    const pricing = model.config?.tokenPricing;
-    return `${pricing?.inputPointsPerMillion}/${pricing?.outputPointsPerMillion} 每 1M Token`;
-  }
   if (model.type === "video" && usesVideoPerRequestBilling(model.config)) {
     const rates = (model.config?.resolutions ?? [])
       .map((resolution) => Math.ceil(videoPerRequestRate(model.config, resolution)))
@@ -892,7 +874,6 @@ function ModelModal({
     pricePerSecondByResolution: initialUpscaleRates(c0),
     referenceVideoBillingEnabled: c0.referenceVideoBillingEnabled ?? false,
     uploadCost: c0.uploadCost ?? "",
-    tokenPricing: c0.tokenPricing ?? { enabled: false, inputPointsPerMillion: "", outputPointsPerMillion: "", maxInputTokens: 131072, maxOutputTokens: 8192 },
   });
   const setC = (patch: Partial<ModelConfig>) => setCfg((p) => ({ ...p, ...patch }));
 
@@ -1162,33 +1143,6 @@ function ModelModal({
       onClose={onClose}
       onSave={save}
     >
-      {isText && <FormCard title="AI 聊天 · Token 定价">
-        <FormGrid>
-          <Field label="开放 Token 计费" span={4} hint="只影响本模型：打开后它在 AI 聊天里按 Token 计费，关闭则沿用下方的按次价格。其他模型不受影响。">
-            <SwitchToggle checked={cfg.tokenPricing?.enabled ?? false} onChange={(enabled) => setC({ tokenPricing: { inputPointsPerMillion: "", outputPointsPerMillion: "", ...cfg.tokenPricing, enabled } })} />
-          </Field>
-          {cfg.tokenPricing?.enabled && <>
-            <Field label="输入积分 / 1M Token" required>
-              <input inputMode="decimal" aria-label="输入积分每百万Token" value={cfg.tokenPricing.inputPointsPerMillion} onChange={e => setC({tokenPricing:{...cfg.tokenPricing!,inputPointsPerMillion:e.target.value}})} placeholder="由你设置，例如 100" />
-            </Field>
-            <Field label="输出积分 / 1M Token" required>
-              <input inputMode="decimal" aria-label="输出积分每百万Token" value={cfg.tokenPricing.outputPointsPerMillion} onChange={e => setC({tokenPricing:{...cfg.tokenPricing!,outputPointsPerMillion:e.target.value}})} placeholder="由你设置，例如 300" />
-            </Field>
-            <Field label="缓存输入积分 / 1M Token" hint="留空使用输入单价；缓存 Token 是输入的一部分，不重复计算。">
-              <input inputMode="decimal" value={cfg.tokenPricing.cachedInputPointsPerMillion ?? ""} onChange={e => setC({tokenPricing:{...cfg.tokenPricing!,cachedInputPointsPerMillion:e.target.value}})} placeholder="同输入单价" />
-            </Field>
-            <Field label="单次输入 Token 上限" hint="用于预留积分，应按模型实际限制配置。">
-              <input type="number" min={1} max={10000000} value={cfg.tokenPricing.maxInputTokens ?? 131072} onChange={e => setC({tokenPricing:{...cfg.tokenPricing!,maxInputTokens:Number(e.target.value)}})} />
-            </Field>
-            <Field label="单次输出 Token 上限" hint="调用时可申请更低上限。按上限预留，结束后按真实用量扣分并释放余量。">
-              <input type="number" min={1} max={1000000} value={cfg.tokenPricing.maxOutputTokens ?? 8192} onChange={e => setC({tokenPricing:{...cfg.tokenPricing!,maxOutputTokens:Number(e.target.value)}})} />
-            </Field>
-            <Field label="结算规则" span={4}>
-              <div className="hint">费用 = 非缓存输入 Token × 输入单价 / 1,000,000 + 缓存输入 Token × 缓存单价 / 1,000,000 + 输出 Token × 输出单价 / 1,000,000。积分精度为 0.000001；上游未返回可靠用量时保留额度等待核对。</div>
-            </Field>
-          </>}
-        </FormGrid>
-      </FormCard>}
       <FormCard title="基础信息">
         <FormGrid>
           <Field label="名称" required span={2}>
@@ -1226,7 +1180,7 @@ function ModelModal({
               label={isVideo ? "兜底积分" : isText ? "原聊天入口按次积分" : "消耗积分"}
               hint={isVideo
                 ? "仅按时长模式中未命中价格矩阵时使用；按次模式始终以清晰度价格表为准"
-                : isText ? "主站聊天入口的按次价格；本模型在 AI 聊天里也用它，除非上方打开了 Token 计费" : "按次扣费的积分（支持小数）；保存后即为计费与前台展示的权威价"}
+                : isText ? "主站聊天入口的按次价格。AI 聊天不读这里，它的模型与单价在「AI 聊天供应商」配置" : "按次扣费的积分（支持小数）；保存后即为计费与前台展示的权威价"}
             >
               <input value={pointCost} onChange={(e) => setPointCost(e.target.value)} placeholder="0.0" inputMode="decimal" />
             </Field>

@@ -31,7 +31,6 @@ import (
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/relaymedia"
 	"tidecanvas/internal/pkg/response"
-	"tidecanvas/internal/pkg/tokenbilling"
 )
 
 // RegisterModels mounts the admin model-market routes on the (already
@@ -303,10 +302,6 @@ func (h *modelsHandler) create(c *gin.Context) {
 		}
 	}
 	if mType == "text" {
-		if err := validateTokenPricingConfig(dto.Config); err != nil {
-			response.Fail(c, 400, err.Error())
-			return
-		}
 	}
 	if mType == "video" {
 		if err := validateOmniReferenceConfig(dto.Config); err != nil {
@@ -543,10 +538,6 @@ func (h *modelsHandler) update(c *gin.Context) {
 			}
 		}
 		if effectiveType == "text" {
-			if err := validateTokenPricingConfig(effectiveConfig); err != nil {
-				response.Fail(c, 400, err.Error())
-				return
-			}
 		}
 		if effectiveType == "video" {
 			if err := validateOmniReferenceConfig(effectiveConfig); err != nil {
@@ -663,10 +654,6 @@ func (h *modelsHandler) setStatus(c *gin.Context) {
 			}
 		}
 		if current.Type == "text" {
-			if err := validateTokenPricingConfig(json.RawMessage(current.Config)); err != nil {
-				response.Fail(c, 400, err.Error())
-				return
-			}
 		}
 		if current.Type == "video" {
 			if err := validateOmniReferenceConfig(json.RawMessage(current.Config)); err != nil {
@@ -916,25 +903,6 @@ func rawToString(raw json.RawMessage) string {
 }
 
 var defaultUpscalePricingResolutions = []string{"720p", "1080p", "2k", "4k"}
-
-func validateTokenPricingConfig(raw json.RawMessage) error {
-	var config struct {
-		Pricing *tokenbilling.Pricing `json:"tokenPricing"`
-	}
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil
-	}
-	if json.Unmarshal(raw, &config) != nil {
-		return fmt.Errorf("Token 定价格式无效")
-	}
-	if config.Pricing == nil || !config.Pricing.Enabled {
-		return nil
-	}
-	if _, err := tokenbilling.Parse(string(raw)); err != nil {
-		return fmt.Errorf("请填写有效的每百万输入/输出 Token 积分单价（最多六位小数）和 Token 上限")
-	}
-	return nil
-}
 
 func validateUpscalePricingConfig(raw json.RawMessage) error {
 	if len(raw) == 0 || !json.Valid(raw) {

@@ -23,7 +23,7 @@ func TestGatewayConcurrentReservationAndDailyLimit(t *testing.T) {
 		calls.Add(1)
 		close(entered)
 		<-release
-		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":100,\"total_tokens\":200}}\n\ndata: [DONE]\n\n")
 	}))
 	defer up.Close()
 	f := setup(t, "", up.URL)
@@ -54,8 +54,8 @@ func TestGatewayConcurrentReservationAndDailyLimit(t *testing.T) {
 	}
 	var user model.User
 	f.s.d.DB.First(&user, "id = ?", f.user.ID)
-	if user.Points != 17 {
-		t.Fatalf("wrong final balance: %d", user.Points)
+	if user.PointBalance() != 19.96 || user.PointHeldMicros != 0 {
+		t.Fatalf("wrong final balance: %v held=%d", user.PointBalance(), user.PointHeldMicros)
 	}
 }
 
@@ -64,7 +64,7 @@ func TestGatewayToolCycleAndInvalidInputs(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&received)
 		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_next\",\"type\":\"function\",\"function\":{\"name\":\"search\",\"arguments\":\"{\\\"q\\\":\"}}]}}]}\n\n")
-		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"answer\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"answer\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":100,\"total_tokens\":200}}\n\ndata: [DONE]\n\n")
 	}))
 	defer up.Close()
 	f := setup(t, "", up.URL)
@@ -94,20 +94,22 @@ func TestGatewayToolCycleAndInvalidInputs(t *testing.T) {
 	}
 	var user model.User
 	f.s.d.DB.First(&user, "id = ?", f.user.ID)
-	if user.Points != 17 {
-		t.Fatal("invalid input charged")
+	if user.PointBalance() != 19.96 || user.PointHeldMicros != 0 {
+		t.Fatalf("invalid input charged or left a reservation: %v held=%d", user.PointBalance(), user.PointHeldMicros)
 	}
 }
 
 func TestGatewaySettlementRecoveryAndReplayConflict(t *testing.T) {
 	f := setup(t, "", "")
-	var m model.MarketModel
-	f.s.d.DB.First(&m)
-	row, fresh, err := f.s.reserve(context.Background(), f.user.ID, "reserved", "body", m)
+	route, err := f.s.routeFor(context.Background(), "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, fresh, err := f.s.reserve(context.Background(), f.user.ID, "reserved", "body", route)
 	if err != nil || !fresh {
 		t.Fatal(err)
 	}
-	if _, _, err := f.s.reserve(context.Background(), f.user.ID, "reserved", "different", m); err != errReplayConflict {
+	if _, _, err := f.s.reserve(context.Background(), f.user.ID, "reserved", "different", route); err != errReplayConflict {
 		t.Fatal("request body conflict ignored")
 	}
 	if err := f.s.settle(row, "", "worker_interrupted"); err != nil {
