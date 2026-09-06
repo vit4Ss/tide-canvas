@@ -227,11 +227,22 @@ LobeHub 自己的对象存储，与主站网关无关，网关只转发消息。
 | `FEATURE_FLAGS` 里**不要**带 `-knowledge_base` | 附件按钮根本不出现 | `config.getGlobalConfig` 的 `enableKnowledgeBase` |
 | LobeHub 配好 S3（`S3_SECRET_ACCESS_KEY` 等） | 同上，按钮不出现 | 同上接口的 `enableUploadFileToServer` |
 | 后台该模型的「图片」开关打开 | 菜单里「上传图片」是灰的，悬停有提示 | `/admin/chat-providers` 模型表 |
-| **S3 配了 CORS，允许从 LobeHub 域名 `PUT`** | 选完文件后毫无反应，只有浏览器 console 有报错 | 开发者工具 Network 里那条 PUT |
+| **`S3_ENDPOINT` 是浏览器能访问到的地址** | 选完文件后毫无反应 | `.env` 里这一项 |
+| **对象存储配了 CORS，允许从 LobeHub 域名 `PUT`** | 同上，同样没有任何界面提示 | 开发者工具 Network 里那条 PUT |
 
-最后一项最容易漏。浏览器是**直传**对象存储的：LobeHub 通过 `upload.createS3PreSignedUrl`
-换一个预签名地址，再由页面 `XMLHttpRequest` 直接 `PUT` 过去，不经服务端中转。所以桶必须允许
-跨域写，例如：
+后两项都源于同一件事：浏览器是**直传**对象存储的。LobeHub 通过 `upload.createS3PreSignedUrl`
+换一个预签名地址，再由页面 `XMLHttpRequest` 直接 `PUT` 过去，文件不经服务端中转。
+
+因此 `S3_ENDPOINT` 必须是**用户浏览器**能访问到的地址，而不是容器之间能访问的地址。
+LobeHub 官方 compose 的默认值是 `http://localhost:9000`，那是**访问者自己的机器**——
+容器内互通不代表浏览器能连上。自带的 RustFS 想用于对话附件，就得给它一个对外域名
+（nginx 反代到 `RUSTFS_PORT`，配好证书），再把 `S3_ENDPOINT` 指过去；预签名 URL 是按这个
+主机名签的，所以它必须和浏览器实际使用的地址完全一致，`http`/`https` 也要对上。
+不想对外暴露这个服务，就换成公有云对象存储（如阿里云 OSS 的 S3 兼容端点
+`https://s3.oss-cn-<region>.aliyuncs.com`，同时设置 `S3_REGION`，不要开
+`S3_ENABLE_PATH_STYLE`——OSS 只支持 virtual-hosted 寻址）。
+
+其次是跨域。桶必须允许来自 LobeHub 域名的写入，例如：
 
 ```json
 [
@@ -245,7 +256,11 @@ LobeHub 自己的对象存储，与主站网关无关，网关只转发消息。
 ]
 ```
 
-（MinIO 也可用 `MINIO_API_CORS_ALLOW_ORIGIN` 设置。）
+（MinIO 也可用 `MINIO_API_CORS_ALLOW_ORIGIN` 设置；阿里云 OSS 在控制台的
+「数据安全 → 跨域设置」里配。）
+
+官方 compose 里的 `bucket.config.json` 与此**无关**：它由 `rustfs-init` 容器在启动时用
+`mc anonymous set-json` 自动应用，给的是匿名读权限，改它不会让上传恢复。
 
 **不需要**把桶设成公开可读。`S3_SET_ACL` 未开启时 LobeHub 用预签名 URL 取文件
 （`getFullFileUrl`），公开读策略只在 `S3_SET_ACL=1` 且配了 `S3_PUBLIC_DOMAIN` 时才走到。
