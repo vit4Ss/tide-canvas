@@ -188,13 +188,13 @@ func TestAnUpstreamEchoingItsCredentialDoesNotForwardIt(t *testing.T) {
 
 	f := setup(t, "", leaky.URL)
 	w := f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, nil)
-	// The gateway replaces an upstream error with its own wording, so the echoed
-	// credential never reaches the caller in any form.
+	// The provider's wording reaches the caller — that is the point of passing
+	// errors through — but the credential inside it must not.
 	if strings.Contains(w.Body.String(), "upstream-secret-only") {
 		t.Fatalf("the upstream credential was forwarded to the caller: %s", w.Body.String())
 	}
-	if strings.Contains(w.Body.String(), "bad key") {
-		t.Fatalf("raw upstream error text reached the caller: %s", w.Body.String())
+	if !strings.Contains(w.Body.String(), "bad key [REDACTED]") {
+		t.Fatalf("the provider's reason was not passed through with the secret scrubbed: %s", w.Body.String())
 	}
 }
 

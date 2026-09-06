@@ -258,12 +258,14 @@ func TestGatewayChargesOnceAndKeepsPartialOutputBilling(t *testing.T) {
 			if strings.Contains(w.Body.String(), "upstream-secret-only") {
 				t.Fatal("upstream secret leaked")
 			}
+			// The history goes up untrimmed — the window is LobeHub's setting,
+			// not this gateway's — while the forged owner is still replaced.
 			gotMessages := received["messages"].([]any)
-			if len(gotMessages) != 5 || received["user"] != f.user.ID.String() {
-				t.Fatalf("bad bounded model input: %#v", received)
+			if len(gotMessages) != 8 || received["user"] != f.user.ID.String() {
+				t.Fatalf("bad model input: %#v", received)
 			}
-			if gotMessages[1].(map[string]any)["content"] != "3" {
-				t.Fatal("wrong historical window")
+			if gotMessages[1].(map[string]any)["content"] != "0" {
+				t.Fatal("the history was trimmed")
 			}
 			_ = f.request("POST", "/api/integrations/v1/chat/completions", string(body), f.apiKey, headers)
 			if calls.Load() != 1 {

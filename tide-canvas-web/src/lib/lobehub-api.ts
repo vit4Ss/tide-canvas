@@ -6,7 +6,6 @@ export interface LobeHubConfig {
   gateway?: string;
   maxConcurrent?: number;
   dailyLimit?: number;
-  historyMessages?: number;
 }
 
 export const lobeHubApi = {

@@ -86,7 +86,10 @@ func TestGatewayToolCycleAndInvalidInputs(t *testing.T) {
 	if len(received["messages"].([]any)) != 4 || received["tools"] == nil {
 		t.Fatal("current tool cycle or tool definitions lost")
 	}
-	for _, invalid := range []string{testPrompt + " {}", `{"model":"test-model","messages":[]}`, `{"model":"not-available","messages":[{"role":"user","content":"x"}]}`} {
+	// Only what the gateway itself must refuse: a body that is not one JSON
+	// object, and a model it does not offer. An empty message list is the
+	// provider's to judge now, and its answer is passed through.
+	for _, invalid := range []string{testPrompt + " {}", `{"model":"not-available","messages":[{"role":"user","content":"x"}]}`} {
 		w = f.request("POST", "/api/integrations/v1/chat/completions", invalid, f.apiKey, nil)
 		if w.Code < 400 {
 			t.Fatal("invalid request accepted")

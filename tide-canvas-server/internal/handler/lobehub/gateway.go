@@ -21,7 +21,6 @@ import (
 	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
-	"tidecanvas/internal/pkg/chatcontext"
 	"tidecanvas/internal/pkg/chatupstream"
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
@@ -51,7 +50,7 @@ func gatewayError(c *gin.Context, status int, code, message string) {
 	c.JSON(status, gin.H{"error": gin.H{"type": code, "code": code, "message": message}})
 }
 
-func gatewayGenerationError(c *gin.Context, code, message, modelName string, out *completion) {
+func gatewayGenerationError(c *gin.Context, status int, code, message, modelName string, out *completion) {
 	result := gin.H{"error": gin.H{"type": code, "code": code, "message": message}}
 	if out.hasOutput() {
 		// JSON clients must also be able to recover content they were charged
@@ -61,7 +60,7 @@ func gatewayGenerationError(c *gin.Context, code, message, modelName string, out
 	if billing, ok := c.Get("lobehub.billing"); ok {
 		result["billing"] = billing
 	}
-	c.JSON(502, result)
+	c.JSON(status, result)
 }
 
 func writeGatewaySSE(c *gin.Context, data string) bool {
@@ -117,48 +116,6 @@ func (s *service) listModels(c *gin.Context) {
 		})
 	}
 	c.JSON(200, gin.H{"object": "list", "data": data})
-}
-
-// Previous completed tool steps are omitted from history; the whole current
-// user turn's tool cycle stays intact so tool_call_id references remain valid.
-func trimGatewayHistory(messages []any) ([]any, error) {
-	lastUser := -1
-	systems := []any{}
-	for i, value := range messages {
-		m, ok := value.(map[string]any)
-		if !ok {
-			return nil, errors.New("invalid message")
-		}
-		role, _ := m["role"].(string)
-		switch role {
-		case "user":
-			lastUser = i
-		case "assistant", "tool":
-		case "system", "developer":
-			systems = append(systems, value)
-		default:
-			return nil, errors.New("invalid message role")
-		}
-	}
-	if lastUser < 0 {
-		return nil, errors.New("a current user message is required")
-	}
-	history := []any{}
-	for _, value := range messages[:lastUser] {
-		m := value.(map[string]any)
-		role := m["role"]
-		if (role == "user" || role == "assistant") && m["tool_calls"] == nil {
-			history = append(history, value)
-		}
-	}
-	out := append(systems, chatcontext.Latest(history)...)
-	for _, value := range messages[lastUser:] {
-		m := value.(map[string]any)
-		if m["role"] != "system" && m["role"] != "developer" {
-			out = append(out, value)
-		}
-	}
-	return out, nil
 }
 
 // reserve holds the worst-case cost of one call. Every AI chat model is token
@@ -287,6 +244,10 @@ type upstreamFrame struct {
 	data string
 	err  error
 	done bool
+	// When err is the provider's answer rather than a failure to reach one:
+	// the status it returned and what it said, with credentials redacted.
+	status  int
+	message string
 }
 type completion struct {
 	text      strings.Builder
@@ -298,6 +259,9 @@ type completion struct {
 	produced  bool
 	failed    bool
 	done      bool
+	// What the provider said in an in-stream error frame, so the user sees
+	// the provider's reason rather than this gateway's paraphrase.
+	errorMessage string
 }
 
 func (out *completion) inspect(data string) bool {
@@ -309,8 +273,14 @@ func (out *completion) inspect(data string) bool {
 	if json.Unmarshal([]byte(data), &frame) != nil {
 		return false
 	}
-	if frame["error"] != nil {
+	if e := frame["error"]; e != nil {
 		out.failed = true
+		switch v := e.(type) {
+		case map[string]any:
+			out.errorMessage, _ = v["message"].(string)
+		case string:
+			out.errorMessage = v
+		}
 		return true
 	}
 	if id, ok := frame["id"].(string); ok {
@@ -436,7 +406,7 @@ func (s *service) readUpstream(ctx context.Context, endpoints []chatEndpoint, pa
 	// the moment a response starts: once bytes are on their way to the user,
 	// retrying elsewhere would repeat text and charge for both attempts.
 	var resp *http.Response
-	var lastErr error
+	var last upstreamFrame
 	for i, endpoint := range endpoints {
 		req, err := http.NewRequestWithContext(ctx, "POST", chatupstream.Endpoint(endpoint.baseURL, "chat/completions"), bytes.NewReader(payload))
 		if err != nil {
@@ -448,15 +418,23 @@ func (s *service) readUpstream(ctx context.Context, endpoints []chatEndpoint, pa
 		req.Header.Set("Accept", "text/event-stream")
 		attempt, err := s.upstream.Do(req)
 		if err != nil {
-			lastErr = errors.New("upstream connection failed")
+			last = upstreamFrame{err: errors.New("upstream connection failed"), message: "无法连接模型服务"}
 			s.noteEndpoint(endpoint.id, "连接失败")
 			continue
 		}
 		if attempt.StatusCode != 200 {
+			message := redactKeys(upstreamErrorMessage(attempt.Body, attempt.StatusCode), endpoints)
 			attempt.Body.Close()
-			lastErr = fmt.Errorf("upstream HTTP %d", attempt.StatusCode)
-			s.noteEndpoint(endpoint.id, fmt.Sprintf("HTTP %d", attempt.StatusCode))
-			continue
+			last = upstreamFrame{err: fmt.Errorf("upstream HTTP %d", attempt.StatusCode), status: attempt.StatusCode, message: message}
+			if endpointProblem(attempt.StatusCode) {
+				s.noteEndpoint(endpoint.id, fmt.Sprintf("HTTP %d", attempt.StatusCode))
+				continue
+			}
+			// The provider objected to the request itself. Every address would
+			// say the same, the address is not at fault, and the user needs to
+			// hear the objection rather than watch a retry repeat it.
+			send(last)
+			return
 		}
 		if i > 0 {
 			logger.L().Info("chat call moved to a backup endpoint", zap.String("endpoint", endpoint.label))
@@ -466,10 +444,10 @@ func (s *service) readUpstream(ctx context.Context, endpoints []chatEndpoint, pa
 		break
 	}
 	if resp == nil {
-		if lastErr == nil {
-			lastErr = errors.New("upstream connection failed")
+		if last.err == nil {
+			last = upstreamFrame{err: errors.New("upstream connection failed"), message: "无法连接模型服务"}
 		}
-		send(upstreamFrame{err: lastErr})
+		send(last)
 		return
 	}
 	defer resp.Body.Close()
@@ -489,13 +467,7 @@ func (s *service) readUpstream(ctx context.Context, endpoints []chatEndpoint, pa
 			send(upstreamFrame{err: errors.New("upstream returned an invalid event")})
 			return
 		}
-		// An upstream that echoes its own credential back in an error must not
-		// forward it to the user, so scrub every key this call could have used.
-		for _, endpoint := range endpoints {
-			if endpoint.apiKey != "" {
-				data = strings.ReplaceAll(data, endpoint.apiKey, "[REDACTED]")
-			}
-		}
+		data = redactKeys(data, endpoints)
 		if !send(upstreamFrame{data: data}) {
 			return
 		}
@@ -506,6 +478,57 @@ func (s *service) readUpstream(ctx context.Context, endpoints []chatEndpoint, pa
 	if err := scan.Err(); err != nil {
 		send(upstreamFrame{err: errors.New("upstream stream interrupted")})
 	}
+}
+
+// redactKeys scrubs every credential this call could have used. A provider
+// that echoes the key back in an error must not hand it to the user.
+func redactKeys(text string, endpoints []chatEndpoint) string {
+	for _, endpoint := range endpoints {
+		if endpoint.apiKey != "" {
+			text = strings.ReplaceAll(text, endpoint.apiKey, "[REDACTED]")
+		}
+	}
+	return text
+}
+
+// endpointProblem reports whether a refusal is about this address — its
+// credential, its quota, its availability — so the next address may still
+// serve. Anything else is about the request, which every address would refuse
+// the same way; that answer goes straight back to the user.
+func endpointProblem(status int) bool {
+	return status == 401 || status == 403 || status == 429 || status >= 500
+}
+
+// upstreamErrorMessage reads what a provider said when it refused, in the
+// shape OpenAI-compatible services use, falling back to the body itself.
+func upstreamErrorMessage(body io.Reader, status int) string {
+	raw, _ := io.ReadAll(io.LimitReader(body, 64<<10))
+	var parsed struct {
+		Error   any    `json:"error"`
+		Message string `json:"message"`
+	}
+	text := ""
+	if json.Unmarshal(raw, &parsed) == nil {
+		switch e := parsed.Error.(type) {
+		case map[string]any:
+			text, _ = e["message"].(string)
+		case string:
+			text = e
+		}
+		if text == "" {
+			text = parsed.Message
+		}
+	}
+	if text == "" {
+		text = strings.TrimSpace(string(raw))
+	}
+	if runes := []rune(text); len(runes) > 2000 {
+		text = string(runes[:2000]) + "…"
+	}
+	if text == "" {
+		text = fmt.Sprintf("模型服务返回 HTTP %d", status)
+	}
+	return text
 }
 
 func (s *service) chat(c *gin.Context) {
@@ -530,32 +553,14 @@ func (s *service) chat(c *gin.Context) {
 		gatewayError(c, 400, "invalid_request", "请求必须是单个 JSON 对象")
 		return
 	}
+	// The request is the client's. Messages, tools, n, temperature — whatever
+	// LobeHub built is what the provider gets, and the provider's own answer is
+	// what the user sees when it objects. This gateway exists to swap in the
+	// operator's credential and to bill by usage; it is not a second validator
+	// in front of the provider, and every rule it used to add here (a history
+	// window, a tools switch, a one-reply rule) was one more thing that could
+	// disagree with the provider and hide its actual message.
 	modelName, _ := body["model"].(string)
-	messages, ok := body["messages"].([]any)
-	if !ok || len(messages) == 0 || len(messages) > 256 {
-		gatewayError(c, 400, "invalid_request", "消息列表无效")
-		return
-	}
-	if n, ok := body["n"].(float64); ok && n != 1 {
-		gatewayError(c, 400, "invalid_request", "每次只支持一条回复")
-		return
-	}
-	if tools, exists := body["tools"]; exists {
-		items, ok := tools.([]any)
-		if !ok {
-			gatewayError(c, 400, "invalid_request", "工具列表格式无效")
-			return
-		}
-		if len(items) > 0 && !s.cfg.SupportsTools {
-			gatewayError(c, 400, "tools_unavailable", "工具调用尚未启用，请管理员先升级模型网关")
-			return
-		}
-	}
-	trimmed, err := trimGatewayHistory(messages)
-	if err != nil {
-		gatewayError(c, 400, "invalid_request", "消息格式无效")
-		return
-	}
 	// Resolve the model to its provider and credentialed addresses before any
 	// money moves: a model we cannot reach must not be charged for.
 	route, err := s.routeFor(c.Request.Context(), upstreamKey(modelName))
@@ -575,45 +580,37 @@ func (s *service) chat(c *gin.Context) {
 	body["model"] = route.model.ModelKey
 	stream, _ := body["stream"].(bool)
 	body["stream"] = true
-	body["messages"] = trimmed
 	uid := middleware.CurrentUserID(c)
 	body["user"] = uid.String()
 	fingerprint, _ := json.Marshal(body)
 	// A model only reaches this point with usable pricing — offeredModels drops
 	// the rest — so token billing always applies here.
 	pricing := route.pricing
-	maxOutput := int64(0)
-	{
-		maxOutput = pricing.MaxOutput
-		field := "max_completion_tokens"
-		if body["max_tokens"] != nil && body["max_completion_tokens"] == nil {
-			field = "max_tokens"
-		}
-		if raw := body[field]; raw != nil {
-			value, ok := raw.(float64)
-			if !ok || value < 1 || value > float64(pricing.MaxOutput) || value != math.Trunc(value) {
-				gatewayError(c, 400, "invalid_token_limit", fmt.Sprintf("输出 Token 上限必须在 1–%d 之间", pricing.MaxOutput))
-				return
-			}
+	// The output cap is the one thing this gateway must put on the request: the
+	// reservation is computed from it, so the provider may not run past it. A
+	// client asking for less gets less; one asking for more, or sending
+	// something unusable, is clamped to what the model is priced for rather
+	// than refused — the price the operator set is the limit, not the client.
+	maxOutput := pricing.MaxOutput
+	field := "max_completion_tokens"
+	if _, legacy := body["max_tokens"]; legacy {
+		field = "max_tokens"
+	}
+	for _, name := range []string{"max_tokens", "max_completion_tokens"} {
+		if value, ok := body[name].(float64); ok && value >= 1 && value == math.Trunc(value) && int64(value) < maxOutput {
 			maxOutput = int64(value)
 		}
-		if body["max_tokens"] != nil && body["max_completion_tokens"] != nil {
-			gatewayError(c, 400, "invalid_token_limit", "请只使用一个输出 Token 上限参数")
-			return
-		}
-		body[field] = maxOutput
-		options := map[string]any{}
-		if raw := body["stream_options"]; raw != nil {
-			var ok bool
-			options, ok = raw.(map[string]any)
-			if !ok {
-				gatewayError(c, 400, "invalid_request", "stream_options 格式无效")
-				return
-			}
-		}
-		options["include_usage"] = true
-		body["stream_options"] = options
+		delete(body, name)
 	}
+	body[field] = maxOutput
+	// Usage in the stream is how the call is billed; without it nothing can be
+	// settled. Merge into whatever the client sent, replace it if unusable.
+	options, _ := body["stream_options"].(map[string]any)
+	if options == nil {
+		options = map[string]any{}
+	}
+	options["include_usage"] = true
+	body["stream_options"] = options
 	payload, err := json.Marshal(body)
 	if err != nil {
 		gatewayError(c, 400, "invalid_request", "请求格式无效")
@@ -689,7 +686,7 @@ func (s *service) chat(c *gin.Context) {
 				writeGatewaySSE(c, partialGatewayFrames(row.ResponseBody)+billingFrame(row)+"data: "+string(data)+"\n\ndata: [DONE]\n\n")
 				return
 			}
-			gatewayGenerationError(c, "generation_failed", message, modelName, parseCompletion(row.ResponseBody))
+			gatewayGenerationError(c, 502, "generation_failed", message, modelName, parseCompletion(row.ResponseBody))
 			return
 		}
 		if stream {
@@ -729,6 +726,8 @@ func (s *service) chat(c *gin.Context) {
 	var frames, terminal strings.Builder
 	out := completion{}
 	code := ""
+	var upstreamStatus int
+	var upstreamMessage string
 	ended := false
 	bufferTerminal := false
 	for !ended {
@@ -745,6 +744,7 @@ func (s *service) chat(c *gin.Context) {
 			}
 			if frame.err != nil {
 				code = "upstream_error"
+				upstreamStatus, upstreamMessage = frame.status, frame.message
 				ended = true
 				break
 			}
@@ -758,6 +758,8 @@ func (s *service) chat(c *gin.Context) {
 			if out.failed {
 				// An explicit error is terminal even if the upstream keeps its
 				// socket open. Release reservations instead of waiting an hour.
+				code = "upstream_error"
+				upstreamMessage = out.errorMessage
 				ended = true
 				cancel()
 			}
@@ -823,13 +825,27 @@ func (s *service) chat(c *gin.Context) {
 		if code == "settlement_pending" {
 			message = "结果结算暂未完成，请保留请求编号并稍后查询"
 		}
+		if code == "upstream_error" && upstreamMessage != "" {
+			// The provider's own words. It knows why it refused; this gateway
+			// only knows that it did. Billing is reported alongside in its
+			// own fields, not folded into the sentence.
+			message = upstreamMessage
+		}
 		if stream {
 			emit(partialGatewayFrames(terminal.String()))
 			emit(billingFrame(row))
-			data, _ := json.Marshal(gin.H{"error": gin.H{"code": code, "type": code, "message": message}})
+			detail := gin.H{"code": code, "type": code, "message": message}
+			if upstreamStatus != 0 {
+				detail["upstream_status"] = upstreamStatus
+			}
+			data, _ := json.Marshal(gin.H{"error": detail})
 			emit("data: " + string(data) + "\n\ndata: [DONE]\n\n")
 		} else {
-			gatewayGenerationError(c, code, message, modelName, &out)
+			status := 502
+			if code == "upstream_error" && upstreamStatus >= 400 && upstreamStatus <= 599 {
+				status = upstreamStatus
+			}
+			gatewayGenerationError(c, status, code, message, modelName, &out)
 		}
 		return
 	}

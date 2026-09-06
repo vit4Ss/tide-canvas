@@ -28,7 +28,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 			response.OK(c, gin.H{"enabled": false})
 			return
 		}
-		response.OK(c, gin.H{"enabled": true, "url": s.cfg.PublicURL, "gateway": s.mainOrigin + "/api/integrations/v1", "maxConcurrent": s.cfg.MaxConcurrent, "dailyLimit": s.cfg.DailyLimit, "historyMessages": 3})
+		response.OK(c, gin.H{"enabled": true, "url": s.cfg.PublicURL, "gateway": s.mainOrigin + "/api/integrations/v1", "maxConcurrent": s.cfg.MaxConcurrent, "dailyLimit": s.cfg.DailyLimit})
 	})
 	if s == nil {
 		return
