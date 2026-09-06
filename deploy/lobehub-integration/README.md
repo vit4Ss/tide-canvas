@@ -265,9 +265,14 @@ LobeHub 官方 compose 的默认值是 `http://localhost:9000`，那是**访问�
 给 `arn:aws:s3:::<bucket>/*` 加 `Principal: "*"` 的 `s3:GetObject` 会让所有用户上传的文件
 对全网可读，且并不能解决上传失败。
 
-还有一点与本集成有关：图片进入对话后，其 URL 会经主站网关原样转给第三方中转站，
-**由中转站从它那一侧去拉取**。如果 S3 端点或 `S3_PUBLIC_DOMAIN` 只在内网可达
-（例如 `http://minio:9000`），上传会成功、缩略图也正常，但模型看不到图片。
+图片进入对话后怎么送到模型，取决于 LobeHub 的 `LLM_VISION_IMAGE_USE_BASE64`。官方
+compose 把它写死为 `1`，此时 LobeHub 在服务端把图片取回并转成 base64 放进请求体
+（`forceImageBase64`），中转站不需要访问对象存储。代价是请求体膨胀约 1/3，而本网关的
+请求上限是 16 MiB，所以超过约 12 MiB 的图片会被网关以 400 拒绝。
+
+若该变量被改为 0，送出去的就是图片 URL，届时**由中转站从它那一侧去拉取**——那样
+对象存储必须是公网可达的，仅在部署内部可达（例如 `http://rustfs:9000`）会表现为
+上传成功、缩略图正常，但模型看不到图片。
 
 ### 用阿里云 OSS 作为附件存储
 
@@ -363,12 +368,24 @@ Bucket → 数据安全 → 跨域设置 → 创建规则：
 
 #### 5. 改 `.env`
 
+注意官方 compose 不是直接读 `S3_*`，而是从 `RUSTFS_*` 转过去的：
+
+```yaml
+- 'S3_ENDPOINT=${S3_ENDPOINT}'
+- 'S3_BUCKET=${RUSTFS_LOBE_BUCKET}'
+- 'S3_ACCESS_KEY_ID=${RUSTFS_ACCESS_KEY}'
+- 'S3_SECRET_ACCESS_KEY=${RUSTFS_SECRET_KEY}'
+```
+
+所以凭证和桶名要写在 `RUSTFS_*` 上——直接在 `.env` 里写 `S3_ACCESS_KEY_ID` 会被
+`environment:` 覆盖，不生效。`S3_REGION` 则相反，compose 没有它，必须由 `.env` 提供：
+
 ```env
-S3_ENDPOINT=https://s3.oss-cn-hongkong.aliyuncs.com
-S3_BUCKET=<bucket>
-S3_REGION=cn-hongkong
-S3_ACCESS_KEY_ID=<AccessKeyId>
-S3_SECRET_ACCESS_KEY=<AccessKeySecret>
+S3_ENDPOINT=https://s3.oss-cn-shanghai.aliyuncs.com
+S3_REGION=cn-shanghai
+RUSTFS_LOBE_BUCKET=<bucket>
+RUSTFS_ACCESS_KEY=<AccessKeyId>
+RUSTFS_SECRET_KEY=<AccessKeySecret>
 ```
 
 三个容易配错的地方，错了都是 `SignatureDoesNotMatch`：
@@ -379,8 +396,20 @@ S3_SECRET_ACCESS_KEY=<AccessKeySecret>
 - `S3_REGION` 填**纯地域 ID**（`cn-hongkong`），不是 `oss-cn-hongkong`——后者只出现在
   主机名里。不设时 LobeHub 默认 `us-east-1`，SigV4 会把 region 算进签名。
 
-**不要设**这两项：`S3_ENABLE_PATH_STYLE`（OSS 只支持 virtual-hosted）、`S3_SET_ACL`
-（会给对象加 `public-read`，桶要保持私有）。若之前为 RustFS 设过，现在删掉。
+**`S3_ENABLE_PATH_STYLE` 必须改成 `0`，而且改不了 `.env`——它写死在 compose 的
+`environment:` 里，而 `environment` 的优先级高于 `env_file`。** 要编辑
+`docker-compose.yml`，把 lobe 服务的 `- 'S3_ENABLE_PATH_STYLE=1'` 改为 `0`（或删掉该行）。
+OSS 明确拒绝路径样式，对私有桶发一个匿名请求就能看到区别：
+
+```
+# 虚拟主机样式 → AccessDenied（寻址正常，只是没权限）
+curl https://<bucket>.oss-cn-shanghai.aliyuncs.com/
+# 路径样式 → SecondLevelDomainForbidden
+#   "The bucket you are attempting to access must be addressed using OSS third level domain"
+curl https://s3.oss-cn-shanghai.aliyuncs.com/<bucket>/
+```
+
+`S3_SET_ACL` 保持 `0`（compose 里已经是 0），开了会给对象加 `public-read`。
 
 签名版本不需要处理。「OSS 要用 V2 签名」是 boto3 特有的问题——它的 V4 实现与
 chunked encoding 强耦合；阿里云文档的结论是除 boto3 外其他 SDK 均可用 V4。
