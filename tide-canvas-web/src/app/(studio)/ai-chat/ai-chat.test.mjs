@@ -92,12 +92,14 @@ test("late session failure after unmount does not redirect the user away", async
 });
 
 function entryHarness({ ancestor } = {}) {
-  const hooks = [], effects = [], navigations = [], escapes = [];
+  const hooks = [], effects = [], navigations = [], escapes = [], frames = [];
   let cursor = 0, sessionToken = "account-a-token", finishLaunch;
   const store = {user:{id:"a",points:20}, ensureSession:async()=>true, fetchUser:async()=>{}};
   const useAuthStore = Object.assign(selector => selector(store), {getState:()=>store});
   const context = {exports:{}, URL,
     localStorage:{getItem:()=>sessionToken},
+    requestAnimationFrame:fn=>frames.push(fn)||frames.length,
+    cancelAnimationFrame:()=>{},
     window:(()=>{
       const self={location:{replace:url=>navigations.push(url),assign:url=>navigations.push(url)}};
       self.self=self;
@@ -113,7 +115,7 @@ function entryHarness({ ancestor } = {}) {
       if(name === "react") return {
         useState:initial=>{const index=cursor++; hooks[index]??={value:initial}; return [hooks[index].value,value=>{hooks[index].value=value;}];},
         useRef:initial=>hooks[cursor++]??={current:initial},
-        useEffect:effect=>{cursor++; if(effects.length===0)effects.push(effect);},
+        useEffect:effect=>{const index=cursor++; effects[index]=effect;},
         useCallback:fn=>{cursor++; return fn;},
       };
       if(name === "react/jsx-runtime") return {jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};
@@ -132,8 +134,18 @@ function entryHarness({ ancestor } = {}) {
     if(match(node))return node;
     return [node.props?.children].flat().map(child=>find(child,match)).find(Boolean);
   };
+  const button=label=>find(render(),node=>node.type==="button"&&JSON.stringify(node.props?.children||"").includes(label));
   return {hooks,navigations,escapes,render,find,
-    start:()=>{render();return effects[0]();},
+    // Effects are indexed by hook position, so replay every one the render
+    // registered, not just the first.
+    start:()=>{render();const cleanups=effects.filter(Boolean).map(effect=>effect());
+      return ()=>cleanups.forEach(fn=>typeof fn==="function"&&fn());},
+    runFrames:async()=>{const queued=frames.splice(0);queued.forEach(fn=>fn());await flush();},
+    // React re-runs effects after the state their deps read has changed; this
+    // harness's setState does not re-render, so a settle stands in for it.
+    settle:async()=>{render();effects.filter(Boolean).forEach(effect=>effect());
+      const queued=frames.splice(0);queued.forEach(fn=>fn());await flush();},
+    leave:()=>button("退出聊天")?.props.onClick(),
     connect:()=>find(render(),node=>node.type==="button").props.onClick(),
     resync:()=>find(render(),node=>node.type==="button"&&String(node.props?.title||"").includes("同步")).props.onClick(),
     finishLaunch:(...args)=>finishLaunch(...args),
@@ -218,5 +230,30 @@ test("re-syncing pushes a fresh connection so edited model prices reach the pick
   await again;
   assert.match(h.frame.props.src,/ticket=two/);
   assert.equal(h.navigations.length,0);
+  cleanup();
+});
+
+test("the page connects on arrival without waiting for a click", async () => {
+  const h = entryHarness();
+  const cleanup = h.start(); await flush();
+  // The effect defers through requestAnimationFrame, as the project's other
+  // loaders do, so the frame has to run before the launch is in flight.
+  await h.settle();
+  h.finishLaunch({success:true,data:{url:origin+"/flowinglight/connect?ticket=auto"}});
+  await flush();
+  assert.match(h.frame.props.src,/ticket=auto/);
+  cleanup();
+});
+
+test("leaving the chat is not undone by another automatic connect", async () => {
+  const h = entryHarness();
+  const cleanup = h.start(); await flush();
+  await h.settle();
+  h.finishLaunch({success:true,data:{url:origin+"/flowinglight/connect?ticket=auto"}});
+  await flush();
+  assert.ok(h.frame);
+
+  h.leave(); await flush(); await h.settle();
+  assert.equal(h.frame,undefined,"exiting must not immediately reconnect");
   cleanup();
 });

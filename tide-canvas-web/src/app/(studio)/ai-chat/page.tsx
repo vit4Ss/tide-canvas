@@ -60,7 +60,7 @@ export default function AIChatPage() {
   // model list and prices into the chat. Model names live in the chat's own
   // storage, so a price edited in the admin reaches the picker on the next
   // connection rather than on its own.
-  const connect = async () => {
+  const connect = useCallback(async () => {
     if (lock.current || !config?.enabled || !config.url || !user) return;
     const sessionToken = localStorage.getItem("access_token");
     lock.current = true; setBusy(true); setError("");
@@ -75,7 +75,18 @@ export default function AIChatPage() {
       setFrameUrl(result.data.url);
     } catch { if (mounted.current) setError("连接暂时失败，请稍后重试"); }
     finally { lock.current = false; if (mounted.current) setBusy(false); }
-  };
+  }, [config, user]);
+
+  // Entering is what this page is for, so it happens on arrival. Exactly one
+  // attempt per visit: "退出聊天" has to stay usable, and a failed connection
+  // must leave the entry panel readable instead of retrying in a loop.
+  const autoEntered = useRef(false);
+  useEffect(() => {
+    if (autoEntered.current || !config?.enabled || !user) return;
+    autoEntered.current = true;
+    const frame = requestAnimationFrame(() => void connect());
+    return () => cancelAnimationFrame(frame);
+  }, [config, user, connect]);
 
   // A ticket is single-use, so leaving the embed must also drop its URL: the
   // next entry asks for a fresh one instead of replaying a spent connection.
@@ -101,7 +112,7 @@ export default function AIChatPage() {
     <header><MessageSquare aria-hidden /><h1>AI 聊天</h1><p>使用流光账号，连接你的 AI 对话空间。</p></header>
     <section className="ai-chat-entry-panel">
       <div className="ai-chat-balance"><Wallet size={18} aria-hidden /><span>可用积分</span><strong>{user?.points?.toLocaleString("zh-CN", {maximumFractionDigits: 6}) ?? "—"}</strong></div>
-      <p>进入后在本页内打开，自动登录并同步你的模型服务。聊天记录保存在你的独立账号中，模型调用使用主站积分。</p>
+      <p>打开本页即自动连接，聊天在本页内展开。聊天记录保存在你的独立账号中，模型调用使用主站积分。</p>
       <p className="ai-chat-note">计费方式由每个模型各自的后台配置决定：配置了 Token 单价的模型按每百万输入、输出 Token 结算，调用前预留额度、结束后按真实用量扣费并释放余量；其余模型仍按单次价格计费。模型列表会标出各自的价格，工具循环和辅助调用也归属你的 API Key。</p>
       {error && <p role="alert" className="ai-chat-error">{error}</p>}
       {config && !config.enabled && <p role="status">AI 聊天尚未开放，请管理员完成接入配置。</p>}
