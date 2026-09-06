@@ -324,7 +324,7 @@ function AdminUsersPageInner() {
         status: editForm.status,
         vipLevel: editForm.vipLevel,
         apiQuota: editForm.apiQuota,
-        points: editForm.points,
+        ...(editForm.points !== editUser.points ? { points: editForm.points } : {}),
       };
       const res = await adminUsersApi.update(editUser.id, dto);
       if (res.success) {

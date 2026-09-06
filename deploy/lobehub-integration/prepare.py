@@ -63,6 +63,9 @@ def init(main_url, lobe_url, supports_tools=False):
         "TIDECANVAS_LOBEHUB_SIGNINGKEYFILE": "/run/secrets/lobehub-oidc.pem",
         "TIDECANVAS_LOBEHUB_MAXCONCURRENT": "2",
         "TIDECANVAS_LOBEHUB_DAILYLIMIT": "0",
+        # Bill by measured tokens. Models without a per-million price are then
+        # hidden from LobeHub rather than silently charged the old per-call rate.
+        "TIDECANVAS_LOBEHUB_REQUIRETOKENPRICING": "true",
         # Enable only after deploying the companion apirouter protocol changes.
         "TIDECANVAS_LOBEHUB_SUPPORTSTOOLS": str(supports_tools).lower(),
     }

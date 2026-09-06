@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
+	"tidecanvas/internal/pkg/tokenbilling"
 )
 
 const maxGatewayResponse = 8 << 20
@@ -32,6 +34,10 @@ var errBusy = errors.New("gateway concurrency limit")
 var errDaily = errors.New("gateway daily limit")
 var errQuota = errors.New("gateway account quota")
 var errReplayConflict = errors.New("idempotency key reused for different input")
+
+type gatewayContextKey int
+
+const gatewayKeyRevision gatewayContextKey = 1
 
 func gatewayError(c *gin.Context, status int, code, message string) {
 	c.Header("Cache-Control", "no-store")
@@ -44,6 +50,9 @@ func gatewayGenerationError(c *gin.Context, code, message, modelName string, out
 		// JSON clients must also be able to recover content they were charged
 		// for. The HTTP status remains an error, never a completed generation.
 		result["partial_response"] = out.json(modelName)
+	}
+	if billing, ok := c.Get("lobehub.billing"); ok {
+		result["billing"] = billing
 	}
 	c.JSON(502, result)
 }
@@ -92,7 +101,13 @@ func (s *service) listModels(c *gin.Context) {
 	}
 	data := []any{}
 	for _, m := range rows {
-		data = append(data, gin.H{"id": m.ModelKey, "object": "model", "created": m.CreateTime.Unix(), "owned_by": "flowinglight", "name": m.Name, "point_cost": m.Price.IntPart()})
+		item := gin.H{"id": m.ModelKey, "object": "model", "created": m.CreateTime.Unix(), "owned_by": "flowinglight", "name": m.Name}
+		if pricing, err := tokenbilling.Parse(m.Config); err == nil {
+			item["token_pricing"] = pricing
+		} else {
+			item["point_cost"] = m.Price.IntPart()
+		}
+		data = append(data, item)
 	}
 	c.JSON(200, gin.H{"object": "list", "data": data})
 }
@@ -139,7 +154,7 @@ func trimGatewayHistory(messages []any) ([]any, error) {
 	return out, nil
 }
 
-func (s *service) reserve(ctx context.Context, uid idgen.ID, requestKey, bodyHash string, m model.MarketModel) (*model.ModelGatewayRequest, bool, error) {
+func (s *service) reserve(ctx context.Context, uid idgen.ID, requestKey, bodyHash string, m model.MarketModel, outputLimit ...int64) (*model.ModelGatewayRequest, bool, error) {
 	var row model.ModelGatewayRequest
 	fresh := false
 	err := s.d.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -170,7 +185,7 @@ func (s *service) reserve(ctx context.Context, uid idgen.ID, requestKey, bodyHas
 		}
 		if user.ApiQuota > 0 {
 			var used int64
-			if err := tx.Unscoped().Model(&model.ModelGatewayRequest{}).Where("user_id = ? AND status IN ?", uid, []string{"pending", "success", "partial"}).Count(&used).Error; err != nil {
+			if err := tx.Unscoped().Model(&model.ModelGatewayRequest{}).Where("user_id = ? AND status IN ?", uid, []string{"pending", "success", "partial", "billing_pending"}).Count(&used).Error; err != nil {
 				return err
 			}
 			if used >= user.ApiQuota {
@@ -182,7 +197,7 @@ func (s *service) reserve(ctx context.Context, uid idgen.ID, requestKey, bodyHas
 			now := time.Now().In(zone)
 			start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, zone)
 			var used int64
-			if err := tx.Unscoped().Model(&model.ModelGatewayRequest{}).Where("user_id = ? AND create_time >= ? AND status IN ?", uid, start.In(time.Local), []string{"pending", "success", "partial"}).Count(&used).Error; err != nil {
+			if err := tx.Unscoped().Model(&model.ModelGatewayRequest{}).Where("user_id = ? AND create_time >= ? AND status IN ?", uid, start.In(time.Local), []string{"pending", "success", "partial", "billing_pending"}).Count(&used).Error; err != nil {
 				return err
 			}
 			if used >= int64(s.cfg.DailyLimit) {
@@ -194,12 +209,47 @@ func (s *service) reserve(ctx context.Context, uid idgen.ID, requestKey, bodyHas
 			cost = 0
 		}
 		row = model.ModelGatewayRequest{UserID: uid, RequestKey: requestKey, BodyHash: bodyHash, ModelKey: m.ModelKey, Cost: cost, Status: "pending", ExpiresAt: time.Now().Add(65 * time.Minute)}
+		pricing, pricingErr := tokenbilling.Parse(m.Config)
+		if pricingErr == nil {
+			limit := pricing.MaxOutput
+			if len(outputLimit) > 0 {
+				limit = outputLimit[0]
+			}
+			if limit < 1 || limit > pricing.MaxOutput {
+				return tokenbilling.ErrLimit
+			}
+			reserved, err := pricing.Reserve(limit)
+			if err != nil {
+				return err
+			}
+			row.BillingMode = "token"
+			row.Cost = 0
+			row.ReservedMicros = reserved
+			row.PricingSnapshot = pricingSnapshot(pricing)
+			row.MaxOutputTokens = limit
+			var key model.UserAPIKey
+			if err := tx.First(&key, "user_id = ?", uid).Error; err != nil {
+				return err
+			}
+			row.KeyRevision = key.Revision
+			if revision, ok := ctx.Value(gatewayKeyRevision).(uint64); ok {
+				row.KeyRevision = revision
+			}
+		} else if s.cfg.RequireTokenPricing {
+			return tokenbilling.ErrPricing
+		}
 		row.ID = idgen.Next()
 		if err := tx.Create(&row).Error; err != nil {
 			return err
 		}
-		if err := points.Consume(tx, uid, cost, "AI 聊天："+m.Name, row.ID); err != nil {
-			return err
+		if row.BillingMode == "token" {
+			if err := points.HoldMicros(tx, uid, row.ReservedMicros); err != nil {
+				return err
+			}
+		} else {
+			if err := points.Consume(tx, uid, cost, "AI 聊天："+m.Name, row.ID); err != nil {
+				return err
+			}
 		}
 		fresh = true
 		return nil
@@ -211,6 +261,9 @@ func (s *service) settle(row *model.ModelGatewayRequest, frames, code string) er
 }
 
 func (s *service) settleInContext(parent context.Context, row *model.ModelGatewayRequest, frames, code string) error {
+	if row.BillingMode == "token" {
+		return s.settleTokens(parent, row, frames, code)
+	}
 	ctx, cancel := context.WithTimeout(parent, 15*time.Second)
 	defer cancel()
 	return s.d.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -494,6 +547,44 @@ func (s *service) chat(c *gin.Context) {
 	body["messages"] = trimmed
 	uid := middleware.CurrentUserID(c)
 	body["user"] = uid.String()
+	fingerprint, _ := json.Marshal(body)
+	maxOutput := int64(0)
+	pricing, pricingErr := tokenbilling.Parse(m.Config)
+	if pricingErr != nil && s.cfg.RequireTokenPricing {
+		gatewayError(c, 503, "token_pricing_required", "该模型尚未配置每百万 Token 的积分单价，请联系管理员")
+		return
+	}
+	if pricingErr == nil {
+		maxOutput = pricing.MaxOutput
+		field := "max_completion_tokens"
+		if body["max_tokens"] != nil && body["max_completion_tokens"] == nil {
+			field = "max_tokens"
+		}
+		if raw := body[field]; raw != nil {
+			value, ok := raw.(float64)
+			if !ok || value < 1 || value > float64(pricing.MaxOutput) || value != math.Trunc(value) {
+				gatewayError(c, 400, "invalid_token_limit", fmt.Sprintf("输出 Token 上限必须在 1–%d 之间", pricing.MaxOutput))
+				return
+			}
+			maxOutput = int64(value)
+		}
+		if body["max_tokens"] != nil && body["max_completion_tokens"] != nil {
+			gatewayError(c, 400, "invalid_token_limit", "请只使用一个输出 Token 上限参数")
+			return
+		}
+		body[field] = maxOutput
+		options := map[string]any{}
+		if raw := body["stream_options"]; raw != nil {
+			var ok bool
+			options, ok = raw.(map[string]any)
+			if !ok {
+				gatewayError(c, 400, "invalid_request", "stream_options 格式无效")
+				return
+			}
+		}
+		options["include_usage"] = true
+		body["stream_options"] = options
+	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		gatewayError(c, 400, "invalid_request", "请求格式无效")
@@ -510,11 +601,15 @@ func (s *service) chat(c *gin.Context) {
 	if requestKey == "" {
 		requestKey = idgen.Next().String()
 	}
-	row, fresh, err := s.reserve(c.Request.Context(), uid, hash(requestKey), hash(string(payload)), m)
+	requestContext := c.Request.Context()
+	if revision, ok := c.Get("integration.keyRevision"); ok {
+		requestContext = context.WithValue(requestContext, gatewayKeyRevision, revision)
+	}
+	row, fresh, err := s.reserve(requestContext, uid, hash(requestKey), hash(string(fingerprint)), m, maxOutput)
 	if err != nil {
 		switch {
 		case errors.Is(err, points.ErrInsufficient):
-			gatewayError(c, 402, "insufficient_points", "积分不足，请前往主站充值")
+			gatewayError(c, 402, "insufficient_points", "可用积分不足以预留本次 Token 额度，请充值或降低输出上限")
 		case errors.Is(err, errBusy):
 			gatewayError(c, 429, "concurrency_limit", "已有聊天正在生成，请稍后再试")
 		case errors.Is(err, errDaily):
@@ -529,7 +624,16 @@ func (s *service) chat(c *gin.Context) {
 		return
 	}
 	c.Header("X-Request-Id", requestKey)
-	c.Header("X-Point-Cost", fmt.Sprint(row.Cost))
+	if row.BillingMode == "token" {
+		c.Header("X-Billing-Mode", "token")
+		c.Header("X-Point-Reserved", tokenCostLabel(row.ReservedMicros))
+		if !fresh {
+			c.Header("X-Point-Cost", tokenCostLabel(row.CostMicros))
+			c.Set("lobehub.billing", billingInfo(row))
+		}
+	} else {
+		c.Header("X-Point-Cost", fmt.Sprint(row.Cost))
+	}
 	c.Header("Cache-Control", "no-store")
 	if !fresh {
 		c.Header("X-Idempotent-Replay", "true")
@@ -543,11 +647,17 @@ func (s *service) chat(c *gin.Context) {
 			if row.Status == "partial" {
 				message = fmt.Sprintf("原请求已生成部分内容，已消耗 %d 积分；本次重试不重复扣费", row.Cost)
 			}
-			if row.Status == "partial" && stream {
+			if row.BillingMode == "token" {
+				message = fmt.Sprintf("原请求已结算 %s 积分；重放不会重复扣费", tokenCostLabel(row.CostMicros))
+				if row.Status == "billing_pending" {
+					message = "本次 Token 用量需要核对，预留积分暂未释放，请查看主站 Token 账单"
+				}
+			}
+			if (row.Status == "partial" || row.Status == "billing_pending") && stream {
 				c.Header("Content-Type", "text/event-stream")
 				c.Header("X-Accel-Buffering", "no")
 				data, _ := json.Marshal(gin.H{"error": gin.H{"type": "partial_response", "message": message}})
-				writeGatewaySSE(c, partialGatewayFrames(row.ResponseBody)+"data: "+string(data)+"\n\ndata: [DONE]\n\n")
+				writeGatewaySSE(c, partialGatewayFrames(row.ResponseBody)+billingFrame(row)+"data: "+string(data)+"\n\ndata: [DONE]\n\n")
 				return
 			}
 			gatewayGenerationError(c, "generation_failed", message, modelName, parseCompletion(row.ResponseBody))
@@ -556,11 +666,15 @@ func (s *service) chat(c *gin.Context) {
 		if stream {
 			c.Header("Content-Type", "text/event-stream")
 			c.Header("X-Accel-Buffering", "no")
-			writeGatewaySSE(c, row.ResponseBody)
+			writeGatewaySSE(c, strings.TrimSuffix(row.ResponseBody, "data: [DONE]\n\n")+billingFrame(row)+"data: [DONE]\n\n")
 			return
 		}
 		out := parseCompletion(row.ResponseBody)
-		c.JSON(200, out.json(modelName))
+		result := out.json(modelName)
+		if row.BillingMode == "token" {
+			result["billing"] = billingInfo(row)
+		}
+		c.JSON(200, result)
 		return
 	}
 	started := time.Now()
@@ -641,6 +755,15 @@ func (s *service) chat(c *gin.Context) {
 		logger.L().Error("gateway settlement failed", zap.String("request", row.ID.String()), zap.Error(err))
 		code = "settlement_pending"
 	}
+	if row.BillingMode == "token" {
+		c.Set("lobehub.billing", billingInfo(row))
+		if !stream {
+			c.Header("X-Point-Cost", tokenCostLabel(row.CostMicros))
+		}
+		if row.Status == "billing_pending" && code != "settlement_pending" {
+			code = "token_usage_unavailable"
+		}
+	}
 	var callErr error
 	if code != "" {
 		callErr = errors.New(code)
@@ -660,11 +783,18 @@ func (s *service) chat(c *gin.Context) {
 		if out.hasOutput() {
 			message = fmt.Sprintf("回复未完整生成，已保留有效内容，本次消耗 %d 积分；继续提问会发起新调用", row.Cost)
 		}
+		if row.BillingMode == "token" {
+			message = fmt.Sprintf("回复未完整生成，已按返回用量结算 %s 积分，未使用的预留额度已释放", tokenCostLabel(row.CostMicros))
+			if row.Status == "billing_pending" {
+				message = "本次 Token 用量需要核对，预留积分暂未释放，请查看主站 Token 账单"
+			}
+		}
 		if code == "settlement_pending" {
 			message = "结果结算暂未完成，请保留请求编号并稍后查询"
 		}
 		if stream {
 			emit(partialGatewayFrames(terminal.String()))
+			emit(billingFrame(row))
 			data, _ := json.Marshal(gin.H{"error": gin.H{"code": code, "type": code, "message": message}})
 			emit("data: " + string(data) + "\n\ndata: [DONE]\n\n")
 		} else {
@@ -673,8 +803,12 @@ func (s *service) chat(c *gin.Context) {
 		return
 	}
 	if stream {
-		emit(terminal.String() + "data: [DONE]\n\n")
+		emit(terminal.String() + billingFrame(row) + "data: [DONE]\n\n")
 	} else {
-		c.JSON(200, out.json(modelName))
+		result := out.json(modelName)
+		if row.BillingMode == "token" {
+			result["billing"] = billingInfo(row)
+		}
+		c.JSON(200, result)
 	}
 }

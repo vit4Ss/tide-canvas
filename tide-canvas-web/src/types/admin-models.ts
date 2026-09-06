@@ -26,6 +26,14 @@ export interface ModelBadge {
  * pre-fills it from the upstream params_schema.
  */
 export interface ModelConfig {
+  tokenPricing?: {
+    enabled: boolean;
+    inputPointsPerMillion: string;
+    outputPointsPerMillion: string;
+    cachedInputPointsPerMillion?: string;
+    maxInputTokens?: number;
+    maxOutputTokens?: number;
+  };
   /** 模型选择列表名称旁的标签（热门/新品/权益说明等）；空/未设 = 不显示 */
   badges?: ModelBadge[];
   /** 运行状态：缺省/normal 正常；maintenance 保持展示但禁止新提交。 */

@@ -17,6 +17,7 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { RefreshCw, Search, SlidersHorizontal, X } from "lucide-react";
 import {
   AdminAlert,
@@ -269,6 +270,11 @@ export default function AdminPointsPage() {
   return (
     <div className="adm-page">
       <StatCardGrid items={kpis} />
+
+      <AdminAlert tone="info" title="AI 聊天按 Token 计费">
+        LobeHub 的模型调用按每百万 Token 单价结算，明细不在下方按次流水里展开。
+        <Link href="/admin/points/token-billing"> 查看 Token 调用账单 →</Link>
+      </AdminAlert>
 
       {error ? (
         <AdminAlert

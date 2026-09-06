@@ -6,9 +6,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/eventlog"
@@ -71,8 +71,8 @@ type g4PointRecordVO struct {
 	UserID     idgen.ID      `json:"userId"`
 	User       g4OrderUserVO `json:"user"`
 	ChangeType string        `json:"changeType"`
-	Amount     int           `json:"amount"`
-	Balance    int           `json:"balance"`
+	Amount     float64       `json:"amount"`
+	Balance    float64       `json:"balance"`
 	Remark     string        `json:"remark"`
 	RefID      *idgen.ID     `json:"refId"`
 	CreateTime string        `json:"createTime"`
@@ -187,42 +187,16 @@ func (h *g4PointsHandler) adjust(c *gin.Context) {
 	var record model.PointRecord
 
 	err := h.db.Transaction(func(tx *gorm.DB) error {
-		var u model.User
-		// SELECT ... FOR UPDATE: lock the row so a concurrent guarded deduction
-		// (points.Consume during AI generation) can't land between this read and the
-		// absolute write below — otherwise this adjust would clobber that deduction
-		// and drift user.Points away from the point_record ledger.
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			First(&u, "id = ?", dto.UserID).Error; err != nil {
-			return err
-		}
-		newBalance := u.Points + int64(dto.Amount)
-		if newBalance < 0 {
-			newBalance = 0
-		}
-		// Record the delta that was ACTUALLY applied, not the requested one — when a
-		// negative adjust is clamped at 0, prevBalance + amount must still equal the
-		// new balance, or the user-facing ledger won't reconcile.
-		applied := int(newBalance - u.Points)
-		if err := tx.Model(&model.User{}).
-			Where("id = ?", dto.UserID).
-			Update("points", newBalance).Error; err != nil {
-			return err
-		}
 		remark := strings.TrimSpace(dto.Remark)
 		if remark == "" {
 			remark = "管理员调整"
 		}
-		opRef := operatorID
-		record = model.PointRecord{
-			UserID:     dto.UserID,
-			ChangeType: "adjust",
-			Amount:     applied,
-			Balance:    int(newBalance),
-			Remark:     remark,
-			RefID:      &opRef,
+		row, err := points.AdjustWhole(tx, dto.UserID, int64(dto.Amount), "adjust", remark, operatorID)
+		if err != nil {
+			return err
 		}
-		return tx.Create(&record).Error
+		record = *row
+		return nil
 	})
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -326,8 +300,8 @@ func g4ToPointRecordVO(r *model.PointRecord, u *model.User) g4PointRecordVO {
 		ID:         r.ID,
 		UserID:     r.UserID,
 		ChangeType: r.ChangeType,
-		Amount:     r.Amount,
-		Balance:    r.Balance,
+		Amount:     r.ExactAmount(),
+		Balance:    r.ExactBalance(),
 		Remark:     r.Remark,
 		RefID:      r.RefID,
 		CreateTime: g4FormatTime(r.CreateTime),

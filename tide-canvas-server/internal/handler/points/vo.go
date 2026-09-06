@@ -14,8 +14,8 @@ import (
 // current usable balance (User.Points); frozen is reserved/held points. The
 // User model has no frozen column, so it is derived as 0 in the VO.
 type BalanceVO struct {
-	Points int64 `json:"points"`
-	Frozen int64 `json:"frozen"`
+	Points float64 `json:"points"`
+	Frozen float64 `json:"frozen"`
 }
 
 // PointRecordVO is one row of the points ledger (GET /api/points/records).
@@ -23,8 +23,8 @@ type BalanceVO struct {
 type PointRecordVO struct {
 	ID         idgen.ID  `json:"id"`
 	ChangeType string    `json:"changeType"`
-	Amount     int       `json:"amount"`
-	Balance    int       `json:"balance"`
+	Amount     float64   `json:"amount"`
+	Balance    float64   `json:"balance"`
 	Remark     string    `json:"remark"`
 	RefID      *idgen.ID `json:"refId"`
 	CreateTime string    `json:"createTime"`
@@ -62,8 +62,8 @@ func toPointRecordVO(r *model.PointRecord) PointRecordVO {
 	return PointRecordVO{
 		ID:         r.ID,
 		ChangeType: r.ChangeType,
-		Amount:     r.Amount,
-		Balance:    r.Balance,
+		Amount:     r.ExactAmount(),
+		Balance:    r.ExactBalance(),
 		Remark:     r.Remark,
 		RefID:      r.RefID,
 		CreateTime: formatTime(r.CreateTime),

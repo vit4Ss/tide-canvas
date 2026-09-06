@@ -185,23 +185,32 @@ func (s *Service) Change(ctx context.Context, uid idgen.ID, revision uint64, rot
 // Authenticate looks up the owner on every call. Account deletion/disablement
 // and key rotation/disablement apply to subsequent requests immediately.
 func (s *Service) Authenticate(ctx context.Context, value string) (*model.User, error) {
+	owner, _, err := s.AuthenticateWithRevision(ctx, value)
+	return owner, err
+}
+
+func (s *Service) AuthenticateWithRevision(ctx context.Context, value string) (*model.User, uint64, error) {
 	if !strings.HasPrefix(value, Prefix) || len(value) != len(Prefix)+43 {
-		return nil, ErrInvalid
+		return nil, 0, ErrInvalid
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(value, Prefix))
 	if err != nil || len(decoded) != 32 {
-		return nil, ErrInvalid
+		return nil, 0, ErrInvalid
 	}
-	var owner model.User
+	var owner struct {
+		model.User
+		Revision uint64 `gorm:"column:api_key_revision"`
+	}
 	err = s.db.WithContext(ctx).Model(&model.User{}).
+		Select("users.*, user_api_key.revision AS api_key_revision").
 		Joins("JOIN user_api_key ON user_api_key.user_id = users.id").
 		Where("user_api_key.key_hash = ? AND user_api_key.disabled_at IS NULL AND users.status = 1", digest(value)).
 		First(&owner).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, ErrInvalid
+		return nil, 0, ErrInvalid
 	}
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return &owner, nil
+	return &owner.User, owner.Revision, nil
 }

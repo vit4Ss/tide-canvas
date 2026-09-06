@@ -7,9 +7,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/response"
@@ -235,37 +235,15 @@ func (h *g4PaymentsHandler) refundOrder(c *gin.Context) {
 			return nil // 未授予积分的订单(异常/零额)只改状态
 		}
 
-		// Claw back, floored at the current balance (spent credits stay spent).
-		// FOR UPDATE serializes concurrent writers on this user row (another
-		// refund / adjust / consume) — without it two refunds both read the
-		// same stale balance and the floor can't stop points going negative.
-		var u model.User
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id", "points").Where("id = ?", refunded.UserID).First(&u).Error; err != nil {
-			return err
-		}
-		deduct := granted
-		if u.Points < deduct {
-			deduct = u.Points
-		}
-		if deduct > 0 {
-			if err := tx.Model(&model.User{}).
-				Where("id = ?", refunded.UserID).
-				UpdateColumn("points", gorm.Expr("points - ?", deduct)).Error; err != nil {
-				return err
-			}
-		}
-		refID := refunded.ID
-		ledger := &model.PointRecord{
-			UserID:     refunded.UserID,
-			ChangeType: "refund",
-			Amount:     int(-deduct),
-			Balance:    int(u.Points - deduct),
-			Remark:     "订单退款收回：" + refunded.OrderNo,
-			RefID:      &refID,
-		}
-		ledger.ID = idgen.Next()
-		return tx.Create(ledger).Error
+		// Claw back, floored at the UNRESERVED balance: already-spent credits
+		// can't go negative, and points a live model call is holding are not
+		// ours to take — overshooting them would leave held_micros above the
+		// balance and strand that reservation. AdjustWhole takes the row FOR
+		// UPDATE, so concurrent writers (another refund / adjust / consume)
+		// can't both read the same stale balance and defeat the floor.
+		_, err := points.AdjustWhole(tx, refunded.UserID, -granted, "refund",
+			"订单退款收回："+refunded.OrderNo, refunded.ID)
+		return err
 	})
 	if txErr != nil {
 		if errors.Is(txErr, errG4RefundNotFound) {

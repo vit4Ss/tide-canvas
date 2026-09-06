@@ -28,7 +28,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 			response.OK(c, gin.H{"enabled": false})
 			return
 		}
-		response.OK(c, gin.H{"enabled": true, "url": s.cfg.PublicURL, "gateway": s.mainOrigin + "/api/integrations/v1", "maxConcurrent": s.cfg.MaxConcurrent, "dailyLimit": s.cfg.DailyLimit, "historyMessages": 3})
+		response.OK(c, gin.H{"enabled": true, "url": s.cfg.PublicURL, "gateway": s.mainOrigin + "/api/integrations/v1", "maxConcurrent": s.cfg.MaxConcurrent, "dailyLimit": s.cfg.DailyLimit, "historyMessages": 3, "tokenBilling": s.cfg.RequireTokenPricing})
 	})
 	if s == nil {
 		return
@@ -39,6 +39,10 @@ func RegisterService(api *gin.RouterGroup, s *service) {
 	ui := api.Group("/lobehub", middleware.JWTAuth(s.d), middleware.RateLimit(s.d, 30, time.Minute))
 	ui.POST("/launch", s.launch)
 	ui.POST("/oidc/approve", s.approve)
+	ui.GET("/billing", s.billingList(false))
+	admin := api.Group("/admin/lobehub-billing", middleware.JWTAuth(s.d), middleware.AdminAccess(s.d), middleware.AdminPerm("admin.points"))
+	admin.GET("", s.billingList(true))
+	admin.POST("/:id/resolve", s.resolveBilling)
 	oidc := api.Group("/lobehub/oidc", middleware.RateLimit(s.d, 120, time.Minute))
 	oidc.GET("/.well-known/openid-configuration", s.discovery)
 	oidc.GET("/jwks", s.jwks)

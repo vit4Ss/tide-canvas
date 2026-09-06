@@ -24,7 +24,7 @@ func UserAPIKeyAuth(keys *userkey.Service) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": gin.H{"message": "需要有效的 API Key", "type": "invalid_api_key"}})
 			return
 		}
-		owner, err := keys.Authenticate(c.Request.Context(), parts[1])
+		owner, revision, err := keys.AuthenticateWithRevision(c.Request.Context(), parts[1])
 		if err != nil {
 			status, message, kind := http.StatusUnauthorized, "API Key 无效、已停用或账号不可用", "invalid_api_key"
 			if !errors.Is(err, userkey.ErrInvalid) {
@@ -36,6 +36,7 @@ func UserAPIKeyAuth(keys *userkey.Service) gin.HandlerFunc {
 		c.Set(CtxUserID, owner.ID)
 		c.Set(CtxRole, 0) // API keys never inherit an administrator role.
 		c.Set("integration.owner", owner)
+		c.Set("integration.keyRevision", revision)
 		c.Next()
 	}
 }

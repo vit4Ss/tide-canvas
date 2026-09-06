@@ -41,7 +41,7 @@ const (
 func mutate(tx *gorm.DB, userID idgen.ID, delta int, changeType, remark string, refID idgen.ID) (int64, error) {
 	q := tx.Model(&model.User{}).Where("id = ?", userID)
 	if delta < 0 {
-		q = q.Where("points >= ?", -delta)
+		q = q.Where("(CAST(points AS DECIMAL(30,0)) * 1000000 + point_fraction - point_held_micros) >= CAST(? AS DECIMAL(30,0)) * 1000000", -delta)
 	}
 	res := q.UpdateColumn("points", gorm.Expr("points + ?", delta))
 	if res.Error != nil {
@@ -55,7 +55,7 @@ func mutate(tx *gorm.DB, userID idgen.ID, delta int, changeType, remark string, 
 	}
 
 	var u model.User
-	if err := tx.Select("id", "points").Where("id = ?", userID).First(&u).Error; err != nil {
+	if err := tx.Select("id", "points", "point_fraction", "point_held_micros").Where("id = ?", userID).First(&u).Error; err != nil {
 		return 0, err
 	}
 
@@ -67,6 +67,10 @@ func mutate(tx *gorm.DB, userID idgen.ID, delta int, changeType, remark string, 
 		Remark:     remark,
 	}
 	rec.ID = idgen.Next()
+	if balance, err := BalanceMicros(&u); err == nil {
+		balance += u.PointHeldMicros
+		rec.BalanceMicros = &balance
+	}
 	if refID != 0 {
 		rid := refID
 		rec.RefID = &rid

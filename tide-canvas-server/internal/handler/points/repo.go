@@ -26,16 +26,16 @@ func newRepo(db *gorm.DB) *repo { return &repo{db: db} }
 
 // userPoints returns the current points balance for a user from the users
 // table. Returns ErrNotFound when the user does not exist.
-func (r *repo) userPoints(userID idgen.ID) (int64, error) {
+func (r *repo) userPoints(userID idgen.ID) (float64, float64, error) {
 	var u model.User
-	err := r.db.Select("id", "points").Where("id = ?", userID).First(&u).Error
+	err := r.db.Select("id", "points", "point_fraction", "point_held_micros").Where("id = ?", userID).First(&u).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return 0, ErrNotFound
+			return 0, 0, ErrNotFound
 		}
-		return 0, err
+		return 0, 0, err
 	}
-	return u.Points, nil
+	return u.PointBalance(), float64(u.PointHeldMicros) / float64(model.PointScale), nil
 }
 
 // listRecords returns a page of the user's point records plus the total count,

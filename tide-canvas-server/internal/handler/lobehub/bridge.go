@@ -19,6 +19,7 @@ import (
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/response"
+	"tidecanvas/internal/pkg/tokenbilling"
 )
 
 //go:embed bridge.html
@@ -326,7 +327,11 @@ func (s *service) bind(c *gin.Context) {
 		for _, m := range models {
 			var capabilities map[string]any
 			_ = json.Unmarshal([]byte(m.Config), &capabilities)
-			items = append(items, gin.H{"id": m.ModelKey, "type": "chat", "displayName": fmt.Sprintf("%s · %d 积分/次", m.Name, m.Price.IntPart()), "enabled": true, "source": "remote", "abilities": gin.H{"functionCall": s.cfg.SupportsTools, "vision": capabilities["fileUpload"] == true}})
+			name := fmt.Sprintf("%s · %d 积分/次", m.Name, m.Price.IntPart())
+			if pricing, err := tokenbilling.Parse(m.Config); err == nil {
+				name = pricing.Label(m.Name)
+			}
+			items = append(items, gin.H{"id": m.ModelKey, "type": "chat", "displayName": name, "enabled": true, "source": "remote", "abilities": gin.H{"functionCall": s.cfg.SupportsTools, "vision": capabilities["fileUpload"] == true}})
 			ids = append(ids, m.ModelKey)
 		}
 		err = s.rpc(c.Request.Context(), cookie, "aiModel.batchUpdateAiModels", gin.H{"id": provider, "models": items})
@@ -382,10 +387,16 @@ func (s *service) models(ctx context.Context) ([]model.MarketModel, error) {
 	seen := map[string]bool{}
 	out := []model.MarketModel{}
 	for _, row := range rows {
-		if !seen[row.ModelKey] {
-			seen[row.ModelKey] = true
-			out = append(out, row)
+		if seen[row.ModelKey] {
+			continue
 		}
+		seen[row.ModelKey] = true
+		if s.cfg.RequireTokenPricing {
+			if _, err := tokenbilling.Parse(row.Config); err != nil {
+				continue
+			}
+		}
+		out = append(out, row)
 	}
 	return out, err
 }

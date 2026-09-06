@@ -6,6 +6,7 @@ import { ArrowUpRight, Loader2, MessageSquare, Wallet } from "lucide-react";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { allowedLobeRedirect, lobeHubApi, type LobeHubConfig } from "@/lib/lobehub-api";
 import "./ai-chat.css";
+import TokenBillingPanel from "@/components/shared/token-billing-panel";
 
 export default function AIChatPage() {
   const [config, setConfig] = useState<LobeHubConfig | null>(null);
@@ -55,9 +56,9 @@ export default function AIChatPage() {
   return <main className="ai-chat-entry">
     <header><MessageSquare aria-hidden /><h1>AI 聊天</h1><p>使用流光账号，连接你的 AI 对话空间。</p></header>
     <section className="ai-chat-entry-panel">
-      <div className="ai-chat-balance"><Wallet size={18} aria-hidden /><span>可用积分</span><strong>{user?.points?.toLocaleString() ?? "—"}</strong></div>
+      <div className="ai-chat-balance"><Wallet size={18} aria-hidden /><span>可用积分</span><strong>{user?.points?.toLocaleString("zh-CN", {maximumFractionDigits: 6}) ?? "—"}</strong></div>
       <p>进入后自动登录并同步你的模型服务。聊天记录保存在你的独立账号中，模型调用使用主站积分。</p>
-      <p className="ai-chat-note">按所选模型的单次价格计费；余额不足时无法开始，未产生有效内容的失败调用退回积分。工具循环和辅助请求也按实际模型调用计费。</p>
+      <p className="ai-chat-note">{config?.tokenBilling ? "按模型的每百万输入、输出 Token 单价计费。调用前预留额度，结束后按真实用量结算并释放余量；工具循环和辅助调用也归属你的 API Key。" : "按所选模型的单次价格计费；未产生有效内容的失败调用退回积分。"}</p>
       {error && <p role="alert" className="ai-chat-error">{error}</p>}
       {config && !config.enabled && <p role="status">AI 聊天尚未开放，请管理员完成接入配置。</p>}
       <div className="ai-chat-entry-actions">
@@ -66,5 +67,6 @@ export default function AIChatPage() {
         <Link href="/account">账户与 API Key</Link><Link href="/billing">充值积分</Link>
       </div>
     </section>
+    {config?.enabled && config.tokenBilling && <TokenBillingPanel />}
   </main>;
 }

@@ -8,10 +8,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/handler/auth"
+	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/eventlog"
@@ -69,30 +71,31 @@ type userHandler struct {
 // AdminUserVO is the admin view of a user. It mirrors the user-facing fields plus
 // derived counts useful to operators. ids are idgen.ID (string JSON).
 type AdminUserVO struct {
-	ID            idgen.ID `json:"id"`
-	Username      string   `json:"username"`
-	Email         string   `json:"email"`
-	Phone         string   `json:"phone"`
-	Nickname      string   `json:"nickname"`
-	Avatar        string   `json:"avatar"`
-	Role          int      `json:"role"`
-	RoleID        idgen.ID `json:"roleId"`
-	VipLevel      int      `json:"vipLevel"`
+	ID       idgen.ID `json:"id"`
+	Username string   `json:"username"`
+	Email    string   `json:"email"`
+	Phone    string   `json:"phone"`
+	Nickname string   `json:"nickname"`
+	Avatar   string   `json:"avatar"`
+	Role     int      `json:"role"`
+	RoleID   idgen.ID `json:"roleId"`
+	VipLevel int      `json:"vipLevel"`
 	// PlanName is the display name of the user's current plan, derived from the
 	// real plan table via vip_level (0 → the free plan). Read-only convenience.
-	PlanName      string   `json:"planName"`
-	Status        int      `json:"status"`
-	ApiQuota      int64    `json:"apiQuota"`
-	Points        int64    `json:"points"`
-	IsAuthor      int      `json:"isAuthor"`
-	StorageQuota  int64    `json:"storageQuota"`
-	StorageUsed   int64    `json:"storageUsed"`
-	ProjectCount  int64    `json:"projectCount"`
-	PostCount     int64    `json:"postCount"`
+	PlanName     string  `json:"planName"`
+	Status       int     `json:"status"`
+	ApiQuota     int64   `json:"apiQuota"`
+	Points       float64 `json:"points"`
+	FrozenPoints float64 `json:"frozenPoints"`
+	IsAuthor     int     `json:"isAuthor"`
+	StorageQuota int64   `json:"storageQuota"`
+	StorageUsed  int64   `json:"storageUsed"`
+	ProjectCount int64   `json:"projectCount"`
+	PostCount    int64   `json:"postCount"`
 	// Remark 运营备注(仅管理端;来源 users.remark,不随用户侧接口下发)。
-	Remark        string   `json:"remark"`
-	CreateTime    string   `json:"createTime"`
-	LastLoginTime string   `json:"lastLoginTime"`
+	Remark        string `json:"remark"`
+	CreateTime    string `json:"createTime"`
+	LastLoginTime string `json:"lastLoginTime"`
 }
 
 // RoleVO is the admin view of a permission role (sys_role).
@@ -145,14 +148,14 @@ func (q *AdminUserQuery) offset() int { return (q.PageNum - 1) * q.PageSize }
 // AdminUserUpdateDTO is the body for PUT /users/:id. All fields are pointers so
 // the admin can update any subset; absent fields are left untouched.
 type AdminUserUpdateDTO struct {
-	Role     *int   `json:"role"`
-	Status   *int   `json:"status"`
-	ApiQuota *int64 `json:"apiQuota"`
-	Points   *int64 `json:"points"`
-	VipLevel *int   `json:"vipLevel"`
-	RoleID   *string `json:"roleId"`
-	Nickname *string `json:"nickname"`
-	Remark   *string `json:"remark" binding:"omitempty,max=255"`
+	Role     *int             `json:"role"`
+	Status   *int             `json:"status"`
+	ApiQuota *int64           `json:"apiQuota"`
+	Points   *decimal.Decimal `json:"points"`
+	VipLevel *int             `json:"vipLevel"`
+	RoleID   *string          `json:"roleId"`
+	Nickname *string          `json:"nickname"`
+	Remark   *string          `json:"remark" binding:"omitempty,max=255"`
 }
 
 // PointAdjustDTO is the body for POST /users/:id/points. amount may be negative
@@ -346,7 +349,13 @@ func (h *userHandler) updateUser(c *gin.Context) {
 		fields["api_quota"] = *dto.ApiQuota
 	}
 	if dto.Points != nil {
-		fields["points"] = *dto.Points
+		if dto.Points.IsNegative() || dto.Points.GreaterThan(decimal.NewFromInt(1_000_000_000_000)) || !dto.Points.Equal(dto.Points.Truncate(6)) {
+			response.Fail(c, 400, "积分余额必须是非负数，最多六位小数")
+			return
+		}
+		micros := dto.Points.Mul(decimal.NewFromInt(model.PointScale)).IntPart()
+		fields["points"] = micros / model.PointScale
+		fields["point_fraction"] = micros % model.PointScale
 	}
 	if dto.VipLevel != nil {
 		fields["vip_level"] = *dto.VipLevel
@@ -377,12 +386,22 @@ func (h *userHandler) updateUser(c *gin.Context) {
 		return
 	}
 
-	res := h.db.Model(&model.User{}).Where("id = ?", id).Updates(fields)
+	query := h.db.Model(&model.User{}).Where("id = ?", id)
+	if dto.Points != nil {
+		query = query.Where("point_held_micros <= ?", dto.Points.Mul(decimal.NewFromInt(model.PointScale)).IntPart())
+	}
+	res := query.Updates(fields)
 	if res.Error != nil {
 		response.Fail(c, response.CodeServerError, "failed to update user")
 		return
 	}
 	if res.RowsAffected == 0 {
+		if dto.Points != nil {
+			if user, err := h.findUser(id); err == nil && decimal.NewFromInt(user.PointHeldMicros).GreaterThan(dto.Points.Mul(decimal.NewFromInt(model.PointScale))) {
+				response.Fail(c, 409, "该用户有预留中的积分，不能将余额调整到预留额度以下")
+				return
+			}
+		}
 		// Either no such user, or the values were identical. Disambiguate.
 		if _, err := h.findUser(id); err != nil {
 			h.failLookup(c, err, "failed to update user")
@@ -432,7 +451,7 @@ func g1SensitiveChangeSummary(dto AdminUserUpdateDTO) string {
 		parts = append(parts, fmt.Sprintf("会员等级=%d", *dto.VipLevel))
 	}
 	if dto.Points != nil {
-		parts = append(parts, fmt.Sprintf("积分=%d", *dto.Points))
+		parts = append(parts, "积分="+dto.Points.String())
 	}
 	if dto.RoleID != nil {
 		parts = append(parts, fmt.Sprintf("权限组=%s", strings.TrimSpace(*dto.RoleID)))
@@ -582,33 +601,18 @@ func (h *userHandler) adjustPoints(c *gin.Context) {
 		}
 	}
 
-	var newBalance int64
+	var newBalance float64
 	err := h.db.Transaction(func(tx *gorm.DB) error {
-		var u model.User
-		if err := tx.Select("id", "points").Where("id = ?", id).First(&u).Error; err != nil {
-			return err
-		}
-		newBalance = u.Points + int64(dto.Amount)
-		if newBalance < 0 {
-			newBalance = 0
-		}
-		if err := tx.Model(&model.User{}).Where("id = ?", id).
-			Update("points", newBalance).Error; err != nil {
-			return err
-		}
 		remark := strings.TrimSpace(dto.Remark)
 		if remark == "" {
 			remark = "管理员调整"
 		}
-		ledger := &model.PointRecord{
-			UserID:     id,
-			ChangeType: changeTypeAdmin,
-			Amount:     dto.Amount,
-			Balance:    int(newBalance),
-			Remark:     remark,
+		ledger, err := points.AdjustWhole(tx, id, int64(dto.Amount), changeTypeAdmin, remark, 0)
+		if err != nil {
+			return err
 		}
-		ledger.ID = idgen.Next()
-		return tx.Create(ledger).Error
+		newBalance = ledger.ExactBalance()
+		return nil
 	})
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -862,7 +866,8 @@ func toAdminUserVO(u *model.User) AdminUserVO {
 		VipLevel:      u.VipLevel,
 		Status:        u.Status,
 		ApiQuota:      u.ApiQuota,
-		Points:        u.Points,
+		Points:        u.PointTotal(),
+		FrozenPoints:  float64(u.PointHeldMicros) / float64(model.PointScale),
 		IsAuthor:      u.IsAuthor,
 		StorageQuota:  u.StorageQuota,
 		StorageUsed:   u.StorageUsed,

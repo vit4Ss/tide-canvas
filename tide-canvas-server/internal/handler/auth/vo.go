@@ -26,7 +26,7 @@ type UserVO struct {
 	RoleID               idgen.ID `json:"roleId"`
 	Status               int      `json:"status"`
 	ApiQuota             int64    `json:"apiQuota"`
-	Points               int64    `json:"points"`
+	Points               float64  `json:"points"`
 	IsAuthor             int      `json:"isAuthor"`
 	StorageQuota         int64    `json:"storageQuota"`
 	// Menus are the front sidebar menu keys the user's role grants
@@ -78,7 +78,7 @@ func toUserVO(u *model.User, menus []string, adminPerms []string) UserVO {
 		RoleID:               u.RoleID,
 		Status:               u.Status,
 		ApiQuota:             u.ApiQuota,
-		Points:               u.Points,
+		Points:               u.PointBalance(),
 		IsAuthor:             u.IsAuthor,
 		StorageQuota:         u.StorageQuota,
 		Menus:                menus,

@@ -16,9 +16,11 @@ type PointRecord struct {
 	// ChangeType: e.g. recharge / consume / checkin / reward / refund.
 	ChangeType string `gorm:"column:change_type;type:varchar(32);not null" json:"changeType"`
 	// Amount may be negative (consumption) or positive (gain).
-	Amount  int    `gorm:"column:amount;type:int;not null" json:"amount"`
-	Balance int    `gorm:"column:balance;type:int;not null;default:0" json:"balance"`
-	Remark  string `gorm:"column:remark;type:varchar(255)" json:"remark"`
+	Amount        int    `gorm:"column:amount;type:int;not null" json:"amount"`
+	Balance       int    `gorm:"column:balance;type:int;not null;default:0" json:"balance"`
+	AmountMicros  *int64 `gorm:"column:amount_micros" json:"amountMicros,omitempty"`
+	BalanceMicros *int64 `gorm:"column:balance_micros" json:"balanceMicros,omitempty"`
+	Remark        string `gorm:"column:remark;type:varchar(255)" json:"remark"`
 	// RefID points at the originating entity (order / task), optional.
 	RefID *idgen.ID `gorm:"column:ref_id;index" json:"refId"`
 }

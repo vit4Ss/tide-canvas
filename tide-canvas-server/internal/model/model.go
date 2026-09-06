@@ -542,6 +542,8 @@ type User struct {
 	Status               int      `gorm:"default:1" json:"status"` // 0 disabled, 1 active
 	ApiQuota             int64    `gorm:"default:0" json:"apiQuota"`
 	Points               int64    `gorm:"default:0" json:"points"`
+	PointFraction        int64    `gorm:"not null;default:0" json:"pointFraction"`
+	PointHeldMicros      int64    `gorm:"not null;default:0" json:"pointHeldMicros"`
 	IsAuthor             int      `gorm:"default:0" json:"isAuthor"`
 	StorageQuota         int64    `gorm:"default:0" json:"storageQuota"`
 	StorageUsed          int64    `gorm:"default:0" json:"storageUsed"`
