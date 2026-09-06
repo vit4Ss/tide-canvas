@@ -135,6 +135,7 @@ function entryHarness({ ancestor } = {}) {
   return {hooks,navigations,escapes,render,find,
     start:()=>{render();return effects[0]();},
     connect:()=>find(render(),node=>node.type==="button").props.onClick(),
+    resync:()=>find(render(),node=>node.type==="button"&&String(node.props?.title||"").includes("同步")).props.onClick(),
     finishLaunch:(...args)=>finishLaunch(...args),
     rotateSession:()=>{sessionToken="account-b-token";},
     get user(){return store.user;},
@@ -200,4 +201,22 @@ test("a foreign ancestor cannot be navigated and does not break the page", async
   assert.deepEqual(h.escapes,[]);
   assert.equal(h.navigations.length,0);
   cleanup?.();
+});
+
+test("re-syncing pushes a fresh connection so edited model prices reach the picker", async () => {
+  const h = entryHarness();
+  const cleanup = h.start(); await flush();
+  const first = h.connect();
+  h.finishLaunch({success:true,data:{url:origin+"/flowinglight/connect?ticket=one"}});
+  await first;
+  assert.match(h.frame.props.src,/ticket=one/);
+
+  // The chat stores model names itself, so a price change only lands on the
+  // next binding: re-syncing must ask for a new ticket, not reuse the spent one.
+  const again = h.resync();
+  h.finishLaunch({success:true,data:{url:origin+"/flowinglight/connect?ticket=two"}});
+  await again;
+  assert.match(h.frame.props.src,/ticket=two/);
+  assert.equal(h.navigations.length,0);
+  cleanup();
 });

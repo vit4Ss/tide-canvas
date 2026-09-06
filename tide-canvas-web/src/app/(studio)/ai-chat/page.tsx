@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUpRight, ExternalLink, Loader2, MessageSquare, Wallet, X } from "lucide-react";
+import { ArrowUpRight, ExternalLink, Loader2, MessageSquare, RefreshCw, Wallet, X } from "lucide-react";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { allowedLobeRedirect, lobeHubApi, type LobeHubConfig } from "@/lib/lobehub-api";
 import "./ai-chat.css";
@@ -56,7 +56,11 @@ export default function AIChatPage() {
     return () => { active = false; mounted.current = false; };
   }, [ensureSession, fetchUser]);
 
-  const enter = async () => {
+  // Every connection re-runs the binding, which is what pushes the current
+  // model list and prices into the chat. Model names live in the chat's own
+  // storage, so a price edited in the admin reaches the picker on the next
+  // connection rather than on its own.
+  const connect = async () => {
     if (lock.current || !config?.enabled || !config.url || !user) return;
     const sessionToken = localStorage.getItem("access_token");
     lock.current = true; setBusy(true); setError("");
@@ -82,6 +86,10 @@ export default function AIChatPage() {
       <div className="ai-chat-embed-bar">
         <span className="ai-chat-embed-title"><MessageSquare size={16} aria-hidden /> AI 聊天</span>
         <span className="ai-chat-embed-balance"><Wallet size={15} aria-hidden />可用积分 <strong>{user?.points?.toLocaleString("zh-CN", {maximumFractionDigits: 6}) ?? "—"}</strong></span>
+        <button type="button" onClick={connect} disabled={busy} title="重新同步模型与价格，会回到聊天首页">
+          {busy ? <Loader2 size={14} className="animate-spin" aria-hidden /> : <RefreshCw size={14} aria-hidden />}
+          {busy ? "同步中…" : "同步模型价格"}
+        </button>
         <a href={frameUrl} target="_blank" rel="noreferrer noopener"><ExternalLink size={14} aria-hidden />在新标签页打开</a>
         <button type="button" onClick={leave}><X size={14} aria-hidden />退出聊天</button>
       </div>
@@ -98,7 +106,7 @@ export default function AIChatPage() {
       {error && <p role="alert" className="ai-chat-error">{error}</p>}
       {config && !config.enabled && <p role="status">AI 聊天尚未开放，请管理员完成接入配置。</p>}
       <div className="ai-chat-entry-actions">
-        <button type="button" disabled={busy || !config?.enabled || !user} onClick={enter}>{busy ? <Loader2 size={17} className="animate-spin" /> : <ArrowUpRight size={17} />} {busy ? "正在连接…" : "进入 AI 聊天"}</button>
+        <button type="button" disabled={busy || !config?.enabled || !user} onClick={connect}>{busy ? <Loader2 size={17} className="animate-spin" /> : <ArrowUpRight size={17} />} {busy ? "正在连接…" : "进入 AI 聊天"}</button>
         {error && !user && <Link href="/login?redirect=%2Fai-chat">重新登录</Link>}
         <Link href="/account">账户与 API Key</Link><Link href="/billing">充值积分</Link>
       </div>

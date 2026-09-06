@@ -33,7 +33,7 @@ sequenceDiagram
 - 连接凭证只能使用一次，10 分钟过期；授权码 2 分钟过期，需要 PKCE S256 和客户端密钥。
 - 原始用户 Key 由主站后端通过 LobeHub 本机接口写入用户自己的加密 provider 配置。连接 URL、桥接页面和绑定响应都不包含原始 Key。
 - 同一主站用户的配置同步使用数据库租约串行执行；多个标签页或多个主站实例同时连接时，后来的请求返回 `SYNC_IN_PROGRESS`，不会让旧同步覆盖刚轮换的 Key。异常中断的同步锁最多 3 分钟自动过期。
-- provider 名称为「流光主站」，ID 为 `flowinglight`。保留 LobeHub 原生的其他 provider 和现有聊天记录。
+- provider 名称为「流光主站」，ID 为 `flowinglight`。每次连接会把其他 provider 全部停用，模型选择器里只留主站模型——LobeHub 自带的 Anthropic、Google 等 provider 默认开着但没有 Key，其模型点了必然失败，也不走主站网关。provider 列表在运行时读取而非写死，随 LobeHub 升级自动适配；个别被官方保护、拒绝停用的 provider 会跳过并记录日志，不影响本次连接。现有聊天记录不受影响。
 - 开放模型来自主站后台已启用的文本模型。模型列表展示「模型名称 · 输入/输出 积分/1M Token」，首次绑定设置默认聊天模型和默认助手。
 - 本次按 LobeHub v2.2.16 的官方源码接口对接，并对测试服务器当前运行镜像的 provider、模型、用户设置、默认助手接口做了实际验证。升级 LobeHub 后应先在测试环境验证这些接口。
 
@@ -179,6 +179,7 @@ systemctl reload nginx
 | 计费方式 | 由**模型自身配置**决定：打开 Token 计费的模型按上游实际返回的 Token 用量结算，非缓存输入 × 输入单价 ÷ 1,000,000 ＋ 缓存输入 × 缓存单价 ÷ 1,000,000 ＋ 输出 × 输出单价 ÷ 1,000,000，向上取整到 0.000001 积分 |
 | 单价配置 | **逐个模型**在后台「模型管理 → 文本模型 → AI 聊天 · Token 定价」里设置；开关只作用于当前模型，不影响其他模型 |
 | 未配置单价 | 该模型沿用自己的按次积分价格，照常出现在模型列表；没有全站开关，一个模型的定价不影响其他模型 |
+| 改价生效 | 计费立即按新单价执行；但模型选择器里的价格标签存在 LobeHub 自己的库里，只在每次连接时推送，所以改价后要在聊天工具条点「同步模型价格」（或退出重进）才会刷新 |
 | 单价填错 | 打开了 Token 计费但单价无效的模型会被撤下并拒绝调用，不会悄悄按旧的按次价格收费；后台模型列表的「计费」列显示「Token 单价填写有误」 |
 | 预留与释放 | 发起上游请求前按「输入上限 × 输入单价 ＋ 输出上限 × 输出单价」预留积分，结算时释放预留、只扣真实用量。预留期间这部分积分不能被其他功能或订单退款收回 |
 | 用量缺失 | 上游未返回可信 usage 时不估算收费：账单置为 `billing_pending`，预留继续保留，等后台在「积分管理 → Token 调用账单」按上游日志核对结算或释放 |
@@ -206,7 +207,7 @@ systemctl reload nginx
 
 工具返回图片/文件时，apirouter 保留 `tool_call_id`、图片精度及文件标识，Responses 通路将它们转换成结构化内容数组，不把整个结果变成 Java 字符串。该形式对应 [OpenAI 官方 SDK 的 FunctionCallOutput 定义](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/response_input_param.py)；具体模型仍需支持所使用的模态。
 
-计费和限额只覆盖 `flowinglight` 的主站网关。用户自行添加的其他 BYOK provider 仍属于 LobeHub 原有能力，不消耗本主站网关积分。语音、绘图等专用协议接口不由本次文本模型网关提供，需在 LobeHub 配置相应服务；图片输入也取决于主站模型的文件能力配置和上游实际支持。
+计费和限额只覆盖 `flowinglight` 的主站网关。**用户自带 Key（BYOK）已被关闭**：每次连接都会停用其他 provider，用户即使手动开启，下次进入也会被再次停用。若日后要放开，去掉绑定流程里的 `hideForeignProviders` 调用即可；那些调用不消耗主站积分。语音、绘图等专用协议接口不由本次文本模型网关提供，需在 LobeHub 配置相应服务；图片输入也取决于主站模型的文件能力配置和上游实际支持。
 
 ## 6. 验收与排错
 
@@ -232,7 +233,7 @@ systemctl reload nginx
 | `SYNC_IN_PROGRESS` | 另一个页面正在同步；稍后从主站重试，进程中断遗留的同步锁最多等待 3 分钟 |
 | 回复中断 | 查看模型日志及返回错误；部分输出收费、无有效输出退款；不要仅依据 HTTP 200 判断 SSE 生成成功 |
 | 工具不可用 | 先确认 apirouter 兼容改动已发布，再启用 SUPPORTSTOOLS，并确认实际模型支持 function calling |
-| 其他 provider 可以用但不扣主站积分 | 这是用户自己的 BYOK 通路，不属于主站网关 |
+| 选择器里仍出现其他 provider 的模型 | 该 provider 拒绝被停用（LobeHub 保护的官方 provider），或本次连接读取 provider 列表失败；查后端日志的 `LobeHub kept a provider enabled` / `could not read the LobeHub provider list` |
 
 为了避免将不可信的旧本地账号按邮箱误合并，OIDC 返回稳定的身份别名邮箱，`email_verified=false`。它仅用于账号映射，不是用户收信地址。客户端密钥和 RSA 私钥都应备份；普通更新不要更换它们，也不要更换现有 LobeHub 加密密钥。
 

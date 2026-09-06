@@ -14,10 +14,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/response"
 	"tidecanvas/internal/pkg/tokenbilling"
 )
@@ -329,16 +331,15 @@ func (s *service) bind(c *gin.Context) {
 		for _, m := range models {
 			var capabilities map[string]any
 			_ = json.Unmarshal([]byte(m.Config), &capabilities)
-			name := fmt.Sprintf("%s · %d 积分/次", m.Name, m.Price.IntPart())
-			if pricing, err := tokenbilling.Parse(m.Config); err == nil {
-				name = pricing.Label(m.Name)
-			}
-			items = append(items, gin.H{"id": m.ModelKey, "type": "chat", "displayName": name, "enabled": true, "source": "remote", "abilities": gin.H{"functionCall": s.cfg.SupportsTools, "vision": capabilities["fileUpload"] == true}})
+			items = append(items, gin.H{"id": m.ModelKey, "type": "chat", "displayName": syncedModelName(m), "enabled": true, "source": "remote", "abilities": gin.H{"functionCall": s.cfg.SupportsTools, "vision": capabilities["fileUpload"] == true}})
 			ids = append(ids, m.ModelKey)
 		}
 		err = s.rpc(c.Request.Context(), cookie, "aiModel.batchUpdateAiModels", gin.H{"id": provider, "models": items})
 		if err == nil {
 			err = s.rpc(c.Request.Context(), cookie, "aiModel.batchToggleAiModels", gin.H{"id": provider, "models": ids, "enabled": true})
+		}
+		if err == nil {
+			s.hideForeignProviders(c.Request.Context(), cookie, provider)
 		}
 		if err == nil && firstBinding {
 			systemAgents := gin.H{}
@@ -381,6 +382,48 @@ func (s *service) bind(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"ok": true, "url": s.cfg.PublicURL, "provider": provider})
+}
+
+// hideForeignProviders leaves the main-site provider as the only one offering
+// models. LobeHub ships its built-in providers enabled and keyless, so their
+// catalogues otherwise fill the picker with models that cannot run and never
+// bill main-site points.
+//
+// The list is read at runtime rather than hard-coded: the built-in set changes
+// between LobeHub releases. A provider the release protects from being disabled
+// refuses the call, which is not a reason to fail the user's connection — the
+// remaining providers are still hidden.
+func (s *service) hideForeignProviders(ctx context.Context, cookie, keep string) {
+	raw, err := s.rpcQuery(ctx, cookie, "aiProvider.getAiProviderList", nil)
+	if err != nil {
+		logger.L().Warn("could not read the LobeHub provider list", zap.Error(err))
+		return
+	}
+	var rows []struct {
+		ID      string `json:"id"`
+		Enabled *bool  `json:"enabled"`
+	}
+	if json.Unmarshal(raw, &rows) != nil {
+		logger.L().Warn("unexpected LobeHub provider list shape")
+		return
+	}
+	for _, row := range rows {
+		if row.ID == "" || row.ID == keep || (row.Enabled != nil && !*row.Enabled) {
+			continue
+		}
+		if err := s.rpc(ctx, cookie, "aiProvider.toggleProviderEnabled", gin.H{"id": row.ID, "enabled": false}); err != nil {
+			logger.L().Info("LobeHub kept a provider enabled", zap.String("provider", row.ID))
+		}
+	}
+}
+
+// syncedModelName is what LobeHub's model picker shows. It is written at sync
+// time, so a price change reaches the picker on the user's next connect.
+func syncedModelName(m model.MarketModel) string {
+	if pricing, err := tokenbilling.Parse(m.Config); err == nil {
+		return pricing.Label(m.Name)
+	}
+	return fmt.Sprintf("%s · %d 积分/次", m.Name, m.Price.IntPart())
 }
 
 func (s *service) models(ctx context.Context) ([]model.MarketModel, error) {

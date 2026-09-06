@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -344,8 +345,24 @@ func TestBindVerifiesActualLobeIdentityAndKeepsKeyServerSide(t *testing.T) {
 	}
 	mainID = f.user.ID.String()
 	w = f.request("POST", "/api/lobehub/bind", `{"ticket":"`+ticket+`"}`, "", headers)
-	if w.Code != 200 || keyTransferred != f.apiKey || len(rpcCalls) != 7 {
+	if w.Code != 200 || keyTransferred != f.apiKey {
 		t.Fatalf("binding failed: code=%d, calls=%v body=%s", w.Code, rpcCalls, w.Body.String())
+	}
+	// A binding configures the provider and its models, hides the other
+	// providers, then sets this user's defaults.
+	for _, procedure := range []string{
+		"/trpc/lambda/aiProvider.updateAiProviderConfig",
+		"/trpc/lambda/aiProvider.updateAiProvider",
+		"/trpc/lambda/aiProvider.toggleProviderEnabled",
+		"/trpc/lambda/aiModel.batchUpdateAiModels",
+		"/trpc/lambda/aiModel.batchToggleAiModels",
+		"/trpc/lambda/aiProvider.getAiProviderList",
+		"/trpc/lambda/user.updateSettings",
+		"/trpc/lambda/agent.updateAgentConfig",
+	} {
+		if !slices.Contains(rpcCalls, procedure) {
+			t.Fatalf("binding skipped %s: %v", procedure, rpcCalls)
+		}
 	}
 	if strings.Contains(w.Body.String(), f.apiKey) {
 		t.Fatal("key returned to bridge browser")
