@@ -74,6 +74,7 @@ def init(main_url, lobe_url, supports_tools=False):
         "AUTH_DISABLE_EMAIL_PASSWORD": "1",
         "AUTH_ALLOWED_EMAILS": "",
         "AUTH_EMAIL_VERIFICATION": "0",
+        "FEATURE_FLAGS": ",".join("-" + flag for flag in DEAD_FEATURE_FLAGS),
     }
     for name, values in (("main.env", main), ("lobehub.env", lobe)):
         atomic_private(private / name, "\n".join(f"{key}={value}" for key, value in values.items()) + "\n")
@@ -81,6 +82,31 @@ def init(main_url, lobe_url, supports_tools=False):
     print("Issuer:", issuer)
     print("LobeHub:", lobe_url)
     print("Existing signing key and client secret were preserved")
+
+
+# LobeHub features that cannot work behind the main-site gateway, which exposes
+# only /models and /chat/completions. Left on, each one shows an entry that
+# fails when used. The provider settings go too: BYOK is closed by the binding,
+# so offering the forms would invite users to configure something we undo.
+#
+# Unknown keys are ignored by LobeHub's parser, so an upgrade that renames one
+# degrades to "that entry is visible again" rather than a broken deployment.
+# Its commercial_hide_* flags are deliberately absent: they require a
+# commercial licence.
+DEAD_FEATURE_FLAGS = (
+    "ai_image",        # 生成：网关没有图像接口
+    "knowledge_base",  # 资源：需要嵌入与文件接口
+    "rag_eval",
+    "speech_to_text",  # 语音输入：网关没有转写接口
+    "voice_dictation",
+    "market",          # 社区：第三方助理市场
+    "check_updates",   # 自部署实例不该提示用户升级
+    "changelog",
+    "welcome_suggest", # 首页推荐，会额外触发模型调用
+    "provider_settings",
+    "openai_api_key",
+    "openai_proxy_url",
+)
 
 
 def merge_env(target, fragment):

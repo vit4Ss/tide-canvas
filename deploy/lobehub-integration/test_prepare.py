@@ -50,6 +50,23 @@ class PrepareTest(unittest.TestCase):
             self.assertNotIn("REQUIRETOKENPRICING", (private / "main.env").read_text())
             self.assertNotIn("TIDECANVAS_LOBEHUB_REQUIRETOKENPRICING", enable.PRESERVED_MAIN_KEYS)
 
+    def test_dead_features_are_switched_off_without_touching_licensed_flags(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(prepare, "ROOT", Path(tmp)):
+            with contextlib.redirect_stdout(io.StringIO()):
+                prepare.init("https://main.example", "https://chat.example")
+            flags = ""
+            for line in (Path(tmp) / "private" / "lobehub.env").read_text().splitlines():
+                if line.startswith("FEATURE_FLAGS="):
+                    flags = line.split("=", 1)[1]
+            self.assertTrue(flags, "FEATURE_FLAGS was not written")
+            # Every entry disables something; nothing is switched on by accident.
+            for entry in flags.split(","):
+                self.assertTrue(entry.startswith("-"), entry)
+            for expected in ("-ai_image", "-knowledge_base", "-market", "-provider_settings"):
+                self.assertIn(expected, flags.split(","))
+            # commercial_hide_* need a LobeHub commercial licence.
+            self.assertNotIn("commercial", flags)
+
     def test_invalid_origin_or_existing_secret_fails_without_replacement(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(prepare, "ROOT", Path(tmp)):
             for origin in ("http://example.test", "https://example.test/path", "https://user:pass@example.test"):
