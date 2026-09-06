@@ -238,9 +238,7 @@ LobeHub 官方 compose 的默认值是 `http://localhost:9000`，那是**访问�
 容器内互通不代表浏览器能连上。自带的 RustFS 想用于对话附件，就得给它一个对外域名
 （nginx 反代到 `RUSTFS_PORT`，配好证书），再把 `S3_ENDPOINT` 指过去；预签名 URL 是按这个
 主机名签的，所以它必须和浏览器实际使用的地址完全一致，`http`/`https` 也要对上。
-不想对外暴露这个服务，就换成公有云对象存储（如阿里云 OSS 的 S3 兼容端点
-`https://s3.oss-cn-<region>.aliyuncs.com`，同时设置 `S3_REGION`，不要开
-`S3_ENABLE_PATH_STYLE`——OSS 只支持 virtual-hosted 寻址）。
+不想对外暴露这个服务，就换成公有云对象存储，见下面「用阿里云 OSS 作为附件存储」。
 
 其次是跨域。桶必须允许来自 LobeHub 域名的写入，例如：
 
@@ -270,6 +268,150 @@ LobeHub 官方 compose 的默认值是 `http://localhost:9000`，那是**访问�
 还有一点与本集成有关：图片进入对话后，其 URL 会经主站网关原样转给第三方中转站，
 **由中转站从它那一侧去拉取**。如果 S3 端点或 `S3_PUBLIC_DOMAIN` 只在内网可达
 （例如 `http://minio:9000`），上传会成功、缩略图也正常，但模型看不到图片。
+
+### 用阿里云 OSS 作为附件存储
+
+自带的 RustFS 要能用于对话附件，就得给它一个对外域名和证书。不想暴露这个服务，
+换成 OSS 更省事：端点本来就是公网可达的 https，DNS、nginx、证书三步全省。
+
+OSS 提供 S3 兼容接口，LobeHub 用的是 AWS SDK JS v3，配置项就是那几个 `S3_*` 变量。
+
+#### 先决定：单独建桶，还是共用主站的桶
+
+**建议单独建一个私有桶。** OSS 按存储量和流量计费，不按桶数量，多一个桶不增加成本。
+
+共用主站桶有一个不能忽略的后果：主站的桶是**公共读**的（`storage.OSSStorage.URL`
+返回的是 `publicBase + key` 拼出来的明文地址，不带签名，CDN 才能回源）。LobeHub 自己
+虽然用预签名 GET，但对象在 OSS 层面已经公开，所以用户在聊天里上传的文件，任何拿到
+URL 的人都能下载，不需要签名，且永久有效——URL 会经 referrer、日志、CDN 缓存、
+浏览器历史和转发的链接泄出去。单独建一个私有桶，附件才真的只能通过限时预签名访问。
+
+共用时还有一个陷阱：不要试图用 RAM 策略把 LobeHub 限定在某个子目录里。对象 key 的
+前缀来自 `NEXT_PUBLIC_S3_FILE_PATH`，但 `generateFilePathMetadata` 里
+`options.directory || fileEnv.NEXT_PUBLIC_S3_FILE_PATH` 允许调用方覆盖它，覆盖了的
+上传路径会撞上策略变成 403，表现为部分功能能传、部分不能。单独建桶时按整桶授权，
+既最简单也确实是最小权限。
+
+#### 1. 创建 Bucket
+
+OSS 控制台 → 创建 Bucket：
+
+| 项 | 取值 | 原因 |
+| --- | --- | --- |
+| 地域 | 与服务器同地域，如香港 `cn-hongkong` | 内地地域自 2025-03-20 起，新开通用户不能用默认外网域名做上传下载，必须绑自定义域名并配证书 |
+| 读写权限 | **私有** | 附件靠预签名 URL 访问，不需要公开读 |
+| 名称 | 不含下划线 | virtual-hosted 寻址要求 bucket 名符合 DNS 命名规范；含下划线就必须改用 path-style |
+
+#### 2. 创建 RAM 用户，取得 AccessKey
+
+RAM 访问控制 → 用户 → 创建用户 → 勾选「使用永久 AccessKey 访问」。
+
+创建完成时页面显示 **AccessKeyId** 和 **AccessKeySecret**，**Secret 只显示这一次**，
+当场保存；丢了只能删掉重建一对。
+
+不要使用主账号的 AccessKey：它对该阿里云账号下所有资源都有完全权限。
+
+#### 3. 创建权限策略并绑定
+
+权限策略和 AccessKey 是两件事，通过 RAM 用户关联：策略规定**能做什么**，AccessKey
+证明**是谁**。策略里不含密钥，两者都需要。
+
+RAM → 权限策略 → 创建权限策略 → 「脚本编辑」：
+
+```json
+{
+  "Version": "1",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "oss:PutObject",
+        "oss:GetObject",
+        "oss:DeleteObject",
+        "oss:AbortMultipartUpload",
+        "oss:ListParts"
+      ],
+      "Resource": ["acs:oss:*:*:<bucket>/*"]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["oss:ListObjects", "oss:GetBucketInfo"],
+      "Resource": ["acs:oss:*:*:<bucket>"]
+    }
+  ]
+}
+```
+
+两条 `Resource` 不同：第一条带 `/*` 管桶内对象，第二条不带，管桶本身。分片上传
+（超过 64 MiB 的文件）需要 `AbortMultipartUpload` 和 `ListParts`。
+
+保存后回到第 2 步的用户 → 权限管理 → 添加权限 → 自定义策略 → 勾选它。
+
+#### 4. 配置跨域（CORS）
+
+Bucket → 数据安全 → 跨域设置 → 创建规则：
+
+| 项 | 值 |
+| --- | --- |
+| 来源 | LobeHub 的完整来源，如 `https://test-lobehub.tcmzhan.com` |
+| 允许 Methods | `PUT` `GET` `HEAD` `POST` |
+| 允许 Headers | `*` |
+| 暴露 Headers | `ETag` |
+| 缓存时间 | `3000` |
+
+共用主站桶时是**新增**一条，不要改动主站直传用的那条。
+
+#### 5. 改 `.env`
+
+```env
+S3_ENDPOINT=https://s3.oss-cn-hongkong.aliyuncs.com
+S3_BUCKET=<bucket>
+S3_REGION=cn-hongkong
+S3_ACCESS_KEY_ID=<AccessKeyId>
+S3_SECRET_ACCESS_KEY=<AccessKeySecret>
+```
+
+三个容易配错的地方，错了都是 `SignatureDoesNotMatch`：
+
+- Endpoint **必须带 `s3.` 前缀**（`s3.oss-{region}.aliyuncs.com`）。写成
+  `oss-cn-hongkong.aliyuncs.com` 走的是原生 OSS 协议，AWS SDK 签不对。
+- 用**外网** endpoint，不要 `-internal`。文件由浏览器直传，内网地址浏览器访问不到。
+- `S3_REGION` 填**纯地域 ID**（`cn-hongkong`），不是 `oss-cn-hongkong`——后者只出现在
+  主机名里。不设时 LobeHub 默认 `us-east-1`，SigV4 会把 region 算进签名。
+
+**不要设**这两项：`S3_ENABLE_PATH_STYLE`（OSS 只支持 virtual-hosted）、`S3_SET_ACL`
+（会给对象加 `public-read`，桶要保持私有）。若之前为 RustFS 设过，现在删掉。
+
+签名版本不需要处理。「OSS 要用 V2 签名」是 boto3 特有的问题——它的 V4 实现与
+chunked encoding 强耦合；阿里云文档的结论是除 boto3 外其他 SDK 均可用 V4。
+Node.js v3 默认 V4，且 LobeHub 已设 `requestChecksumCalculation: 'WHEN_REQUIRED'`
+关掉了会干扰兼容存储的 `x-amz-checksum-*` 头。
+
+#### 6. 重建容器
+
+```bash
+cd /root/lobehub-db
+docker compose up -d
+```
+
+必须 `up -d`。`restart` 不重新读 `env_file`，改了 `.env` 也不生效。
+
+`rustfs` 与 `rustfs-init` 两个服务此后不再被使用，可以从 `docker-compose.yml` 删除，
+`bucket.config.json` 一并作废。已存在于 RustFS 的头像和附件**不会自动迁移**，切换后
+那些旧地址会失效。
+
+#### 7. 验证与故障对照
+
+传一个文件，看开发者工具 Network 里那条 `PUT`：
+
+| 现象 | 原因 |
+| --- | --- |
+| `200` / `204` | 成功 |
+| 根本没有 PUT 请求 | 看 `/trpc/lambda/upload.createS3PreSignedUrl` 的状态码，签名接口就没通 |
+| `ERR_NAME_NOT_RESOLVED` / 连接失败 | `S3_ENDPOINT` 的域名浏览器解析不到或访问不到 |
+| CORS error | 第 4 步没配，或来源域名与浏览器实际使用的不完全一致 |
+| `403 SignatureDoesNotMatch` | `S3_REGION` 或 Endpoint 写错，或 AK/SK 不匹配 |
+| `403 AccessDenied` | 第 3 步的策略没覆盖到该操作，或策略没绑到该用户 |
 
 
 ## 6. 验收与排错
