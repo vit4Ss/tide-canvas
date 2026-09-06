@@ -1,23 +1,43 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, Loader2, MessageSquare, Wallet } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowUpRight, ExternalLink, Loader2, MessageSquare, Wallet, X } from "lucide-react";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { allowedLobeRedirect, lobeHubApi, type LobeHubConfig } from "@/lib/lobehub-api";
 import "./ai-chat.css";
 import TokenBillingPanel from "@/components/shared/token-billing-panel";
 
+/** True while this document is rendered inside a frame. */
+function framed() {
+  try {
+    return typeof window !== "undefined" && window.top !== window.self;
+  } catch {
+    // A foreign ancestor makes window.top opaque; that still means framed.
+    return true;
+  }
+}
+
 export default function AIChatPage() {
   const [config, setConfig] = useState<LobeHubConfig | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [frameUrl, setFrameUrl] = useState("");
   const user = useAuthStore((s) => s.user);
   const ensureSession = useAuthStore((s) => s.ensureSession);
   const fetchUser = useAuthStore((s) => s.fetchUser);
   const lock = useRef(false);
   const mounted = useRef(false);
   useEffect(() => {
+    // LobeHub sends a lost session to /signin, which the chat host redirects
+    // back here. Inside the embed that would nest this page in itself, so climb
+    // out to the real window instead of rendering a chat entry inside the chat.
+    if (framed()) {
+      try {
+        window.top?.location.replace("/ai-chat");
+      } catch { /* opaque ancestor: the link below is the way out */ }
+      return;
+    }
     let active = true;
     mounted.current = true;
     (async () => {
@@ -48,16 +68,32 @@ export default function AIChatPage() {
       }
       if (!result.success || !result.data) { setError(result.message || "暂时无法连接 AI 聊天"); return; }
       if (!allowedLobeRedirect(result.data.url, config.url)) { setError("聊天地址配置异常，请联系管理员"); return; }
-      window.location.assign(result.data.url);
+      setFrameUrl(result.data.url);
     } catch { if (mounted.current) setError("连接暂时失败，请稍后重试"); }
     finally { lock.current = false; if (mounted.current) setBusy(false); }
   };
+
+  // A ticket is single-use, so leaving the embed must also drop its URL: the
+  // next entry asks for a fresh one instead of replaying a spent connection.
+  const leave = useCallback(() => { setFrameUrl(""); void fetchUser(true); }, [fetchUser]);
+
+  if (frameUrl) {
+    return <div className="ai-chat-embed">
+      <div className="ai-chat-embed-bar">
+        <span className="ai-chat-embed-title"><MessageSquare size={16} aria-hidden /> AI 聊天</span>
+        <span className="ai-chat-embed-balance"><Wallet size={15} aria-hidden />可用积分 <strong>{user?.points?.toLocaleString("zh-CN", {maximumFractionDigits: 6}) ?? "—"}</strong></span>
+        <a href={frameUrl} target="_blank" rel="noreferrer noopener"><ExternalLink size={14} aria-hidden />在新标签页打开</a>
+        <button type="button" onClick={leave}><X size={14} aria-hidden />退出聊天</button>
+      </div>
+      <iframe className="ai-chat-frame" src={frameUrl} title="AI 聊天" allow="clipboard-write; microphone" />
+    </div>;
+  }
 
   return <main className="ai-chat-entry">
     <header><MessageSquare aria-hidden /><h1>AI 聊天</h1><p>使用流光账号，连接你的 AI 对话空间。</p></header>
     <section className="ai-chat-entry-panel">
       <div className="ai-chat-balance"><Wallet size={18} aria-hidden /><span>可用积分</span><strong>{user?.points?.toLocaleString("zh-CN", {maximumFractionDigits: 6}) ?? "—"}</strong></div>
-      <p>进入后自动登录并同步你的模型服务。聊天记录保存在你的独立账号中，模型调用使用主站积分。</p>
+      <p>进入后在本页内打开，自动登录并同步你的模型服务。聊天记录保存在你的独立账号中，模型调用使用主站积分。</p>
       <p className="ai-chat-note">{config?.tokenBilling ? "按模型的每百万输入、输出 Token 单价计费。调用前预留额度，结束后按真实用量结算并释放余量；工具循环和辅助调用也归属你的 API Key。" : "按所选模型的单次价格计费；未产生有效内容的失败调用退回积分。"}</p>
       {error && <p role="alert" className="ai-chat-error">{error}</p>}
       {config && !config.enabled && <p role="status">AI 聊天尚未开放，请管理员完成接入配置。</p>}

@@ -168,3 +168,26 @@ func TestSessionGuardRevalidatesMainIdentity(t *testing.T) {
 		t.Fatal("transient identity service failure treated as logout")
 	}
 }
+
+// The chat is embedded by the main site, so the bridge must name it as the one
+// allowed ancestor — and must not also send a blanket X-Frame-Options, which
+// has no origin list and would block the embed outright.
+func TestBridgeIsFramableOnlyByTheMainSite(t *testing.T) {
+	f := setup(t, "", "")
+	w := f.request("GET", "/api/lobehub/bridge?ticket="+strings.Repeat("t", 43), "", "", nil)
+	if w.Code != 200 {
+		t.Fatalf("bridge failed: %d %s", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("X-Frame-Options"); got != "" {
+		t.Fatalf("X-Frame-Options %q overrides frame-ancestors and blocks the embed", got)
+	}
+	csp := w.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "frame-ancestors "+f.s.mainOrigin+";") {
+		t.Fatalf("the main site is not an allowed ancestor: %s", csp)
+	}
+	for _, forbidden := range []string{"frame-ancestors *", "frame-ancestors 'self'", "frame-ancestors 'none'"} {
+		if strings.Contains(csp, forbidden) {
+			t.Fatalf("%q would let any site embed the bridge or block the main one: %s", forbidden, csp)
+		}
+	}
+}

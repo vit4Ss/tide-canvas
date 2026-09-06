@@ -91,20 +91,30 @@ test("late session failure after unmount does not redirect the user away", async
   assert.equal(h.approvals, 0);
 });
 
-test("entry discards an old-account launch even before cross-tab user metadata catches up", async () => {
-  const hooks = [], effects = [], navigations = [];
+function entryHarness({ ancestor } = {}) {
+  const hooks = [], effects = [], navigations = [], escapes = [];
   let cursor = 0, sessionToken = "account-a-token", finishLaunch;
   const store = {user:{id:"a",points:20}, ensureSession:async()=>true, fetchUser:async()=>{}};
   const useAuthStore = Object.assign(selector => selector(store), {getState:()=>store});
   const context = {exports:{}, URL,
     localStorage:{getItem:()=>sessionToken},
-    window:{location:{replace:url=>navigations.push(url),assign:url=>navigations.push(url)}},
+    window:(()=>{
+      const self={location:{replace:url=>navigations.push(url),assign:url=>navigations.push(url)}};
+      self.self=self;
+      // "opaque" models a foreign ancestor: reading window.top throws, exactly
+      // as a cross-origin embedder behaves.
+      if(ancestor==="opaque"){Object.defineProperty(self,"top",{get(){throw new Error("cross-origin");}});}
+      else if(ancestor){self.top={location:{replace:url=>escapes.push(url)}};}
+      else self.top=self;
+      return self;
+    })(),
     require(name) {
       if(name.endsWith(".css")) return {};
       if(name === "react") return {
         useState:initial=>{const index=cursor++; hooks[index]??={value:initial}; return [hooks[index].value,value=>{hooks[index].value=value;}];},
         useRef:initial=>hooks[cursor++]??={current:initial},
         useEffect:effect=>{cursor++; if(effects.length===0)effects.push(effect);},
+        useCallback:fn=>{cursor++; return fn;},
       };
       if(name === "react/jsx-runtime") return {jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};
       if(name.includes("use-auth-store")) return {useAuthStore};
@@ -117,18 +127,77 @@ test("entry discards an old-account launch even before cross-tab user metadata c
   const source=readFileSync(new URL("./page.tsx",import.meta.url),"utf8");
   vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2022}}).outputText,context);
   const render=()=>{cursor=0;return context.exports.default();};
-  render(); const cleanup=effects[0](); await flush();
-  const findButton=node=>{
+  const find=(node,match)=>{
     if(!node||typeof node!=="object")return null;
-    if(node.type==="button")return node;
-    return [node.props?.children].flat().map(findButton).find(Boolean);
+    if(match(node))return node;
+    return [node.props?.children].flat().map(child=>find(child,match)).find(Boolean);
   };
-  const action=findButton(render()).props.onClick();
-  sessionToken="account-b-token";
-  finishLaunch({success:true,data:{url:origin+"/flowinglight/connect?ticket=old"}});
+  return {hooks,navigations,escapes,render,find,
+    start:()=>{render();return effects[0]();},
+    connect:()=>find(render(),node=>node.type==="button").props.onClick(),
+    finishLaunch:(...args)=>finishLaunch(...args),
+    rotateSession:()=>{sessionToken="account-b-token";},
+    get user(){return store.user;},
+    get frame(){return find(render(),node=>node.type==="iframe");}};
+}
+
+test("entry discards an old-account launch even before cross-tab user metadata catches up", async () => {
+  const h = entryHarness();
+  const cleanup = h.start(); await flush();
+  const action = h.connect();
+  h.rotateSession();
+  h.finishLaunch({success:true,data:{url:origin+"/flowinglight/connect?ticket=old"}});
   await action;
-  assert.equal(store.user.id,"a");
-  assert.equal(navigations.length,0);
-  assert.match(hooks[1].value,/登录状态/);
+  assert.equal(h.user.id,"a");
+  assert.equal(h.navigations.length,0);
+  assert.equal(h.frame,undefined,"a discarded launch must not be embedded");
+  assert.match(h.hooks[1].value,/登录状态/);
   cleanup();
+});
+
+test("a connected chat is embedded in this page instead of navigating away", async () => {
+  const h = entryHarness();
+  const cleanup = h.start(); await flush();
+  const action = h.connect();
+  const url = origin + "/flowinglight/connect?ticket=fresh";
+  h.finishLaunch({success:true,data:{url}});
+  await action;
+  assert.equal(h.navigations.length,0,"the embed must not replace the main window");
+  const frame = h.frame;
+  assert.ok(frame,"the chat is not embedded");
+  assert.equal(frame.props.src,url);
+  // The escape hatch stays available when a browser refuses to frame the chat.
+  const link = h.find(h.render(),node=>node.type==="a"&&node.props?.target==="_blank");
+  assert.equal(link.props.href,url);
+  assert.equal(link.props.rel,"noreferrer noopener");
+  cleanup();
+});
+
+test("an off-origin launch URL is never embedded", async () => {
+  const h = entryHarness();
+  const cleanup = h.start(); await flush();
+  const action = h.connect();
+  h.finishLaunch({success:true,data:{url:"https://evil.example/flowinglight/connect?ticket=x"}});
+  await action;
+  assert.equal(h.frame,undefined);
+  assert.match(h.hooks[1].value,/聊天地址/);
+  cleanup();
+});
+
+test("the chat host bouncing a lost session back here escapes the embed", async () => {
+  const h = entryHarness({ancestor:"main"});
+  const cleanup = h.start(); await flush();
+  // Nesting this entry inside the chat would offer "进入 AI 聊天" within the
+  // chat itself; the real window must be taken back to the entry instead.
+  assert.deepEqual(h.escapes,["/ai-chat"]);
+  assert.equal(h.navigations.length,0);
+  cleanup?.();
+});
+
+test("a foreign ancestor cannot be navigated and does not break the page", async () => {
+  const h = entryHarness({ancestor:"opaque"});
+  const cleanup = h.start(); await flush();
+  assert.deepEqual(h.escapes,[]);
+  assert.equal(h.navigations.length,0);
+  cleanup?.();
 });

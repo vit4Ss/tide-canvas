@@ -17,7 +17,7 @@ sequenceDiagram
     participant R as apirouter
     U->>M: 点击 AI 聊天
     M-->>U: 一次性连接凭证
-    U->>L: 同域连接页面
+    U->>L: 主站页面内的 iframe 打开同域连接页面
     L->>M: OIDC + PKCE 登录
     M-->>L: 稳定用户 ID
     M->>L: 校验实际会话并同步该用户默认 Key
@@ -31,7 +31,7 @@ sequenceDiagram
 
 - 主站用户 ID 是 OIDC `sub`，数据库保存唯一的主站用户 ↔ LobeHub 用户映射。
 - 连接凭证只能使用一次，10 分钟过期；授权码 2 分钟过期，需要 PKCE S256 和客户端密钥。
-- 原始用户 Key 由主站后端通过 LobeHub 本机接口写入用户自己的加密 provider 配置。跳转 URL、桥接页面和绑定响应都不包含原始 Key。
+- 原始用户 Key 由主站后端通过 LobeHub 本机接口写入用户自己的加密 provider 配置。连接 URL、桥接页面和绑定响应都不包含原始 Key。
 - 同一主站用户的配置同步使用数据库租约串行执行；多个标签页或多个主站实例同时连接时，后来的请求返回 `SYNC_IN_PROGRESS`，不会让旧同步覆盖刚轮换的 Key。异常中断的同步锁最多 3 分钟自动过期。
 - provider 名称为「流光主站」，ID 为 `flowinglight`。保留 LobeHub 原生的其他 provider 和现有聊天记录。
 - 开放模型来自主站后台已启用的文本模型。模型列表展示「模型名称 · 输入/输出 积分/1M Token」，首次绑定设置默认聊天模型和默认助手。
@@ -165,7 +165,14 @@ systemctl reload nginx
 
 ## 5. 用户使用与计费
 
-用户登录主站 → 侧栏「AI 聊天」→「进入 AI 聊天」。首次进入创建/映射个人 LobeHub 账号、同步模型和默认 Key；后续进入刷新 Key 与开放模型配置。
+用户登录主站 → 侧栏「AI 聊天」→「进入 AI 聊天」，聊天在**主站页面内嵌的 iframe** 里打开，不再跳出到聊天域名。首次进入创建/映射个人 LobeHub 账号、同步模型和默认 Key；后续进入刷新 Key 与开放模型配置。
+
+嵌入依赖两个前提，改域名前先确认：
+
+- 聊天域名与主站域名属于**同一个可注册域**（当前 `test-lobehub.tcmzhan.com` 与 `test-flowlight.tcmzhan.com` 同为 `tcmzhan.com`）。若换成不同注册域，iframe 变成第三方上下文，浏览器会拦截 LobeHub 的会话 Cookie，嵌入将无法登录。
+- LobeHub 自身不下发 `X-Frame-Options` / CSP `frame-ancestors`（当前镜像已确认）。桥接页由主站显式允许主站域名作为唯一父页面。
+
+嵌入被浏览器拒绝时，工具条上的「在新标签页打开」仍可用；LobeHub 把丢失的会话弹回主站 `/ai-chat` 时，页面会自动跳出 iframe 回到入口，不会自我嵌套。
 
 | 项目 | 实际规则 |
 |---|---|

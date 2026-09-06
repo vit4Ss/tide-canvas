@@ -29,9 +29,17 @@ function Authorize() {
     }
     work.current.promise.then((url) => {
       if (!active) return;
+      if (url) { window.location.replace(url); return; }
       // ensureSession can return false after fetching an expired session and
-      // clearing its token. Preserve this authorization request through login.
-      window.location.replace(url || `/login?redirect=${encodeURIComponent(`/ai-chat/authorize?request=${request}`)}`);
+      // clearing its token. Preserve this authorization request through login —
+      // and when this page is running inside the chat embed, sign in in the real
+      // window rather than squeezing the login form into the frame.
+      const login = `/login?redirect=${encodeURIComponent(`/ai-chat/authorize?request=${request}`)}`;
+      let target: Location = window.location;
+      try {
+        if (window.top && window.top !== window.self && window.top.location) target = window.top.location;
+      } catch { /* opaque ancestor: fall back to this frame */ }
+      target.replace(login);
     })
       .catch((error: Error) => { if (active) setError(error.message); });
     return () => { active = false; };

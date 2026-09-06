@@ -74,8 +74,10 @@ func (s *service) bridge(c *gin.Context) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Header("Cache-Control", "no-store")
 	c.Header("Referrer-Policy", "no-referrer")
-	c.Header("Content-Security-Policy", "default-src 'none'; script-src 'nonce-"+nonce+"'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
-	c.Header("X-Frame-Options", "DENY")
+	// The main site embeds the chat in an iframe, so it is the one permitted
+	// ancestor. X-Frame-Options has no origin list (ALLOW-FROM is dead), so the
+	// restriction is expressed with frame-ancestors alone.
+	c.Header("Content-Security-Policy", "default-src 'none'; script-src 'nonce-"+nonce+"'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors "+s.mainOrigin+"; base-uri 'none'")
 	data, _ := json.Marshal(gin.H{"ticket": ticket, "mainURL": s.mainOrigin + "/ai-chat", "lobeURL": s.cfg.PublicURL, "afterSSO": c.Query("sso") == "1"})
 	t := template.Must(template.New("bridge").Parse(bridgeHTML))
 	_ = t.Execute(c.Writer, struct {

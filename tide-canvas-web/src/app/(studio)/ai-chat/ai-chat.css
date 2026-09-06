@@ -1,4 +1,5 @@
-.ai-chat-entry{width:min(760px,100%);margin:0 auto;padding:48px 24px;color:var(--text)}
+.ai-chat-entry{width:100%;height:100%;overflow-y:auto;padding:48px 24px;color:var(--text);scrollbar-width:thin}
+.ai-chat-entry>*{width:min(760px,100%);margin-inline:auto}
 .ai-chat-entry header>svg{color:var(--accent);width:28px;height:28px}
 .ai-chat-entry h1{font-size:28px;margin:16px 0 8px}
 .ai-chat-entry p{line-height:1.8;color:var(--text-dim)}
@@ -14,3 +15,17 @@
 .ai-chat-entry a{font-size:13px;color:var(--accent)}
 .ai-chat-entry button:focus-visible,.ai-chat-entry a:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
 @media(max-width:560px){.ai-chat-entry{padding:24px 16px}.ai-chat-entry-panel{padding:24px}}
+
+/* 内嵌聊天：细工具条 + 铺满剩余高度的 iframe。工具条留住积分、外开和退出，
+   这些在 LobeHub 页面里没有对应入口。 */
+.ai-chat-embed{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--bg)}
+.ai-chat-embed-bar{display:flex;align-items:center;gap:16px;padding:0 16px;height:44px;flex:none;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:13px}
+.ai-chat-embed-title{display:flex;align-items:center;gap:8px;color:var(--text);font-weight:600}
+.ai-chat-embed-title svg{color:var(--accent)}
+.ai-chat-embed-balance{display:flex;align-items:center;gap:8px;margin-left:auto;font-variant-numeric:tabular-nums}
+.ai-chat-embed-balance strong{color:var(--text)}
+.ai-chat-embed-bar a,.ai-chat-embed-bar button{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--border-strong);border-radius:6px;background:transparent;color:var(--text-dim);font:inherit;cursor:pointer}
+.ai-chat-embed-bar a:hover,.ai-chat-embed-bar button:hover{color:var(--text)}
+.ai-chat-embed-bar a:focus-visible,.ai-chat-embed-bar button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ai-chat-frame{flex:1;min-height:0;width:100%;border:0;display:block;background:var(--bg)}
+@media(max-width:560px){.ai-chat-embed-bar{gap:8px;padding:0 8px}.ai-chat-embed-balance{display:none}}
