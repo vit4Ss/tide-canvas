@@ -876,7 +876,7 @@ function AdminUsersPageInner() {
                   onChange={(e) => setEditForm({ ...editForm, vipLevel: Number(e.target.value) })}
                 />
               </Field>
-              <Field label="API 额度" span={2}>
+              <Field label="API 累计调用额度（0 不限）" span={2}>
                 <input
                   type="number"
                   value={editForm.apiQuota}

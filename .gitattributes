@@ -1,2 +1,4 @@
 # 容器入口脚本必须 LF：Windows 提交 CRLF 会让 Linux 容器报 "no such file or directory"
 *.sh text eol=lf
+# Unified diff context lines require a leading space even on empty lines.
+deploy/lobehub-integration/*.patch text eol=lf -whitespace

@@ -1,0 +1,7 @@
+# Use after the main deployment compose. Replace the host directory if needed.
+services:
+  backend:
+    env_file:
+      - /root/lobehub-integration/private/main.env
+    volumes:
+      - /root/lobehub-integration/private/oidc-private.pem:/run/secrets/lobehub-oidc.pem:ro

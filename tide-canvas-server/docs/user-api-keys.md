@@ -27,4 +27,6 @@
 
 API Key 鉴权只挂在明确的集成路由上，不代替主站 JWT，也不继承管理员角色。原有后台“邮件配置”中的无用户归属 Key 不在此鉴权范围。
 
-此阶段完成默认 Key 的发放、管理和身份校验，不创建 apirouter 用户、不复制主站共享上游 Key、不部署 LobeHub 或 SSO。身份校验本身不扣积分。LobeHub 的模型调用仍需接入后续主站模型网关，由该网关基于验证后的用户 ID 执行积分扣费；本接口不是 `/v1/chat/completions` 的替代品。
+身份校验本身不扣积分。已实现的 LobeHub 集成使用 OIDC 登录和服务端账号绑定，将该用户默认 Key 同步到个人 provider；模型请求走 `GET /api/integrations/v1/models` 与 `POST /api/integrations/v1/chat/completions`，由主站按真实用户执行额度、并发和积分结算。无需创建 apirouter 用户，也不会向 LobeHub 复制主站共享上游 Key。
+
+部署配置、实际计费规则和验收步骤见 [LobeHub 主站集成](../../deploy/lobehub-integration/README.md)。集成默认关闭，需要按该文档发布主站及 apirouter 的兼容改动并配置现有 LobeHub。

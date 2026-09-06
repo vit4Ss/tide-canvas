@@ -1,0 +1,788 @@
+diff --git a/backend/src/main/java/com/scarecrowtoken/relay/service/ChatService.java b/backend/src/main/java/com/scarecrowtoken/relay/service/ChatService.java
+index e86386a..ce5761a 100644
+--- a/backend/src/main/java/com/scarecrowtoken/relay/service/ChatService.java
++++ b/backend/src/main/java/com/scarecrowtoken/relay/service/ChatService.java
+@@ -217,13 +217,16 @@ public class ChatService {
+      * meaningful concatenated content rather than every keep-alive frame).
+      */
+     private record StreamOut(String text, int tokens, String upstreamRequest, String upstreamResponse,
+-                             String finishReason) {
++                             String finishReason, List<Map<String, Object>> toolCalls) {
++        StreamOut(String text, int tokens, String request, String response, String finishReason) {
++            this(text, tokens, request, response, finishReason, List.of());
++        }
+         /** True when the upstream ended the reply for a reason other than a
+          *  natural stop — e.g. {@code length} (output cap hit) or
+          *  {@code content_filter}. A missing finish_reason counts as normal:
+          *  some aggregators never send one. */
+         boolean finishedAbnormally() {
+-            return finishReason != null && !finishReason.isEmpty() && !"stop".equals(finishReason);
++            return finishReason != null && !finishReason.isEmpty() && !"stop".equals(finishReason) && !"tool_calls".equals(finishReason);
+         }
+     }
+ 
+@@ -531,6 +534,11 @@ public class ChatService {
+      */
+     public SseEmitter apiStream(String userId, String model, List<Map<String, Object>> messages,
+                                 boolean webSearch, String apiRequest) {
++        return apiStream(userId, model, messages, webSearch, apiRequest, Map.of());
++    }
++
++    public SseEmitter apiStream(String userId, String model, List<Map<String, Object>> messages,
++                                boolean webSearch, String apiRequest, Map<String, Object> options) {
+         var history = normalizeMessages(model, messages);
+         requireBalance(userId, model);
+         var targets = resolveTargets(model);
+@@ -541,7 +549,7 @@ public class ChatService {
+             try {
+                 // Off the request thread: fetching the images can take seconds.
+                 var inlined = inlineHistoryImages(history);
+-                var out = streamWithFailover(model, targets, t -> inlined, webSearch, emitter, attempts);
++                var out = streamWithOptions(model, targets, t -> inlined, webSearch, emitter, attempts, options);
+                 BigDecimal cost = pricing.estimate(model, "chat", Map.<String, Object>of());
+                 tx.executeWithoutResult(s -> {
+                     debit(userId, model, out.tokens(), cost);
+@@ -570,6 +578,11 @@ public class ChatService {
+      */
+     public Map<String, Object> apiComplete(String userId, String model, List<Map<String, Object>> messages,
+                                            boolean webSearch, String apiRequest) {
++        return apiComplete(userId, model, messages, webSearch, apiRequest, Map.of());
++    }
++
++    public Map<String, Object> apiComplete(String userId, String model, List<Map<String, Object>> messages,
++                                           boolean webSearch, String apiRequest, Map<String, Object> options) {
+         var history = normalizeMessages(model, messages);
+         requireBalance(userId, model);
+         var targets = resolveTargets(model);
+@@ -578,7 +591,7 @@ public class ChatService {
+         StreamOut out;
+         var attempts = new ArrayList<Map<String, Object>>();
+         try {
+-            out = streamWithFailover(model, targets, t -> inlined, webSearch, null, attempts); // null emitter → collect only
++            out = streamWithOptions(model, targets, t -> inlined, webSearch, null, attempts, options); // null emitter → collect only
+         } catch (Exception e) {
+             log.error("chat api completion failed", e);
+             recordChatFailure(userId, model, lastUserText(history),
+@@ -611,7 +624,12 @@ public class ChatService {
+             if (m == null) continue;
+             var role = str(m.get("role"));
+             if (role.isEmpty()) role = "user";
+-            out.add(Map.<String, Object>of("role", role, "content", normalizeContent(m.get("content"))));
++            var normalized = new LinkedHashMap<String, Object>();
++            normalized.put("role", role);
++            normalized.put("content", normalizeContent(m.get("content")));
++            for (var key : List.of("tool_calls", "tool_call_id", "name", "function_call", "reasoning_content"))
++                if (m.get(key) != null) normalized.put(key, m.get(key));
++            out.add(normalized);
+         }
+         if (out.isEmpty()) throw ApiException.badRequest("messages is required");
+         return out;
+@@ -681,12 +699,13 @@ public class ChatService {
+         var message = new LinkedHashMap<String, Object>();
+         message.put("role", "assistant");
+         message.put("content", out.text());
++        if (!out.toolCalls().isEmpty()) message.put("tool_calls", out.toolCalls());
+         var choice = new LinkedHashMap<String, Object>();
+         choice.put("index", 0);
+         choice.put("message", message);
+         // Pass the upstream's real finish_reason through so API clients can see
+         // a length-cap / content-filter cut; default to "stop" when absent.
+-        choice.put("finish_reason", out.finishedAbnormally() ? out.finishReason() : "stop");
++        choice.put("finish_reason", out.finishReason() == null || out.finishReason().isEmpty() ? "stop" : out.finishReason());
+         // We only get a total token count from the upstream stream (if any), so
+         // report it as total and leave the prompt/completion split unattributed.
+         var usage = new LinkedHashMap<String, Object>();
+@@ -733,12 +752,19 @@ public class ChatService {
+                                          Function<ChatTarget, List<Map<String, Object>>> historyFor,
+                                          boolean webSearch, SseEmitter emitter,
+                                          List<Map<String, Object>> attempts) throws Exception {
++        return streamWithOptions(model, targets, historyFor, webSearch, emitter, attempts, Map.of());
++    }
++
++    private StreamOut streamWithOptions(String model, List<ChatTarget> targets,
++                                         Function<ChatTarget, List<Map<String, Object>>> historyFor,
++                                         boolean webSearch, SseEmitter emitter,
++                                         List<Map<String, Object>> attempts, Map<String, Object> options) throws Exception {
+         ChatUpstreamException last = null;
+         for (int i = 0; i < targets.size(); i++) {
+             var target = targets.get(i);
+             long startNs = System.nanoTime();
+             try {
+-                var out = streamUpstream(model, target, historyFor.apply(target), webSearch, emitter);
++                var out = streamUpstream(model, target, historyFor.apply(target), webSearch, emitter, options);
+                 attempts.add(chatAttempt(target, "succeeded", null, null, elapsedMs(startNs)));
+                 return out;
+             } catch (ChatUpstreamException e) {
+@@ -887,23 +913,36 @@ public class ChatService {
+     private StreamOut streamUpstream(String model, ChatTarget target,
+                                      List<Map<String, Object>> history, boolean webSearch,
+                                      SseEmitter emitter) throws Exception {
++        return streamUpstream(model, target, history, webSearch, emitter, Map.of());
++    }
++
++    private StreamOut streamUpstream(String model, ChatTarget target,
++                                     List<Map<String, Object>> history, boolean webSearch,
++                                     SseEmitter emitter, Map<String, Object> options) throws Exception {
+         // Per-route API choice: the OpenAI Responses API (/v1/responses) natively
+         // parses spreadsheets / PDFs sent as input_file, which Chat Completions
+         // can't — but only if the upstream supports it, so it's opt-in via
+         // config.chat_api = "responses". Default stays chat completions.
+         return "responses".equalsIgnoreCase(target.api())
+-                ? streamResponses(model, target, history, webSearch, emitter)
+-                : streamChatCompletions(model, target, history, webSearch, emitter);
++                ? streamResponses(model, target, history, webSearch, emitter, options)
++                : streamChatCompletions(model, target, history, webSearch, emitter, options);
+     }
+ 
+     /** Upstream call via {@code /v1/chat/completions} — OpenAI chunks forwarded verbatim. */
+     private StreamOut streamChatCompletions(String model, ChatTarget target,
+                                             List<Map<String, Object>> history, boolean webSearch,
+                                             SseEmitter emitter) throws Exception {
++        return streamChatCompletions(model, target, history, webSearch, emitter, Map.of());
++    }
++
++    private StreamOut streamChatCompletions(String model, ChatTarget target,
++                                            List<Map<String, Object>> history, boolean webSearch,
++                                            SseEmitter emitter, Map<String, Object> options) throws Exception {
+         var reqBody = new LinkedHashMap<String, Object>();
+         reqBody.put("model", target.upstreamModel());   // canonical key, or per-route override
+         reqBody.put("messages", history);
+         reqBody.put("stream", true);
++        reqBody.putAll(ChatProtocol.chatOptions(options));
+         // 联网 (web search): forward the upstream's documented flag when asked.
+         // WHICH json field carries it varies by aggregator, so the field NAME is
+         // per-route configurable (config.web_search_field, default "web_search");
+@@ -952,6 +991,8 @@ public class ChatService {
+         int totalTokens = -1;
+         int reasoningChars = 0;
+         String finishReason = null;
++        var toolCalls = new ChatProtocol.ToolCalls();
++        boolean terminalReceived = false;
+         boolean sentAny = false; // any chunk ATTEMPTED to the client — gates mid-stream failover
+         var body = resp.body();
+         var lastRead = new AtomicLong(System.currentTimeMillis());
+@@ -962,13 +1003,17 @@ public class ChatService {
+                 lastRead.set(System.currentTimeMillis());
+                 if (line.isBlank() || !line.startsWith("data:")) continue;
+                 String data = line.substring(5).trim();
+-                if (data.equals("[DONE]")) break;
++                if (data.equals("[DONE]")) { terminalReceived = true; break; }
+                 // sentAny BEFORE the send: a send that throws (client already
+                 // gone) must NOT fail over — each retry would re-generate the
+                 // whole reply on another route for a dead client.
+-                if (emitter != null) { sentAny = true; emitter.send(SseEmitter.event().data(data)); } // forward OpenAI chunk verbatim
+-                try {
+-                    var node = json.readTree(data);
++                JsonNode node;
++                try { node = json.readTree(data); }
++                catch (com.fasterxml.jackson.core.JsonProcessingException ignore) { continue; }
++                if (node.hasNonNull("error")) throw new IllegalStateException("upstream returned an error frame");
++                if (emitter != null) { sentAny = true; emitter.send(SseEmitter.event().data(data)); }
++                {
++                    toolCalls.chatDelta(node.path("choices").path(0).path("delta"));
+                     var delta = node.path("choices").path(0).path("delta").path("content").asText("");
+                     if (!delta.isEmpty()) full.append(delta);
+                     // Reasoning is NOT part of the answer and is never appended,
+@@ -983,14 +1028,14 @@ public class ChatService {
+                     if (!fr.isEmpty()) finishReason = fr;
+                     var usage = node.path("usage");
+                     if (usage.has("total_tokens")) totalTokens = usage.get("total_tokens").asInt();
+-                } catch (Exception ignore) { /* keep-alive / partial frame */ }
++                }
+             }
+         } catch (Exception e) {
+             // Stream died. If NOTHING was delivered yet (no chunk attempted to
+             // the client, no text collected) this is as good as a pre-stream
+             // failure — wrap it so streamWithFailover tries the next route.
+             // After first output it surfaces as-is (partial reply delivered).
+-            if (!sentAny && full.length() == 0)
++            if (!sentAny && full.length() == 0 && toolCalls.isEmpty())
+                 throw new ChatUpstreamException("upstream stream aborted before any output: " + e.getMessage(),
+                         upstreamReq, null);
+             throw e;
+@@ -999,15 +1044,20 @@ public class ChatService {
+         }
+         // Truncated / filtered replies (finish_reason length / content_filter)
+         // used to be indistinguishable from a natural stop — surface them.
+-        if (finishReason != null && !finishReason.isEmpty() && !"stop".equals(finishReason))
++        if (finishReason != null && !finishReason.isEmpty() && !"stop".equals(finishReason) && !"tool_calls".equals(finishReason))
+             log.warn("chat upstream ended abnormally: model={} finish_reason={} chars={}",
+                     target.upstreamModel(), finishReason, full.length());
+-        requireNonEmptyReply(full, finishReason, reasoningChars, upstreamReq);
++        if (!terminalReceived && (finishReason == null || finishReason.isBlank())) {
++            if (!sentAny && full.length() == 0 && toolCalls.isEmpty())
++                throw new ChatUpstreamException("upstream ended before any output", upstreamReq, null);
++            throw new IllegalStateException("upstream stream ended without a completion marker");
++        }
++        if (toolCalls.isEmpty()) requireNonEmptyReply(full, finishReason, reasoningChars, upstreamReq);
+         // NB: [DONE] is sent by the caller AFTER persistence — the studio
+         // re-fetches the thread on [DONE], so the assistant row must already be
+         // committed or the re-fetch races and misses the reply.
+         int tokens = totalTokens >= 0 ? totalTokens : estimateTokens(history, full.toString());
+-        return new StreamOut(full.toString(), tokens, upstreamReq, full.toString(), finishReason);
++        return new StreamOut(full.toString(), tokens, upstreamReq, full.toString(), finishReason, toolCalls.list());
+     }
+ 
+     /**
+@@ -1049,12 +1099,23 @@ public class ChatService {
+     private StreamOut streamResponses(String model, ChatTarget target,
+                                       List<Map<String, Object>> history, boolean webSearch,
+                                       SseEmitter emitter) throws Exception {
++        return streamResponses(model, target, history, webSearch, emitter, Map.of());
++    }
++
++    private StreamOut streamResponses(String model, ChatTarget target,
++                                      List<Map<String, Object>> history, boolean webSearch,
++                                      SseEmitter emitter, Map<String, Object> options) throws Exception {
+         var reqBody = new LinkedHashMap<String, Object>();
+         reqBody.put("model", target.upstreamModel());   // canonical key, or per-route override
+         reqBody.put("input", toResponsesInput(history));
+         reqBody.put("stream", true);
+-        if (webSearch && target.webSearchTool() != null && !target.webSearchTool().isBlank())
+-            reqBody.put("tools", List.of(Map.of("type", target.webSearchTool())));
++        reqBody.putAll(ChatProtocol.responsesOptions(options));
++        if (webSearch && target.webSearchTool() != null && !target.webSearchTool().isBlank()) {
++            var tools = new ArrayList<Object>();
++            if (reqBody.get("tools") instanceof List<?> existing) tools.addAll(existing);
++            tools.add(Map.of("type", target.webSearchTool()));
++            reqBody.put("tools", tools);
++        }
+ 
+         var url = target.baseUrl() + "/v1/responses";
+         // One serialization for both the wire and the capture — see streamChatCompletions.
+@@ -1090,6 +1151,8 @@ public class ChatService {
+         var full = new StringBuilder();
+         int totalTokens = -1;
+         String finishReason = null;
++        var toolCalls = new ChatProtocol.ToolCalls();
++        boolean terminalReceived = false;
+         boolean sentAny = false; // any chunk ATTEMPTED to the client — gates mid-stream failover
+         var body = resp.body();
+         var lastRead = new AtomicLong(System.currentTimeMillis());
+@@ -1100,10 +1163,17 @@ public class ChatService {
+                 lastRead.set(System.currentTimeMillis());
+                 if (line.isBlank() || !line.startsWith("data:")) continue;
+                 String data = line.substring(5).trim();
+-                if (data.equals("[DONE]")) break;
++                if (data.equals("[DONE]")) { terminalReceived = true; break; }
+                 JsonNode node;
+                 try { node = json.readTree(data); } catch (Exception ignore) { continue; /* partial / non-JSON */ }
+                 var type = node.path("type").asText("");
++                var toolDelta = toolCalls.responseEvent(node);
++                if (toolDelta != null && emitter != null) {
++                    sentAny = true;
++                    emitter.send(SseEmitter.event().data(json.writeValueAsString(Map.of(
++                            "object", "chat.completion.chunk", "choices", List.of(Map.of(
++                            "index", 0, "delta", Map.of("tool_calls", List.of(toolDelta))))))));
++                }
+                 if (type.equals("response.output_text.delta")) {
+                     var delta = node.path("delta").asText("");
+                     if (!delta.isEmpty()) {
+@@ -1113,6 +1183,8 @@ public class ChatService {
+                         if (emitter != null) { sentAny = true; emitter.send(SseEmitter.event().data(chatChunk(delta))); }
+                     }
+                 } else if (type.equals("response.completed")) {
++                    terminalReceived = true;
++                    finishReason = toolCalls.isEmpty() ? "stop" : "tool_calls";
+                     var usage = node.path("response").path("usage");
+                     if (usage.has("total_tokens")) totalTokens = usage.get("total_tokens").asInt();
+                     else if (usage.has("input_tokens") || usage.has("output_tokens"))
+@@ -1121,7 +1193,8 @@ public class ChatService {
+                     // Responses-API truncation signal (max_output_tokens /
+                     // content_filter) — the chat-completions finish_reason analogue.
+                     var reason = node.path("response").path("incomplete_details").path("reason").asText("");
+-                    finishReason = reason.isEmpty() ? "incomplete" : reason;
++                    terminalReceived = true;
++                    finishReason = "max_output_tokens".equals(reason) ? "length" : reason.isEmpty() ? "incomplete" : reason;
+                     var usage = node.path("response").path("usage");
+                     if (usage.has("total_tokens")) totalTokens = usage.get("total_tokens").asInt();
+                     else if (usage.has("input_tokens") || usage.has("output_tokens"))
+@@ -1137,21 +1210,30 @@ public class ChatService {
+             // Same pre-output failover contract as streamChatCompletions —
+             // covers idle-guard closes AND upstream response.failed events that
+             // arrive before any output token.
+-            if (!sentAny && full.length() == 0)
++            if (!sentAny && full.length() == 0 && toolCalls.isEmpty())
+                 throw new ChatUpstreamException("upstream stream aborted before any output: " + e.getMessage(),
+                         upstreamReq, null);
+             throw e;
+         } finally {
+             guard.cancel(false);
+         }
+-        if (finishReason != null && !finishReason.isEmpty() && !"stop".equals(finishReason))
++        if (finishReason != null && !finishReason.isEmpty() && !"stop".equals(finishReason) && !"tool_calls".equals(finishReason))
+             log.warn("responses upstream ended abnormally: model={} finish_reason={} chars={}",
+                     target.upstreamModel(), finishReason, full.length());
+         // The Responses API carries reasoning as its own output item rather than
+         // a delta field, so there is no per-chunk counter to report here.
+-        requireNonEmptyReply(full, finishReason, 0, upstreamReq);
++        if (!terminalReceived) {
++            if (!sentAny && full.length() == 0 && toolCalls.isEmpty())
++                throw new ChatUpstreamException("responses stream ended before any output", upstreamReq, null);
++            throw new IllegalStateException("responses stream ended without a completion marker");
++        }
++        if (toolCalls.isEmpty()) requireNonEmptyReply(full, finishReason, 0, upstreamReq);
++        if (finishReason == null || finishReason.isBlank()) finishReason = toolCalls.isEmpty() ? "stop" : "tool_calls";
++        if (emitter != null) emitter.send(SseEmitter.event().data(json.writeValueAsString(Map.of(
++                "object", "chat.completion.chunk", "choices", List.of(Map.of(
++                "index", 0, "delta", Map.of(), "finish_reason", finishReason))))));
+         int tokens = totalTokens >= 0 ? totalTokens : estimateTokens(history, full.toString());
+-        return new StreamOut(full.toString(), tokens, upstreamReq, full.toString(), finishReason);
++        return new StreamOut(full.toString(), tokens, upstreamReq, full.toString(), finishReason, toolCalls.list());
+     }
+ 
+     /** A chat-style {@code messages[]} array → Responses {@code input[]}: text →
+@@ -1162,33 +1244,18 @@ public class ChatService {
+         for (var m : history) {
+             var role = String.valueOf(m.getOrDefault("role", "user"));
+             var content = m.get("content");
+-            if (content instanceof List<?> list) {
+-                var parts = new ArrayList<Map<String, Object>>();
+-                for (var item : list) {
+-                    if (!(item instanceof Map<?, ?> mp)) continue;
+-                    switch (String.valueOf(mp.get("type"))) {
+-                        case "text" -> parts.add(Map.of("type", "input_text", "text", String.valueOf(mp.get("text"))));
+-                        case "image_url" -> {
+-                            var iu = mp.get("image_url");
+-                            var u = iu instanceof Map<?, ?> im ? String.valueOf(im.get("url")) : String.valueOf(iu);
+-                            parts.add(Map.of("type", "input_image", "image_url", u));
+-                        }
+-                        case "file" -> {
+-                            if (mp.get("file") instanceof Map<?, ?> fm) {
+-                                var p = new LinkedHashMap<String, Object>();
+-                                p.put("type", "input_file");
+-                                if (fm.get("filename") != null) p.put("filename", fm.get("filename"));
+-                                if (fm.get("file_data") != null) p.put("file_data", fm.get("file_data"));
+-                                parts.add(p);
+-                            }
+-                        }
+-                        default -> { }
+-                    }
++            if ("tool".equals(role)) {
++                out.add(Map.of("type", "function_call_output", "call_id", str(m.get("tool_call_id")), "output", ChatProtocol.responsesContent(content)));
++                continue;
++            }
++            if (m.get("tool_calls") instanceof List<?> calls) {
++                for (var raw : calls) if (raw instanceof Map<?,?> call && call.get("function") instanceof Map<?,?> function) {
++                    out.add(Map.of("type", "function_call", "call_id", String.valueOf(call.get("id")),
++                            "name", String.valueOf(function.get("name")), "arguments", String.valueOf(function.get("arguments"))));
+                 }
+-                out.add(Map.of("role", role, "content", parts));
+-            } else {
+-                out.add(Map.of("role", role, "content", content == null ? "" : String.valueOf(content)));
++                if (content == null || (content instanceof String text && text.isBlank())) continue;
+             }
++            out.add(Map.of("role", role, "content", ChatProtocol.responsesContent(content)));
+         }
+         return out;
+     }
+@@ -1219,7 +1286,7 @@ public class ChatService {
+         // Only recorded when abnormal (length / content_filter / incomplete…) —
+         // lets the task detail distinguish "upstream truncated" from "model
+         // stopped naturally" when a user reports missing text.
+-        if (finishReason != null && !finishReason.isEmpty() && !"stop".equals(finishReason))
++        if (finishReason != null && !finishReason.isEmpty() && !"stop".equals(finishReason) && !"tool_calls".equals(finishReason))
+             result.put("finish_reason", finishReason);
+         tasks.insert(Task.builder()
+                 .id(Ids.of("task"))
+@@ -1594,16 +1661,22 @@ public class ChatService {
+                     var original = String.valueOf(holder.get("url"));
+                     var replacement = inlined.get(cursor++);
+                     if (!replacement.equals(original)) {
+-                        rebuilt.add(Map.of("type", "image_url", "image_url", Map.of("url", replacement)));
++                        var image = ChatProtocol.stringMap(holder);
++                        image.put("url", replacement);
++                        var updatedPart = ChatProtocol.stringMap(pm);
++                        updatedPart.put("image_url", image);
++                        rebuilt.add(updatedPart);
+                         changed = true;
+                         continue;
+                     }
+                 }
+                 rebuilt.add(part);
+             }
+-            out.add(changed
+-                    ? Map.<String, Object>of("role", message.get("role"), "content", rebuilt)
+-                    : message);
++            if (changed) {
++                var updated = new LinkedHashMap<>(message);
++                updated.put("content", rebuilt);
++                out.add(updated);
++            } else out.add(message);
+         }
+         return out;
+     }
+diff --git a/backend/src/main/java/com/scarecrowtoken/relay/web/V1ChatController.java b/backend/src/main/java/com/scarecrowtoken/relay/web/V1ChatController.java
+index 4e3d189..430272f 100644
+--- a/backend/src/main/java/com/scarecrowtoken/relay/web/V1ChatController.java
++++ b/backend/src/main/java/com/scarecrowtoken/relay/web/V1ChatController.java
+@@ -1,9 +1,13 @@
+ package com.scarecrowtoken.relay.web;
+ 
+ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
++import com.fasterxml.jackson.annotation.JsonAnySetter;
++import com.fasterxml.jackson.annotation.JsonAnyGetter;
++import com.fasterxml.jackson.annotation.JsonIgnore;
+ import com.scarecrowtoken.relay.common.ApiException;
+ import com.scarecrowtoken.relay.security.SecurityUtils;
+ import com.scarecrowtoken.relay.service.ChatService;
++import com.scarecrowtoken.relay.service.ChatProtocol;
+ import jakarta.servlet.http.HttpServletRequest;
+ import jakarta.servlet.http.HttpServletResponse;
+ import lombok.RequiredArgsConstructor;
+@@ -14,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
+ 
+ import java.util.List;
+ import java.util.Map;
++import java.util.LinkedHashMap;
+ 
+ /**
+  * OpenAI-compatible {@code POST /v1/chat/completions} for text-modality
+@@ -49,8 +54,18 @@ public class V1ChatController {
+             Boolean stream,
+             // 联网: forward the upstream web-search flag (vision/file inputs ride
+             // in messages[].content as image_url parts, handled by ChatService).
+-            Boolean webSearch
+-    ) {}
++            Boolean webSearch,
++            @JsonIgnore Map<String,Object> options
++    ) {
++        public ChatCompletionsReq { options = options == null ? new LinkedHashMap<>() : ChatProtocol.chatOptions(options); }
++        public ChatCompletionsReq(String model, List<Map<String,Object>> messages, Boolean stream, Boolean webSearch) {
++            this(model,messages,stream,webSearch,new LinkedHashMap<>());
++        }
++        @JsonAnySetter public void acceptOption(String name,Object value) {
++            if (ChatProtocol.OPTIONS.contains(name)) options.put(name,value);
++        }
++        @JsonAnyGetter public Map<String,Object> extraOptions() { return options; }
++    }
+ 
+     @PostMapping("/chat/completions")
+     public Object completions(@RequestBody ChatCompletionsReq req, HttpServletRequest http,
+@@ -72,7 +87,7 @@ public class V1ChatController {
+         // SseEmitter (stream) and Map (non-stream) are both valid Spring return
+         // values; the framework picks the right handler off the runtime type.
+         return stream
+-                ? chatService.apiStream(userId, req.model(), req.messages(), webSearch, apiRequest)
+-                : chatService.apiComplete(userId, req.model(), req.messages(), webSearch, apiRequest);
++                ? chatService.apiStream(userId, req.model(), req.messages(), webSearch, apiRequest, req.options())
++                : chatService.apiComplete(userId, req.model(), req.messages(), webSearch, apiRequest, req.options());
+     }
+ }
+diff --git a/backend/src/test/java/com/scarecrowtoken/relay/service/ChatServiceAttemptsLogTest.java b/backend/src/test/java/com/scarecrowtoken/relay/service/ChatServiceAttemptsLogTest.java
+index 29e8241..b38abd9 100644
+--- a/backend/src/test/java/com/scarecrowtoken/relay/service/ChatServiceAttemptsLogTest.java
++++ b/backend/src/test/java/com/scarecrowtoken/relay/service/ChatServiceAttemptsLogTest.java
+@@ -465,6 +465,93 @@ class ChatServiceAttemptsLogTest {
+         assertThat(task.getAttemptsLog()).hasSize(2);
+     }
+ 
++    @ParameterizedTest
++    @ValueSource(strings = {"chat", "responses"})
++    void apiToolsRoundTripWithoutRequiringText(String api) {
++        boolean responses = "responses".equals(api);
++        server.createContext("/tools"+(responses?"/v1/responses":"/v1/chat/completions"), exchange -> {
++            sentBody.set(new ObjectMapper().readTree(exchange.getRequestBody()));
++            reply(exchange,200,responses ? """
++                    data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_new","call_id":"call_new","name":"lookup","arguments":""}}
++
++                    data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"{}"}
++
++                    data: {"type":"response.completed","response":{"usage":{"total_tokens":5}}}
++
++                    """ : """
++                    data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_new","type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}
++
++                    data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
++
++                    data: [DONE]
++                    """);
++        });
++        var selected=route("r-tools","supplier","/tools",null);selected.getConfig().put("chat_api",api);
++        when(routes.selectList(any())).thenReturn(List.of(selected));
++        var previousCall=Map.of("id","call_previous","type","function","function",Map.of("name","lookup","arguments","{}"));
++        var result=service.apiComplete("user-1","gpt-5.6-sol",List.of(
++                Map.of("role","user","content","look it up"),
++                Map.of("role","assistant","content","","tool_calls",List.of(previousCall)),
++                Map.of("role","tool","tool_call_id","call_previous","content","found")),false,"curl inbound",
++                Map.of("tools",List.of(Map.of("type","function","function",Map.of("name","lookup","parameters",Map.of("type","object"))))));
++        var tree=new ObjectMapper().valueToTree(result);
++        assertThat(tree.at("/choices/0/finish_reason").asText()).isEqualTo("tool_calls");
++        assertThat(tree.at("/choices/0/message/tool_calls/0/function/arguments").asText()).isEqualTo("{}");
++        if (responses) {
++            assertThat(sentBody.get().at("/input/1/type").asText()).isEqualTo("function_call");
++            assertThat(sentBody.get().at("/input/2/type").asText()).isEqualTo("function_call_output");
++        } else {
++            assertThat(sentBody.get().at("/messages/1/tool_calls/0/id").asText()).isEqualTo("call_previous");
++            assertThat(sentBody.get().at("/messages/2/tool_call_id").asText()).isEqualTo("call_previous");
++        }
++        assertThat(sentBody.get().path("tools").size()).isEqualTo(1);
++    }
++
++    @ParameterizedTest
++    @ValueSource(strings = {"chat", "responses"})
++    void imageToolOutputPreservesItsCallIdAndContent(String api) {
++        boolean responses = "responses".equals(api);
++        server.createContext("/image-tools"+(responses?"/v1/responses":"/v1/chat/completions"), exchange -> {
++            sentBody.set(new ObjectMapper().readTree(exchange.getRequestBody()));
++            reply(exchange,200,responses ? """
++                    data: {"type":"response.output_text.delta","delta":"screenshot received"}
++
++                    data: {"type":"response.completed","response":{"usage":{"total_tokens":5}}}
++
++                    """ : """
++                    data: {"choices":[{"delta":{"content":"screenshot received"},"finish_reason":"stop"}]}
++
++                    data: [DONE]
++                    """);
++        });
++        var selected=route("r-images","supplier","/image-tools",null);
++        selected.getConfig().put("chat_api",api);
++        when(routes.selectList(any())).thenReturn(List.of(selected));
++        var tool=Map.<String,Object>of("role","tool","tool_call_id","call_screenshot","name","screenshot",
++                "content",List.of(Map.of("type","text","text","screen"),
++                        Map.of("type","image_url","image_url",Map.of("url",baseUrl+"/asset/pic.png","detail","high")),
++                        Map.of("type","file","file",Map.of("file_id","file-test"))));
++        service.apiComplete("user-1","gpt-5.6-sol",List.of(
++                Map.of("role","user","content","inspect screenshot"),
++                Map.of("role","assistant","tool_calls",List.of(Map.of("id","call_screenshot","type","function","function",Map.of("name","screenshot","arguments","{}")))),
++                tool),false,"curl inbound");
++        var message=sentBody.get().at(responses?"/input/2":"/messages/2");
++        assertThat(message.path(responses?"call_id":"tool_call_id").asText()).isEqualTo("call_screenshot");
++        var parts=message.path(responses?"output":"content");
++        assertThat(parts.isArray()).isTrue();
++        assertThat(parts.at(responses?"/1/image_url":"/1/image_url/url").asText()).startsWith("data:image/png;base64,");
++        assertThat(parts.at(responses?"/1/detail":"/1/image_url/detail").asText()).isEqualTo("high");
++        assertThat(parts.at(responses?"/2/file_id":"/2/file/file_id").asText()).isEqualTo("file-test");
++    }
++
++    @Test void prematureEndIsNotReportedAsComplete() {
++        server.createContext("/cut/v1/chat/completions", exchange -> reply(exchange,200,"data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"));
++        when(routes.selectList(any())).thenReturn(List.of(route("r-cut","supplier","/cut",null)));
++        assertThatThrownBy(()->service.apiComplete("user-1","gpt-5.6-sol",List.of(Map.of("role","user","content","long answer")),false,"curl inbound"))
++                .hasMessageContaining("chat upstream failed");
++        assertThat(captureTask().getStatus()).isEqualTo(Task.Status.failed);
++    }
++
+     /** The resize step is Dimensio's; here it must simply not alter the URL. */
+     private static DimensioImagePreprocessor passThroughPreprocessor() {
+         var preprocessor = mock(DimensioImagePreprocessor.class);
+diff --git a/backend/src/main/java/com/scarecrowtoken/relay/service/ChatProtocol.java b/backend/src/main/java/com/scarecrowtoken/relay/service/ChatProtocol.java
+new file mode 100644
+--- /dev/null
++++ b/backend/src/main/java/com/scarecrowtoken/relay/service/ChatProtocol.java
+@@ -0,0 +1,151 @@
++package com.scarecrowtoken.relay.service;
++
++import com.fasterxml.jackson.databind.JsonNode;
++import java.util.*;
++
++/** OpenAI wire-format helpers. No routing credentials or billing state enter here. */
++public final class ChatProtocol {
++    private ChatProtocol() {}
++    public static final Set<String> OPTIONS = Set.of(
++            "tools", "tool_choice", "parallel_tool_calls", "temperature", "top_p", "stop",
++            "max_tokens", "max_completion_tokens", "response_format", "reasoning_effort",
++            "seed", "presence_penalty", "frequency_penalty", "stream_options", "user", "service_tier");
++
++    public static Map<String,Object> chatOptions(Map<String,Object> input) {
++        var out = new LinkedHashMap<String,Object>();
++        if (input != null) input.forEach((key,value) -> { if (OPTIONS.contains(key) && value != null) out.put(key,value); });
++        return out;
++    }
++
++    public static Map<String,Object> responsesOptions(Map<String,Object> input) {
++        var chat = chatOptions(input);
++        var out = new LinkedHashMap<String,Object>();
++        for (var key : List.of("temperature", "top_p", "parallel_tool_calls", "user", "service_tier"))
++            if (chat.containsKey(key)) out.put(key,chat.get(key));
++        if (chat.containsKey("max_completion_tokens") || chat.containsKey("max_tokens"))
++            out.put("max_output_tokens",chat.getOrDefault("max_completion_tokens",chat.get("max_tokens")));
++        if (chat.containsKey("reasoning_effort")) out.put("reasoning",Map.of("effort",chat.get("reasoning_effort")));
++        if (chat.get("tools") instanceof List<?> list) {
++            var tools = new ArrayList<Map<String,Object>>();
++            for (var raw : list) if (raw instanceof Map<?,?> tool) {
++                var next = stringMap(tool);
++                if ("function".equals(tool.get("type")) && tool.get("function") instanceof Map<?,?> function) {
++                    next = stringMap(function); next.put("type","function");
++                    // Chat tools default to non-strict; Responses defaults must
++                    // not unexpectedly reject an existing MCP JSON schema.
++                    next.putIfAbsent("strict",false);
++                }
++                tools.add(next);
++            }
++            out.put("tools",tools);
++        }
++        if (chat.containsKey("tool_choice")) {
++            Object choice = chat.get("tool_choice");
++            if (choice instanceof Map<?,?> selected && selected.get("function") instanceof Map<?,?> function)
++                choice = Map.of("type","function","name",function.get("name"));
++            out.put("tool_choice",choice);
++        }
++        if (chat.get("response_format") instanceof Map<?,?> format) {
++            var converted = new LinkedHashMap<String,Object>();
++            if ("json_schema".equals(format.get("type")) && format.get("json_schema") instanceof Map<?,?> schema) converted.putAll(stringMap(schema));
++            converted.put("type",format.get("type"));
++            out.put("text",Map.of("format",converted));
++        }
++        return out;
++    }
++
++    static Map<String,Object> stringMap(Map<?,?> source) {
++        var out = new LinkedHashMap<String,Object>();
++        source.forEach((key,value) -> { if (key instanceof String name) out.put(name,value); });
++        return out;
++    }
++
++    /** Responses message and function outputs both accept typed input parts. */
++    public static Object responsesContent(Object content) {
++        if (!(content instanceof List<?> list)) return content == null ? "" : String.valueOf(content);
++        var parts = new ArrayList<Map<String,Object>>();
++        for (var raw : list) {
++            if (!(raw instanceof Map<?,?> part)) continue;
++            switch (String.valueOf(part.get("type"))) {
++                case "text" -> parts.add(Map.of("type","input_text","text",String.valueOf(part.get("text"))));
++                case "image_url" -> {
++                    var image = part.get("image_url");
++                    var next = new LinkedHashMap<String,Object>();
++                    next.put("type","input_image");
++                    if (image instanceof Map<?,?> holder) {
++                        if (holder.get("url") != null) next.put("image_url",holder.get("url"));
++                        if (holder.get("detail") != null) next.put("detail",holder.get("detail"));
++                    } else if (image != null) next.put("image_url",image);
++                    parts.add(next);
++                }
++                case "file" -> {
++                    if (part.get("file") instanceof Map<?,?> file) {
++                        var next = new LinkedHashMap<String,Object>();
++                        next.put("type","input_file");
++                        for (var key : List.of("filename","file_data","file_id","file_url"))
++                            if (file.get(key) != null) next.put(key,file.get(key));
++                        parts.add(next);
++                    }
++                }
++                default -> { }
++            }
++        }
++        return parts;
++    }
++
++    public static final class ToolCalls {
++        private final SortedMap<Integer,Map<String,Object>> calls = new TreeMap<>();
++        private final Map<Integer,Integer> responseIndices = new HashMap<>();
++
++        public void chatDelta(JsonNode delta) {
++            for (var item : delta.path("tool_calls")) {
++                int index = item.path("index").asInt(0);
++                var target = calls.computeIfAbsent(index, ignored -> new LinkedHashMap<>(Map.of("type","function","function",new LinkedHashMap<String,Object>(Map.of("name","","arguments","")))));
++                if (item.hasNonNull("id")) target.put("id",item.path("id").asText());
++                @SuppressWarnings("unchecked") var function = (Map<String,Object>) target.get("function");
++                for (var name : List.of("name","arguments")) if (item.path("function").hasNonNull(name))
++                    function.put(name,String.valueOf(function.get(name)) + item.path("function").path(name).asText());
++            }
++        }
++
++        /** Translate Responses function events to a dense chat tool-call delta. */
++        public Map<String,Object> responseEvent(JsonNode event) {
++            String type = event.path("type").asText();
++            int output = event.path("output_index").asInt();
++            if ((type.equals("response.output_item.added") || type.equals("response.output_item.done")) &&
++                    event.path("item").path("type").asText().equals("function_call")) {
++                var item = event.path("item");
++                Integer existing = responseIndices.get(output);
++                if (existing == null) {
++                    int index = calls.size(); responseIndices.put(output,index);
++                    var fn = new LinkedHashMap<String,Object>();fn.put("name",item.path("name").asText());fn.put("arguments",item.path("arguments").asText(""));
++                    var call = new LinkedHashMap<String,Object>();call.put("id",item.path("call_id").asText());call.put("type","function");call.put("function",fn);
++                    calls.put(index,call);
++                    var delta = new LinkedHashMap<>(call);delta.put("index",index);return delta;
++                }
++                if (type.endsWith(".done")) return finishArguments(existing,item.path("arguments").asText(""));
++            }
++            Integer index = responseIndices.get(output);
++            if (index != null && type.equals("response.function_call_arguments.delta")) {
++                String text = event.path("delta").asText();
++                function(index).put("arguments",String.valueOf(function(index).get("arguments"))+text);
++                return Map.of("index",index,"function",Map.of("arguments",text));
++            }
++            if (index != null && type.equals("response.function_call_arguments.done"))
++                return finishArguments(index,event.path("arguments").asText());
++            return null;
++        }
++
++        @SuppressWarnings("unchecked")
++        private Map<String,Object> function(int index) { return (Map<String,Object>)calls.get(index).get("function"); }
++        private Map<String,Object> finishArguments(int index,String complete) {
++            String current = String.valueOf(function(index).get("arguments"));
++            if (current.equals(complete)) return null;
++            if (!complete.startsWith(current)) throw new IllegalStateException("inconsistent streamed function arguments");
++            function(index).put("arguments",complete);
++            return Map.of("index",index,"function",Map.of("arguments",complete.substring(current.length())));
++        }
++        public boolean isEmpty() { return calls.isEmpty(); }
++        public List<Map<String,Object>> list() { return new ArrayList<>(calls.values()); }
++    }
++}
+diff --git a/backend/src/test/java/com/scarecrowtoken/relay/service/ChatProtocolTest.java b/backend/src/test/java/com/scarecrowtoken/relay/service/ChatProtocolTest.java
+new file mode 100644
+--- /dev/null
++++ b/backend/src/test/java/com/scarecrowtoken/relay/service/ChatProtocolTest.java
+@@ -0,0 +1,58 @@
++package com.scarecrowtoken.relay.service;
++
++import com.fasterxml.jackson.databind.ObjectMapper;
++import com.fasterxml.jackson.databind.PropertyNamingStrategies;
++import com.scarecrowtoken.relay.web.V1ChatController;
++import org.junit.jupiter.api.Test;
++import java.util.List;
++import java.util.Map;
++import static org.assertj.core.api.Assertions.assertThat;
++
++class ChatProtocolTest {
++    private final ObjectMapper json = new ObjectMapper();
++
++    @Test void publicRequestKeepsSupportedOptionsWithoutAllowingRouteOverrides() throws Exception {
++        var mapper = new ObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
++        var request = mapper.readValue("""
++                {"model":"gpt-6-astra","messages":[{"role":"user","content":"hi"}],"stream":true,
++                 "web_search":true,"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}],
++                 "tool_choice":"auto","max_completion_tokens":8192,"base_url":"https://attacker.test"}
++                """, V1ChatController.ChatCompletionsReq.class);
++        assertThat(request.webSearch()).isTrue();
++        assertThat(request.options()).containsKeys("tools","tool_choice","max_completion_tokens").doesNotContainKey("base_url");
++        assertThat(mapper.valueToTree(request).has("tools")).isTrue();
++    }
++
++    @Test void responsesOptionsTranslateFunctionsAndStructuredOutput() {
++        var schema = Map.of("type","object");
++        var options = ChatProtocol.responsesOptions(Map.of(
++                "tools",List.of(Map.of("type","function","function",Map.of("name","lookup","parameters",schema))),
++                "tool_choice",Map.of("type","function","function",Map.of("name","lookup")),
++                "max_completion_tokens",4096,"reasoning_effort","high",
++                "response_format",Map.of("type","json_schema","json_schema",Map.of("name","answer","schema",schema,"strict",true))));
++        var tree=json.valueToTree(options);
++        assertThat(tree.at("/tools/0/name").asText()).isEqualTo("lookup");
++        assertThat(tree.at("/tool_choice/name").asText()).isEqualTo("lookup");
++        assertThat(tree.at("/max_output_tokens").asInt()).isEqualTo(4096);
++        assertThat(tree.at("/reasoning/effort").asText()).isEqualTo("high");
++        assertThat(tree.at("/text/format/schema/type").asText()).isEqualTo("object");
++    }
++
++    @Test void responsesToolDeltasDoNotDuplicateFinalArguments() throws Exception {
++        var calls=new ChatProtocol.ToolCalls();
++        var start=calls.responseEvent(json.readTree("""
++                {"type":"response.output_item.added","output_index":3,"item":{"type":"function_call","id":"fc_a","call_id":"call_a","name":"lookup","arguments":""}}
++                """));
++        assertThat(start).containsEntry("index",0).containsEntry("id","call_a");
++        calls.responseEvent(json.readTree("""
++                {"type":"response.function_call_arguments.delta","output_index":3,"delta":"{}"}
++                """));
++        assertThat(calls.responseEvent(json.readTree("""
++                {"type":"response.function_call_arguments.done","output_index":3,"arguments":"{}"}
++                """))).isNull();
++        assertThat(calls.responseEvent(json.readTree("""
++                {"type":"response.output_item.done","output_index":3,"item":{"type":"function_call","call_id":"call_a","name":"lookup","arguments":"{}"}}
++                """))).isNull();
++        assertThat(json.valueToTree(calls.list()).at("/0/function/arguments").asText()).isEqualTo("{}");
++    }
++}

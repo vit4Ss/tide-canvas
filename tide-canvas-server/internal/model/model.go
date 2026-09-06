@@ -21,6 +21,9 @@ func Models() []any {
 		// Core FULL entities (back real endpoints).
 		&User{},
 		&UserAPIKey{},
+		&LobeHubGrant{},
+		&LobeHubLink{},
+		&ModelGatewayRequest{},
 		&Project{},
 		&AiProvider{},
 		&AiModel{},

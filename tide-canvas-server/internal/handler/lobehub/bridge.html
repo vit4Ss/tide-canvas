@@ -1,0 +1,24 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>连接流光 AI 聊天</title>
+<style>body{margin:0;background:#0c0d10;color:#e8edf1;font:15px system-ui;display:grid;place-items:center;min-height:100vh}.panel{max-width:420px;padding:32px;border:1px solid #26383e;border-radius:12px}h1{font-size:22px}p{color:#a5b4bd;line-height:1.7}a{color:#49cde0}</style>
+<main class="panel"><h1>正在连接 AI 聊天</h1><p id="status">正在验证主站账号，并同步模型配置。</p><a id="back">返回主站重新连接</a></main>
+<script nonce="{{.Nonce}}">
+const config={{.Config}};
+document.getElementById('back').href=config.mainURL;
+async function login(signOut){
+ if(config.afterSSO)throw new Error('登录账号与连接请求不一致，请返回主站重新连接。');
+ if(signOut)await fetch('/api/auth/sign-out',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+ const response=await fetch('/api/auth/sign-in/oauth2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({providerId:'generic-oidc',callbackURL:config.lobeURL+'/flowinglight/connect?sso=1&ticket='+encodeURIComponent(config.ticket)})});
+ const data=await response.json(); if(!response.ok||!data.url)throw new Error('统一登录尚未配置，请联系管理员。');
+ const target=new URL(data.url); if(target.protocol!=='https:'&&target.hostname!=='localhost'&&target.hostname!=='127.0.0.1')throw new Error('登录地址无效');
+ window.location.replace(target.href);
+}
+(async()=>{
+ const response=await fetch('/flowinglight/bind',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticket:config.ticket})});
+ const data=await response.json();
+ if(response.status===401)return login(false);
+ if(response.status===409&&data.error==='ACCOUNT_MISMATCH')return login(true);
+ if(!response.ok||!data.ok)throw new Error(data.message||'暂时无法连接，请返回主站重试。');
+ window.location.replace(config.lobeURL+'/');
+})().catch(error=>{document.getElementById('status').textContent=error.message;});
+</script></html>

@@ -1,0 +1,110 @@
+name: tide-lobehub-test
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  app:
+    image: lobehub/lobehub:2.2.16@sha256:b51561ee77c7c4299b5f158d6fb3c71137d98abb89a248b782b93d8956db661d
+    restart: unless-stopped
+    ports: ["127.0.0.1:3210:3210"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    env_file: [.env]
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/lobehub
+      INTERNAL_APP_URL: http://localhost:3210
+      REDIS_URL: redis://redis:6379
+      REDIS_PREFIX: lobehub-test
+      REDIS_TLS: "0"
+      S3_BUCKET: lobehub-files
+      S3_REGION: us-east-1
+      S3_ENABLE_PATH_STYLE: "1"
+      S3_SET_ACL: "0"
+      LLM_VISION_IMAGE_USE_BASE64: "1"
+      NODE_OPTIONS: --max-old-space-size=384
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 256
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      storage-init: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "/bin/node", "-e", "fetch('http://localhost:3210/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 8s
+      start_period: 120s
+      retries: 6
+    logging: *logging
+
+  postgres:
+    image: paradedb/paradedb:latest-pg17@sha256:044b8cc5b40159714e88e3f546fc74de11cf215c030190cc82c6627015d728ea
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lobehub
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    command: ["postgres", "-c", "shared_preload_libraries=pg_search", "-c", "shared_buffers=48MB", "-c", "work_mem=2MB", "-c", "max_connections=30"]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    mem_limit: 384m
+    cpus: 0.7
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d lobehub"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    logging: *logging
+
+  redis:
+    image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "24mb", "--maxmemory-policy", "allkeys-lru", "--appendonly", "yes"]
+    volumes: ["redis-data:/data"]
+    mem_limit: 48m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    logging: *logging
+
+  storage:
+    image: rustfs/rustfs:latest@sha256:41fe89380f4120a337790c02af192c3fe7bb55c3edc2e6e9357b487b47c6ab21
+    restart: unless-stopped
+    ports: ["127.0.0.1:19000:9000"]
+    environment:
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY_ID}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_ACCESS_KEY}
+      RUSTFS_CONSOLE_ENABLE: "false"
+    command: ["/data"]
+    volumes: ["storage-data:/data"]
+    mem_limit: 192m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/health >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      start_period: 20s
+      retries: 30
+    logging: *logging
+
+  storage-init:
+    image: minio/mc:latest@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    environment:
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - 'mc alias set local http://storage:9000 "$$S3_ACCESS_KEY_ID" "$$S3_SECRET_ACCESS_KEY" >/dev/null; mc mb local/lobehub-files --ignore-existing >/dev/null'
+    depends_on:
+      storage: {condition: service_healthy}
+    mem_limit: 64m
+    restart: "no"
+    logging: *logging
+
+volumes:
+  postgres-data:
+  redis-data:
+  storage-data:

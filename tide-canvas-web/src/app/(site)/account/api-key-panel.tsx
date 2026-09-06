@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Copy, Eye, EyeOff, KeyRound, Loader2, RefreshCw } from "lucide-react";
 import { userApiKeyApi, type UserApiKey } from "@/lib/user-api-key";
 import { toast } from "@/components/shared/toast";
@@ -132,6 +133,7 @@ export function ApiKeyPanel({ accountId }: { accountId: string }) {
           <div className="acc-key-footer">
             <span>{secret ? "完整密钥将在 60 秒后自动隐藏" : "密钥已隐藏，只有你可以查看完整内容"}</span>
             <div>
+              <Link className="pf-btn sec" href="/ai-chat">AI 聊天</Link>
               <button type="button" className="pf-btn sec" disabled={busy} onClick={() => act("toggle")}>{keyInfo.enabled ? "停用" : "启用"}</button>
               <button type="button" className="pf-btn sec" disabled={busy} onClick={() => act("rotate")}><RefreshCw size={13} aria-hidden />重置密钥</button>
             </div>

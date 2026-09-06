@@ -40,6 +40,7 @@ type Config struct {
 	Email           EmailConfig           `mapstructure:"email"`
 	LLM             LLMConfig             `mapstructure:"llm"`
 	Relay           RelayConfig           `mapstructure:"relay"`
+	LobeHub         LobeHubConfig         `mapstructure:"lobehub"`
 	VideoDownloader VideoDownloaderConfig `mapstructure:"videoDownloader"`
 	WorldLabs       WorldLabsConfig       `mapstructure:"worldLabs"`
 	Eliandapay      EliandapayConfig      `mapstructure:"eliandapay"`
@@ -47,6 +48,21 @@ type Config struct {
 	// credential. The four JWT-backed supplier credentials are stored in
 	// sys_config and overlaid by the admin balance monitor at request time.
 	BalanceMonitor BalanceMonitorConfig `mapstructure:"balanceMonitor"`
+}
+
+// LobeHubConfig keeps first-party SSO credentials server-side. PublicURL is the
+// browser origin; InternalURL may point at the local container for session RPC.
+type LobeHubConfig struct {
+	Enabled        bool   `mapstructure:"enabled"`
+	PublicURL      string `mapstructure:"publicUrl"`
+	IssuerURL      string `mapstructure:"issuerUrl"`
+	InternalURL    string `mapstructure:"internalUrl"`
+	ClientID       string `mapstructure:"clientId"`
+	ClientSecret   string `mapstructure:"clientSecret"`
+	SigningKeyFile string `mapstructure:"signingKeyFile"`
+	MaxConcurrent  int    `mapstructure:"maxConcurrent"`
+	DailyLimit     int    `mapstructure:"dailyLimit"`
+	SupportsTools  bool   `mapstructure:"supportsTools"`
 }
 
 // VideoDownloaderConfig controls the local public-video download engine.
@@ -459,6 +475,16 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.historyLimit", 3)
 	v.SetDefault("llm.contextTokenLimit", 32000)
 	v.SetDefault("llm.systemPrompt", defaultLLMSystemPrompt)
+	v.SetDefault("lobehub.enabled", false)
+	v.SetDefault("lobehub.publicUrl", "")
+	v.SetDefault("lobehub.issuerUrl", "")
+	v.SetDefault("lobehub.internalUrl", "")
+	v.SetDefault("lobehub.clientId", "flowinglight-lobehub")
+	v.SetDefault("lobehub.clientSecret", "")
+	v.SetDefault("lobehub.signingKeyFile", "")
+	v.SetDefault("lobehub.maxConcurrent", 2)
+	v.SetDefault("lobehub.dailyLimit", 0)
+	v.SetDefault("lobehub.supportsTools", false)
 
 	// Missing/empty TIDECANVAS_ENV resolves to test, so the safe default must
 	// never send local development traffic to the production relay.

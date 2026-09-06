@@ -1,0 +1,8 @@
+.env
+.env.*
+.bootstrap-login.json
+.test-access.txt
+.account-ready
+.lobehub-update-*
+__pycache__/
+backups/

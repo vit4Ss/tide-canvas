@@ -180,6 +180,7 @@ func redactQueryForLogs(raw string) string {
 	sensitive := map[string]bool{
 		"ticket": true, "token": true, "access_token": true, "refresh_token": true,
 		"authorization": true, "signature": true, "sign": true, "api_key": true, "apikey": true,
+		"code": true, "state": true, "request": true, "code_verifier": true, "client_secret": true, "id_token": true,
 	}
 	for key, entries := range values {
 		normalized := strings.ToLower(strings.ReplaceAll(key, "-", "_"))
