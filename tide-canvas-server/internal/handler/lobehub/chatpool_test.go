@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
 )
@@ -297,5 +298,46 @@ func TestAPlaintextAddressNeverCarriesTheCredential(t *testing.T) {
 	}
 	if len(route.endpoints) != 1 || route.endpoints[0].baseURL != good.URL {
 		t.Fatalf("wrong addresses survived the check: %+v", route.endpoints)
+	}
+}
+
+// The login hop runs inside the chat iframe. A browser that renders the 302
+// instead of following it used to show Go's default body — the bare word
+// "Found" — and the user was stuck with nothing to click.
+func TestTheLoginHopCarriesItsDestinationInTheBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/api/lobehub/oidc/authorize", nil)
+
+	const target = "https://main.example.com/ai-chat/authorize?request=abc&x=1"
+	redirectToLogin(c, target)
+
+	if w.Code != 302 {
+		t.Fatalf("status = %d, want 302 for clients that do follow it", w.Code)
+	}
+	if got := w.Header().Get("Location"); got != target {
+		t.Fatalf("Location = %q, want %q", got, target)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, ">Found<") {
+		t.Fatal("the body is still Go's default redirect text")
+	}
+	// The destination has to be reachable from the rendered page two ways.
+	escaped := "https://main.example.com/ai-chat/authorize?request=abc&amp;x=1"
+	if !strings.Contains(body, `content="0;url=`+escaped+`"`) {
+		t.Fatalf("no meta refresh to the destination: %s", body)
+	}
+	if !strings.Contains(body, `href="`+escaped+`"`) {
+		t.Fatalf("nothing for the user to click: %s", body)
+	}
+	// The destination is interpolated into HTML, so it must not be able to
+	// close the attribute it sits in.
+	hostile := httptest.NewRecorder()
+	c2, _ := gin.CreateTestContext(hostile)
+	c2.Request = httptest.NewRequest("GET", "/", nil)
+	redirectToLogin(c2, `https://x/"><script>alert(1)</script>`)
+	if strings.Contains(hostile.Body.String(), "<script>alert(1)</script>") {
+		t.Fatalf("the destination broke out of its attribute: %s", hostile.Body.String())
 	}
 }

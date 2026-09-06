@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"html"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -82,7 +83,26 @@ func (s *service) authorize(c *gin.Context) {
 	}
 	c.Header("Cache-Control", "no-store")
 	c.Header("Referrer-Policy", "no-referrer")
-	c.Redirect(302, s.mainOrigin+"/ai-chat/authorize?request="+url.QueryEscape(request))
+	redirectToLogin(c, s.mainOrigin+"/ai-chat/authorize?request="+url.QueryEscape(request))
+}
+
+// redirectToLogin sends the browser on to the main site's approval page.
+//
+// This hop happens inside the chat iframe, and a browser that declines to
+// follow the 302 there renders the response body instead — with Go's default
+// body that is the word "Found" on a blank page, which tells the user nothing
+// and leaves them stuck. So the body carries the same destination as a meta
+// refresh and as a link the user can click. Clients that do follow the
+// redirect never see any of it.
+func redirectToLogin(c *gin.Context, target string) {
+	c.Header("Location", target)
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	escaped := html.EscapeString(target)
+	c.String(302, "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\">"+
+		"<meta http-equiv=\"refresh\" content=\"0;url="+escaped+"\">"+
+		"<title>正在登录 AI 聊天</title>"+
+		"<body style=\"margin:0;background:#0c0d10;color:#e8edf1;font:15px system-ui;display:grid;place-items:center;min-height:100vh\">"+
+		"<p>正在跳转到主站登录…<br><a style=\"color:#49cde0\" href=\""+escaped+"\">如果没有自动跳转，请点这里继续</a></p>")
 }
 func (s *service) approve(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2048)
