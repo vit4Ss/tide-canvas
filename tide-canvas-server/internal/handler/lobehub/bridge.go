@@ -315,7 +315,7 @@ func (s *service) bind(c *gin.Context) {
 		name  string
 		input any
 	}{
-		{"aiProvider.updateAiProviderConfig", gin.H{"id": provider, "value": gin.H{"keyVaults": gin.H{"apiKey": key, "baseURL": s.mainOrigin + "/api/integrations/v1"}, "fetchOnClient": false, "config": gin.H{"enableResponseApi": false}, "checkModel": routes[0].model.ModelKey}}},
+		{"aiProvider.updateAiProviderConfig", gin.H{"id": provider, "value": gin.H{"keyVaults": gin.H{"apiKey": key, "baseURL": s.mainOrigin + "/api/integrations/v1"}, "fetchOnClient": false, "config": gin.H{"enableResponseApi": false}, "checkModel": advertisedID(routes[0].model.ModelKey)}}},
 		{"aiProvider.updateAiProvider", gin.H{"id": provider, "value": gin.H{"name": "流光主站", "description": "使用主站积分的模型服务", "settings": gin.H{"sdkType": "openai", "showModelFetcher": true, "supportResponsesApi": false}}}},
 		{"aiProvider.toggleProviderEnabled", gin.H{"id": provider, "enabled": true}},
 	}
@@ -325,12 +325,21 @@ func (s *service) bind(c *gin.Context) {
 		}
 	}
 	if err == nil {
+		// Drop what a previous sync left behind before pushing the current list.
+		// batchUpdateAiModels only upserts, so a model the operator has stopped
+		// offering — or one synced under an older id — would otherwise stay in
+		// the picker and fail at send time. Only models this sync created carry
+		// source "remote", so nothing the user added by hand is touched. A
+		// refusal here is not fatal: a stale extra entry beats no chat at all.
+		if clearErr := s.rpc(c.Request.Context(), cookie, "aiModel.clearRemoteModels", gin.H{"providerId": provider}); clearErr != nil {
+			logger.L().Warn("could not clear previously synced chat models", zap.Error(clearErr))
+		}
 		items := []any{}
 		ids := []string{}
 		for i := range routes {
 			r := &routes[i]
-			items = append(items, gin.H{"id": r.model.ModelKey, "type": "chat", "displayName": r.displayName(), "enabled": true, "source": "remote", "abilities": gin.H{"functionCall": s.cfg.SupportsTools, "vision": r.model.Vision}})
-			ids = append(ids, r.model.ModelKey)
+			items = append(items, gin.H{"id": advertisedID(r.model.ModelKey), "type": "chat", "displayName": r.displayName(), "enabled": true, "source": "remote", "abilities": gin.H{"functionCall": s.cfg.SupportsTools, "vision": r.model.Vision}})
+			ids = append(ids, advertisedID(r.model.ModelKey))
 		}
 		err = s.rpc(c.Request.Context(), cookie, "aiModel.batchUpdateAiModels", gin.H{"id": provider, "models": items})
 		if err == nil {

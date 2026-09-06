@@ -106,7 +106,7 @@ func (s *service) listModels(c *gin.Context) {
 		// The provider and its addresses stay server-side; a caller only needs
 		// the model id and what it costs.
 		data = append(data, gin.H{
-			"id": r.model.ModelKey, "object": "model", "created": r.model.CreateTime.Unix(),
+			"id": advertisedID(r.model.ModelKey), "object": "model", "created": r.model.CreateTime.Unix(),
 			"owned_by": "flowinglight", "name": r.displayNameOnly(), "token_pricing": r.pricing,
 		})
 	}
@@ -543,7 +543,7 @@ func (s *service) chat(c *gin.Context) {
 	}
 	// Resolve the model to its provider and credentialed addresses before any
 	// money moves: a model we cannot reach must not be charged for.
-	route, err := s.routeFor(c.Request.Context(), modelName)
+	route, err := s.routeFor(c.Request.Context(), upstreamKey(modelName))
 	if err != nil {
 		switch {
 		case errors.Is(err, errNoChatModel):
@@ -555,6 +555,9 @@ func (s *service) chat(c *gin.Context) {
 		}
 		return
 	}
+	// The provider knows the model by its own name, never by the namespaced id
+	// this gateway advertises.
+	body["model"] = route.model.ModelKey
 	stream, _ := body["stream"].(bool)
 	body["stream"] = true
 	body["messages"] = trimmed

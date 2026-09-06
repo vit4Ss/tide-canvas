@@ -2,6 +2,7 @@ package lobehub
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -339,5 +340,76 @@ func TestTheLoginHopCarriesItsDestinationInTheBody(t *testing.T) {
 	redirectToLogin(c2, `https://x/"><script>alert(1)</script>`)
 	if strings.Contains(hostile.Body.String(), "<script>alert(1)</script>") {
 		t.Fatalf("the destination broke out of its attribute: %s", hostile.Body.String())
+	}
+}
+
+// LobeHub decides which OpenAI endpoint to call from the model id alone: a bare
+// "gpt-5.2" or later is called through /v1/responses, which this gateway does
+// not serve, and no provider setting overrides that. The namespace this gateway
+// advertises has to keep every id out of that rule.
+func TestAdvertisedIDsAreNotMistakenForOpenAIModels(t *testing.T) {
+	// The rule LobeHub applies (packages/model-runtime/.../openai/modelId.ts):
+	// an id is OpenAI's only if it starts with "gpt-", "openai/" or "codex/".
+	openAIish := func(id string) bool {
+		lower := strings.ToLower(strings.TrimSpace(id))
+		return strings.HasPrefix(lower, "gpt-") ||
+			strings.HasPrefix(lower, "openai/") ||
+			strings.HasPrefix(lower, "codex/")
+	}
+	for _, key := range []string{"gpt-5.5", "gpt-5.2-pro", "gpt-4o", "o3-pro", "codex-mini-latest", "deepseek-chat"} {
+		id := advertisedID(key)
+		if openAIish(id) {
+			t.Errorf("advertised %q still reads as an OpenAI model id", id)
+		}
+		if upstreamKey(id) != key {
+			t.Errorf("upstreamKey(%q) = %q, want %q", id, upstreamKey(id), key)
+		}
+	}
+	// A relay whose own keys are namespaced keeps its slashes.
+	if got := upstreamKey(advertisedID("deepseek/deepseek-chat")); got != "deepseek/deepseek-chat" {
+		t.Errorf("nested key mangled: %q", got)
+	}
+}
+
+// A client may send either name. The provider is always called with its own.
+func TestEitherModelNameWorksAndTheProviderSeesItsOwn(t *testing.T) {
+	var seen string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		seen = body.Model
+		fmt.Fprint(w, okWithUsage)
+	}))
+	defer upstream.Close()
+
+	for _, name := range []string{"test-model", "flowinglight/test-model"} {
+		seen = ""
+		f := setup(t, "", upstream.URL)
+		prompt := strings.Replace(testPrompt, `"test-model"`, `"`+name+`"`, 1)
+		if prompt == testPrompt && name != "test-model" {
+			t.Fatalf("the fixture prompt no longer names the model; cannot vary it")
+		}
+		w := f.request("POST", "/api/integrations/v1/chat/completions", prompt, f.apiKey, nil)
+		if w.Code != 200 {
+			t.Fatalf("%s was refused: %d %s", name, w.Code, w.Body.String())
+		}
+		if seen != "test-model" {
+			t.Fatalf("the provider was called with %q, want its own key", seen)
+		}
+	}
+}
+
+// The catalogue and the sync must advertise the same id, or the picker offers a
+// model the gateway then refuses.
+func TestTheCatalogueAdvertisesTheNamespacedID(t *testing.T) {
+	f := setup(t, "", "")
+	w := f.request("GET", "/api/integrations/v1/models", "", f.apiKey, nil)
+	if w.Code != 200 {
+		t.Fatalf("model list failed: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"flowinglight/test-model"`) {
+		t.Fatalf("the catalogue still advertises a bare id: %s", w.Body.String())
 	}
 }

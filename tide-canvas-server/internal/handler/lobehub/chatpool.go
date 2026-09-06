@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"net/url"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -23,6 +24,24 @@ import (
 // the per-user billing, and the operator's credentials never reach a browser.
 
 var errNoChatModel = errors.New("lobehub: model is not offered to AI chat")
+
+// chatNamespace prefixes every model id this gateway advertises.
+//
+// The gateway speaks OpenAI's protocol but is not OpenAI, and a client that
+// mistakes one for the other picks the wrong endpoint. LobeHub reads a bare
+// "gpt-5.x" id as an OpenAI model that must be called through /v1/responses —
+// a decision it makes from the id alone, which no provider setting overrides —
+// and this gateway serves /v1/chat/completions. Namespacing says whose model
+// this is, the way "codex/" and "openai/" already do for other gateways.
+const chatNamespace = "flowinglight/"
+
+// advertisedID is how a model is named to clients; upstreamKey is the name the
+// provider knows it by. A client may send either.
+func advertisedID(modelKey string) string { return chatNamespace + modelKey }
+func upstreamKey(advertised string) string {
+	return strings.TrimPrefix(advertised, chatNamespace)
+}
+
 var errNoEndpoint = errors.New("lobehub: provider has no usable endpoint")
 
 // chatRoute is one model plus the ordered addresses that may serve it.

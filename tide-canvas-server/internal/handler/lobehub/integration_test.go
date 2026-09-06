@@ -381,6 +381,7 @@ func TestBindVerifiesActualLobeIdentityAndKeepsKeyServerSide(t *testing.T) {
 		"/trpc/lambda/aiProvider.updateAiProviderConfig",
 		"/trpc/lambda/aiProvider.updateAiProvider",
 		"/trpc/lambda/aiProvider.toggleProviderEnabled",
+		"/trpc/lambda/aiModel.clearRemoteModels",
 		"/trpc/lambda/aiModel.batchUpdateAiModels",
 		"/trpc/lambda/aiModel.batchToggleAiModels",
 		"/trpc/lambda/aiProvider.getAiProviderList",
@@ -390,6 +391,13 @@ func TestBindVerifiesActualLobeIdentityAndKeepsKeyServerSide(t *testing.T) {
 		if !slices.Contains(rpcCalls, procedure) {
 			t.Fatalf("binding skipped %s: %v", procedure, rpcCalls)
 		}
+	}
+	// Clearing has to come before the push, or the sync deletes what it just
+	// wrote and the user is left with an empty model picker.
+	clear := slices.Index(rpcCalls, "/trpc/lambda/aiModel.clearRemoteModels")
+	push := slices.Index(rpcCalls, "/trpc/lambda/aiModel.batchUpdateAiModels")
+	if clear > push {
+		t.Fatalf("the sync cleared the models it had just pushed: %v", rpcCalls)
 	}
 	if strings.Contains(w.Body.String(), f.apiKey) {
 		t.Fatal("key returned to bridge browser")
