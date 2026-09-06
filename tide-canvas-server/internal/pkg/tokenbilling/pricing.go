@@ -9,7 +9,12 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-var ErrPricing = errors.New("token pricing is not configured")
+// ErrNotConfigured means the model simply has no token pricing: it keeps its
+// per-call price. ErrPricing means an operator switched token billing on but
+// the numbers are unusable — that model must be refused, never quietly billed
+// at the old per-call rate.
+var ErrNotConfigured = errors.New("model bills per call")
+var ErrPricing = errors.New("token pricing is configured but unusable")
 var ErrUsage = errors.New("authoritative token usage is missing or invalid")
 var ErrLimit = errors.New("token usage exceeds the reserved model limits")
 
@@ -29,7 +34,7 @@ func Parse(config string) (*Pricing, error) {
 		Pricing *Pricing `json:"tokenPricing"`
 	}
 	if json.Unmarshal([]byte(config), &value) != nil || value.Pricing == nil || !value.Pricing.Enabled {
-		return nil, ErrPricing
+		return nil, ErrNotConfigured
 	}
 	p := value.Pricing
 	if p.MaxInput == 0 {

@@ -94,7 +94,7 @@ export default function AIChatPage() {
     <section className="ai-chat-entry-panel">
       <div className="ai-chat-balance"><Wallet size={18} aria-hidden /><span>可用积分</span><strong>{user?.points?.toLocaleString("zh-CN", {maximumFractionDigits: 6}) ?? "—"}</strong></div>
       <p>进入后在本页内打开，自动登录并同步你的模型服务。聊天记录保存在你的独立账号中，模型调用使用主站积分。</p>
-      <p className="ai-chat-note">{config?.tokenBilling ? "按模型的每百万输入、输出 Token 单价计费。调用前预留额度，结束后按真实用量结算并释放余量；工具循环和辅助调用也归属你的 API Key。" : "按所选模型的单次价格计费；未产生有效内容的失败调用退回积分。"}</p>
+      <p className="ai-chat-note">计费方式由每个模型各自的后台配置决定：配置了 Token 单价的模型按每百万输入、输出 Token 结算，调用前预留额度、结束后按真实用量扣费并释放余量；其余模型仍按单次价格计费。模型列表会标出各自的价格，工具循环和辅助调用也归属你的 API Key。</p>
       {error && <p role="alert" className="ai-chat-error">{error}</p>}
       {config && !config.enabled && <p role="status">AI 聊天尚未开放，请管理员完成接入配置。</p>}
       <div className="ai-chat-entry-actions">
@@ -103,6 +103,6 @@ export default function AIChatPage() {
         <Link href="/account">账户与 API Key</Link><Link href="/billing">充值积分</Link>
       </div>
     </section>
-    {config?.enabled && config.tokenBilling && <TokenBillingPanel />}
+    {config?.enabled && <TokenBillingPanel />}
   </main>;
 }

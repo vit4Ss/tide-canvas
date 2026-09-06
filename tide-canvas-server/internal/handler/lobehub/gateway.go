@@ -235,8 +235,8 @@ func (s *service) reserve(ctx context.Context, uid idgen.ID, requestKey, bodyHas
 			if revision, ok := ctx.Value(gatewayKeyRevision).(uint64); ok {
 				row.KeyRevision = revision
 			}
-		} else if s.cfg.RequireTokenPricing {
-			return tokenbilling.ErrPricing
+		} else if !errors.Is(pricingErr, tokenbilling.ErrNotConfigured) {
+			return pricingErr
 		}
 		row.ID = idgen.Next()
 		if err := tx.Create(&row).Error; err != nil {
@@ -549,9 +549,11 @@ func (s *service) chat(c *gin.Context) {
 	body["user"] = uid.String()
 	fingerprint, _ := json.Marshal(body)
 	maxOutput := int64(0)
+	// A model without token pricing keeps its per-call price; one whose token
+	// pricing is switched on but unusable is refused rather than repriced.
 	pricing, pricingErr := tokenbilling.Parse(m.Config)
-	if pricingErr != nil && s.cfg.RequireTokenPricing {
-		gatewayError(c, 503, "token_pricing_required", "该模型尚未配置每百万 Token 的积分单价，请联系管理员")
+	if pricingErr != nil && !errors.Is(pricingErr, tokenbilling.ErrNotConfigured) {
+		gatewayError(c, 503, "token_pricing_invalid", "该模型的 Token 单价配置有误，请联系管理员")
 		return
 	}
 	if pricingErr == nil {

@@ -181,7 +181,25 @@ function initialUpscaleRates(config: ModelConfig): Record<string, number | strin
   return Object.fromEntries(resolutions.map((resolution) => [resolution, legacy]));
 }
 
+/** AI 聊天的 Token 定价：每个文本模型自己决定按 Token 还是按次计费。 */
+function tokenPricingState(model: AdminModelVO): "off" | "on" | "broken" {
+  const pricing = model.config?.tokenPricing;
+  if (model.type !== "text" || !pricing?.enabled) return "off";
+  const rate = (value?: string) => {
+    const text = String(value ?? "").trim();
+    return text !== "" && Number.isFinite(Number(text)) && Number(text) >= 0;
+  };
+  return rate(pricing.inputPointsPerMillion) && rate(pricing.outputPointsPerMillion) ? "on" : "broken";
+}
+
 function billingLabel(model: AdminModelVO): string {
+  const token = tokenPricingState(model);
+  // 填错的单价会让该模型在 AI 聊天里被拒绝，而不是退回按次价格——列表要能一眼看出。
+  if (token === "broken") return "Token 单价填写有误";
+  if (token === "on") {
+    const pricing = model.config?.tokenPricing;
+    return `${pricing?.inputPointsPerMillion}/${pricing?.outputPointsPerMillion} 每 1M Token`;
+  }
   if (model.type === "video" && usesVideoPerRequestBilling(model.config)) {
     const rates = (model.config?.resolutions ?? [])
       .map((resolution) => Math.ceil(videoPerRequestRate(model.config, resolution)))
@@ -1146,7 +1164,7 @@ function ModelModal({
     >
       {isText && <FormCard title="AI 聊天 · Token 定价">
         <FormGrid>
-          <Field label="开放 Token 计费" span={4} hint="LobeHub 只开放已配置 Token 单价的模型。没有配置不会按旧的单次价格收费。">
+          <Field label="开放 Token 计费" span={4} hint="只影响本模型：打开后它在 AI 聊天里按 Token 计费，关闭则沿用下方的按次价格。其他模型不受影响。">
             <SwitchToggle checked={cfg.tokenPricing?.enabled ?? false} onChange={(enabled) => setC({ tokenPricing: { inputPointsPerMillion: "", outputPointsPerMillion: "", ...cfg.tokenPricing, enabled } })} />
           </Field>
           {cfg.tokenPricing?.enabled && <>
@@ -1208,7 +1226,7 @@ function ModelModal({
               label={isVideo ? "兜底积分" : isText ? "原聊天入口按次积分" : "消耗积分"}
               hint={isVideo
                 ? "仅按时长模式中未命中价格矩阵时使用；按次模式始终以清晰度价格表为准"
-                : isText ? "原主站聊天入口的按次价格；LobeHub 使用上方独立的 Token 定价" : "按次扣费的积分（支持小数）；保存后即为计费与前台展示的权威价"}
+                : isText ? "主站聊天入口的按次价格；本模型在 AI 聊天里也用它，除非上方打开了 Token 计费" : "按次扣费的积分（支持小数）；保存后即为计费与前台展示的权威价"}
             >
               <input value={pointCost} onChange={(e) => setPointCost(e.target.value)} placeholder="0.0" inputMode="decimal" />
             </Field>

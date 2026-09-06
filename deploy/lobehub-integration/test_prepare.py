@@ -40,14 +40,15 @@ class PrepareTest(unittest.TestCase):
             self.assertEqual(len(backups), 1)
             self.assertEqual(backups[0].read_text(), original)
 
-    def test_token_billing_is_enabled_and_an_operator_override_survives(self):
+    def test_billing_mode_is_not_forced_site_wide(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(prepare, "ROOT", Path(tmp)):
             private = Path(tmp) / "private"
             with contextlib.redirect_stdout(io.StringIO()):
                 prepare.init("https://main.example", "https://chat.example")
-            self.assertIn("TIDECANVAS_LOBEHUB_REQUIRETOKENPRICING=true", (private / "main.env").read_text())
-            # enable.py carries an operator's own value across a re-run.
-            self.assertIn("TIDECANVAS_LOBEHUB_REQUIRETOKENPRICING", enable.PRESERVED_MAIN_KEYS)
+            # Each model decides between token and per-call billing in the admin;
+            # a deploy-wide switch would override that choice for all of them.
+            self.assertNotIn("REQUIRETOKENPRICING", (private / "main.env").read_text())
+            self.assertNotIn("TIDECANVAS_LOBEHUB_REQUIRETOKENPRICING", enable.PRESERVED_MAIN_KEYS)
 
     def test_invalid_origin_or_existing_secret_fails_without_replacement(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(prepare, "ROOT", Path(tmp)):

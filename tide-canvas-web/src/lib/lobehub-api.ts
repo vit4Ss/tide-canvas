@@ -7,7 +7,6 @@ export interface LobeHubConfig {
   maxConcurrent?: number;
   dailyLimit?: number;
   historyMessages?: number;
-  tokenBilling?: boolean;
 }
 
 export const lobeHubApi = {

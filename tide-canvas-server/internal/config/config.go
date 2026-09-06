@@ -53,17 +53,16 @@ type Config struct {
 // LobeHubConfig keeps first-party SSO credentials server-side. PublicURL is the
 // browser origin; InternalURL may point at the local container for session RPC.
 type LobeHubConfig struct {
-	Enabled             bool   `mapstructure:"enabled"`
-	PublicURL           string `mapstructure:"publicUrl"`
-	IssuerURL           string `mapstructure:"issuerUrl"`
-	InternalURL         string `mapstructure:"internalUrl"`
-	ClientID            string `mapstructure:"clientId"`
-	ClientSecret        string `mapstructure:"clientSecret"`
-	SigningKeyFile      string `mapstructure:"signingKeyFile"`
-	MaxConcurrent       int    `mapstructure:"maxConcurrent"`
-	DailyLimit          int    `mapstructure:"dailyLimit"`
-	SupportsTools       bool   `mapstructure:"supportsTools"`
-	RequireTokenPricing bool   `mapstructure:"requireTokenPricing"`
+	Enabled        bool   `mapstructure:"enabled"`
+	PublicURL      string `mapstructure:"publicUrl"`
+	IssuerURL      string `mapstructure:"issuerUrl"`
+	InternalURL    string `mapstructure:"internalUrl"`
+	ClientID       string `mapstructure:"clientId"`
+	ClientSecret   string `mapstructure:"clientSecret"`
+	SigningKeyFile string `mapstructure:"signingKeyFile"`
+	MaxConcurrent  int    `mapstructure:"maxConcurrent"`
+	DailyLimit     int    `mapstructure:"dailyLimit"`
+	SupportsTools  bool   `mapstructure:"supportsTools"`
 }
 
 // VideoDownloaderConfig controls the local public-video download engine.

@@ -393,10 +393,12 @@ func (s *service) models(ctx context.Context) ([]model.MarketModel, error) {
 			continue
 		}
 		seen[row.ModelKey] = true
-		if s.cfg.RequireTokenPricing {
-			if _, err := tokenbilling.Parse(row.Config); err != nil {
-				continue
-			}
+		// Each model carries its own billing mode. Only one that an operator
+		// switched to token billing and then mispriced is withheld: it would
+		// fail at call time, and falling back to its per-call price would bill
+		// the rate they meant to replace.
+		if _, err := tokenbilling.Parse(row.Config); errors.Is(err, tokenbilling.ErrPricing) {
+			continue
 		}
 		out = append(out, row)
 	}

@@ -17,7 +17,6 @@ const tokenTestPricing = `{"tokenPricing":{"enabled":true,"inputPointsPerMillion
 
 func enableTestTokenPricing(t *testing.T, f *fixture) {
 	t.Helper()
-	f.s.cfg.RequireTokenPricing = true
 	if err := f.s.d.DB.Model(&model.MarketModel{}).Where("model_key = ?", "test-model").Update("config", tokenTestPricing).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -97,29 +96,64 @@ func TestInputOnlyUsageIsChargedEvenWhenTheProviderReportsFailure(t *testing.T) 
 	}
 }
 
-// With token billing required, a model that has no per-million price must not
-// appear in the catalogue at all — offering it would either fall back to the
-// old per-call price or fail only after the user has composed a message.
-func TestModelsWithoutTokenPricingAreHiddenAndRefused(t *testing.T) {
-	f := setup(t, "", "")
+// Billing is decided per model: pricing one model must not disturb another.
+// Both stay in the catalogue, each advertising the price it will actually be
+// charged at.
+func TestEachModelKeepsItsOwnBillingMode(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer up.Close()
+	f := setup(t, "", up.URL)
 	enableTestTokenPricing(t, f)
 	legacy := model.MarketModel{Name: "Legacy Model", ModelKey: "legacy-model", Type: "text", Status: 1, SortOrder: 5, Price: decimal.NewFromInt(9)}
 	if err := f.s.d.DB.Create(&legacy).Error; err != nil {
 		t.Fatal(err)
 	}
 
-	w := f.request("GET", "/api/integrations/v1/models", "", f.apiKey, nil)
-	body := w.Body.String()
-	if strings.Contains(body, "legacy-model") {
-		t.Fatalf("a model without token pricing was offered: %s", body)
+	models := jsonMap(t, f.request("GET", "/api/integrations/v1/models", "", f.apiKey, nil))["data"].([]any)
+	modes := map[string]map[string]any{}
+	for _, row := range models {
+		item := row.(map[string]any)
+		modes[item["id"].(string)] = item
 	}
-	if !strings.Contains(body, "test-model") || !strings.Contains(body, "token_pricing") {
-		t.Fatalf("the priced model is missing from the catalogue: %s", body)
+	if len(modes) != 2 {
+		t.Fatalf("both models must stay available: %v", modes)
+	}
+	if modes["test-model"]["token_pricing"] == nil || modes["test-model"]["point_cost"] != nil {
+		t.Fatalf("the priced model must advertise token pricing: %v", modes["test-model"])
+	}
+	if modes["legacy-model"]["point_cost"] != float64(9) || modes["legacy-model"]["token_pricing"] != nil {
+		t.Fatalf("the unpriced model must keep its per-call price: %v", modes["legacy-model"])
 	}
 
-	w = f.request("POST", "/api/integrations/v1/chat/completions", strings.ReplaceAll(testPrompt, "test-model", "legacy-model"), f.apiKey, nil)
-	if w.Code == 200 {
-		t.Fatal("an unpriced model was charged through the token gateway")
+	// The unpriced model still bills per call, in whole points, no reservation.
+	w := f.request("POST", "/api/integrations/v1/chat/completions", strings.ReplaceAll(testPrompt, "test-model", "legacy-model"), f.apiKey, nil)
+	if w.Code != 200 {
+		t.Fatalf("a per-call model was refused: %d %s", w.Code, w.Body.String())
+	}
+	var user model.User
+	f.s.d.DB.First(&user, "id = ?", f.user.ID)
+	if user.Points != 11 || user.PointHeldMicros != 0 {
+		t.Fatalf("per-call charge is wrong: %+v", user)
+	}
+}
+
+// A model an operator switched to token billing and then mispriced must not be
+// offered or charged: silently reverting to its per-call price would bill the
+// very rate they were replacing.
+func TestMispricedTokenModelIsWithheldRatherThanBilledPerCall(t *testing.T) {
+	f := setup(t, "", "")
+	broken := `{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"abc","outputPointsPerMillion":"300"}}`
+	if err := f.s.d.DB.Model(&model.MarketModel{}).Where("model_key = ?", "test-model").Update("config", broken).Error; err != nil {
+		t.Fatal(err)
+	}
+	if body := f.request("GET", "/api/integrations/v1/models", "", f.apiKey, nil).Body.String(); strings.Contains(body, "test-model") {
+		t.Fatalf("a mispriced model was offered: %s", body)
+	}
+	w := f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, nil)
+	if w.Code == 200 || !strings.Contains(w.Body.String(), "token_pricing_invalid") {
+		t.Fatalf("a mispriced model was billed: %d %s", w.Code, w.Body.String())
 	}
 	var user model.User
 	f.s.d.DB.First(&user, "id = ?", f.user.ID)
