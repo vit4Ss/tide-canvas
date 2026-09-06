@@ -234,3 +234,13 @@
   opacity: 0.3;
   cursor: default;
 }
+
+/* A column whose meaning is not obvious from its label: the toggle decides
+   whether the chat lets the user attach an image at all. */
+.cp-table th small {
+  display: block;
+  margin-top: 2px;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-faint);
+}

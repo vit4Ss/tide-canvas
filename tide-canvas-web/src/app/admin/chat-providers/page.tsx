@@ -533,7 +533,10 @@ function ModelList({ provider, busy, run }: { provider: ChatProviderVO; busy: st
               <th>模型</th>
               <th>输入 / 输出 积分每 1M Token</th>
               <th>Token 上限</th>
-              <th>图片</th>
+              <th>
+                图片
+                <small>关闭时聊天里的「上传图片」是灰的</small>
+              </th>
               <th>开放</th>
               <th />
             </tr>
