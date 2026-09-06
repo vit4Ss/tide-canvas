@@ -40,6 +40,7 @@ func newChatFixture(t *testing.T) *chatFixture {
 	h := &chatProvidersHandler{db: db, vault: chatupstream.New("test-secret"), client: http.DefaultClient}
 	r := gin.New()
 	r.GET("/chat-providers", h.list)
+	r.PUT("/chat-providers/:id", h.updateProvider)
 	r.POST("/chat-providers/:id/endpoints", h.createEndpoint)
 	r.PUT("/chat-endpoints/:id", h.updateEndpoint)
 	r.POST("/chat-providers/:id/fetch-models", h.fetchModels)
@@ -293,5 +294,65 @@ func TestCreatingSomethingSwitchedOffLeavesItOff(t *testing.T) {
 	}
 	if !live.Enabled {
 		t.Fatal("an address created without the flag did not default to enabled")
+	}
+}
+
+// The admin page edits these fields in place. Each has to actually round-trip,
+// including the ones whose new value is empty — clearing a remark must clear
+// it, not be read as "unchanged".
+func TestEveryEditableFieldRoundTrips(t *testing.T) {
+	f := newChatFixture(t)
+	row := f.endpoint("https://api.example.com", "sk-original")
+
+	if w := f.call("PUT", "/chat-providers/"+f.provider.ID.String(),
+		`{"name":"DeepSeek 官方","remark":"主用"}`); w.Code != 200 {
+		t.Fatalf("provider save failed: %d %s", w.Code, w.Body.String())
+	}
+	var provider model.ChatProvider
+	f.h.db.First(&provider, "id = ?", f.provider.ID)
+	if provider.Name != "DeepSeek 官方" || provider.Remark != "主用" {
+		t.Fatalf("provider edit lost: %+v", provider)
+	}
+	if w := f.call("PUT", "/chat-providers/"+f.provider.ID.String(), `{"remark":""}`); w.Code != 200 {
+		t.Fatalf("clearing the remark failed: %s", w.Body.String())
+	}
+	var cleared model.ChatProvider
+	f.h.db.First(&cleared, "id = ?", f.provider.ID)
+	if cleared.Remark != "" {
+		t.Fatalf("a cleared remark came back: %q", cleared.Remark)
+	}
+	if cleared.Name != "DeepSeek 官方" {
+		t.Fatalf("clearing one field wiped another: %+v", cleared)
+	}
+
+	// Changing the address must not disturb the credential stored beside it.
+	if w := f.call("PUT", "/chat-endpoints/"+row.ID.String(),
+		`{"baseUrl":"https://backup.example.com/openai","label":"备用","sortOrder":3}`); w.Code != 200 {
+		t.Fatalf("endpoint save failed: %d %s", w.Code, w.Body.String())
+	}
+	var endpoint model.ChatEndpoint
+	f.h.db.First(&endpoint, "id = ?", row.ID)
+	if endpoint.BaseURL != "https://backup.example.com/openai" || endpoint.Label != "备用" || endpoint.SortOrder != 3 {
+		t.Fatalf("endpoint edit lost: %+v", endpoint)
+	}
+	if got, err := f.h.vault.Open(endpoint.APIKey); err != nil || got != "sk-original" {
+		t.Fatalf("editing the address disturbed the credential: %q %v", got, err)
+	}
+	// The address is still validated on edit, not only on create.
+	if w := f.call("PUT", "/chat-endpoints/"+row.ID.String(), `{"baseUrl":"https://127.0.0.1/v1"}`); w.Code == 200 {
+		t.Fatalf("an internal address was accepted on edit: %s", w.Body.String())
+	}
+
+	m := model.ChatModel{ProviderID: f.provider.ID, ModelKey: "gpt-4o-mini", Name: "gpt-4o-mini"}
+	if err := f.h.db.Create(&m).Error; err != nil {
+		t.Fatal(err)
+	}
+	if w := f.call("PUT", "/chat-models/"+m.ID.String(), `{"name":"GPT-4o mini"}`); w.Code != 200 {
+		t.Fatalf("model rename failed: %d %s", w.Code, w.Body.String())
+	}
+	var renamed model.ChatModel
+	f.h.db.First(&renamed, "id = ?", m.ID)
+	if renamed.Name != "GPT-4o mini" || renamed.ModelKey != "gpt-4o-mini" {
+		t.Fatalf("rename changed the wrong thing: %+v", renamed)
 	}
 }

@@ -12,7 +12,7 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Plus, RefreshCw, Trash2 } from "lucide-react";
 import {
   AdminAlert,
   AdminEmptyState,
@@ -163,12 +163,92 @@ export default function ChatProvidersPage() {
 
 type Run = (key: string, action: () => Promise<{ success: boolean; message?: string }>, ok: string) => Promise<void>;
 
+// InlineText is the page's editing idiom for a single value: it reads as text,
+// commits on blur or Enter, and reverts on Escape. It saves only when the value
+// actually changed, so tabbing through a row does not fire a request per field.
+function InlineText({
+  value,
+  onSave,
+  className = "",
+  placeholder,
+  label,
+  disabled,
+}: {
+  value: string;
+  onSave: (next: string) => void;
+  className?: string;
+  placeholder?: string;
+  label: string;
+  disabled?: boolean;
+}) {
+  const [draft, setDraft] = useState(value);
+  // A reload replaces the row, and the field must follow it rather than keep a
+  // stale draft. Reconciling during render is how React wants props-derived
+  // state adjusted; an effect here would fight the lint rule and flash.
+  const [seen, setSeen] = useState(value);
+  if (seen !== value) {
+    setSeen(value);
+    setDraft(value);
+  }
+
+  const commit = () => {
+    const next = draft.trim();
+    if (next === value.trim()) {
+      setDraft(value);
+      return;
+    }
+    onSave(next);
+  };
+
+  return (
+    <input
+      className={`cp-inline ${className}`.trim()}
+      aria-label={label}
+      value={draft}
+      placeholder={placeholder}
+      disabled={disabled}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.currentTarget.blur();
+        } else if (e.key === "Escape") {
+          setDraft(value);
+          e.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
+
 function ProviderCard({ provider, busy, run }: { provider: ChatProviderVO; busy: string; run: Run }) {
   return (
     <section className="cp-provider">
       <header>
         <div>
-          <h3>{provider.name}</h3>
+          <InlineText
+            label="供应商名称"
+            className="cp-name"
+            value={provider.name}
+            disabled={!!busy}
+            onSave={(name) => {
+              if (!name) {
+                toast.error("供应商名称不能为空");
+                return;
+              }
+              void run(`pn-${provider.id}`, () => adminChatProvidersApi.updateProvider(provider.id, { name }), "已重命名");
+            }}
+          />
+          <InlineText
+            label="供应商备注"
+            className="cp-remark"
+            value={provider.remark}
+            placeholder="备注（可留空）"
+            disabled={!!busy}
+            onSave={(remark) =>
+              void run(`pr-${provider.id}`, () => adminChatProvidersApi.updateProvider(provider.id, { remark }), "已保存备注")
+            }
+          />
           <p>
             {provider.endpoints.length} 个接入地址 · {provider.models.filter((m) => m.enabled).length} /{" "}
             {provider.models.length} 个模型已开放
@@ -249,7 +329,14 @@ function EndpointList({ provider, busy, run }: { provider: ChatProviderVO; busy:
           </thead>
           <tbody>
             {provider.endpoints.map((endpoint, index) => (
-              <EndpointRow key={endpoint.id} endpoint={endpoint} index={index} busy={busy} run={run} />
+              <EndpointRow
+                key={endpoint.id}
+                endpoint={endpoint}
+                index={index}
+                siblings={provider.endpoints}
+                busy={busy}
+                run={run}
+              />
             ))}
           </tbody>
         </table>
@@ -277,22 +364,85 @@ function EndpointList({ provider, busy, run }: { provider: ChatProviderVO; busy:
 function EndpointRow({
   endpoint,
   index,
+  siblings,
   busy,
   run,
 }: {
   endpoint: ChatEndpointVO;
   index: number;
+  siblings: ChatEndpointVO[];
   busy: string;
   run: Run;
 }) {
   const [key, setKey] = useState("");
+
+  // Order is failover order, so it has to be changeable without deleting the
+  // address and typing its credential again. Swapping two rows takes two saves;
+  // they run inside one action so the list refreshes once, already in order.
+  const move = (delta: number) => {
+    const other = siblings[index + delta];
+    if (!other) return;
+    void run(
+      `em-${endpoint.id}`,
+      async () => {
+        const first = await adminChatProvidersApi.updateEndpoint(endpoint.id, { sortOrder: index + delta });
+        if (!first.success) return first;
+        return adminChatProvidersApi.updateEndpoint(other.id, { sortOrder: index });
+      },
+      "已调整顺序",
+    );
+  };
+
   return (
     <tr>
       <td>
-        <strong>#{index + 1}</strong>
-        {endpoint.label ? <small>{endpoint.label}</small> : null}
+        <div className="cp-order">
+          <strong>#{index + 1}</strong>
+          <button
+            type="button"
+            className="cp-move"
+            aria-label="上移，更早被尝试"
+            disabled={!!busy || index === 0}
+            onClick={() => move(-1)}
+          >
+            <ChevronUp aria-hidden size={14} />
+          </button>
+          <button
+            type="button"
+            className="cp-move"
+            aria-label="下移，更晚被尝试"
+            disabled={!!busy || index === siblings.length - 1}
+            onClick={() => move(1)}
+          >
+            <ChevronDown aria-hidden size={14} />
+          </button>
+        </div>
+        <InlineText
+          label="接入地址备注"
+          className="cp-remark"
+          value={endpoint.label}
+          placeholder="备注"
+          disabled={!!busy}
+          onSave={(label) =>
+            void run(`el-${endpoint.id}`, () => adminChatProvidersApi.updateEndpoint(endpoint.id, { label }), "已保存备注")
+          }
+        />
       </td>
-      <td className="mono">{endpoint.baseUrl}</td>
+      <td>
+        <InlineText
+          label="接入地址"
+          className="mono"
+          value={endpoint.baseUrl}
+          disabled={!!busy}
+          onSave={(baseUrl) => {
+            if (!baseUrl) {
+              toast.error("接入地址不能为空");
+              return;
+            }
+            void run(`eu-${endpoint.id}`, () => adminChatProvidersApi.updateEndpoint(endpoint.id, { baseUrl }), "已更新接入地址");
+          }}
+        />
+      </td>
       <td>
         <input
           type="password"
@@ -418,7 +568,16 @@ function ModelRow({ model, busy, run }: { model: ChatModelVO; busy: string; run:
   return (
     <tr>
       <td>
-        <strong>{model.name || model.modelKey}</strong>
+        <InlineText
+          label="模型显示名"
+          className="cp-name"
+          value={model.name}
+          placeholder={model.modelKey}
+          disabled={!!busy}
+          onSave={(name) =>
+            void run(`mn-${model.id}`, () => adminChatProvidersApi.updateModel(model.id, { name }), "已重命名")
+          }
+        />
         <small className="mono">{model.modelKey}</small>
         {model.priceError ? <small className="cp-bad">{model.priceError}</small> : null}
       </td>
