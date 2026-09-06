@@ -45,6 +45,7 @@ import { defaultAvatar } from "@/lib/default-avatar";
 import { hasAdminAccess } from "@/lib/admin-access";
 import type { UserVO } from "@/types/user";
 import { OrdersPanel, PointsPanel } from "./ledger-panels";
+import { ApiKeyPanel } from "./api-key-panel";
 import "./account.css";
 
 /* ── helpers ported from shell.js (FX.initials / FX.avatarGrad) ───────────── */
@@ -464,6 +465,7 @@ export default function AccountPage() {
 
           {/* stats — all real, no social placeholders */}
           <AccountStats points={user.points || 0} />
+          <ApiKeyPanel key={user.id} accountId={user.id} />
 
           <div className="pf-grid">
             {/* account info */}

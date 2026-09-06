@@ -9,13 +9,15 @@ import (
 	"tidecanvas/internal/config"
 	"tidecanvas/internal/pkg/alerting"
 	"tidecanvas/internal/pkg/storage"
+	"tidecanvas/internal/pkg/userkey"
 )
 
 // Deps is the application-wide dependency container.
 type Deps struct {
-	DB      *gorm.DB
-	RDB     *redis.Client
-	Cfg     *config.Config
-	Storage storage.StorageStrategy
-	Alerts  *alerting.Service
+	DB       *gorm.DB
+	RDB      *redis.Client
+	Cfg      *config.Config
+	Storage  storage.StorageStrategy
+	Alerts   *alerting.Service
+	UserKeys *userkey.Service
 }

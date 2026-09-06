@@ -35,6 +35,7 @@ import (
 	"tidecanvas/internal/pkg/response"
 	"tidecanvas/internal/pkg/storage"
 	"tidecanvas/internal/pkg/token"
+	"tidecanvas/internal/pkg/userkey"
 
 	"tidecanvas/internal/handler/admin"
 	"tidecanvas/internal/handler/ai"
@@ -46,6 +47,7 @@ import (
 	"tidecanvas/internal/handler/content"
 	"tidecanvas/internal/handler/file"
 	"tidecanvas/internal/handler/inspiration"
+	"tidecanvas/internal/handler/integration"
 	"tidecanvas/internal/handler/market"
 	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/handler/project"
@@ -102,6 +104,13 @@ func run() error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 	logger.L().Info("mysql connected & migrated")
+	userKeys, err := userkey.New(gdb, cfg.JWT.Secret)
+	if err != nil {
+		return fmt.Errorf("init user API keys: %w", err)
+	}
+	if err := userKeys.Install(); err != nil {
+		return fmt.Errorf("install user API key provisioning: %w", err)
+	}
 
 	// Demo/bootstrap seed: populate the 作品广场 / 灵感 (and a default admin author)
 	// when their tables are empty, so a fresh DB renders content without a manual
@@ -203,9 +212,10 @@ func run() error {
 	mailer.Init(cfg.Email)
 
 	alertService := alerting.New(gdb, cfg.Env, cfg.JWT.Secret)
-	deps := &app.Deps{DB: gdb, RDB: rdb, Cfg: cfg, Storage: store, Alerts: alertService}
+	deps := &app.Deps{DB: gdb, RDB: rdb, Cfg: cfg, Storage: store, Alerts: alertService, UserKeys: userKeys}
 	workerCtx, stopWorkers := context.WithCancel(context.Background())
 	defer stopWorkers()
+	userKeys.StartBackfill(workerCtx)
 	alertService.Start(workerCtx)
 	admin.StartSupplierBalanceMonitor(workerCtx, deps)
 	if err := alertService.EnsureDefaultRules(context.Background()); err != nil {
@@ -270,6 +280,7 @@ func run() error {
 	api := r.Group("/api")
 	stub.Register(api, deps)
 	auth.Register(api, deps)
+	integration.Register(api, deps)
 	project.Register(api, deps)
 	ai.Register(api, deps)
 	file.Register(api, deps)
