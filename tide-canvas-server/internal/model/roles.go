@@ -63,11 +63,14 @@ var FrontMenuKeys = []string{
 	"three_d",  // 3D模型 /three-d
 	"tools",    // 工具 /tools(智能工具中心)
 	"chat",     // 生成 /chat
+	"ai_chat",  // AI聊天 /ai-chat
 	"canvas",   // 画布 /projects
 	"explore",  // 作品广场 /explore
 	"inspire",  // 灵感 /inspire
 	"assets",   // 资产 /assets
 }
+
+var frontMenuBackfillKeys = []string{"three_d", "tools", "analysis", "ai_chat"}
 
 // ensureBaselineRoles inserts the 用户/管理员 roles when missing (never
 // overwriting admin edits) and backfills User.RoleID for existing rows:
@@ -129,7 +132,7 @@ func ensureBaselineRoles(db *gorm.DB) error {
 
 	// 新增前台菜单键的一次性回填:键发布前创建的角色不可能是管理员刻意取消的,
 	// 不补则新页签对全体存量登录用户隐身(菜单按角色 permissions 收窄)。
-	for _, key := range []string{"three_d", "tools", "analysis"} {
+	for _, key := range frontMenuBackfillKeys {
 		if err := backfillMenuKey(db, key); err != nil {
 			return err
 		}

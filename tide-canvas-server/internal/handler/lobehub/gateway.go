@@ -50,6 +50,13 @@ func gatewayError(c *gin.Context, status int, code, message string) {
 	c.JSON(status, gin.H{"error": gin.H{"type": code, "code": code, "message": message}})
 }
 
+// LobeHub's OpenAI-compatible runtime recognizes insufficient_quota and maps
+// it to a user-facing balance error. A custom HTTP 402 / insufficient_points
+// falls through to ProviderBizError and is displayed as an opaque 500.
+func gatewayInsufficientPoints(c *gin.Context) {
+	gatewayError(c, http.StatusTooManyRequests, "insufficient_quota", "可用积分不足以预留本次 Token 额度，请充值或降低输出上限")
+}
+
 func gatewayGenerationError(c *gin.Context, status int, code, message, modelName string, out *completion) {
 	result := gin.H{"error": gin.H{"type": code, "code": code, "message": message}}
 	if out.hasOutput() {
@@ -544,6 +551,9 @@ func upstreamErrorMessage(body io.Reader, status int) string {
 			text = ""
 		}
 	}
+	if strings.EqualFold(strings.TrimSpace(text), "error") {
+		text = ""
+	}
 	if runes := []rune(text); len(runes) > 2000 {
 		text = string(runes[:2000]) + "…"
 	}
@@ -657,7 +667,7 @@ func (s *service) chat(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, points.ErrInsufficient):
-			gatewayError(c, 402, "insufficient_points", "可用积分不足以预留本次 Token 额度，请充值或降低输出上限")
+			gatewayInsufficientPoints(c)
 		case errors.Is(err, errBusy):
 			gatewayError(c, 429, "concurrency_limit", "已有聊天正在生成，请稍后再试")
 		case errors.Is(err, errDaily):

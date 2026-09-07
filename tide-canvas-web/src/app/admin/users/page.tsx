@@ -134,6 +134,7 @@ const MENU_OPTIONS: { key: string; label: string }[] = [
   { key: "three_d", label: "3D模型" },
   { key: "tools", label: "工具" },
   { key: "chat", label: "生成" },
+  { key: "ai_chat", label: "AI聊天" },
   { key: "canvas", label: "画布" },
   { key: "explore", label: "作品广场" },
   { key: "inspire", label: "灵感" },

@@ -8,6 +8,32 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestFrontMenuKeysKeepChatAndAIChatIndependent(t *testing.T) {
+	found := map[string]int{}
+	for index, key := range FrontMenuKeys {
+		found[key] = index
+	}
+	if _, ok := found["chat"]; !ok {
+		t.Fatal("generation chat menu key is missing")
+	}
+	if _, ok := found["ai_chat"]; !ok {
+		t.Fatal("AI chat menu key is missing")
+	}
+	if found["chat"] == found["ai_chat"] || found["ai_chat"] != found["chat"]+1 {
+		t.Fatalf("chat menu order is not independent and adjacent: %#v", FrontMenuKeys)
+	}
+	backfilled := false
+	for _, key := range frontMenuBackfillKeys {
+		if key == "ai_chat" {
+			backfilled = true
+			break
+		}
+	}
+	if !backfilled {
+		t.Fatal("existing roles would not receive the new AI chat menu key")
+	}
+}
+
 func TestMenuBackfillRunsOnceAndPreservesLaterAdminChoice(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "roles.db")), &gorm.Config{})
 	if err != nil {

@@ -322,7 +322,7 @@ func TestGatewayRejectsInsufficientBalanceBeforeUpstream(t *testing.T) {
 	f := setup(t, "", up.URL)
 	f.s.d.DB.Model(&model.User{}).Where("id = ?", f.user.ID).Update("points", 0)
 	w := f.request("POST", "/api/integrations/v1/chat/completions", `{"model":"test-model","messages":[{"role":"user","content":"hello"}]}`, f.apiKey, nil)
-	if w.Code != 402 || calls.Load() != 0 {
+	if w.Code != http.StatusTooManyRequests || calls.Load() != 0 || !strings.Contains(w.Body.String(), `"code":"insufficient_quota"`) || !strings.Contains(w.Body.String(), "可用积分不足") {
 		t.Fatal("insufficient balance reached provider")
 	}
 	var count int64
