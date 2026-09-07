@@ -240,14 +240,15 @@ func TestGatewayChargesOnceAndKeepsPartialOutputBilling(t *testing.T) {
 			var user model.User
 			f.s.d.DB.First(&user, "id = ?", f.user.ID)
 			// An ending that reports usage is charged for it and releases the
-			// rest of the hold: 100 input + 100 output = 0.04 积分. "eof" and
+			// rest of the hold: 100 input + 100 output has a 0.04 raw cost and
+			// is charged as one whole point. "eof" and
 			// "error" report none, so the hold stays for manual review instead
 			// of the cost being guessed.
 			if ending == "stop" || ending == "length" {
-				if user.PointBalance() != 19.96 || user.PointHeldMicros != 0 {
+				if user.PointBalance() != 19 || user.PointHeldMicros != 0 {
 					t.Fatalf("%s: balance=%v held=%d body=%s", ending, user.PointBalance(), user.PointHeldMicros, w.Body.String())
 				}
-			} else if user.PointHeldMicros != 400_000 || user.Points != 20 {
+			} else if user.PointHeldMicros != 1_000_000 || user.Points != 20 {
 				t.Fatalf("%s: usage was absent, so nothing may be charged: balance=%v held=%d", ending, user.PointBalance(), user.PointHeldMicros)
 			}
 			expect := map[string]string{"stop": "hello", "length": "incomplete_response",
@@ -272,7 +273,7 @@ func TestGatewayChargesOnceAndKeepsPartialOutputBilling(t *testing.T) {
 				t.Fatal("idempotent retry repeated the provider call")
 			}
 			f.s.d.DB.First(&user, "id = ?", f.user.ID)
-			if ending == "stop" && (user.PointBalance() != 19.96 || user.PointHeldMicros != 0) {
+			if ending == "stop" && (user.PointBalance() != 19 || user.PointHeldMicros != 0) {
 				t.Fatalf("retry charged again: balance=%v held=%d", user.PointBalance(), user.PointHeldMicros)
 			}
 		})

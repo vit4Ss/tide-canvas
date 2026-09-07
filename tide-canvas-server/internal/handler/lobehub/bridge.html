@@ -5,6 +5,13 @@
 <script nonce="{{.Nonce}}">
 const config={{.Config}};
 document.getElementById('back').href=config.mainURL;
+const documentLoaded=new Promise(resolve=>document.readyState==='complete'?resolve():window.addEventListener('load',resolve,{once:true}));
+function notify(type,message){
+ try{
+  if(window.parent===window)return;
+  window.parent.postMessage({source:'flowinglight-ai-chat',type,message:message||''},new URL(config.mainURL).origin);
+ }catch(_error){}
+}
 async function login(signOut){
  if(config.afterSSO)throw new Error('登录账号与连接请求不一致，请返回主站重新连接。');
  if(signOut)await fetch('/api/auth/sign-out',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
@@ -19,6 +26,8 @@ async function login(signOut){
  if(response.status===401)return login(false);
  if(response.status===409&&data.error==='ACCOUNT_MISMATCH')return login(true);
  if(!response.ok||!data.ok)throw new Error(data.message||'暂时无法连接，请返回主站重试。');
+ await documentLoaded;
+ notify('bound');
  window.location.replace(config.lobeURL+'/');
-})().catch(error=>{document.getElementById('status').textContent=error.message;});
+})().catch(error=>{document.getElementById('status').textContent=error.message;notify('error',error.message);});
 </script></html>

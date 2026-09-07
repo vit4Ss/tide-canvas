@@ -531,7 +531,10 @@ function ModelList({ provider, busy, run }: { provider: ChatProviderVO; busy: st
           <thead>
             <tr>
               <th>模型</th>
-              <th>输入 / 输出 积分每 1M Token</th>
+              <th>
+                输入 / 输出 积分每 1M Token
+                <small>单次费用非零时向上取整为整数积分</small>
+              </th>
               <th>Token 上限</th>
               <th>
                 图片

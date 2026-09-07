@@ -3,7 +3,21 @@ package tokenbilling
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/shopspring/decimal"
 )
+
+func TestWholePointCeilingKeepsZeroAndExactIntegersStable(t *testing.T) {
+	for _, test := range []struct {
+		micros int64
+		want   int64
+	}{{0, 0}, {1, Scale}, {Scale, Scale}, {Scale + 1, 2 * Scale}} {
+		got, err := wholePointMicros(decimal.NewFromInt(test.micros))
+		if err != nil || got != test.want {
+			t.Fatalf("wholePointMicros(%d) = %d, %v; want %d", test.micros, got, err, test.want)
+		}
+	}
+}
 
 func TestTokenPriceUsesCacheAsInputSubsetAndReasoningAsOutputSubset(t *testing.T) {
 	p, err := Parse(`{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"100","outputPointsPerMillion":"300","cachedInputPointsPerMillion":"20","maxInputTokens":1000,"maxOutputTokens":1000}}`)
@@ -17,12 +31,19 @@ func TestTokenPriceUsesCacheAsInputSubsetAndReasoningAsOutputSubset(t *testing.T
 		t.Fatal(err)
 	}
 	cost, err := p.Cost(usage, 1000)
-	if err != nil || cost != 68_400 {
+	if err != nil || cost != 1_000_000 {
 		t.Fatalf("wrong token fee: %d %v", cost, err)
 	}
 	reserved, err := p.Reserve(1000)
-	if err != nil || reserved != 400_000 {
+	if err != nil || reserved != 1_000_000 {
 		t.Fatalf("wrong hold: %d %v", reserved, err)
+	}
+	zero, err := p.Cost(&Usage{}, 1000)
+	if err != nil || zero != 0 {
+		t.Fatalf("zero usage cost: %d %v", zero, err)
+	}
+	if !ReservationCovers(400_000, 1_000_000) || ReservationCovers(400_000, 2_000_000) || ReservationCovers(1_000_000, 2_000_000) {
+		t.Fatal("whole-point reservation compatibility boundary is wrong")
 	}
 }
 

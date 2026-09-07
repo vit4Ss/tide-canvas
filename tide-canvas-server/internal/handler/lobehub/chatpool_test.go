@@ -78,7 +78,7 @@ func TestAFailedAddressFallsThroughToTheBackup(t *testing.T) {
 	}
 	var user model.User
 	f.s.d.DB.First(&user, "id = ?", f.user.ID)
-	if user.PointBalance() != 19.96 || user.PointHeldMicros != 0 {
+	if user.PointBalance() != 19 || user.PointHeldMicros != 0 {
 		t.Fatalf("failover charged twice or stranded a hold: %v held=%d", user.PointBalance(), user.PointHeldMicros)
 	}
 }

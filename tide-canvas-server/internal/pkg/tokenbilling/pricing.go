@@ -68,6 +68,20 @@ func rateMicros(raw string) (decimal.Decimal, error) {
 	return rate.Mul(decimal.NewFromInt(Scale)), nil
 }
 
+// wholePointMicros converts a non-negative calculated micro-point amount into
+// the product's user-facing billing unit. Every non-zero calculated fee costs
+// a whole number of points; a zero calculated fee remains free.
+func wholePointMicros(value decimal.Decimal) (int64, error) {
+	if value.IsZero() {
+		return 0, nil
+	}
+	points := value.Div(decimal.NewFromInt(Scale)).Ceil()
+	if points.IsNegative() || points.GreaterThan(decimal.NewFromInt(math.MaxInt64/Scale)) {
+		return 0, ErrPricing
+	}
+	return points.IntPart() * Scale, nil
+}
+
 func (p *Pricing) Reserve(maxOutput int64) (int64, error) {
 	input, _ := rateMicros(p.Input)
 	cached, _ := rateMicros(p.CachedInput)
@@ -75,11 +89,8 @@ func (p *Pricing) Reserve(maxOutput int64) (int64, error) {
 	if cached.GreaterThan(input) {
 		input = cached
 	}
-	value := input.Mul(decimal.NewFromInt(p.MaxInput)).Add(output.Mul(decimal.NewFromInt(maxOutput))).Div(decimal.NewFromInt(Scale)).Ceil()
-	if value.GreaterThan(decimal.NewFromInt(math.MaxInt64)) {
-		return 0, ErrPricing
-	}
-	return value.IntPart(), nil
+	value := input.Mul(decimal.NewFromInt(p.MaxInput)).Add(output.Mul(decimal.NewFromInt(maxOutput))).Div(decimal.NewFromInt(Scale))
+	return wholePointMicros(value)
 }
 
 type Usage struct {
@@ -151,11 +162,29 @@ func (p *Pricing) Cost(usage *Usage, maxOutput int64) (int64, error) {
 	in, _ := rateMicros(p.Input)
 	out, _ := rateMicros(p.Output)
 	cached, _ := rateMicros(p.CachedInput)
-	value := in.Mul(decimal.NewFromInt(usage.Input - usage.Cached)).Add(cached.Mul(decimal.NewFromInt(usage.Cached))).Add(out.Mul(decimal.NewFromInt(usage.Output))).Div(decimal.NewFromInt(Scale)).Ceil()
-	if value.GreaterThan(decimal.NewFromInt(math.MaxInt64)) {
-		return 0, ErrPricing
+	value := in.Mul(decimal.NewFromInt(usage.Input - usage.Cached)).Add(cached.Mul(decimal.NewFromInt(usage.Cached))).Add(out.Mul(decimal.NewFromInt(usage.Output))).Div(decimal.NewFromInt(Scale))
+	return wholePointMicros(value)
+}
+
+// ReservationCovers accepts current whole-point reservations and the smaller
+// fractional reservations written before whole-point billing was introduced.
+// A legacy reservation may grow only to its own whole-point ceiling.
+func ReservationCovers(reserved, cost int64) bool {
+	if reserved < 0 || cost < 0 {
+		return false
 	}
-	return value.IntPart(), nil
+	if cost <= reserved {
+		return true
+	}
+	if reserved == 0 || reserved%Scale == 0 {
+		return false
+	}
+	whole := reserved / Scale
+	if whole >= math.MaxInt64/Scale {
+		return false
+	}
+	ceiling := (whole + 1) * Scale
+	return cost <= ceiling
 }
 
 func (p *Pricing) Label(name string) string {

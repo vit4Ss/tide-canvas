@@ -54,7 +54,7 @@ func TestGatewayConcurrentReservationAndDailyLimit(t *testing.T) {
 	}
 	var user model.User
 	f.s.d.DB.First(&user, "id = ?", f.user.ID)
-	if user.PointBalance() != 19.96 || user.PointHeldMicros != 0 {
+	if user.PointBalance() != 19 || user.PointHeldMicros != 0 {
 		t.Fatalf("wrong final balance: %v held=%d", user.PointBalance(), user.PointHeldMicros)
 	}
 }
@@ -96,7 +96,7 @@ func TestGatewayToolCycleAndInvalidInputs(t *testing.T) {
 	}
 	var user model.User
 	f.s.d.DB.First(&user, "id = ?", f.user.ID)
-	if user.PointBalance() != 19.96 || user.PointHeldMicros != 0 {
+	if user.PointBalance() != 19 || user.PointHeldMicros != 0 {
 		t.Fatalf("invalid input charged or left a reservation: %v held=%d", user.PointBalance(), user.PointHeldMicros)
 	}
 }

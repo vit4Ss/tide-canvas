@@ -2,11 +2,10 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUpRight, ExternalLink, Loader2, MessageSquare, RefreshCw, Wallet, X } from "lucide-react";
+import { Loader2, MessageSquare, RefreshCw } from "lucide-react";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { allowedLobeRedirect, lobeHubApi, type LobeHubConfig } from "@/lib/lobehub-api";
 import "./ai-chat.css";
-import TokenBillingPanel from "@/components/shared/token-billing-panel";
 
 /** True while this document is rendered inside a frame. */
 function framed() {
@@ -23,11 +22,14 @@ export default function AIChatPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [frameUrl, setFrameUrl] = useState("");
+  const [frameReady, setFrameReady] = useState(false);
   const user = useAuthStore((s) => s.user);
   const ensureSession = useAuthStore((s) => s.ensureSession);
   const fetchUser = useAuthStore((s) => s.fetchUser);
   const lock = useRef(false);
   const mounted = useRef(false);
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const awaitingChatDocument = useRef(false);
   useEffect(() => {
     // LobeHub sends a lost session to /signin, which the chat host redirects
     // back here. Inside the embed that would nest this page in itself, so climb
@@ -72,14 +74,61 @@ export default function AIChatPage() {
       }
       if (!result.success || !result.data) { setError(result.message || "暂时无法连接 AI 聊天"); return; }
       if (!allowedLobeRedirect(result.data.url, config.url)) { setError("聊天地址配置异常，请联系管理员"); return; }
+      awaitingChatDocument.current = false;
+      setFrameReady(false);
       setFrameUrl(result.data.url);
     } catch { if (mounted.current) setError("连接暂时失败，请稍后重试"); }
     finally { lock.current = false; if (mounted.current) setBusy(false); }
   }, [config, user]);
 
+  // The cross-origin bridge reports when account binding has completed. Keep
+  // every connect/OIDC hand-off covered, then reveal only the following LobeHub
+  // document. Origin + Window checks prevent another frame from spoofing it.
+  useEffect(() => {
+    if (!config?.url) return;
+    let expectedOrigin = "";
+    try { expectedOrigin = new URL(config.url).origin; } catch { return; }
+    const receive = (event: MessageEvent) => {
+      if (event.origin !== expectedOrigin || event.source !== frameRef.current?.contentWindow) return;
+      const message = event.data as { source?: unknown; type?: unknown; message?: unknown } | null;
+      if (!message || message.source !== "flowinglight-ai-chat") return;
+      if (message.type === "bound") {
+        awaitingChatDocument.current = true;
+      } else if (message.type === "error") {
+        awaitingChatDocument.current = false;
+        setFrameReady(false);
+        setFrameUrl("");
+        setError(typeof message.message === "string" && message.message.trim()
+          ? message.message.trim().slice(0, 240)
+          : "AI 聊天连接失败，请重新尝试");
+      }
+    };
+    window.addEventListener("message", receive);
+    return () => window.removeEventListener("message", receive);
+  }, [config?.url]);
+
+  // Never reveal an authorization/bridge document as if it were the chat. A
+  // stalled or mixed-version deployment becomes a recoverable connection error.
+  useEffect(() => {
+    if (!frameUrl || frameReady) return;
+    let timer = 0;
+    let finalWaits = 0;
+    const expire = () => {
+      if (awaitingChatDocument.current && finalWaits < 2) {
+        finalWaits += 1;
+        timer = window.setTimeout(expire, 10_000);
+        return;
+      }
+      setFrameUrl("");
+      setError("AI 聊天连接超时，请重新尝试");
+    };
+    timer = window.setTimeout(expire, 20_000);
+    return () => window.clearTimeout(timer);
+  }, [frameUrl, frameReady]);
+
   // Entering is what this page is for, so it happens on arrival. Exactly one
-  // attempt per visit: "退出聊天" has to stay usable, and a failed connection
-  // must leave the entry panel readable instead of retrying in a loop.
+  // automatic attempt per visit; a failed connection becomes an explicit retry
+  // instead of looping behind the loading shell.
   const autoEntered = useRef(false);
   useEffect(() => {
     if (autoEntered.current || !config?.enabled || !user) return;
@@ -88,40 +137,50 @@ export default function AIChatPage() {
     return () => cancelAnimationFrame(frame);
   }, [config, user, connect]);
 
-  // A ticket is single-use, so leaving the embed must also drop its URL: the
-  // next entry asks for a fresh one instead of replaying a spent connection.
-  const leave = useCallback(() => { setFrameUrl(""); void fetchUser(true); }, [fetchUser]);
-
   if (frameUrl) {
     return <div className="ai-chat-embed">
       <div className="ai-chat-embed-bar">
         <span className="ai-chat-embed-title"><MessageSquare size={16} aria-hidden /> AI 聊天</span>
-        <span className="ai-chat-embed-balance"><Wallet size={15} aria-hidden />可用积分 <strong>{user?.points?.toLocaleString("zh-CN", {maximumFractionDigits: 6}) ?? "—"}</strong></span>
-        <button type="button" onClick={connect} disabled={busy} title="重新同步模型与价格，会回到聊天首页">
+        <button type="button" className="ai-chat-reconnect" onClick={connect} disabled={busy} title="重新连接并同步模型与价格" aria-label="重新连接 AI 聊天">
           {busy ? <Loader2 size={14} className="animate-spin" aria-hidden /> : <RefreshCw size={14} aria-hidden />}
-          {busy ? "同步中…" : "同步模型价格"}
         </button>
-        <a href={frameUrl} target="_blank" rel="noreferrer noopener"><ExternalLink size={14} aria-hidden />在新标签页打开</a>
-        <button type="button" onClick={leave}><X size={14} aria-hidden />退出聊天</button>
       </div>
-      <iframe className="ai-chat-frame" src={frameUrl} title="AI 聊天" allow="clipboard-write; microphone" />
+      <div className="ai-chat-stage" data-ready={frameReady ? "true" : "false"}>
+        <iframe
+          ref={frameRef}
+          className="ai-chat-frame"
+          src={frameUrl}
+          title="AI 聊天"
+          allow="clipboard-write; microphone"
+          tabIndex={frameReady ? 0 : -1}
+          aria-hidden={!frameReady}
+          onLoad={() => {
+            if (!awaitingChatDocument.current) return;
+            awaitingChatDocument.current = false;
+            setFrameReady(true);
+          }}
+        />
+        {!frameReady && <div className="ai-chat-boot" aria-live="polite" aria-busy="true"><Loader2 aria-hidden /><span className="sr-only">正在进入 AI 聊天</span></div>}
+      </div>
     </div>;
   }
 
-  return <main className="ai-chat-entry">
-    <header><MessageSquare aria-hidden /><h1>AI 聊天</h1><p>使用流光账号，连接你的 AI 对话空间。</p></header>
-    <section className="ai-chat-entry-panel">
-      <div className="ai-chat-balance"><Wallet size={18} aria-hidden /><span>可用积分</span><strong>{user?.points?.toLocaleString("zh-CN", {maximumFractionDigits: 6}) ?? "—"}</strong></div>
-      <p>打开本页即自动连接，聊天在本页内展开。聊天记录保存在你的独立账号中，模型调用使用主站积分。</p>
-      <p className="ai-chat-note">计费方式由每个模型各自的后台配置决定：配置了 Token 单价的模型按每百万输入、输出 Token 结算，调用前预留额度、结束后按真实用量扣费并释放余量；其余模型仍按单次价格计费。模型列表会标出各自的价格，工具循环和辅助调用也归属你的 API Key。</p>
-      {error && <p role="alert" className="ai-chat-error">{error}</p>}
-      {config && !config.enabled && <p role="status">AI 聊天尚未开放，请管理员完成接入配置。</p>}
+  const unavailable = error || (config && !config.enabled ? "AI 聊天尚未开放，请联系管理员完成接入配置。" : "");
+  if (!unavailable) {
+    return <main className="ai-chat-boot" aria-live="polite" aria-busy="true"><Loader2 aria-hidden /><span className="sr-only">正在进入 AI 聊天</span></main>;
+  }
+  return <main className="ai-chat-entry ai-chat-failure">
+    <section className="ai-chat-entry-panel" role="alert">
+      <MessageSquare aria-hidden />
+      <h1>暂时无法进入 AI 聊天</h1>
+      <p className="ai-chat-error">{unavailable}</p>
       <div className="ai-chat-entry-actions">
-        <button type="button" disabled={busy || !config?.enabled || !user} onClick={connect}>{busy ? <Loader2 size={17} className="animate-spin" /> : <ArrowUpRight size={17} />} {busy ? "正在连接…" : "进入 AI 聊天"}</button>
-        {error && !user && <Link href="/login?redirect=%2Fai-chat">重新登录</Link>}
-        <Link href="/account">账户与 API Key</Link><Link href="/billing">充值积分</Link>
+        <button type="button" disabled={busy} onClick={() => {
+          if (config?.enabled && user) void connect();
+          else window.location.replace("/ai-chat");
+        }}>{busy ? <Loader2 size={17} className="animate-spin" aria-hidden /> : <RefreshCw size={17} aria-hidden />}重新尝试</button>
+        {!user && <Link href="/login?redirect=%2Fai-chat">重新登录</Link>}
       </div>
     </section>
-    {config?.enabled && <TokenBillingPanel />}
   </main>;
 }

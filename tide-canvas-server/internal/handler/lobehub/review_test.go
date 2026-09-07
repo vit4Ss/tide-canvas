@@ -54,10 +54,11 @@ func TestOneEntryAndOnePriceWhenProvidersShareAModelID(t *testing.T) {
 	if w := f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, nil); w.Code != 200 {
 		t.Fatalf("call failed: %d %s", w.Code, w.Body.String())
 	}
-	// 100 input at 100/M + 100 output at 300/M = 0.04 — the quoted price.
+	// 100 input at 100/M + 100 output at 300/M = 0.04 raw points, rounded
+	// to one whole point by the per-request billing contract.
 	var user model.User
 	f.s.d.DB.First(&user, "id = ?", f.user.ID)
-	if user.PointBalance() != 19.96 {
+	if user.PointBalance() != 19 {
 		t.Fatalf("charged at a price the user was not quoted: %v", user.PointBalance())
 	}
 }
@@ -86,7 +87,7 @@ func TestInterruptedTerminalChunkRetainsContentAndReplay(t *testing.T) {
 			}
 			var user model.User
 			f.s.d.DB.First(&user, "id = ?", f.user.ID)
-			if user.PointBalance() != 19.96 || user.PointHeldMicros != 0 || calls.Load() != 1 {
+			if user.PointBalance() != 19 || user.PointHeldMicros != 0 || calls.Load() != 1 {
 				t.Fatalf("partial response replay charged twice: balance=%v held=%d calls=%d",
 					user.PointBalance(), user.PointHeldMicros, calls.Load())
 			}

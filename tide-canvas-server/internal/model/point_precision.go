@@ -2,8 +2,9 @@ package model
 
 import "github.com/shopspring/decimal"
 
-// Existing integer-priced features keep using Points; the positive fractional
-// remainder makes token debits exact without letting legacy debits overspend.
+// Existing integer-priced features keep using Points; the fractional remainder
+// preserves historical token settlements and active reservations without
+// letting legacy balances overspend. New AI chat charges are whole-point values.
 const PointScale int64 = 1_000_000
 
 func (u *User) PointBalance() float64 {

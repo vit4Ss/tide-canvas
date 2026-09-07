@@ -272,7 +272,7 @@ export default function AdminPointsPage() {
       <StatCardGrid items={kpis} />
 
       <AdminAlert tone="info" title="AI 聊天按 Token 计费">
-        LobeHub 的模型调用按每百万 Token 单价结算，明细不在下方按次流水里展开。
+        LobeHub 按实际 Token 用量计算，费用非零时向上取整为整数积分；结算结果会进入下方积分流水，Token 用量与计价快照在独立账单中核对。
         <Link href="/admin/points/token-billing"> 查看 Token 调用账单 →</Link>
       </AdminAlert>
 

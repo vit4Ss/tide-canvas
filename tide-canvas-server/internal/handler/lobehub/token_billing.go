@@ -32,7 +32,7 @@ func (s *service) settleTokens(parent context.Context, row *model.ModelGatewayRe
 		if usageErr == nil && pricingErr == nil {
 			var err error
 			actual, err = pricing.Cost(usage, result.MaxOutputTokens)
-			if err != nil || actual > result.ReservedMicros {
+			if err != nil || !tokenbilling.ReservationCovers(result.ReservedMicros, actual) {
 				usageErr = tokenbilling.ErrLimit
 			}
 		}
@@ -80,6 +80,9 @@ func (s *service) settleTokens(parent context.Context, row *model.ModelGatewayRe
 }
 
 func tokenCostLabel(micros int64) string {
+	if micros%tokenbilling.Scale == 0 {
+		return fmt.Sprint(micros / tokenbilling.Scale)
+	}
 	return fmt.Sprintf("%.6f", float64(micros)/float64(tokenbilling.Scale))
 }
 

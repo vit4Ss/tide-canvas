@@ -74,13 +74,13 @@ test("invalid authorization handles never reach the approval endpoint", async ()
   assert.equal(h.states.length, 1);
 });
 
-test("expired main session returns to login with the authorization request intact", async () => {
+test("expired main session returns through login to a fresh direct chat launch", async () => {
   const h = authorizationHarness(request, async () => false); await flush();
   assert.equal(h.approvals, 0);
   assert.equal(h.navigations.length, 1);
   const target = new URL(h.navigations[0], "https://main.example");
   assert.equal(target.pathname, "/login");
-  assert.equal(target.searchParams.get("redirect"), "/ai-chat/authorize?request=" + request);
+  assert.equal(target.searchParams.get("redirect"), "/ai-chat");
 });
 
 test("late session failure after unmount does not redirect the user away", async () => {
@@ -101,7 +101,8 @@ function entryHarness({ ancestor } = {}) {
     requestAnimationFrame:fn=>frames.push(fn)||frames.length,
     cancelAnimationFrame:()=>{},
     window:(()=>{
-      const self={location:{replace:url=>navigations.push(url),assign:url=>navigations.push(url)}};
+      const self={location:{replace:url=>navigations.push(url),assign:url=>navigations.push(url)},
+        addEventListener:()=>{},removeEventListener:()=>{},setTimeout:()=>1,clearTimeout:()=>{}};
       self.self=self;
       // "opaque" models a foreign ancestor: reading window.top throws, exactly
       // as a cross-origin embedder behaves.
@@ -116,7 +117,7 @@ function entryHarness({ ancestor } = {}) {
         useState:initial=>{const index=cursor++; hooks[index]??={value:initial}; return [hooks[index].value,value=>{hooks[index].value=value;}];},
         useRef:initial=>hooks[cursor++]??={current:initial},
         useEffect:effect=>{const index=cursor++; effects[index]=effect;},
-        useCallback:fn=>{cursor++; return fn;},
+        useCallback:fn=>{const index=cursor++;hooks[index]??={};hooks[index].callback=fn;return fn;},
       };
       if(name === "react/jsx-runtime") return {jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})};
       if(name.includes("use-auth-store")) return {useAuthStore};
@@ -134,7 +135,6 @@ function entryHarness({ ancestor } = {}) {
     if(match(node))return node;
     return [node.props?.children].flat().map(child=>find(child,match)).find(Boolean);
   };
-  const button=label=>find(render(),node=>node.type==="button"&&JSON.stringify(node.props?.children||"").includes(label));
   return {hooks,navigations,escapes,render,find,
     // Effects are indexed by hook position, so replay every one the render
     // registered, not just the first.
@@ -145,8 +145,7 @@ function entryHarness({ ancestor } = {}) {
     // harness's setState does not re-render, so a settle stands in for it.
     settle:async()=>{render();effects.filter(Boolean).forEach(effect=>effect());
       const queued=frames.splice(0);queued.forEach(fn=>fn());await flush();},
-    leave:()=>button("退出聊天")?.props.onClick(),
-    connect:()=>find(render(),node=>node.type==="button").props.onClick(),
+    connect:()=>{render();return hooks.find(item=>item?.callback)?.callback();},
     resync:()=>find(render(),node=>node.type==="button"&&String(node.props?.title||"").includes("同步")).props.onClick(),
     finishLaunch:(...args)=>finishLaunch(...args),
     rotateSession:()=>{sessionToken="account-b-token";},
@@ -179,10 +178,6 @@ test("a connected chat is embedded in this page instead of navigating away", asy
   const frame = h.frame;
   assert.ok(frame,"the chat is not embedded");
   assert.equal(frame.props.src,url);
-  // The escape hatch stays available when a browser refuses to frame the chat.
-  const link = h.find(h.render(),node=>node.type==="a"&&node.props?.target==="_blank");
-  assert.equal(link.props.href,url);
-  assert.equal(link.props.rel,"noreferrer noopener");
   cleanup();
 });
 
@@ -245,15 +240,12 @@ test("the page connects on arrival without waiting for a click", async () => {
   cleanup();
 });
 
-test("leaving the chat is not undone by another automatic connect", async () => {
-  const h = entryHarness();
-  const cleanup = h.start(); await flush();
-  await h.settle();
-  h.finishLaunch({success:true,data:{url:origin+"/flowinglight/connect?ticket=auto"}});
-  await flush();
-  assert.ok(h.frame);
-
-  h.leave(); await flush(); await h.settle();
-  assert.equal(h.frame,undefined,"exiting must not immediately reconnect");
-  cleanup();
+test("normal entry hides the account and token-billing intermediary UI", () => {
+  const source = readFileSync(new URL("./page.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /TokenBillingPanel|可用积分|Token 调用账单|充值积分|账户与 API Key/);
+  assert.match(source, /className="ai-chat-boot"/);
+  assert.match(source, /tabIndex=\{frameReady \? 0 : -1\}[\s\S]*aria-hidden=\{!frameReady\}/);
+  assert.match(source, /message\.type === "bound"[\s\S]*setFrameReady\(true\)/);
+  assert.match(source, /AI 聊天连接超时，请重新尝试/);
+  assert.doesNotMatch(source, /setTimeout\(\(\) => setFrameReady\(true\)/);
 });

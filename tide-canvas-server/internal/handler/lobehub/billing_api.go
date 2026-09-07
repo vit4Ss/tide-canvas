@@ -108,7 +108,7 @@ func (s *service) resolveBilling(c *gin.Context) {
 				return err
 			}
 			cost, err = pricing.Cost(usage, row.MaxOutputTokens)
-			if err != nil || cost > row.ReservedMicros {
+			if err != nil || !tokenbilling.ReservationCovers(row.ReservedMicros, cost) {
 				return tokenbilling.ErrLimit
 			}
 			status = "partial"

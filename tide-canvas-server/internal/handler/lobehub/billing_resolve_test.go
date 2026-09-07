@@ -50,8 +50,10 @@ func TestResolvingABillReleasesTheHoldAndChargesOnlyVerifiedTokens(t *testing.T)
 
 	var settled model.ModelGatewayRequest
 	f.s.d.DB.First(&settled, "id = ?", row.ID)
-	// 100 input − 20 cached at 100/M, 20 cached at 20/M, 200 output at 300/M.
-	if settled.CostMicros != 68_400 || settled.Status == "billing_pending" || settled.ErrorCode != "" {
+	// 100 input − 20 cached at 100/M, 20 cached at 20/M, 200 output at
+	// 300/M produces 0.0684 raw points and settles as one whole point. The
+	// 0.4-point hold models a pending row created before integer billing.
+	if settled.CostMicros != 1_000_000 || settled.Status == "billing_pending" || settled.ErrorCode != "" {
 		t.Fatalf("unexpected settlement: cost=%d status=%s code=%s", settled.CostMicros, settled.Status, settled.ErrorCode)
 	}
 	if settled.BillingResolution != "上游日志确认用量" || settled.BillingResolvedBy == 0 || settled.BillingResolvedAt == nil {
@@ -59,7 +61,7 @@ func TestResolvingABillReleasesTheHoldAndChargesOnlyVerifiedTokens(t *testing.T)
 	}
 	var user model.User
 	f.s.d.DB.First(&user, "id = ?", f.user.ID)
-	if user.PointHeldMicros != 0 || user.PointBalance() != 19.9316 {
+	if user.PointHeldMicros != 0 || user.PointBalance() != 19 {
 		t.Fatalf("hold or charge is wrong: held=%d balance=%v", user.PointHeldMicros, user.PointBalance())
 	}
 
@@ -68,7 +70,7 @@ func TestResolvingABillReleasesTheHoldAndChargesOnlyVerifiedTokens(t *testing.T)
 		t.Fatal("a settled bill was resolved twice")
 	}
 	f.s.d.DB.First(&user, "id = ?", f.user.ID)
-	if user.PointBalance() != 19.9316 {
+	if user.PointBalance() != 19 {
 		t.Fatalf("balance moved on the second resolve: %v", user.PointBalance())
 	}
 }
