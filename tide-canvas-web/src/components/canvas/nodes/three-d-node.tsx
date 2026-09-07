@@ -97,6 +97,7 @@ export const ThreeDNode = memo(function ThreeDNode({
   const cost = modelConfig.creditCost ?? selectedModel?.pointCost ?? 0;
   const cardHeight = Math.round(node.width * 9 / 16);
   const hasRenderableModel = !!directorSceneAsset;
+  const uploading = !!node.uploading;
 
   // 图生 3D 的全景识别：站内全景节点带 is360/2:1 标记；用户上传的全景照片
   // 没有任何标记，按真实像素比例（equirectangular ≈ 2:1）识别。误判可用
@@ -137,6 +138,7 @@ export const ThreeDNode = memo(function ThreeDNode({
     && (panoOverride ?? (i2SourceFlagged || panoAutoDetected));
 
   const handleGenerate = () => {
+    if (uploading) return;
     const prompt = node.prompt?.trim() || "";
     if (!modelId) {
       toast.error("暂无可用的 3D 模型");
@@ -282,8 +284,9 @@ export const ThreeDNode = memo(function ThreeDNode({
           </div>
         ) : null}
 
-        {generating && <NodeGeneratingOverlay label={isWorldModel ? "正在生成 Marble 3D 场景..." : "正在生成 3D 模型..."} />}
-        {node.status === "error" && !generating && !node.modelSrc && <NodeErrorBadge />}
+        {uploading && <NodeGeneratingOverlay label={`正在上传 GLB${node.uploadProgress ? ` ${node.uploadProgress}%` : "..."}`} />}
+        {generating && !uploading && <NodeGeneratingOverlay label={isWorldModel ? "正在生成 Marble 3D 场景..." : "正在生成 3D 模型..."} />}
+        {node.status === "error" && !generating && !uploading && !node.modelSrc && <NodeErrorBadge />}
       </div>
 
       {/* 端口必须与 overflow-hidden 卡片同级：端口锚在卡片外，放卡片内会被整体裁掉 */}
@@ -431,9 +434,9 @@ export const ThreeDNode = memo(function ThreeDNode({
             <div className="flex items-center gap-2 text-xs text-neutral-500">
               <span className="flex items-center gap-1 tabular-nums"><Zap className="h-3 w-3" fill="currentColor" />{cost}</span>
               <GenerateSubmitButton
-                disabled={generating || !modelId}
+                disabled={generating || uploading || !modelId}
                 generating={generating}
-                title={generating ? "生成中..." : "开始生成 3D"}
+                title={uploading ? "GLB 上传中..." : generating ? "生成中..." : "开始生成 3D"}
                 onClick={handleGenerate}
               />
             </div>

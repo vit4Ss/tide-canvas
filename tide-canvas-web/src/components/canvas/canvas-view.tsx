@@ -24,8 +24,9 @@ import { CanvasContextMenu, type ContextMenuState } from "./canvas-context-menu"
 import { CanvasBottomToolbar } from "./canvas-bottom-toolbar";
 import { MyAssetsPanel } from "./my-assets-panel";
 import { CanvasHistoryPanel } from "./canvas-history-panel";
-import { FileCategory, FileType, type FileVO } from "@/types/file";
+import { FileCategory, type FileVO } from "@/types/file";
 import { fileApi, uploadFileSmart } from "@/lib/api";
+import { CANVAS_DROP_ACCEPT, canvasDropFileInfo, canvasStoredFileInfo, normalizeCanvasDropFile, type CanvasDropFileInfo } from "@/lib/canvas-drop-files";
 import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE } from "@/lib/canvas-node-types";
 import { toast } from "@/components/shared/toast";
 import { CanvasMinimap } from "./canvas-minimap";
@@ -43,6 +44,14 @@ interface CanvasViewProps {
   persistenceReady?: boolean;
   onLaunchConsumed?: () => void;
 }
+
+interface CanvasUploadFile {
+  file: File;
+  info: CanvasDropFileInfo;
+}
+
+const MAX_CANVAS_UPLOAD_FILES = 24;
+const CANVAS_UPLOAD_CONCURRENCY = 3;
 
 export function CanvasView({ launchJournal, persistenceReady = false, onLaunchConsumed }: CanvasViewProps) {
   // A journal that already froze/submitted the legacy single-model payload
@@ -163,23 +172,30 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
     handleAddNode(type, world.x, world.y);
   }, [getViewportCenter, handleAddNode]);
 
-  // 「我的素材」点选：在视口中心新建图片/视频节点并填入该素材 URL
+  // 「我的素材」点选：在视口中心新建对应媒体节点并填入该素材 URL
   const addAssetToCanvas = useCallback((file: FileVO) => {
     const rect = containerRef.current?.getBoundingClientRect();
     const sx = rect ? rect.left + rect.width / 2 : 0;
     const sy = rect ? rect.top + rect.height / 2 : 0;
     const world = panZoom.screenToWorld(sx, sy);
-    const type =
-      file.category === FileCategory.CHARACTER
+    const media = canvasStoredFileInfo({ name: file.originalName, type: file.mimeType, fileType: file.fileType });
+    const type = media?.kind === "image" && file.category === FileCategory.CHARACTER
         ? CHARACTER_NODE_TYPE
-        : file.category === FileCategory.SCENE
+        : media?.kind === "image" && file.category === FileCategory.SCENE
           ? SCENE_NODE_TYPE
-          : file.fileType === FileType.VIDEO
-            ? "video"
-            : "image";
+          : media?.kind ?? "";
+    if (!type) {
+      toast.error("该素材暂不能添加到画布；支持图片、视频、音频或 GLB 模型");
+      return;
+    }
     const node = createNode(type, world.x, world.y, nodes);
     if (type === "video") {
       node.videoSrc = file.fileUrl;
+    } else if (type === "audio") {
+      node.audioSrc = file.fileUrl;
+    } else if (type === "3d") {
+      node.modelSrc = file.fileUrl;
+      node.modelAssets = [{ type: "glb", url: file.fileUrl }];
     } else {
       node.imageSrc = file.fileUrl;
     }
@@ -337,7 +353,7 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
       : canvasConnectionRule(candidate, origin).allowed;
   }, [connection.quickAdd, nodes]);
 
-  // 从系统拖入文件到画布：上传图片/视频，并在落点生成对应节点（多文件错开排列）
+  // 从系统拖入文件到画布：识别图片/视频/音频/GLB，并在落点生成对应节点（多文件错开排列）
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (e.dataTransfer.types.includes("Files")) {
       e.preventDefault();
@@ -353,25 +369,27 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
     }
   }, []);
 
-  // 上传文件并在指定世界坐标生成对应节点（多文件错开排列）；拖拽落入与右键「上传」共用
-  const uploadFilesAt = useCallback(async (files: File[], world: { x: number; y: number }) => {
-    toast.info(files.length > 1 ? `正在上传 ${files.length} 个文件...` : "正在上传...");
+  // 上传文件并在指定世界坐标生成对应节点（多文件错开排列）；拖拽落入与右键「上传」共用。
+  // File.type 在 Windows/跨浏览器拖放中可能为空，入口已经按扩展名补齐可靠 MIME。
+  const uploadFilesAt = useCallback(async (entries: CanvasUploadFile[], world: { x: number; y: number }) => {
+    toast.info(entries.length > 1 ? `正在上传 ${entries.length} 个文件...` : "正在上传...");
     let ok = 0;
 
-    await Promise.all(
-      files.map(async (file, i) => {
-        const isVideo = file.type.startsWith("video/");
-        const previewUrl = URL.createObjectURL(file);
+    const uploadOne = async (entry: CanvasUploadFile, i: number) => {
+        const file = normalizeCanvasDropFile(entry.file, entry.info);
+        const kind = entry.info.kind;
+        const previewUrl = kind === "3d" ? "" : URL.createObjectURL(file);
         const st = useCanvasStore.getState();
-        const node = createNode(isVideo ? "video" : "image", world.x + i * 48, world.y + i * 48, st.nodes);
-        if (isVideo) node.videoSrc = previewUrl;
-        else node.imageSrc = previewUrl;
+        const node = createNode(kind, world.x + i * 48, world.y + i * 48, st.nodes);
+        if (kind === "video") node.videoSrc = previewUrl;
+        else if (kind === "audio") node.audioSrc = previewUrl;
+        else if (kind === "image") node.imageSrc = previewUrl;
         node.status = "idle";
         node.uploading = true;
         node.uploadProgress = 0;
         node.fileSize = file.size;
-        node.fileType = isVideo ? "video" : "image";
-        node.mimeType = file.type;
+        node.fileType = kind === "image" || kind === "video" ? kind : "other";
+        node.mimeType = entry.info.mimeType;
         if (file.name) node.title = file.name;
         addNode(node);
         selectNode(node.id);
@@ -381,29 +399,45 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
             useCanvasStore.getState().updateNode(node.id, { uploadProgress: pct });
           });
           if (res.success && res.data?.fileUrl) {
-            const patch = isVideo
-              ? { videoSrc: res.data.fileUrl, status: "success" as const, uploading: false, uploadProgress: 100, fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }
-              : { imageSrc: res.data.fileUrl, status: "success" as const, uploading: false, uploadProgress: 100, fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType };
+            const common = { status: "success" as const, uploading: false, uploadProgress: 100, fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType || entry.info.mimeType };
+            const patch = kind === "video"
+              ? { ...common, videoSrc: res.data.fileUrl }
+              : kind === "audio"
+                ? { ...common, audioSrc: res.data.fileUrl }
+                : kind === "3d"
+                  ? { ...common, modelSrc: res.data.fileUrl, modelAssets: [{ type: "glb", url: res.data.fileUrl }] }
+                  : { ...common, imageSrc: res.data.fileUrl };
             useCanvasStore.getState().updateNode(node.id, patch);
             ok++;
           } else {
-            const patch = isVideo
+            const patch = kind === "video"
               ? { videoSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 }
-              : { imageSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 };
+              : kind === "audio"
+                ? { audioSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 }
+                : kind === "3d"
+                  ? { modelSrc: undefined, modelAssets: undefined, status: "error" as const, uploading: false, uploadProgress: 0 }
+                  : { imageSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 };
             useCanvasStore.getState().updateNode(node.id, patch);
             toast.error(`上传失败：${res.message || file.name}`);
           }
         } catch (err) {
-          const patch = isVideo
+          const patch = kind === "video"
             ? { videoSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 }
-            : { imageSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 };
+            : kind === "audio"
+              ? { audioSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 }
+              : kind === "3d"
+                ? { modelSrc: undefined, modelAssets: undefined, status: "error" as const, uploading: false, uploadProgress: 0 }
+                : { imageSrc: undefined, status: "error" as const, uploading: false, uploadProgress: 0 };
           useCanvasStore.getState().updateNode(node.id, patch);
           toast.error(`上传失败：${(err as Error)?.message || file.name}`);
         } finally {
-          URL.revokeObjectURL(previewUrl);
+          if (previewUrl) URL.revokeObjectURL(previewUrl);
         }
-      })
-    );
+    };
+    for (let start = 0; start < entries.length; start += CANVAS_UPLOAD_CONCURRENCY) {
+      const batch = entries.slice(start, start + CANVAS_UPLOAD_CONCURRENCY);
+      await Promise.all(batch.map((entry, offset) => uploadOne(entry, start + offset)));
+    }
 
     if (ok > 0) toast.success(ok > 1 ? `已添加 ${ok} 个节点` : "已添加到画布");
   }, [addNode, selectNode]);
@@ -414,13 +448,19 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
     e.preventDefault();
     setIsDraggingFile(false);
 
-    const files = Array.from(e.dataTransfer.files).filter(
-      (f) => f.type.startsWith("image/") || f.type.startsWith("video/")
-    );
+    const dropped = Array.from(e.dataTransfer.files);
+    const accepted = dropped.flatMap((file): CanvasUploadFile[] => {
+      const info = canvasDropFileInfo(file);
+      return info ? [{ file, info }] : [];
+    });
+    const files = accepted.slice(0, MAX_CANVAS_UPLOAD_FILES);
     if (files.length === 0) {
-      if (e.dataTransfer.files.length > 0) toast.error("仅支持拖入图片或视频");
+      if (dropped.length > 0) toast.error("暂不支持该文件；可拖入图片、视频、音频或 GLB 模型");
       return;
     }
+    const unsupported = dropped.length - accepted.length;
+    if (unsupported > 0) toast.info(`已跳过 ${unsupported} 个不支持的文件`);
+    if (accepted.length > files.length) toast.info(`单次最多添加 ${MAX_CANVAS_UPLOAD_FILES} 个文件，其余文件未上传`);
     await uploadFilesAt(files, panZoom.screenToWorld(e.clientX, e.clientY));
   }, [panZoom, uploadFilesAt]);
 
@@ -433,12 +473,21 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
   }, [contextMenu]);
 
   const handleUploadPick = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []).filter(
-      (f) => f.type.startsWith("image/") || f.type.startsWith("video/")
-    );
+    const picked = Array.from(e.target.files ?? []);
+    const accepted = picked.flatMap((file): CanvasUploadFile[] => {
+      const info = canvasDropFileInfo(file);
+      return info ? [{ file, info }] : [];
+    });
+    const files = accepted.slice(0, MAX_CANVAS_UPLOAD_FILES);
     // 清空 value：同一文件连续选两次也要触发 change
     e.target.value = "";
-    if (files.length === 0) return;
+    if (files.length === 0) {
+      if (picked.length > 0) toast.error("暂不支持该文件；可上传图片、视频、音频或 GLB 模型");
+      return;
+    }
+    const unsupported = picked.length - accepted.length;
+    if (unsupported > 0) toast.info(`已跳过 ${unsupported} 个不支持的文件`);
+    if (accepted.length > files.length) toast.info(`单次最多添加 ${MAX_CANVAS_UPLOAD_FILES} 个文件，其余文件未上传`);
     // 兜底视口中心：理论上菜单落点必存在,防御 contextMenu 已被清空的时序
     let world = uploadWorldRef.current;
     uploadWorldRef.current = null;
@@ -519,7 +568,7 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
         <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-blue-500/10 backdrop-blur-[1px]">
           <div className="rounded-2xl border-2 border-dashed border-blue-400 bg-white/90 px-8 py-6 text-center shadow-xl dark:bg-neutral-900/90">
             <p className="text-sm font-medium text-blue-600 dark:text-blue-400">释放以上传到画布</p>
-            <p className="mt-1 text-xs text-neutral-500">支持图片、视频，自动在落点生成节点</p>
+            <p className="mt-1 text-xs text-neutral-500">支持图片、视频、音频和 GLB，自动生成对应节点</p>
           </div>
         </div>
       )}
@@ -563,7 +612,7 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
       <input
         ref={uploadInputRef}
         type="file"
-        accept="image/*,video/*"
+        accept={CANVAS_DROP_ACCEPT}
         multiple
         className="hidden"
         onChange={handleUploadPick}

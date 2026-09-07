@@ -8,13 +8,14 @@ import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
 import { toast } from "@/components/shared/toast";
 import type { AiModelVO } from "@/types/ai";
 import { FileCategory } from "@/types/file";
+import { canvasDropFileInfo, normalizeCanvasDropFile } from "@/lib/canvas-drop-files";
 import { useMountedRef } from "./use-node-runtime";
 import {
   canCommitCanvasMediaUpload,
   canReplaceCanvasMedia,
 } from "@/lib/canvas-generation-guard";
 
-export type UploadMediaKind = "image" | "video";
+export type UploadMediaKind = "image" | "video" | "audio";
 
 export interface HostedMediaAsset {
   url: string;
@@ -22,13 +23,14 @@ export interface HostedMediaAsset {
   sizeBytes?: number;
 }
 
-/** 图片/视频上传的差异全部收敛在这张表：写回字段、成功后状态、大小上限口径、提示文案 */
+/** 媒体上传差异全部收敛在这张表：写回字段、成功后状态、大小上限口径、提示文案 */
 const KIND_META: Record<UploadMediaKind, { status: "idle" | "success"; label: string; successToast: string }> = {
   image: { status: "idle", label: "参考图", successToast: "图片已上传，可输入指令进行编辑" },
   video: { status: "success", label: "参考视频", successToast: "视频已上传" },
+  audio: { status: "success", label: "音频", successToast: "音频已上传" },
 };
 
-/** 媒体文件上传生命周期：本地 blob 预览 + 原始分辨率探测 + 进度上报 + 成功后写回托管 URL。
+/** 媒体文件上传生命周期：本地 blob 预览 + 图片/视频分辨率探测 + 进度上报 + 成功后写回托管 URL。
  *  送后端只用托管 URL，永不送 blob:；预览 blob 在 finally 统一 revoke，探测 blob 在自身回调回收。 */
 export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selectedModel: AiModelVO | undefined) {
   const updateNode = useCanvasStore((s) => s.updateNode);
@@ -63,6 +65,12 @@ export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selected
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    const detected = canvasDropFileInfo(file);
+    if (!detected || detected.kind !== kind) {
+      toast.error(kind === "audio" ? "请选择支持的音频文件" : kind === "video" ? "请选择支持的视频文件" : "请选择支持的图片文件");
+      return;
+    }
+    const uploadFile = normalizeCanvasDropFile(file, detected);
     const current = useCanvasStore.getState().nodes.find((item) => item.id === node.id);
     if (!canReplaceCanvasMedia(current)) {
       toast.info(current?.uploading ? "素材正在上传，请稍候" : "生成期间暂不能替换素材");
@@ -73,32 +81,35 @@ export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selected
     // Store-level uploading is the cross-entry mutex: every generation path
     // sees it synchronously, including actions outside this component.
     updateNode(node.id, { uploading: true, uploadProgress: 0 }, false);
-    const objUrl = URL.createObjectURL(file);
-    setLocalPreview(objUrl);
-    setDims(null); // 换新文件先清掉上一次的尺寸，成功后才由本次探测回填
-    // 探测原始分辨率用于头部「W × H」展示。探测用独立的 objectURL,在自身
-    // 回调里回收——共用预览 URL 的话,上传瞬间失败时 finally 的 revoke 会
-    // 抢在加载完成之前执行,探测报错、尺寸标签永远不出现。
-    const probeUrl = URL.createObjectURL(file);
-    if (kind === "image") {
-      const probe = document.createElement("img");
-      const releaseProbe = () => { probe.onload = null; probe.onerror = null; URL.revokeObjectURL(probeUrl); };
-      probe.onload = () => { if (mountedRef.current) setDims({ w: probe.naturalWidth, h: probe.naturalHeight }); releaseProbe(); };
-      probe.onerror = releaseProbe;
-      probe.src = probeUrl;
-    } else {
-      const probe = document.createElement("video");
-      probe.preload = "metadata";
-      const releaseProbe = () => { probe.onloadedmetadata = null; probe.onerror = null; URL.revokeObjectURL(probeUrl); };
-      probe.onloadedmetadata = () => { if (mountedRef.current) setDims({ w: probe.videoWidth, h: probe.videoHeight }); releaseProbe(); };
-      probe.onerror = releaseProbe;
-      probe.src = probeUrl;
-    }
     setUploadPct(0);
     setUploading(true);
+    let objUrl = "";
     let ok = false;
     try {
-      const res = await uploadFileSmart(file, (pct) => {
+      // Preview setup belongs to the guarded lifecycle too. If the browser
+      // cannot allocate a Blob URL, finally still releases the store mutex.
+      objUrl = URL.createObjectURL(uploadFile);
+      setLocalPreview(objUrl);
+      setDims(null); // 换新文件先清掉上一次的尺寸，成功后才由本次探测回填
+      // 探测原始分辨率用于头部「W × H」展示。探测用独立的 objectURL,在自身
+      // 回调里回收——共用预览 URL 的话,上传瞬间失败时 finally 的 revoke 会
+      // 抢在加载完成之前执行,探测报错、尺寸标签永远不出现。
+      const probeUrl = kind === "audio" ? "" : URL.createObjectURL(uploadFile);
+      if (kind === "image") {
+        const probe = document.createElement("img");
+        const releaseProbe = () => { probe.onload = null; probe.onerror = null; URL.revokeObjectURL(probeUrl); };
+        probe.onload = () => { if (mountedRef.current) setDims({ w: probe.naturalWidth, h: probe.naturalHeight }); releaseProbe(); };
+        probe.onerror = releaseProbe;
+        probe.src = probeUrl;
+      } else if (kind === "video") {
+        const probe = document.createElement("video");
+        probe.preload = "metadata";
+        const releaseProbe = () => { probe.onloadedmetadata = null; probe.onerror = null; URL.revokeObjectURL(probeUrl); };
+        probe.onloadedmetadata = () => { if (mountedRef.current) setDims({ w: probe.videoWidth, h: probe.videoHeight }); releaseProbe(); };
+        probe.onerror = releaseProbe;
+        probe.src = probeUrl;
+      }
+      const res = await uploadFileSmart(uploadFile, (pct) => {
         if (mountedRef.current) setUploadPct(pct);
       }, {
         maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
@@ -120,8 +131,13 @@ export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selected
         if (kind === "image") {
           patch.imageSrc = res.data.fileUrl;
           patch.images = undefined;
+        } else if (kind === "video") {
+          patch.videoSrc = res.data.fileUrl;
+        } else {
+          patch.audioSrc = res.data.fileUrl;
+          patch.audioTracks = undefined;
+          if (/^音频节点(?: \d+)?$/.test(latest?.title?.trim() || "")) patch.title = uploadFile.name;
         }
-        else patch.videoSrc = res.data.fileUrl;
         // Clear the transient mutex before recording history, otherwise Undo
         // would restore a permanently uploading node. The user-visible media
         // replacement itself is one deliberate, reversible history step.
@@ -144,7 +160,7 @@ export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selected
         // 失败(或探测晚于失败回填)时清掉尺寸标签，避免上传失败后残留一枚孤立的 W×H。
         if (!ok) setDims(null);
       }
-      URL.revokeObjectURL(objUrl);
+      if (objUrl) URL.revokeObjectURL(objUrl);
     }
   }, [assetCategory, kind, mountedRef, node.id, selectedModel, updateNode]);
 
@@ -194,14 +210,18 @@ export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selected
       const patch: Partial<CanvasNode> = {
         status: KIND_META[kind].status,
         fileSize: sizeBytes,
-        fileType: kind,
+        fileType: kind === "audio" ? "other" : kind,
         mimeType: undefined,
       };
       if (kind === "image") {
         patch.imageSrc = asset.url;
         patch.images = undefined;
-      } else {
+      } else if (kind === "video") {
         patch.videoSrc = asset.url;
+      } else {
+        patch.audioSrc = asset.url;
+        patch.audioTracks = undefined;
+        if (asset.name && /^音频节点(?: \d+)?$/.test(latest?.title?.trim() || "")) patch.title = asset.name;
       }
 
       // Keep history clean: the transient mutex is never part of the undo
@@ -209,7 +229,7 @@ export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selected
       updateNode(node.id, { uploading: false, uploadProgress: undefined }, false);
       updateNode(node.id, patch, true);
       setDims(null);
-      toast.success(kind === "image" ? "已从资产库添加图片" : "已从资产库添加视频");
+      toast.success(kind === "image" ? "已从资产库添加图片" : kind === "video" ? "已从资产库添加视频" : "已从资产库添加音频");
       return true;
     } catch {
       toast.error("资产添加失败，请稍后重试");
@@ -222,7 +242,7 @@ export function useMediaUpload(node: CanvasNode, kind: UploadMediaKind, selected
     }
   }, [kind, mountedRef, node.id, selectedModel, updateNode]);
 
-  const mediaSrc = kind === "image" ? node.imageSrc : node.videoSrc;
+  const mediaSrc = kind === "image" ? node.imageSrc : kind === "video" ? node.videoSrc : node.audioSrc;
   const nodeUploading = uploading || node.uploading === true;
   const nodeUploadPct = uploading ? uploadPct : node.uploadProgress ?? 0;
   const uploadPreviewSrc = localPreview || mediaSrc || null;

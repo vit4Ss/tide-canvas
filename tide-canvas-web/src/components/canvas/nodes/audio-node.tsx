@@ -1,14 +1,17 @@
 "use client";
 
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import {
   AudioLines,
   ChevronDown,
+  FolderOpen,
   Loader2,
   Mic2,
   Music2,
   SlidersHorizontal,
+  Upload,
   Zap,
 } from "lucide-react";
 import {
@@ -32,10 +35,14 @@ import { NodePorts } from "./base/node-ports";
 import { ModelPicker } from "./model-picker";
 import { PopoverSelect } from "@/components/shared/popover-select";
 import { ClipPicker } from "@/components/studio/clip-picker";
+import { AssetPickerModal } from "@/components/studio/create-studio/asset-picker-modal";
+import type { PickedAsset } from "@/components/studio/assets-browser";
 import type { CanvasNodeProps } from "./types/node-props";
 import { useAiModels, useNodeRuntime } from "./shared/use-node-runtime";
+import { useMediaUpload } from "./shared/use-media-upload";
 import { parseModelConfig, stopEvent as stop } from "./shared/node-utils";
 import { GenerateSubmitButton, NodePanelChrome, NodeShell } from "./shared/node-overlays";
+import { CANVAS_AUDIO_ACCEPT } from "@/lib/canvas-drop-files";
 
 const MAX_TEXT = 50000;
 const WAVE_BARS = [16, 28, 44, 60, 40, 24, 34, 54, 70, 48, 30, 18, 42, 56, 36, 22];
@@ -352,6 +359,16 @@ export const AudioNode = memo(function AudioNode({
   const updateNode = useCanvasStore((s) => s.updateNode);
   const { generate, generating, showAuxUI } = useNodeRuntime(node, isSelected, isDragging);
   const { models, modelId, setModelId, selectedModel } = useAiModels(AiModelType.AUDIO);
+  const {
+    fileInputRef,
+    openFilePicker,
+    handleFileUpload,
+    applyHostedMedia,
+    nodeUploading,
+    nodeUploadPct,
+    uploadPreviewSrc,
+  } = useMediaUpload(node, "audio", undefined);
+  const [assetPickerOpen, setAssetPickerOpen] = useState(false);
 
   const [voice, setVoice] = useState("");
   const [activeTokenMenu, setActiveTokenMenu] = useState<AudioTokenMenu>(null);
@@ -365,6 +382,26 @@ export const AudioNode = memo(function AudioNode({
   const [clipPickerOpen, setClipPickerOpen] = useState(false);
   // 分轨播放：Suno 一次两首，节点内切换（0 = 主歌）。
   const [trackIdx, setTrackIdx] = useState(0);
+
+  const openAssetPicker = useCallback((event?: React.MouseEvent) => {
+    event?.stopPropagation();
+    if (nodeUploading || generating) {
+      toast.info(nodeUploading ? "音频正在上传，请稍候" : "生成完成后可替换音频");
+      return;
+    }
+    setAssetPickerOpen(true);
+  }, [generating, nodeUploading]);
+
+  const handleAssetPick = useCallback((assets: PickedAsset[]) => {
+    const asset = assets[0];
+    if (!asset) return;
+    if (asset.kind !== "audio") {
+      toast.error("该节点仅支持音频素材");
+      return;
+    }
+    setAssetPickerOpen(false);
+    void applyHostedMedia({ url: asset.url, name: asset.name, sizeBytes: asset.sizeBytes });
+  }, [applyHostedMedia]);
 
   const voices = voicesOf(selectedModel);
   const [lastModelId, setLastModelId] = useState(modelId);
@@ -427,7 +464,7 @@ export const AudioNode = memo(function AudioNode({
   // 分轨播放地址：有分轨按选中项，否则回落 audioSrc。
   const tracks = node.audioTracks ?? [];
   const activeTrack = tracks[Math.min(trackIdx, Math.max(0, tracks.length - 1))];
-  const playSrc = activeTrack?.url || node.audioSrc;
+  const playSrc = nodeUploading && uploadPreviewSrc ? uploadPreviewSrc : activeTrack?.url || node.audioSrc;
 
   useEffect(() => {
     if (rawPrompt && rawPrompt !== prompt) {
@@ -474,7 +511,7 @@ export const AudioNode = memo(function AudioNode({
   }, [customPauseValue, insertPromptToken]);
 
   const handleGenerate = () => {
-    if (generating) return;
+    if (generating || nodeUploading) return;
     if (isMusic) {
       const err = validateMusicParams(prompt, music);
       if (err) {
@@ -517,7 +554,21 @@ export const AudioNode = memo(function AudioNode({
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(59,130,246,0.10),transparent_34%),radial-gradient(circle_at_82%_18%,rgba(16,185,129,0.08),transparent_30%)]" />
           <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/80 to-transparent dark:via-white/15" />
 
-          {generating && (
+          {nodeUploading && (
+            <div className="absolute inset-0 z-[6] flex items-center justify-center bg-white/80 backdrop-blur-sm dark:bg-neutral-950/80">
+              <div className="flex min-w-40 flex-col items-center gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 shadow-lg dark:border-neutral-800 dark:bg-neutral-900">
+                <div className="flex items-center gap-2 text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                  <Loader2 className="h-4 w-4 animate-spin text-blue-500" aria-hidden />
+                  {nodeUploadPct > 0 ? `上传音频 ${nodeUploadPct}%` : "正在载入音频..."}
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800" role="progressbar" aria-label="音频上传进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.max(0, Math.min(100, nodeUploadPct))}>
+                  <span className="block h-full rounded-full bg-blue-500 transition-[width] duration-150 motion-reduce:transition-none" style={{ width: `${Math.max(0, Math.min(100, nodeUploadPct))}%` }} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {generating && !nodeUploading && (
             <div className="absolute inset-0 z-[5] flex items-center justify-center bg-white/75 backdrop-blur-sm dark:bg-neutral-950/75">
               <div className="flex flex-col items-center gap-3 rounded-2xl border border-neutral-200 bg-white/90 px-5 py-4 shadow-lg dark:border-neutral-800 dark:bg-neutral-900/90">
                 <Loader2 className="h-7 w-7 animate-spin text-blue-500" />
@@ -531,7 +582,7 @@ export const AudioNode = memo(function AudioNode({
           <div className="relative flex h-full flex-col px-5 py-4">
 
             <div className="flex min-h-0 flex-1 items-center justify-center">
-              <div className="flex w-full flex-col items-center gap-4">
+              <div className="flex w-full flex-col items-center gap-2">
                 <div className="flex items-end justify-center gap-1.5">
                   {WAVE_BARS.map((h, i) => (
                     <span
@@ -546,11 +597,33 @@ export const AudioNode = memo(function AudioNode({
                   ))}
                 </div>
                 {!playSrc && (
-                  <div className="flex max-w-full items-center gap-2 rounded-xl border border-neutral-200/80 bg-white/80 px-3 py-2 text-sm text-neutral-700 shadow-sm dark:border-neutral-800 dark:bg-neutral-900/80 dark:text-neutral-300">
-                    <Music2 className="h-4 w-4 shrink-0 text-neutral-500" />
-                    <span className="truncate">
-                      {isMusic ? "描述你想要的音乐" : isSfx ? "描述你想要的音效" : "输入文本生成音频"}
-                    </span>
+                  <div className="flex max-w-full flex-col items-center gap-2">
+                    <div className="flex max-w-full items-center gap-2 rounded-xl border border-neutral-200/80 bg-white/80 px-3 py-2 text-sm text-neutral-700 shadow-sm dark:border-neutral-800 dark:bg-neutral-900/80 dark:text-neutral-300">
+                      <Music2 className="h-4 w-4 shrink-0 text-neutral-500" />
+                      <span className="truncate">
+                        {isMusic ? "描述你想要的音乐" : isSfx ? "描述你想要的音效" : "输入文本生成音频"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onMouseDown={stop}
+                        onClick={openFilePicker}
+                        disabled={nodeUploading || generating}
+                        className="inline-flex h-11 touch-manipulation items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 text-xs font-medium text-neutral-600 transition-colors hover:border-neutral-400 hover:text-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:text-white"
+                      >
+                        <Upload className="h-3.5 w-3.5" aria-hidden />上传本地音频
+                      </button>
+                      <button
+                        type="button"
+                        onMouseDown={stop}
+                        onClick={openAssetPicker}
+                        disabled={nodeUploading || generating}
+                        className="inline-flex h-11 touch-manipulation items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 text-xs font-medium text-neutral-600 transition-colors hover:border-neutral-400 hover:text-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:text-white"
+                      >
+                        <FolderOpen className="h-3.5 w-3.5" aria-hidden />从资产库选择
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -587,6 +660,11 @@ export const AudioNode = memo(function AudioNode({
                   controls
                   preload="metadata"
                   onMouseDown={stop}
+                  onError={() => {
+                    // Blob 预览会在上传结束后主动 revoke；那不是音频损坏，不能
+                    // 在远端地址已经写回时再弹一次误导性的解码失败。
+                    if (!nodeUploading) toast.error("浏览器无法播放该音频，请尝试 MP3、WAV、M4A、AAC、OGG、FLAC 或 OPUS 格式");
+                  }}
                   className="w-full"
                   style={{ height: 36 }}
                 />
@@ -594,6 +672,23 @@ export const AudioNode = memo(function AudioNode({
             )}
           </div>
         </div>
+
+        <input ref={fileInputRef} type="file" accept={CANVAS_AUDIO_ACCEPT} className="hidden" onClick={stop} onChange={handleFileUpload} />
+
+        {assetPickerOpen && typeof document !== "undefined"
+          ? createPortal(
+              <AssetPickerModal
+                kind="audio"
+                defaultFilter="audio"
+                className="canvas-asset-picker-theme"
+                lockKind
+                existingUrls={[node.audioSrc, ...tracks.map((track) => track.url)].filter((value): value is string => !!value)}
+                onPick={handleAssetPick}
+                onClose={() => setAssetPickerOpen(false)}
+              />,
+              document.body,
+            )
+          : null}
 
         <NodeHeader icon={AudioLines} title={node.title || "音频节点"} visible={showAuxUI} overlay />
         <NodePorts nodeId={node.id} visible={showAuxUI} overlay onPortMouseDown={onPortMouseDown} />
@@ -866,6 +961,27 @@ export const AudioNode = memo(function AudioNode({
 
               <div className="mt-3 flex items-center justify-between gap-2 px-2">
                 <div className="flex min-w-0 items-center gap-1 text-xs text-neutral-600 dark:text-neutral-400">
+                  <button
+                    type="button"
+                    onMouseDown={stop}
+                    onClick={openFilePicker}
+                    disabled={nodeUploading || generating}
+                    className="inline-flex h-11 touch-manipulation shrink-0 items-center gap-1.5 rounded-md border border-neutral-200 px-2 text-xs font-medium text-neutral-600 transition-colors hover:border-neutral-400 hover:text-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:text-white"
+                    title={node.audioSrc ? "替换当前音频" : "上传本地音频"}
+                  >
+                    {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Upload className="h-3.5 w-3.5" aria-hidden />}
+                    {node.audioSrc ? "替换" : "上传"}
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={stop}
+                    onClick={openAssetPicker}
+                    disabled={nodeUploading || generating}
+                    className="inline-flex h-11 touch-manipulation shrink-0 items-center gap-1.5 rounded-md border border-neutral-200 px-2 text-xs font-medium text-neutral-600 transition-colors hover:border-neutral-400 hover:text-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:text-white"
+                    title="从资产库选择音频"
+                  >
+                    <FolderOpen className="h-3.5 w-3.5" aria-hidden />资产库
+                  </button>
                   <ModelPicker models={models} value={modelId} onChange={setModelId} />
                   {!isMusic && voices.length > 0 && (
                     <span className="flex min-w-0 items-center gap-1">
@@ -891,10 +1007,12 @@ export const AudioNode = memo(function AudioNode({
                     {cost}
                   </span>
                   <GenerateSubmitButton
-                    disabled={!canGenerate || generating}
+                    disabled={!canGenerate || generating || nodeUploading}
                     generating={generating}
                     title={
-                      generating
+                      nodeUploading
+                        ? "音频上传中..."
+                        : generating
                         ? "生成中..."
                         : !canGenerate
                           ? (isMusic ? validateMusicParams(prompt, music) ?? "先填写必填项" : "先输入文案")

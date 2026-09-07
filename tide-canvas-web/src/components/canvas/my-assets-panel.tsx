@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fileApi } from "@/lib/api";
+import { canvasStoredFileInfo } from "@/lib/canvas-drop-files";
 import { FileCategory, FileType, type FileQuery, type FileVO } from "@/types/file";
-import { X, RefreshCw, Inbox, Video, Loader2, Trash2, UserRound, Mountain } from "lucide-react";
+import { Box, FileQuestion, Inbox, Loader2, Mountain, Music2, RefreshCw, Trash2, UserRound, Video, X } from "lucide-react";
 import { toast } from "@/components/shared/toast";
 
 interface Props {
@@ -15,12 +16,13 @@ interface Props {
   refreshKey?: number;
 }
 
-const TABS: { key: string; label: string; query: Pick<FileQuery, "fileType" | "category"> }[] = [
+const TABS: { key: string; label: string; query: Pick<FileQuery, "fileType" | "category" | "mediaKind"> }[] = [
   { key: "all", label: "全部", query: {} },
   { key: FileCategory.CHARACTER, label: "角色", query: { fileType: FileType.IMAGE, category: FileCategory.CHARACTER } },
   { key: FileCategory.SCENE, label: "场景", query: { fileType: FileType.IMAGE, category: FileCategory.SCENE } },
   { key: FileType.IMAGE, label: "图片", query: { fileType: FileType.IMAGE, category: FileCategory.GENERAL } },
   { key: FileType.VIDEO, label: "视频", query: { fileType: FileType.VIDEO, category: FileCategory.GENERAL } },
+  { key: "audio", label: "音频", query: { mediaKind: "audio", category: FileCategory.GENERAL } },
 ];
 
 /** 「我的素材」面板：拉取当前用户已上传/生成的文件，点击即在画布中心新建对应节点 */
@@ -125,50 +127,66 @@ export function MyAssetsPanel({ open, onClose, onPick, refreshKey }: Props) {
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-2">
-            {files.map((f) => (
-              <div
-                key={f.id}
-                onClick={() => onPick(f)}
-                title={f.originalName}
-                className="group relative aspect-square cursor-pointer overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50 transition-shadow hover:shadow-md dark:border-neutral-700 dark:bg-neutral-800"
-              >
-                {f.fileType === FileType.VIDEO ? (
-                  <>
-                    <video src={f.fileUrl} muted preload="metadata" className="h-full w-full object-cover" />
-                    <span className="absolute left-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-md bg-black/50 text-white">
-                      <Video className="h-3 w-3" />
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={f.fileUrl} alt={f.originalName} className="h-full w-full object-cover" />
-                    {f.category === FileCategory.CHARACTER && (
-                      <span className="absolute left-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-md bg-black/50 text-white" title="角色素材">
-                        <UserRound className="h-3 w-3" />
-                      </span>
-                    )}
-                    {f.category === FileCategory.SCENE && (
-                      <span className="absolute left-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-md bg-black/50 text-white" title="场景素材">
-                        <Mountain className="h-3 w-3" />
-                      </span>
-                    )}
-                  </>
-                )}
-                {/* 删除：hover 显示右上角 */}
-                <button
-                  onClick={(e) => { e.stopPropagation(); void handleDelete(f); }}
-                  disabled={deleting === f.id}
-                  title="删除素材"
-                  className="absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-black/50 text-white opacity-0 transition-all hover:bg-red-500 group-hover:opacity-100 disabled:opacity-100"
+            {files.map((f) => {
+              const media = canvasStoredFileInfo({ name: f.originalName, type: f.mimeType, fileType: f.fileType });
+              const kind = media?.kind ?? null;
+              return (
+                <div
+                  key={f.id}
+                  title={f.originalName}
+                  className={`group relative aspect-square overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50 transition-shadow dark:border-neutral-700 dark:bg-neutral-800 ${kind ? "hover:shadow-md" : "opacity-60"}`}
                 >
-                  {deleting === f.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                </button>
-                <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-1.5 text-left text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">
-                  点击添加到画布
-                </span>
-              </div>
-            ))}
+                  {kind === "video" ? (
+                    <>
+                      <video src={f.fileUrl} muted preload="metadata" className="h-full w-full object-cover" />
+                      <span className="absolute left-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-md bg-black/50 text-white">
+                        <Video className="h-3 w-3" />
+                      </span>
+                    </>
+                  ) : kind === "image" ? (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={f.fileUrl} alt={f.originalName} className="h-full w-full object-cover" />
+                      {f.category === FileCategory.CHARACTER && (
+                        <span className="absolute left-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-md bg-black/50 text-white" title="角色素材">
+                          <UserRound className="h-3 w-3" />
+                        </span>
+                      )}
+                      {f.category === FileCategory.SCENE && (
+                        <span className="absolute left-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-md bg-black/50 text-white" title="场景素材">
+                          <Mountain className="h-3 w-3" />
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <div className="flex h-full flex-col items-center justify-center gap-2 text-neutral-400">
+                      {kind === "audio" ? <Music2 className="h-8 w-8" /> : kind === "3d" ? <Box className="h-8 w-8" /> : <FileQuestion className="h-8 w-8" />}
+                      <span className="max-w-[80%] truncate text-[10px]">{kind === "audio" ? "音频" : kind === "3d" ? "GLB 模型" : "不支持的文件"}</span>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    disabled={!kind}
+                    onClick={() => { if (kind) onPick(f); }}
+                    aria-label={kind ? `添加素材到画布：${f.originalName}` : `不支持的素材：${f.originalName}`}
+                    className="absolute inset-0 z-[1] cursor-pointer rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 disabled:cursor-not-allowed"
+                  />
+                  {/* 删除：hover 显示右上角 */}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); void handleDelete(f); }}
+                    disabled={deleting === f.id}
+                    title="删除素材"
+                    className="absolute right-1 top-1 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-black/50 text-white opacity-0 transition-all hover:bg-red-500 group-hover:opacity-100 disabled:opacity-100"
+                  >
+                    {deleting === f.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                  </button>
+                  <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-1.5 text-left text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">
+                    {kind ? "点击添加到画布" : "当前格式不支持"}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
