@@ -41,6 +41,12 @@ export interface ChatModelVO {
   pricing: ChatTokenPricing | null;
   /** 配置了但无法解析时的说明。 */
   priceError: string;
+  /** 同一 modelKey 在多家供应商间的顺序，越小越先被调用；「设为首选」会重排为 0,1,2…。 */
+  priority: number;
+  /** 路由会选这一行来服务这个 modelKey。 */
+  preferred: boolean;
+  /** 还有几家供应商能提供同一个模型（已开放、已定价、供应商启用）；为 0 时不显示首选控件。 */
+  rivals: number;
 }
 
 export interface ChatProviderVO {

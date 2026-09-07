@@ -818,6 +818,28 @@ function ModelNameCell({ model, busy, run }: { model: ChatModelVO; busy: string;
       />
       <code className="cp-model-key">{model.modelKey}</code>
       {model.priceError ? <span className="cp-warn">{model.priceError}</span> : null}
+      {model.rivals > 0 ? (
+        <div className="cp-rival">
+          {model.preferred ? (
+            <>
+              <StatusPill tone="blue">首选</StatusPill>
+              <small>另有 {model.rivals} 家供应商提供，首选失败时依次切换</small>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="adm-btn ghost cp-prefer"
+                disabled={!!busy}
+                onClick={() => void run(`mf-${model.id}`, () => adminChatProvidersApi.preferModel(model.id), "已设为首选供应商")}
+              >
+                设为首选
+              </button>
+              <small>{model.pricing && model.enabled ? "目前作为备用，首选失败时才会用到" : "开放并定价后才能参与切换"}</small>
+            </>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

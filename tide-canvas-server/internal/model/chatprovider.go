@@ -67,6 +67,14 @@ type ChatModel struct {
 	Name       string   `gorm:"column:name;type:varchar(128)" json:"name"`
 	Enabled    bool     `gorm:"column:enabled" json:"enabled"`
 	SortOrder  int      `gorm:"column:sort_order;default:0" json:"sortOrder"`
+	// Priority orders the rows that share one ModelKey across providers: the
+	// lowest is the provider a call goes to first, the rest are tried in turn
+	// when every address of the one before has failed. It is separate from
+	// SortOrder, which is the model's place in the picker; making a provider
+	// preferred for one model must not move that model around in the list.
+	// The admin "设为首选" action renumbers a key's rows 0, 1, 2… so the
+	// values stay small and the order stays readable.
+	Priority int `gorm:"column:priority;not null;default:0" json:"priority"`
 	// Pricing is the JSON object {"tokenPricing":{…}} — same dialect the market
 	// models used, so tokenbilling.Parse reads both without a second parser.
 	Pricing string `gorm:"column:pricing;type:text" json:"pricing"`
@@ -78,3 +86,9 @@ type ChatModel struct {
 }
 
 func (ChatModel) TableName() string { return "chat_model" }
+
+// ChatModelOrder is the one ordering every reader of chat_model uses when rows
+// share a ModelKey: the catalogue that shows a model, the router that picks
+// who serves it, and the admin list that says which provider is preferred.
+// They must agree, or the price a user was shown is not the price they pay.
+const ChatModelOrder = "priority ASC, sort_order ASC, id ASC"

@@ -34,6 +34,9 @@ export const adminChatProvidersApi = {
     http.post<ChatFetchResult>(`/api/admin/chat-providers/${providerId}/fetch-models`, {}),
   updateModel: (id: string, dto: ChatModelDTO) =>
     http.put<{ ok: boolean }>(`/api/admin/chat-models/${id}`, dto),
+  /** 让这一行成为同名模型的首选供应商；其余同名行按原顺序排在后面作备用。 */
+  preferModel: (id: string) =>
+    http.post<{ ok: boolean }>(`/api/admin/chat-models/${id}/prefer`, {}),
   deleteModel: (id: string) =>
     http.delete<{ ok: boolean }>(`/api/admin/chat-models/${id}`),
 };

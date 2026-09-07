@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/chatupstream"
@@ -236,5 +237,49 @@ func (h *chatProvidersHandler) deleteModel(c *gin.Context) {
 		return
 	}
 	h.audit(c, id, "chat_model_delete", "删除聊天模型")
+	response.OK(c, gin.H{"ok": true})
+}
+
+// preferModel makes this row the first choice for its model key. The key's
+// rows are renumbered 0, 1, 2… with this one at the front and the others in
+// their existing order, so the values stay small and "who comes after" is
+// preserved rather than scrambled.
+func (h *chatProvidersHandler) preferModel(c *gin.Context) {
+	id, ok := g4ParseID(c)
+	if !ok {
+		return
+	}
+	var target model.ChatModel
+	if err := h.db.WithContext(c.Request.Context()).First(&target, "id = ?", id).Error; err != nil {
+		response.Fail(c, response.CodeNotFound, "模型不存在")
+		return
+	}
+	err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		var rows []model.ChatModel
+		if err := tx.Where("model_key = ?", target.ModelKey).Order(model.ChatModelOrder).Find(&rows).Error; err != nil {
+			return err
+		}
+		next := 1
+		for _, row := range rows {
+			priority := next
+			if row.ID == target.ID {
+				priority = 0
+			} else {
+				next++
+			}
+			if row.Priority == priority {
+				continue
+			}
+			if err := tx.Model(&model.ChatModel{}).Where("id = ?", row.ID).Update("priority", priority).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "保存失败")
+		return
+	}
+	h.audit(c, id, "chat_model_prefer", "设为首选供应商："+target.ModelKey)
 	response.OK(c, gin.H{"ok": true})
 }

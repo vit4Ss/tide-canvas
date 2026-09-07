@@ -420,3 +420,27 @@
     display: none;
   }
 }
+
+/* Same model under several providers: which one a call goes to first. Shown
+   only where there is a choice to make. */
+.cp-rival {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  min-width: 0;
+}
+
+.cp-rival small {
+  color: var(--text-faint);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-prefer {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}

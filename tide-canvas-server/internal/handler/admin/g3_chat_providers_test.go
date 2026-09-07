@@ -45,6 +45,7 @@ func newChatFixture(t *testing.T) *chatFixture {
 	r.PUT("/chat-endpoints/:id", h.updateEndpoint)
 	r.POST("/chat-providers/:id/fetch-models", h.fetchModels)
 	r.PUT("/chat-models/:id", h.updateModel)
+	r.POST("/chat-models/:id/prefer", h.preferModel)
 	r.DELETE("/chat-providers/:id", h.deleteProvider)
 
 	provider := model.ChatProvider{Name: "中转站", Enabled: true}
@@ -404,5 +405,76 @@ func TestDiscoveryExplainsARedirect(t *testing.T) {
 	f.h.db.Model(&model.ChatModel{}).Count(&count)
 	if count != 0 {
 		t.Fatalf("%d model(s) were recorded from a redirect", count)
+	}
+}
+
+// When two providers offer the same model, the operator picks which one a call
+// goes to first. The list says which row is preferred and how many others could
+// serve, so the page shows the choice only where there is one to make.
+func TestPreferringAProviderForAModel(t *testing.T) {
+	f := newChatFixture(t)
+	other := model.ChatProvider{Name: "备用中转", Enabled: true}
+	if err := f.h.db.Create(&other).Error; err != nil {
+		t.Fatal(err)
+	}
+	const price = `{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"2","outputPointsPerMillion":"8"}}`
+	a := model.ChatModel{ProviderID: f.provider.ID, ModelKey: "gpt-x", Name: "A 家", Enabled: true, Pricing: price}
+	b := model.ChatModel{ProviderID: other.ID, ModelKey: "gpt-x", Name: "B 家", Enabled: true, Pricing: price}
+	solo := model.ChatModel{ProviderID: f.provider.ID, ModelKey: "only-here", Name: "只有一家", Enabled: true, Pricing: price}
+	unpriced := model.ChatModel{ProviderID: other.ID, ModelKey: "gpt-x", Name: "没定价的第三行", Enabled: true}
+	for _, row := range []*model.ChatModel{&a, &b, &solo, &unpriced} {
+		if err := f.h.db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	flags := func() map[string]chatModelVO {
+		w := f.call("GET", "/chat-providers", "")
+		var body struct {
+			Data []chatProviderVO `json:"data"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]chatModelVO{}
+		for _, p := range body.Data {
+			for _, m := range p.Models {
+				out[m.Name] = m
+			}
+		}
+		return out
+	}
+
+	// Before any choice, the earliest row is preferred and both see one rival.
+	// The unpriced row cannot serve, so it is nobody's rival and not preferred.
+	before := flags()
+	if !before["A 家"].Preferred || before["B 家"].Preferred || before["A 家"].Rivals != 1 || before["B 家"].Rivals != 1 {
+		t.Fatalf("initial preference wrong: A=%+v B=%+v", before["A 家"], before["B 家"])
+	}
+	if before["只有一家"].Rivals != 0 || !before["只有一家"].Preferred {
+		t.Fatalf("a model one provider offers should be preferred with no rivals: %+v", before["只有一家"])
+	}
+	if before["没定价的第三行"].Preferred || before["没定价的第三行"].Rivals != 2 {
+		t.Fatalf("an unpriced row: %+v", before["没定价的第三行"])
+	}
+
+	if w := f.call("POST", "/chat-models/"+b.ID.String()+"/prefer", "{}"); w.Code != 200 {
+		t.Fatalf("prefer failed: %d %s", w.Code, w.Body.String())
+	}
+	after := flags()
+	if !after["B 家"].Preferred || after["A 家"].Preferred {
+		t.Fatalf("preference did not move: A=%+v B=%+v", after["A 家"], after["B 家"])
+	}
+	// Renumbered 0, 1, 2 with the chosen row first and the rest in their order.
+	var rows []model.ChatModel
+	f.h.db.Where("model_key = ?", "gpt-x").Order(model.ChatModelOrder).Find(&rows)
+	if len(rows) != 3 || rows[0].ID != b.ID || rows[0].Priority != 0 || rows[1].ID != a.ID || rows[1].Priority != 1 || rows[2].Priority != 2 {
+		t.Fatalf("renumbering wrong: %+v", rows)
+	}
+	// Preference must not touch the picker order of the other model.
+	var soloAfter model.ChatModel
+	f.h.db.First(&soloAfter, "id = ?", solo.ID)
+	if soloAfter.Priority != 0 || soloAfter.SortOrder != solo.SortOrder {
+		t.Fatalf("an unrelated model was disturbed: %+v", soloAfter)
 	}
 }

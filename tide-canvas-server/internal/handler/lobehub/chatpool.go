@@ -44,11 +44,20 @@ func upstreamKey(advertised string) string {
 var errNoEndpoint = errors.New("lobehub: provider has no usable endpoint")
 
 // chatRoute is one model plus the ordered addresses that may serve it.
+//
+// When several providers offer the same model key, model/provider/pricing are
+// the preferred provider's — that row is what the picker showed and what the
+// call is priced at — and endpoints holds every provider's addresses in
+// priority order, so a call falls through to the next provider only after
+// every address of the one before has failed.
 type chatRoute struct {
 	model     model.ChatModel
 	provider  model.ChatProvider
 	pricing   *tokenbilling.Pricing
 	endpoints []chatEndpoint
+	// providers is how many providers contribute addresses; 1 in the common
+	// case, more when the operator has set up a fallback for this key.
+	providers int
 }
 
 type chatEndpoint struct {
@@ -63,7 +72,7 @@ type chatEndpoint struct {
 // out rather than shown and then refused at send time.
 func (s *service) offeredModels(ctx context.Context) ([]chatRoute, error) {
 	var models []model.ChatModel
-	if err := s.d.DB.WithContext(ctx).Where("enabled = ?", true).Order("sort_order ASC, id ASC").Find(&models).Error; err != nil {
+	if err := s.d.DB.WithContext(ctx).Where("enabled = ?", true).Order(model.ChatModelOrder).Find(&models).Error; err != nil {
 		return nil, err
 	}
 	if len(models) == 0 {
@@ -97,16 +106,20 @@ func (s *service) offeredModels(ctx context.Context) ([]chatRoute, error) {
 // routeFor resolves one model key all the way to its credentialed addresses.
 // Callers use it before charging, so an unusable model costs the user nothing.
 //
-// It repeats offeredModels' rule — first row in order with an enabled provider
-// and usable pricing wins — rather than calling it, because this runs on every
-// chat message and offeredModels reads the whole catalogue. The two must agree:
-// the price the picker showed came from the row chosen here.
+// It applies offeredModels' rule — rows in ChatModelOrder, keeping those with
+// an enabled provider and usable pricing — rather than calling it, because this
+// runs on every chat message and offeredModels reads the whole catalogue. The
+// first surviving row is the one the picker showed and the one the call is
+// priced at. Every surviving row's addresses are collected, in that order, so
+// that when the preferred provider is down the call moves on to the next one
+// the operator set up for this key instead of failing.
 func (s *service) routeFor(ctx context.Context, modelKey string) (*chatRoute, error) {
 	var models []model.ChatModel
 	if err := s.d.DB.WithContext(ctx).Where("enabled = ? AND model_key = ?", true, modelKey).
-		Order("sort_order ASC, id ASC").Find(&models).Error; err != nil {
+		Order(model.ChatModelOrder).Find(&models).Error; err != nil {
 		return nil, err
 	}
+	var route *chatRoute
 	for _, m := range models {
 		var provider model.ChatProvider
 		err := s.d.DB.WithContext(ctx).Where("id = ? AND enabled = ?", m.ProviderID, true).First(&provider).Error
@@ -120,13 +133,28 @@ func (s *service) routeFor(ctx context.Context, modelKey string) (*chatRoute, er
 		if err != nil {
 			continue
 		}
+		if route == nil {
+			route = &chatRoute{model: m, provider: provider, pricing: pricing}
+		}
 		endpoints, err := s.endpointsFor(ctx, provider.ID)
+		if errors.Is(err, errNoEndpoint) {
+			// A provider with no usable address contributes nothing, but it
+			// does not disqualify the model if another provider has one.
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
-		return &chatRoute{model: m, provider: provider, pricing: pricing, endpoints: endpoints}, nil
+		route.endpoints = append(route.endpoints, endpoints...)
+		route.providers++
 	}
-	return nil, errNoChatModel
+	if route == nil {
+		return nil, errNoChatModel
+	}
+	if len(route.endpoints) == 0 {
+		return nil, errNoEndpoint
+	}
+	return route, nil
 }
 
 // endpointsFor returns a provider's addresses in the order they will be tried.

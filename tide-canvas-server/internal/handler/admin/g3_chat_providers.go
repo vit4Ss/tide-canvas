@@ -63,6 +63,7 @@ func RegisterChatProviders(g *gin.RouterGroup, d *app.Deps) {
 
 	g.POST("/chat-providers/:id/fetch-models", h.fetchModels)
 	g.PUT("/chat-models/:id", h.updateModel)
+	g.POST("/chat-models/:id/prefer", h.preferModel)
 	g.DELETE("/chat-models/:id", h.deleteModel)
 }
 
@@ -89,6 +90,14 @@ type chatModelVO struct {
 	Vision     bool                  `json:"vision"`
 	Pricing    *tokenbilling.Pricing `json:"pricing"`
 	PriceError string                `json:"priceError"`
+	// Priority is this row's rank among the providers offering the same key.
+	// Preferred says whether routing would pick this row for the key; Rivals is
+	// how many other rows for the key could serve it (enabled, priced, under an
+	// enabled provider). The page shows the preference control only when
+	// Rivals is above zero — a model one provider offers has nothing to choose.
+	Priority  int  `json:"priority"`
+	Preferred bool `json:"preferred"`
+	Rivals    int  `json:"rivals"`
 }
 
 type chatProviderVO struct {
@@ -114,7 +123,7 @@ func (h *chatProvidersHandler) list(c *gin.Context) {
 		return
 	}
 	var models []model.ChatModel
-	if err := h.db.WithContext(ctx).Order("sort_order ASC, id ASC").Find(&models).Error; err != nil {
+	if err := h.db.WithContext(ctx).Order(model.ChatModelOrder).Find(&models).Error; err != nil {
 		response.Fail(c, response.CodeServerError, "读取模型失败")
 		return
 	}
@@ -141,12 +150,39 @@ func (h *chatProvidersHandler) list(c *gin.Context) {
 			LastOkAt: e.LastOkAt, LastFailedAt: e.LastFailedAt, LastFailure: e.LastFailure,
 		})
 	}
+	// Which row serves each key is decided across providers, in the same order
+	// the router uses (model.ChatModelOrder); the list is loaded in that order
+	// so the first eligible row per key is the preferred one.
+	enabledProvider := map[idgen.ID]bool{}
+	for _, p := range providers {
+		enabledProvider[p.ID] = p.Enabled
+	}
+	eligible := map[string][]idgen.ID{}
+	for _, m := range models {
+		if m.Enabled && enabledProvider[m.ProviderID] {
+			if _, err := tokenbilling.Parse(m.Pricing); err == nil {
+				eligible[m.ModelKey] = append(eligible[m.ModelKey], m.ID)
+			}
+		}
+	}
 	for _, m := range models {
 		vo, ok := byProvider[m.ProviderID]
 		if !ok {
 			continue
 		}
-		vo.Models = append(vo.Models, toChatModelVO(m))
+		item := toChatModelVO(m)
+		item.Priority = m.Priority
+		if rows := eligible[m.ModelKey]; len(rows) > 0 {
+			item.Preferred = rows[0] == m.ID
+			item.Rivals = len(rows)
+			for _, id := range rows {
+				if id == m.ID {
+					item.Rivals--
+					break
+				}
+			}
+		}
+		vo.Models = append(vo.Models, item)
 	}
 	response.OK(c, out)
 }

@@ -274,8 +274,11 @@ func TestTheChargedRowIsTheRowTheCatalogueShowed(t *testing.T) {
 		t.Fatalf("prices diverged: charged in/out %s/%s, shown %s/%s",
 			route.pricing.Input, route.pricing.Output, shown.pricing.Input, shown.pricing.Output)
 	}
-	if len(route.endpoints) != 1 || route.endpoints[0].apiKey != "second-secret" {
-		t.Fatalf("the route carries the wrong provider's addresses: %+v", route.endpoints)
+	// The chosen provider's addresses come first; the other eligible provider's
+	// follow as fallback, so a dead preferred provider does not take the model
+	// down. The disabled provider contributes nothing.
+	if len(route.endpoints) != 2 || route.endpoints[0].apiKey != "second-secret" || route.providers != 2 {
+		t.Fatalf("the route does not lead with the chosen provider: providers=%d %+v", route.providers, route.endpoints)
 	}
 }
 
