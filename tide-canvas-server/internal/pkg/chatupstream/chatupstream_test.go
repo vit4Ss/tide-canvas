@@ -2,8 +2,11 @@ package chatupstream
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSealedKeyRoundTripsAndResistsTampering(t *testing.T) {
@@ -96,12 +99,49 @@ func TestEndpointDoesNotDoubleTheVersionSegment(t *testing.T) {
 // reason than a malformed one, and the caller must be able to tell them apart
 // to explain it.
 func TestAnInternalAddressIsRefusedDistinctly(t *testing.T) {
-	for _, internal := range []string{"http://10.0.0.5:8080", "https://127.0.0.1/v1", "http://[::1]", "https://169.254.169.254"} {
+	for _, internal := range []string{"https://127.0.0.1/v1", "http://[::1]", "https://169.254.169.254", "http://0.0.0.0:8080", "http://[::ffff:127.0.0.1]"} {
 		if _, err := NormalizeBaseURL(internal); !errors.Is(err, ErrInternalHost) {
 			t.Errorf("NormalizeBaseURL(%q) = %v, want ErrInternalHost", internal, err)
 		}
 	}
+	// The operator's own network is theirs: a relay on the LAN is ordinary.
+	for _, private := range []string{"http://10.0.0.5:8080", "http://192.168.1.10:3000/v1", "https://172.16.0.2"} {
+		if _, err := NormalizeBaseURL(private); err != nil {
+			t.Errorf("NormalizeBaseURL(%q) refused a private-network relay: %v", private, err)
+		}
+	}
 	if _, err := NormalizeBaseURL("ftp://relay.example.com"); !errors.Is(err, ErrBaseURL) {
 		t.Errorf("a non-HTTP scheme was not an ErrBaseURL: %v", err)
+	}
+}
+
+// A hostname is what a form check cannot see through. The transport resolves it
+// and applies the same policy: a name that resolves to this host is refused,
+// while a literal address — already vetted when saved — is dialled as written.
+func TestTheTransportRefusesNamesThatResolveToThisHost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(204)
+	}))
+	defer server.Close()
+	client := &http.Client{Transport: NewTransport(), Timeout: 5 * time.Second}
+
+	if resp, err := client.Get(server.URL); err != nil || resp.StatusCode != 204 {
+		t.Fatalf("a literal loopback address (vetted at save time) was not dialled: %v", err)
+	}
+	// Same server, reached by a name that resolves to loopback.
+	byName := strings.Replace(server.URL, "127.0.0.1", "localhost", 1)
+	if _, err := client.Get(byName); err == nil || !errors.Is(err, ErrInternalHost) {
+		t.Fatalf("a hostname resolving to this host was dialled: %v", err)
+	}
+}
+
+func TestRedirectHintNamesTheAddressToUse(t *testing.T) {
+	if got := RedirectHint(301, "https://relay.example.com/v1/chat/completions"); !strings.Contains(got, "https://relay.example.com/v1/chat/completions") || !strings.Contains(got, "https") {
+		t.Fatalf("hint = %q", got)
+	}
+	for status, location := range map[int]string{200: "https://x", 301: "", 404: "https://x"} {
+		if got := RedirectHint(status, location); got != "" {
+			t.Errorf("RedirectHint(%d, %q) = %q, want none", status, location, got)
+		}
 	}
 }

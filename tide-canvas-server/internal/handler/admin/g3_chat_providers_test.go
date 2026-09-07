@@ -37,7 +37,7 @@ func newChatFixture(t *testing.T) *chatFixture {
 	if err := db.AutoMigrate(&model.ChatProvider{}, &model.ChatEndpoint{}, &model.ChatModel{}); err != nil {
 		t.Fatalf("migrate chat tables: %v", err)
 	}
-	h := &chatProvidersHandler{db: db, vault: chatupstream.New("test-secret"), client: http.DefaultClient}
+	h := &chatProvidersHandler{db: db, vault: chatupstream.New("test-secret"), client: discoveryClient()}
 	r := gin.New()
 	r.GET("/chat-providers", h.list)
 	r.PUT("/chat-providers/:id", h.updateProvider)
@@ -91,10 +91,10 @@ func TestAnInternalAddressIsRefusedButPlainHTTPIsAllowed(t *testing.T) {
 	for _, internal := range []string{
 		"https://127.0.0.1/v1",
 		"https://169.254.169.254/latest/meta-data",
-		"http://10.0.0.5:8080",
+		"http://0.0.0.0:8080",
 		"https://[::1]/v1",
 	} {
-		if w := post(internal); !strings.Contains(w.Body.String(), "内网") {
+		if w := post(internal); !strings.Contains(w.Body.String(), "本机") {
 			t.Fatalf("%s was not refused as an internal address: %s", internal, w.Body.String())
 		}
 	}
@@ -113,15 +113,18 @@ func TestAnInternalAddressIsRefusedButPlainHTTPIsAllowed(t *testing.T) {
 		t.Fatalf("%d refused address(es) were stored", count)
 	}
 
-	if w := post("http://relay.example.com:3000/v1/"); !strings.Contains(w.Body.String(), `"success":true`) {
-		t.Fatalf("a plain-http relay was refused: %s", w.Body.String())
+	// Plain http, and a relay on the operator's own LAN: both ordinary.
+	for _, allowed := range []string{"http://relay.example.com:3000/v1/", "http://192.168.1.10:3000/v1"} {
+		if w := post(allowed); !strings.Contains(w.Body.String(), `"success":true`) {
+			t.Fatalf("%s was refused: %s", allowed, w.Body.String())
+		}
 	}
-	var stored model.ChatEndpoint
-	if err := f.h.db.First(&stored).Error; err != nil {
+	var stored []model.ChatEndpoint
+	if err := f.h.db.Order("id ASC").Find(&stored).Error; err != nil {
 		t.Fatal(err)
 	}
-	if stored.BaseURL != "http://relay.example.com:3000/v1" {
-		t.Fatalf("stored as %q", stored.BaseURL)
+	if len(stored) != 2 || stored[0].BaseURL != "http://relay.example.com:3000/v1" || stored[1].BaseURL != "http://192.168.1.10:3000/v1" {
+		t.Fatalf("stored as %+v", stored)
 	}
 }
 
@@ -376,5 +379,30 @@ func TestEveryEditableFieldRoundTrips(t *testing.T) {
 	f.h.db.First(&renamed, "id = ?", m.ID)
 	if renamed.Name != "GPT-4o mini" || renamed.ModelKey != "gpt-4o-mini" {
 		t.Fatalf("rename changed the wrong thing: %+v", renamed)
+	}
+}
+
+// An http address that the relay only serves over https answers discovery with
+// a redirect. Following it would carry the credential wherever the relay
+// points; refusing it with "HTTP 301" tells the operator nothing. Name the
+// address to use instead.
+func TestDiscoveryExplainsARedirect(t *testing.T) {
+	f := newChatFixture(t)
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "https://relay.example.com/v1/models")
+		w.WriteHeader(301)
+	}))
+	defer relay.Close()
+	f.endpoint(relay.URL, "sk-fetch")
+
+	w := f.call("POST", "/chat-providers/"+f.provider.ID.String()+"/fetch-models", "{}")
+	body := w.Body.String()
+	if !strings.Contains(body, "https://relay.example.com/v1/models") || !strings.Contains(body, "改为") {
+		t.Fatalf("the redirect was not explained: %s", body)
+	}
+	var count int64
+	f.h.db.Model(&model.ChatModel{}).Count(&count)
+	if count != 0 {
+		t.Fatalf("%d model(s) were recorded from a redirect", count)
 	}
 }

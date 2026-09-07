@@ -16,7 +16,6 @@ import (
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/response"
-	"tidecanvas/internal/pkg/safefetch"
 	"tidecanvas/internal/pkg/tokenbilling"
 )
 
@@ -33,14 +32,25 @@ type chatProvidersHandler struct {
 	client *http.Client
 }
 
+// discoveryClient is what model discovery calls providers with. The same dial
+// policy as the chat gateway (chatupstream.NewTransport), so an address that
+// works here works in a conversation and one refused here is refused there.
+// Redirects are not followed: the credential must not ride along to wherever
+// a relay points. Tests build the handler with this too, so a fixture cannot
+// quietly differ from production in how it reaches a provider.
+func discoveryClient() *http.Client {
+	return &http.Client{
+		Timeout:       30 * time.Second,
+		Transport:     chatupstream.NewTransport(),
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
 func RegisterChatProviders(g *gin.RouterGroup, d *app.Deps) {
 	h := &chatProvidersHandler{
-		db:    d.DB,
-		vault: chatupstream.New(d.Cfg.JWT.Secret),
-		// Model discovery follows an address an operator typed. NormalizeBaseURL
-		// already refuses a literal internal address; this also refuses one a
-		// hostname resolves to, which is the half a form check cannot see.
-		client: safefetch.NewClient(30*time.Second, nil),
+		db:     d.DB,
+		vault:  chatupstream.New(d.Cfg.JWT.Secret),
+		client: discoveryClient(),
 	}
 	g.GET("/chat-providers", h.list)
 	g.POST("/chat-providers", h.createProvider)
@@ -248,7 +258,7 @@ type chatEndpointDTO struct {
 }
 
 const badBaseURL = "接入地址必须是 http 或 https 开头的完整地址，且不能带账号密码或查询参数"
-const internalBaseURL = "接入地址不能指向内网或本机地址"
+const internalBaseURL = "接入地址不能指向本机或云元数据地址（127.0.0.1、0.0.0.0、169.254.x.x 等）；内网 IP 可以"
 
 // baseURLMessage tells the operator which rule an address broke. The two are
 // different actions: fix the format, or accept that this one is off limits.

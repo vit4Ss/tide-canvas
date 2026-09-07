@@ -431,6 +431,9 @@ func (s *service) readUpstream(ctx context.Context, endpoints []chatEndpoint, pa
 		}
 		if attempt.StatusCode != 200 {
 			message := redactKeys(upstreamErrorMessage(attempt.Body, attempt.StatusCode), endpoints)
+			if hint := chatupstream.RedirectHint(attempt.StatusCode, attempt.Header.Get("Location")); hint != "" {
+				message = hint
+			}
 			attempt.Body.Close()
 			last = upstreamFrame{err: fmt.Errorf("upstream HTTP %d", attempt.StatusCode), status: attempt.StatusCode, message: message}
 			if endpointProblem(attempt.StatusCode) {

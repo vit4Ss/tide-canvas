@@ -251,3 +251,33 @@ func TestAModelMissingOnOneAddressIsTriedOnTheNext(t *testing.T) {
 		t.Fatalf("a 404 on one address did not move to the next: %d calls, %d %s", backupCalls.Load(), w.Code, w.Body.String())
 	}
 }
+
+// A relay that only serves https answers an http address with a redirect. It is
+// not followed — the credential must not ride along — and the user is told the
+// address to use rather than "HTTP 301".
+func TestARedirectingRelayIsExplainedNotFollowed(t *testing.T) {
+	var followed atomic.Int32
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/moved" {
+			followed.Add(1)
+			return
+		}
+		w.Header().Set("Location", "https://relay.example.com/v1/chat/completions")
+		w.WriteHeader(301)
+	}))
+	defer relay.Close()
+
+	f := setup(t, "", relay.URL)
+	w := f.request("POST", "/api/integrations/v1/chat/completions", untrimmedPrompt, f.apiKey, nil)
+	if followed.Load() != 0 {
+		t.Fatal("the redirect was followed with the credential attached")
+	}
+	if !strings.Contains(w.Body.String(), "https://relay.example.com/v1/chat/completions") {
+		t.Fatalf("the user was not told the address to use: %s", w.Body.String())
+	}
+	var user model.User
+	f.s.d.DB.First(&user, "id = ?", f.user.ID)
+	if user.Points != 20 || user.PointHeldMicros != 0 {
+		t.Fatalf("a redirect moved money: %+v", user)
+	}
+}

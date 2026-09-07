@@ -9,18 +9,21 @@
 package chatupstream
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"net/netip"
 	"net/url"
 	"strings"
-
-	"tidecanvas/internal/pkg/safefetch"
+	"time"
 )
 
 // Masked is what an operator sees in place of a stored key. It is also refused
@@ -30,10 +33,18 @@ const Masked = "••••••••"
 var ErrKey = errors.New("chatupstream: unusable credential")
 var ErrBaseURL = errors.New("chatupstream: base URL must be an http(s) origin without credentials or query")
 
-// ErrInternalHost is a well-formed address that points inside the deployment.
-// It is kept apart from ErrBaseURL because the operator needs a different
-// answer: not "fix the format" but "this is refused on purpose".
-var ErrInternalHost = errors.New("chatupstream: base URL points inside the deployment")
+// ErrInternalHost is a well-formed address that points at the host itself or
+// at the link-local range where cloud metadata services live. It is kept apart
+// from ErrBaseURL because the operator needs a different answer: not "fix the
+// format" but "this is refused on purpose".
+//
+// Private networks (10/8, 172.16/12, 192.168/16, fc00::/7) are allowed. A
+// relay on the operator's own LAN is an ordinary place for one to be, and the
+// operator's network is theirs. What is refused is the machine this service
+// runs on — an admin with the models permission could otherwise reach every
+// port bound to loopback — and 169.254/16, where a cloud provider hands out
+// the instance's own credentials to anything that asks.
+var ErrInternalHost = errors.New("chatupstream: base URL points at this host or the link-local range")
 
 type Vault struct{ key [32]byte }
 
@@ -112,7 +123,7 @@ func NormalizeBaseURL(raw string) (string, error) {
 	// An operations admin holds this form, not only the owner, so a literal
 	// address inside the deployment is refused: it would turn "fetch models"
 	// into a probe of the private network with the reply handed back.
-	if ip, ipErr := netip.ParseAddr(parsed.Hostname()); ipErr == nil && !safefetch.IsPublicIP(ip) {
+	if ip, ipErr := netip.ParseAddr(parsed.Hostname()); ipErr == nil && isForbiddenIP(ip) {
 		return "", ErrInternalHost
 	}
 	return strings.TrimRight(parsed.Scheme+"://"+parsed.Host+parsed.Path, "/"), nil
@@ -131,4 +142,60 @@ func Endpoint(baseURL, path string) string {
 		base += "/v1"
 	}
 	return base + "/" + strings.TrimLeft(path, "/")
+}
+
+// isForbiddenIP is the address policy behind ErrInternalHost. See its comment.
+func isForbiddenIP(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	return ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsInterfaceLocalMulticast() || ip.IsMulticast()
+}
+
+// NewTransport dials providers under the same policy NormalizeBaseURL applies
+// to literal addresses, extended to what a hostname resolves to. A literal IP
+// was vetted when the address was saved and is dialled as written. A hostname
+// is resolved here and refused if any answer is a forbidden address — that is
+// the half a form check cannot see, and the way a saved-looking name is turned
+// into a request against this host or the metadata service.
+//
+// Both callers — model discovery and the chat gateway — use this, so an address
+// behaves the same in the admin page and in a conversation. Callers set their
+// own timeouts and redirect policy on the client.
+func NewTransport() *http.Transport {
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		if _, literal := netip.ParseAddr(host); literal == nil {
+			return dialer.DialContext(ctx, network, address)
+		}
+		ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+		if err != nil {
+			return nil, err
+		}
+		if len(ips) == 0 {
+			return nil, errors.New("chatupstream: hostname has no addresses")
+		}
+		for _, ip := range ips {
+			if isForbiddenIP(ip) {
+				return nil, ErrInternalHost
+			}
+		}
+		return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].Unmap().String(), port))
+	}
+	return transport
+}
+
+// RedirectHint turns a provider's redirect into something the operator can act
+// on. Redirects are not followed — a credential must not ride along to wherever
+// a relay points — and a bare "HTTP 301" says nothing. The usual cause is an
+// address entered as http that the relay only serves over https.
+func RedirectHint(status int, location string) string {
+	if status < 300 || status > 399 || strings.TrimSpace(location) == "" {
+		return ""
+	}
+	return fmt.Sprintf("模型服务要求跳转到 %s，请把接入地址改为该地址（多半是 http 要改成 https）", strings.TrimSpace(location))
 }

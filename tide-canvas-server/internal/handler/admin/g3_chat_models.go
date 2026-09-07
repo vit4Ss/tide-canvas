@@ -125,6 +125,9 @@ func (h *chatProvidersHandler) remoteModels(ctx context.Context, baseURL, apiKey
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
+		if hint := chatupstream.RedirectHint(resp.StatusCode, resp.Header.Get("Location")); hint != "" {
+			return nil, errors.New(hint)
+		}
 		return nil, fmt.Errorf("上游返回 HTTP %d", resp.StatusCode)
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))

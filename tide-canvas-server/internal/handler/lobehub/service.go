@@ -113,7 +113,9 @@ func newService(d *app.Deps) (*service, error) {
 	}
 	pub, _ := x509.MarshalPKIXPublicKey(&rsaKey.PublicKey)
 	digest := sha256.Sum256(pub)
-	upstreamTransport := http.DefaultTransport.(*http.Transport).Clone()
+	// The same dial policy model discovery uses (see chatupstream.NewTransport):
+	// an address behaves the same in the admin page and in a conversation.
+	upstreamTransport := chatupstream.NewTransport()
 	upstreamTransport.ResponseHeaderTimeout = 15 * time.Minute
 	return &service{d: d, cfg: cfg, signer: rsaKey, kid: hex.EncodeToString(digest[:12]), mainOrigin: issuer.Scheme + "://" + issuer.Host, upstreams: chatupstream.New(d.Cfg.JWT.Secret),
 		upstream: &http.Client{Transport: upstreamTransport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
