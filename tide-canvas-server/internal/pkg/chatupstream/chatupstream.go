@@ -28,7 +28,12 @@ import (
 const Masked = "••••••••"
 
 var ErrKey = errors.New("chatupstream: unusable credential")
-var ErrBaseURL = errors.New("chatupstream: base URL must be an https origin without credentials or query")
+var ErrBaseURL = errors.New("chatupstream: base URL must be an http(s) origin without credentials or query")
+
+// ErrInternalHost is a well-formed address that points inside the deployment.
+// It is kept apart from ErrBaseURL because the operator needs a different
+// answer: not "fix the format" but "this is refused on purpose".
+var ErrInternalHost = errors.New("chatupstream: base URL points inside the deployment")
 
 type Vault struct{ key [32]byte }
 
@@ -95,8 +100,12 @@ func NormalizeBaseURL(raw string) (string, error) {
 	if len(raw) > 512 {
 		return "", ErrBaseURL
 	}
+	// Plain http is accepted. Many relays only speak it, and over it the
+	// operator's key travels in the clear — that is the operator's risk to
+	// take, and the admin page says so next to such an address, rather than
+	// something a gateway should forbid on their behalf.
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || parsed.User != nil ||
 		parsed.RawQuery != "" || parsed.Fragment != "" || strings.Contains(parsed.Path, "..") {
 		return "", ErrBaseURL
 	}
@@ -104,7 +113,7 @@ func NormalizeBaseURL(raw string) (string, error) {
 	// address inside the deployment is refused: it would turn "fetch models"
 	// into a probe of the private network with the reply handed back.
 	if ip, ipErr := netip.ParseAddr(parsed.Hostname()); ipErr == nil && !safefetch.IsPublicIP(ip) {
-		return "", ErrBaseURL
+		return "", ErrInternalHost
 	}
 	return strings.TrimRight(parsed.Scheme+"://"+parsed.Host+parsed.Path, "/"), nil
 }

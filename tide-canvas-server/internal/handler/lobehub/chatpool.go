@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -142,12 +141,11 @@ func (s *service) endpointsFor(ctx context.Context, provider idgen.ID) ([]chatEn
 	}
 	out := make([]chatEndpoint, 0, len(rows))
 	for _, row := range rows {
-		// The admin form only stores https, but this is where the credential is
-		// actually put on the wire, so it is also where a plain-http row — an
-		// older row, a hand-edited one — has to be stopped rather than sending
-		// the operator's key across the network in the clear.
-		if !isSecureUpstream(row.BaseURL) {
-			logger.L().Warn("chat endpoint would send its credential unencrypted",
+		// This is where the credential is put on the wire. Plain http is the
+		// operator's decision (the admin page says what it costs); a row whose
+		// scheme is not HTTP at all is skipped rather than dialled.
+		if !isHTTPUpstream(row.BaseURL) {
+			logger.L().Warn("chat endpoint has an unusable address",
 				zap.String("endpoint", row.ID.String()), zap.String("label", row.Label))
 			continue
 		}
@@ -210,23 +208,10 @@ func (r *chatRoute) displayName() string {
 	return fmt.Sprintf("%s · %s/%s 积分/1M Token", r.displayNameOnly(), r.pricing.Input, r.pricing.Output)
 }
 
-// isSecureUpstream reports whether the credential can be sent to this address.
-// https always; plain http only to the loopback interface, where nothing
-// leaves the machine — that is what lets a test server stand in for a provider.
-func isSecureUpstream(baseURL string) bool {
+// isHTTPUpstream reports whether this address can be dialled at all: an
+// http or https origin with a host. Anything else in the table — a hand-edited
+// row, a stray scheme — is skipped, never sent the credential.
+func isHTTPUpstream(baseURL string) bool {
 	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Host == "" {
-		return false
-	}
-	if parsed.Scheme == "https" {
-		return true
-	}
-	if parsed.Scheme != "http" {
-		return false
-	}
-	if parsed.Hostname() == "localhost" {
-		return true
-	}
-	ip, err := netip.ParseAddr(parsed.Hostname())
-	return err == nil && ip.IsLoopback()
+	return err == nil && parsed.Host != "" && (parsed.Scheme == "http" || parsed.Scheme == "https")
 }

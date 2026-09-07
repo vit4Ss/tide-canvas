@@ -1,6 +1,7 @@
 package chatupstream
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -40,11 +41,12 @@ func TestTheMaskIsNeverStoredAsACredential(t *testing.T) {
 
 func TestBaseURLMustBeAPlainHTTPSOrigin(t *testing.T) {
 	for raw, want := range map[string]string{
-		"https://api.openai.com":      "https://api.openai.com",
-		"https://api.example.com/":    "https://api.example.com",
-		"https://api.example.com/v1/": "https://api.example.com/v1",
-		" https://api.example.com ":   "https://api.example.com",
-		"":                            "",
+		"https://api.openai.com":            "https://api.openai.com",
+		"http://relay.example.com:3000/v1/": "http://relay.example.com:3000/v1",
+		"https://api.example.com/":          "https://api.example.com",
+		"https://api.example.com/v1/":       "https://api.example.com/v1",
+		" https://api.example.com ":         "https://api.example.com",
+		"":                                  "",
 	} {
 		got, err := NormalizeBaseURL(raw)
 		if err != nil || got != want {
@@ -52,7 +54,6 @@ func TestBaseURLMustBeAPlainHTTPSOrigin(t *testing.T) {
 		}
 	}
 	for _, refused := range []string{
-		"http://api.example.com",            // plaintext would expose the key
 		"https://user:pass@api.example.com", // credentials in the URL
 		"https://api.example.com?token=x",   // query could redirect the call
 		"https://api.example.com/../evil",   // traversal
@@ -88,5 +89,19 @@ func TestEndpointDoesNotDoubleTheVersionSegment(t *testing.T) {
 	}
 	if got := Endpoint("https://ccgoai.club/v1", "chat/completions"); got != "https://ccgoai.club/v1/chat/completions" {
 		t.Errorf("chat path = %q", got)
+	}
+}
+
+// A well-formed address inside the deployment is refused for a different
+// reason than a malformed one, and the caller must be able to tell them apart
+// to explain it.
+func TestAnInternalAddressIsRefusedDistinctly(t *testing.T) {
+	for _, internal := range []string{"http://10.0.0.5:8080", "https://127.0.0.1/v1", "http://[::1]", "https://169.254.169.254"} {
+		if _, err := NormalizeBaseURL(internal); !errors.Is(err, ErrInternalHost) {
+			t.Errorf("NormalizeBaseURL(%q) = %v, want ErrInternalHost", internal, err)
+		}
+	}
+	if _, err := NormalizeBaseURL("ftp://relay.example.com"); !errors.Is(err, ErrBaseURL) {
+		t.Errorf("a non-HTTP scheme was not an ErrBaseURL: %v", err)
 	}
 }

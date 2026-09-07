@@ -79,29 +79,49 @@ func (f *chatFixture) endpoint(baseURL, apiKey string) model.ChatEndpoint {
 }
 
 // An operator holding only the models permission fills this form, so an address
-// inside the deployment must be refused: fetch-models would otherwise read the
-// private network and hand the reply back.
-func TestAnInternalAddressIsRefused(t *testing.T) {
+// inside the deployment is refused: fetch-models would otherwise read the
+// private network and hand the reply back. Plain http across the network is
+// allowed — many relays only speak it — and the two refusals each say why.
+func TestAnInternalAddressIsRefusedButPlainHTTPIsAllowed(t *testing.T) {
 	f := newChatFixture(t)
-	for _, bad := range []string{
+	post := func(baseURL string) *httptest.ResponseRecorder {
+		return f.call("POST", "/chat-providers/"+f.provider.ID.String()+"/endpoints",
+			fmt.Sprintf(`{"baseUrl":%q,"apiKey":"sk-test"}`, baseURL))
+	}
+	for _, internal := range []string{
 		"https://127.0.0.1/v1",
 		"https://169.254.169.254/latest/meta-data",
-		"https://10.0.0.5:8080",
+		"http://10.0.0.5:8080",
 		"https://[::1]/v1",
-		"http://api.example.com/v1",
+	} {
+		if w := post(internal); !strings.Contains(w.Body.String(), "内网") {
+			t.Fatalf("%s was not refused as an internal address: %s", internal, w.Body.String())
+		}
+	}
+	for _, malformed := range []string{
 		"https://user:pw@api.example.com",
 		"https://api.example.com/v1?key=leak",
+		"ftp://api.example.com",
 	} {
-		body := fmt.Sprintf(`{"baseUrl":%q,"apiKey":"sk-test"}`, bad)
-		w := f.call("POST", "/chat-providers/"+f.provider.ID.String()+"/endpoints", body)
-		if !strings.Contains(w.Body.String(), "https") {
-			t.Fatalf("%s was accepted as an upstream address: %s", bad, w.Body.String())
+		if w := post(malformed); !strings.Contains(w.Body.String(), "http 或 https") {
+			t.Fatalf("%s was not refused as malformed: %s", malformed, w.Body.String())
 		}
 	}
 	var count int64
 	f.h.db.Model(&model.ChatEndpoint{}).Count(&count)
 	if count != 0 {
-		t.Fatalf("%d internal address(es) were stored", count)
+		t.Fatalf("%d refused address(es) were stored", count)
+	}
+
+	if w := post("http://relay.example.com:3000/v1/"); !strings.Contains(w.Body.String(), `"success":true`) {
+		t.Fatalf("a plain-http relay was refused: %s", w.Body.String())
+	}
+	var stored model.ChatEndpoint
+	if err := f.h.db.First(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.BaseURL != "http://relay.example.com:3000/v1" {
+		t.Fatalf("stored as %q", stored.BaseURL)
 	}
 }
 

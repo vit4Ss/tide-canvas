@@ -343,7 +343,7 @@ function EndpointList({ provider, busy, run }: { provider: ChatProviderVO; busy:
       )}
 
       <FormGrid>
-        <Field label="接入地址" span={2} hint="https 开头。供应商文档里的 base_url 直接粘贴即可，带不带 /v1 都行">
+        <Field label="接入地址" span={2} hint="http 或 https 开头。供应商文档里的 base_url 直接粘贴即可，带不带 /v1 都行">
           <input inputMode="url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com" />
         </Field>
         <Field label="API Key" hint="保存后不再回显">
@@ -442,6 +442,9 @@ function EndpointRow({
             void run(`eu-${endpoint.id}`, () => adminChatProvidersApi.updateEndpoint(endpoint.id, { baseUrl }), "已更新接入地址");
           }}
         />
+        {endpoint.baseUrl.startsWith("http://") ? (
+          <small className="cp-bad">http 明文传输，API Key 会在网络上裸露</small>
+        ) : null}
       </td>
       <td>
         <input

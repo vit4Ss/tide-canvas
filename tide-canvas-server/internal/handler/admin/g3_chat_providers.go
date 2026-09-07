@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -246,7 +247,17 @@ type chatEndpointDTO struct {
 	SortOrder *int    `json:"sortOrder"`
 }
 
-const badBaseURL = "接入地址必须是 https 开头的地址，且不能带账号密码或查询参数"
+const badBaseURL = "接入地址必须是 http 或 https 开头的完整地址，且不能带账号密码或查询参数"
+const internalBaseURL = "接入地址不能指向内网或本机地址"
+
+// baseURLMessage tells the operator which rule an address broke. The two are
+// different actions: fix the format, or accept that this one is off limits.
+func baseURLMessage(err error) string {
+	if errors.Is(err, chatupstream.ErrInternalHost) {
+		return internalBaseURL
+	}
+	return badBaseURL
+}
 
 func (h *chatProvidersHandler) createEndpoint(c *gin.Context) {
 	providerID, ok := g4ParseID(c)
@@ -260,7 +271,7 @@ func (h *chatProvidersHandler) createEndpoint(c *gin.Context) {
 	}
 	baseURL, err := chatupstream.NormalizeBaseURL(*dto.BaseUrl)
 	if err != nil || baseURL == "" {
-		response.Fail(c, response.CodeBadRequest, badBaseURL)
+		response.Fail(c, response.CodeBadRequest, baseURLMessage(err))
 		return
 	}
 	sealed, err := h.vault.Seal(*dto.ApiKey)
@@ -304,7 +315,7 @@ func (h *chatProvidersHandler) updateEndpoint(c *gin.Context) {
 	if dto.BaseUrl != nil {
 		baseURL, err := chatupstream.NormalizeBaseURL(*dto.BaseUrl)
 		if err != nil || baseURL == "" {
-			response.Fail(c, response.CodeBadRequest, badBaseURL)
+			response.Fail(c, response.CodeBadRequest, baseURLMessage(err))
 			return
 		}
 		fields["base_url"] = baseURL

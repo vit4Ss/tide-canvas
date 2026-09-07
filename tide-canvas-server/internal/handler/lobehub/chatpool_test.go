@@ -279,29 +279,24 @@ func TestTheChargedRowIsTheRowTheCatalogueShowed(t *testing.T) {
 	}
 }
 
-// The admin form only stores https, but the gateway calls whatever is in the
-// table. A row that would put the operator's key on the wire in the clear is
-// skipped rather than used.
-func TestAPlaintextAddressNeverCarriesTheCredential(t *testing.T) {
-	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, okWithUsage)
-	}))
-	defer good.Close()
-
-	f := setup(t, "", "http://relay.example.com")
+// Plain http is the operator's decision — many relays only speak it — so an
+// http address across the network is used like any other. What the gateway
+// will not do is dial a scheme that is not HTTP at all; such a row is skipped
+// rather than fatal, and the provider's other addresses still serve.
+func TestOnlyHTTPSchemesAreDialled(t *testing.T) {
+	f := setup(t, "", "ftp://relay.example.com")
 	if _, err := f.s.routeFor(context.Background(), "test-model"); err == nil {
-		t.Fatal("a plain-http address across the network was used to carry the key")
+		t.Fatal("a non-HTTP address was accepted as an upstream")
 	}
 
-	// Loopback is the exception: nothing leaves the machine, which is what lets
-	// a test server stand in for a provider.
-	addEndpoint(t, f, good.URL, "loopback-secret", 1)
+	addEndpoint(t, f, "http://relay.example.com:3000/v1", "plain-http-secret", 1)
+	addEndpoint(t, f, "https://relay.example.com/v1", "https-secret", 2)
 	route, err := f.s.routeFor(context.Background(), "test-model")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(route.endpoints) != 1 || route.endpoints[0].baseURL != good.URL {
-		t.Fatalf("wrong addresses survived the check: %+v", route.endpoints)
+	if len(route.endpoints) != 2 || route.endpoints[0].baseURL != "http://relay.example.com:3000/v1" {
+		t.Fatalf("the usable addresses were not the ones kept: %+v", route.endpoints)
 	}
 }
 
