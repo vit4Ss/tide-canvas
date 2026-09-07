@@ -7,8 +7,11 @@
    Token 用量从主站积分扣费。和「模型管理 / 创作台」完全分开：这里的任何配置
    都不会影响生成。
 
-   一个供应商可配多组地址，调用时按顺序尝试，前一组连不上就换下一组。
-   拉取到的模型默认未开放，填好每百万 Token 单价后才能开放给用户。
+   三层结构：供应商 → 接入地址（可多组，按顺序尝试，前一组连不上换下一组）
+   → 模型（拉取后默认未开放，填好每百万 Token 单价才能开放）。
+
+   页面沿用后台的组件与样式体系（AdminModal / AdminTable / StatusPill /
+   confirmDialog），不使用浏览器原生弹窗。
    ============================================================================ */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -16,12 +19,16 @@ import { ChevronDown, ChevronUp, Plus, RefreshCw, Trash2 } from "lucide-react";
 import {
   AdminAlert,
   AdminEmptyState,
+  AdminModal,
+  AdminTable,
   Field,
   FormGrid,
   Panel,
+  StatusPill,
   SwitchToggle,
   TableSkeleton,
 } from "@/components/admin";
+import { confirmDialog } from "@/components/shared/confirm";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { toast } from "@/components/shared/toast";
 import { adminChatProvidersApi } from "@/lib/admin-chat-providers-api";
@@ -45,10 +52,13 @@ const emptyPricing = (): ChatTokenPricing => ({
 });
 
 function fmtTime(value: string | null): string {
-  if (!value) return "—";
+  if (!value) return "";
   const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("zh-CN", { hour12: false });
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString("zh-CN", { hour12: false });
 }
+
+type Result = { success: boolean; message?: string };
+type Run = (key: string, action: () => Promise<Result>, ok: string) => Promise<void>;
 
 export default function ChatProvidersPage() {
   const ensureSession = useAuthStore((s) => s.ensureSession);
@@ -56,6 +66,8 @@ export default function ChatProvidersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [addTarget, setAddTarget] = useState<ChatProviderVO | null>(null);
   const requestRef = useRef(0);
 
   const load = useCallback(async () => {
@@ -89,7 +101,7 @@ export default function ChatProvidersPage() {
   // run wraps every mutation: one in flight at a time, refresh on success, and
   // the server's own message on failure (it explains what was wrong with the
   // address, the credential or the price).
-  const run = async (key: string, action: () => Promise<{ success: boolean; message?: string }>, ok: string) => {
+  const run: Run = async (key, action, ok) => {
     if (busy) return;
     setBusy(key);
     try {
@@ -105,12 +117,6 @@ export default function ChatProvidersPage() {
     } finally {
       setBusy("");
     }
-  };
-
-  const addProvider = () => {
-    const name = window.prompt("供应商名称（如 OpenAI 官方 / DeepSeek / 某中转站）");
-    if (!name?.trim()) return;
-    void run("new-provider", () => adminChatProvidersApi.createProvider({ name: name.trim() }), "已新增供应商");
   };
 
   return (
@@ -139,7 +145,7 @@ export default function ChatProvidersPage() {
         title="AI 聊天供应商"
         sub="一个供应商可配多组接入地址，调用时按顺序尝试，前一组连不上自动换下一组"
         tools={
-          <button type="button" className="adm-btn" onClick={addProvider} disabled={!!busy}>
+          <button type="button" className="adm-btn" onClick={() => setCreateOpen(true)} disabled={!!busy}>
             <Plus aria-hidden size={14} />
             新增供应商
           </button>
@@ -148,20 +154,194 @@ export default function ChatProvidersPage() {
         {loading ? (
           <TableSkeleton rows={3} />
         ) : providers.length === 0 ? (
-          <AdminEmptyState title="还没有供应商" description="新增一个供应商，填好它的接入地址和 API Key，再拉取模型列表。" />
+          <AdminEmptyState
+            title="还没有供应商"
+            description="新增一个供应商，填好它的接入地址和 API Key，页面会顺手把模型列表拉回来。"
+            action={
+              <button type="button" className="adm-btn" onClick={() => setCreateOpen(true)}>
+                <Plus aria-hidden size={14} />
+                新增供应商
+              </button>
+            }
+          />
         ) : (
           <div className="cp-list">
             {providers.map((provider) => (
-              <ProviderCard key={provider.id} provider={provider} busy={busy} run={run} />
+              <ProviderCard key={provider.id} provider={provider} busy={busy} run={run} onAddEndpoint={setAddTarget} />
             ))}
           </div>
         )}
       </Panel>
+
+      <CreateProviderModal open={createOpen} onClose={() => setCreateOpen(false)} reload={load} />
+      <AddEndpointModal provider={addTarget} onClose={() => setAddTarget(null)} reload={load} />
     </div>
   );
 }
 
-type Run = (key: string, action: () => Promise<{ success: boolean; message?: string }>, ok: string) => Promise<void>;
+/* ---------------------------------------------------------------- modals */
+
+// One step creates a usable provider: name it, give it its first address, and
+// the model list comes back in the same save. A provider with no address is
+// a dead end, so the address is offered here rather than left for later.
+function CreateProviderModal({ open, onClose, reload }: { open: boolean; onClose: () => void; reload: () => Promise<void> }) {
+  const [name, setName] = useState("");
+  const [remark, setRemark] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [label, setLabel] = useState("");
+
+  const reset = () => {
+    setName("");
+    setRemark("");
+    setBaseUrl("");
+    setApiKey("");
+    setLabel("");
+  };
+
+  const save = async (): Promise<boolean> => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      toast.error("请填写供应商名称");
+      return false;
+    }
+    const url = baseUrl.trim();
+    const key = apiKey.trim();
+    if ((url && !key) || (!url && key)) {
+      toast.error("接入地址和 API Key 要一起填，或都留空稍后再加");
+      return false;
+    }
+    try {
+      const created = await adminChatProvidersApi.createProvider({ name: trimmedName, remark: remark.trim() });
+      if (!created.success || !created.data) {
+        toast.error(created.message || "创建供应商失败");
+        return false;
+      }
+      if (!url) {
+        toast.success("已新增供应商，接下来添加一组接入地址");
+      } else {
+        const endpoint = await adminChatProvidersApi.createEndpoint(created.data.id, { baseUrl: url, apiKey: key, label: label.trim() });
+        if (!endpoint.success) {
+          toast.error(endpoint.message || "供应商已创建，但接入地址未能保存，请在列表里补填");
+        } else {
+          const fetched = await adminChatProvidersApi.fetchModels(created.data.id);
+          if (fetched.success && fetched.data) {
+            toast.success(`已新增供应商，拉到 ${fetched.data.total} 个模型；填好单价后即可开放`);
+          } else {
+            toast.info(`已新增供应商和接入地址；拉取模型失败：${fetched.message || "请稍后重试"}`);
+          }
+        }
+      }
+      await reload();
+      reset();
+      return true;
+    } catch {
+      toast.error("操作失败，请稍后重试");
+      return false;
+    }
+  };
+
+  return (
+    <AdminModal
+      open={open}
+      size="md"
+      title="新增供应商"
+      subtitle="一个 OpenAI 兼容服务；地址可以现在填，也可以建好后在列表里添加"
+      saveLabel="创建"
+      onClose={() => {
+        reset();
+        onClose();
+      }}
+      onSave={save}
+    >
+      <FormGrid>
+        <Field label="供应商名称" required span={2} hint="如 OpenAI 官方 / DeepSeek / 某中转站">
+          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+        </Field>
+        <Field label="备注" span={2}>
+          <input value={remark} onChange={(e) => setRemark(e.target.value)} placeholder="可留空" />
+        </Field>
+        <Field label="接入地址" span={4} hint="http 或 https 开头。供应商文档里的 base_url 直接粘贴即可，带不带 /v1 都行">
+          <input inputMode="url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com/v1" />
+        </Field>
+        <Field label="API Key" span={2} hint="加密保存，之后只显示是否已设置">
+          <input type="password" autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
+        </Field>
+        <Field label="地址备注" span={2} hint="如「主用」「备用」">
+          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="可留空" />
+        </Field>
+      </FormGrid>
+    </AdminModal>
+  );
+}
+
+function AddEndpointModal({ provider, onClose, reload }: { provider: ChatProviderVO | null; onClose: () => void; reload: () => Promise<void> }) {
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [label, setLabel] = useState("");
+
+  const reset = () => {
+    setBaseUrl("");
+    setApiKey("");
+    setLabel("");
+  };
+
+  const save = async (): Promise<boolean> => {
+    if (!provider) return true;
+    if (!baseUrl.trim() || !apiKey.trim()) {
+      toast.error("请填写接入地址和 API Key");
+      return false;
+    }
+    try {
+      const res = await adminChatProvidersApi.createEndpoint(provider.id, {
+        baseUrl: baseUrl.trim(),
+        apiKey: apiKey.trim(),
+        label: label.trim(),
+        sortOrder: provider.endpoints.length,
+      });
+      if (!res.success) {
+        toast.error(res.message || "创建接入地址失败");
+        return false;
+      }
+      toast.success("已添加接入地址");
+      await reload();
+      reset();
+      return true;
+    } catch {
+      toast.error("操作失败，请稍后重试");
+      return false;
+    }
+  };
+
+  return (
+    <AdminModal
+      open={!!provider}
+      size="md"
+      title={provider ? `为「${provider.name}」添加接入地址` : "添加接入地址"}
+      subtitle="同一供应商可以配多组地址互为备用，调用时按顺序尝试"
+      saveLabel="添加"
+      onClose={() => {
+        reset();
+        onClose();
+      }}
+      onSave={save}
+    >
+      <FormGrid>
+        <Field label="接入地址" required span={4} hint="http 或 https 开头。供应商文档里的 base_url 直接粘贴即可，带不带 /v1 都行">
+          <input inputMode="url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com/v1" autoFocus />
+        </Field>
+        <Field label="API Key" required span={2} hint="加密保存，之后只显示是否已设置">
+          <input type="password" autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
+        </Field>
+        <Field label="备注" span={2} hint="如「主用」「备用」">
+          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="可留空" />
+        </Field>
+      </FormGrid>
+    </AdminModal>
+  );
+}
+
+/* ---------------------------------------------------------------- inline edit */
 
 // InlineText is the page's editing idiom for a single value: it reads as text,
 // commits on blur or Enter, and reverts on Escape. It saves only when the value
@@ -184,7 +364,7 @@ function InlineText({
   const [draft, setDraft] = useState(value);
   // A reload replaces the row, and the field must follow it rather than keep a
   // stale draft. Reconciling during render is how React wants props-derived
-  // state adjusted; an effect here would fight the lint rule and flash.
+  // state adjusted.
   const [seen, setSeen] = useState(value);
   if (seen !== value) {
     setSeen(value);
@@ -221,11 +401,36 @@ function InlineText({
   );
 }
 
-function ProviderCard({ provider, busy, run }: { provider: ChatProviderVO; busy: string; run: Run }) {
+/* ---------------------------------------------------------------- provider */
+
+function ProviderCard({
+  provider,
+  busy,
+  run,
+  onAddEndpoint,
+}: {
+  provider: ChatProviderVO;
+  busy: string;
+  run: Run;
+  onAddEndpoint: (provider: ChatProviderVO) => void;
+}) {
+  const open = provider.models.filter((m) => m.enabled).length;
+
+  const remove = async () => {
+    const ok = await confirmDialog({
+      title: "删除供应商",
+      message: `删除「${provider.name}」及其全部接入地址与模型？已开放给用户的模型会立刻从聊天里消失。`,
+      confirmText: "删除",
+      danger: true,
+    });
+    if (!ok) return;
+    void run(`pd-${provider.id}`, () => adminChatProvidersApi.deleteProvider(provider.id), "已删除供应商");
+  };
+
   return (
-    <section className="cp-provider">
-      <header>
-        <div>
+    <section className={`cp-provider${provider.enabled ? "" : " is-off"}`} aria-label={provider.name}>
+      <header className="cp-head">
+        <div className="cp-ident">
           <InlineText
             label="供应商名称"
             className="cp-name"
@@ -243,120 +448,87 @@ function ProviderCard({ provider, busy, run }: { provider: ChatProviderVO; busy:
             label="供应商备注"
             className="cp-remark"
             value={provider.remark}
-            placeholder="备注（可留空）"
+            placeholder="添加备注"
             disabled={!!busy}
             onSave={(remark) =>
               void run(`pr-${provider.id}`, () => adminChatProvidersApi.updateProvider(provider.id, { remark }), "已保存备注")
             }
           />
-          <p>
-            {provider.endpoints.length} 个接入地址 · {provider.models.filter((m) => m.enabled).length} /{" "}
-            {provider.models.length} 个模型已开放
-          </p>
         </div>
-        <label className="cp-switch">
-          <span>启用</span>
-          <SwitchToggle
-            checked={provider.enabled}
-            onChange={(enabled) =>
-              void run(`p-${provider.id}`, () => adminChatProvidersApi.updateProvider(provider.id, { enabled }), enabled ? "已启用" : "已停用")
-            }
-          />
-        </label>
-        <button
-          type="button"
-          className="adm-btn ghost danger"
-          disabled={!!busy}
-          onClick={() => {
-            if (!window.confirm(`删除供应商「${provider.name}」及其全部地址与模型？`)) return;
-            void run(`pd-${provider.id}`, () => adminChatProvidersApi.deleteProvider(provider.id), "已删除供应商");
-          }}
-        >
-          <Trash2 aria-hidden size={14} />
-          删除
-        </button>
+        <div className="cp-meta">
+          <span>
+            <strong>{provider.endpoints.length}</strong> 个接入地址
+          </span>
+          <span>
+            <strong>{open}</strong> / {provider.models.length} 个模型开放
+          </span>
+        </div>
+        <div className="cp-acts">
+          <label className="cp-switch">
+            <span>{provider.enabled ? "启用中" : "已停用"}</span>
+            <SwitchToggle
+              checked={provider.enabled}
+              onChange={(enabled) =>
+                void run(`p-${provider.id}`, () => adminChatProvidersApi.updateProvider(provider.id, { enabled }), enabled ? "已启用" : "已停用")
+              }
+            />
+          </label>
+          <button type="button" className="adm-btn ghost danger" disabled={!!busy} onClick={() => void remove()}>
+            <Trash2 aria-hidden size={14} />
+            删除
+          </button>
+        </div>
       </header>
 
-      <EndpointList provider={provider} busy={busy} run={run} />
-      <ModelList provider={provider} busy={busy} run={run} />
+      <EndpointSection provider={provider} busy={busy} run={run} onAdd={onAddEndpoint} />
+      <ModelSection provider={provider} busy={busy} run={run} />
     </section>
   );
 }
 
-function EndpointList({ provider, busy, run }: { provider: ChatProviderVO; busy: string; run: Run }) {
-  const [baseUrl, setBaseUrl] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [label, setLabel] = useState("");
+/* ---------------------------------------------------------------- endpoints */
 
-  const add = () => {
-    if (!baseUrl.trim() || !apiKey.trim()) {
-      toast.error("请填写接入地址和 API Key");
-      return;
-    }
-    void run(
-      `e-new-${provider.id}`,
-      () =>
-        adminChatProvidersApi.createEndpoint(provider.id, {
-          baseUrl: baseUrl.trim(),
-          apiKey: apiKey.trim(),
-          label: label.trim(),
-          sortOrder: provider.endpoints.length,
-        }),
-      "已新增接入地址",
-    ).then(() => {
-      setBaseUrl("");
-      setApiKey("");
-      setLabel("");
-    });
-  };
-
+function EndpointSection({
+  provider,
+  busy,
+  run,
+  onAdd,
+}: {
+  provider: ChatProviderVO;
+  busy: string;
+  run: Run;
+  onAdd: (provider: ChatProviderVO) => void;
+}) {
   return (
     <div className="cp-section">
-      <h4>接入地址</h4>
-      {provider.endpoints.length === 0 ? (
-        <p className="cp-none">还没有接入地址，填一组后才能拉取模型。</p>
-      ) : (
-        <table className="cp-table">
-          <thead>
-            <tr>
-              <th>顺序 / 备注</th>
-              <th>地址</th>
-              <th>密钥</th>
-              <th>最近状态</th>
-              <th>启用</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {provider.endpoints.map((endpoint, index) => (
-              <EndpointRow
-                key={endpoint.id}
-                endpoint={endpoint}
-                index={index}
-                siblings={provider.endpoints}
-                busy={busy}
-                run={run}
-              />
-            ))}
-          </tbody>
-        </table>
-      )}
+      <div className="cp-section-head">
+        <h4>
+          接入地址
+          <span className="cp-n">{provider.endpoints.length}</span>
+        </h4>
+        <button type="button" className="adm-btn ghost" disabled={!!busy} onClick={() => onAdd(provider)}>
+          <Plus aria-hidden size={14} />
+          添加地址
+        </button>
+      </div>
 
-      <FormGrid>
-        <Field label="接入地址" span={2} hint="http 或 https 开头。供应商文档里的 base_url 直接粘贴即可，带不带 /v1 都行">
-          <input inputMode="url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.openai.com" />
-        </Field>
-        <Field label="API Key" hint="保存后不再回显">
-          <input type="password" autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
-        </Field>
-        <Field label="备注" hint="如「主用」「备用」">
-          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="可留空" />
-        </Field>
-      </FormGrid>
-      <button type="button" className="adm-btn ghost" onClick={add} disabled={!!busy}>
-        <Plus aria-hidden size={14} />
-        添加这组地址
-      </button>
+      {provider.endpoints.length === 0 ? (
+        <p className="cp-none">还没有接入地址。添加一组 base_url 和 API Key 后才能拉取模型。</p>
+      ) : (
+        <div className="cp-endpoints" role="list" aria-label="接入地址">
+          <div className="cp-endpoint cp-endpoint-cols" aria-hidden>
+            <span>顺序</span>
+            <span>地址</span>
+            <span>API Key</span>
+            <span>最近状态</span>
+            <span>启用</span>
+            <span />
+          </div>
+          {provider.endpoints.map((endpoint, index) => (
+            <EndpointRow key={endpoint.id} endpoint={endpoint} index={index} siblings={provider.endpoints} busy={busy} run={run} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -393,19 +565,26 @@ function EndpointRow({
     );
   };
 
+  const remove = async () => {
+    const ok = await confirmDialog({
+      title: "删除接入地址",
+      message: `删除 ${endpoint.baseUrl}？它保存的 API Key 会一并删除。`,
+      confirmText: "删除",
+      danger: true,
+    });
+    if (!ok) return;
+    void run(`ed-${endpoint.id}`, () => adminChatProvidersApi.deleteEndpoint(endpoint.id), "已删除接入地址");
+  };
+
+  const plain = endpoint.baseUrl.startsWith("http://");
+
   return (
-    <tr>
-      <td>
-        <div className="cp-order">
-          <strong>#{index + 1}</strong>
-          <button
-            type="button"
-            className="cp-move"
-            aria-label="上移，更早被尝试"
-            disabled={!!busy || index === 0}
-            onClick={() => move(-1)}
-          >
-            <ChevronUp aria-hidden size={14} />
+    <div className="cp-endpoint" role="listitem">
+      <div className="cp-order">
+        <strong>#{index + 1}</strong>
+        <span className="cp-move-group">
+          <button type="button" className="cp-move" aria-label="上移，更早被尝试" disabled={!!busy || index === 0} onClick={() => move(-1)}>
+            <ChevronUp aria-hidden size={13} />
           </button>
           <button
             type="button"
@@ -414,24 +593,15 @@ function EndpointRow({
             disabled={!!busy || index === siblings.length - 1}
             onClick={() => move(1)}
           >
-            <ChevronDown aria-hidden size={14} />
+            <ChevronDown aria-hidden size={13} />
           </button>
-        </div>
-        <InlineText
-          label="接入地址备注"
-          className="cp-remark"
-          value={endpoint.label}
-          placeholder="备注"
-          disabled={!!busy}
-          onSave={(label) =>
-            void run(`el-${endpoint.id}`, () => adminChatProvidersApi.updateEndpoint(endpoint.id, { label }), "已保存备注")
-          }
-        />
-      </td>
-      <td>
+        </span>
+      </div>
+
+      <div className="cp-addr">
         <InlineText
           label="接入地址"
-          className="mono"
+          className="cp-url"
           value={endpoint.baseUrl}
           disabled={!!busy}
           onSave={(baseUrl) => {
@@ -442,127 +612,231 @@ function EndpointRow({
             void run(`eu-${endpoint.id}`, () => adminChatProvidersApi.updateEndpoint(endpoint.id, { baseUrl }), "已更新接入地址");
           }}
         />
-        {endpoint.baseUrl.startsWith("http://") ? (
-          <small className="cp-bad">http 明文传输，API Key 会在网络上裸露</small>
-        ) : null}
-      </td>
-      <td>
+        <div className="cp-addr-sub">
+          <InlineText
+            label="接入地址备注"
+            className="cp-label"
+            value={endpoint.label}
+            placeholder="备注"
+            disabled={!!busy}
+            onSave={(label) =>
+              void run(`el-${endpoint.id}`, () => adminChatProvidersApi.updateEndpoint(endpoint.id, { label }), "已保存备注")
+            }
+          />
+          {plain ? <span className="cp-warn">http 明文传输，API Key 会在网络上裸露</span> : null}
+        </div>
+      </div>
+
+      <div className="cp-keycell">
         <input
           type="password"
           autoComplete="off"
           className="cp-key"
+          aria-label="API Key，输入新值并离开即保存"
           value={key}
           placeholder={endpoint.hasApiKey ? MASK : "未设置"}
           onChange={(e) => setKey(e.target.value)}
           onBlur={() => {
             if (!key.trim()) return;
-            void run(
-              `e-${endpoint.id}`,
-              () => adminChatProvidersApi.updateEndpoint(endpoint.id, { apiKey: key.trim() }),
-              "已更新 API Key",
-            ).then(() => setKey(""));
+            void run(`e-${endpoint.id}`, () => adminChatProvidersApi.updateEndpoint(endpoint.id, { apiKey: key.trim() }), "已更新 API Key").then(() =>
+              setKey(""),
+            );
           }}
         />
-      </td>
-      <td>
+        <small>{endpoint.hasApiKey ? "已设置，输入新值可替换" : "尚未设置"}</small>
+      </div>
+
+      <div className="cp-health">
         {endpoint.lastFailure ? (
-          <span className="cp-bad">
-            {endpoint.lastFailure}
-            <small>{fmtTime(endpoint.lastFailedAt)}</small>
-          </span>
+          <>
+            <StatusPill tone="red">失败</StatusPill>
+            <small title={endpoint.lastFailure}>
+              {endpoint.lastFailure}
+              {fmtTime(endpoint.lastFailedAt) ? ` · ${fmtTime(endpoint.lastFailedAt)}` : ""}
+            </small>
+          </>
         ) : endpoint.lastOkAt ? (
-          <span className="cp-ok">
-            正常
+          <>
+            <StatusPill tone="green">正常</StatusPill>
             <small>{fmtTime(endpoint.lastOkAt)}</small>
-          </span>
+          </>
         ) : (
-          <span className="cp-idle">尚未调用</span>
+          <>
+            <StatusPill tone="gray">尚未调用</StatusPill>
+            <small>还没有请求经过这里</small>
+          </>
         )}
-      </td>
-      <td>
+      </div>
+
+      <div className="cp-toggle">
         <SwitchToggle
           checked={endpoint.enabled}
+          aria-label="启用此地址"
           onChange={(enabled) =>
             void run(`es-${endpoint.id}`, () => adminChatProvidersApi.updateEndpoint(endpoint.id, { enabled }), enabled ? "已启用" : "已停用")
           }
         />
-      </td>
-      <td>
-        <button
-          type="button"
-          className="adm-btn ghost danger"
-          disabled={!!busy}
-          onClick={() => {
-            if (!window.confirm(`删除接入地址 ${endpoint.baseUrl}？`)) return;
-            void run(`ed-${endpoint.id}`, () => adminChatProvidersApi.deleteEndpoint(endpoint.id), "已删除接入地址");
-          }}
-        >
+      </div>
+
+      <div className="cp-rowact">
+        <button type="button" className="adm-btn ghost danger cp-icon" aria-label="删除此地址" disabled={!!busy} onClick={() => void remove()}>
           <Trash2 aria-hidden size={14} />
         </button>
-      </td>
-    </tr>
-  );
-}
-
-function ModelList({ provider, busy, run }: { provider: ChatProviderVO; busy: string; run: Run }) {
-  return (
-    <div className="cp-section">
-      <div className="cp-section-head">
-        <h4>模型</h4>
-        <button
-          type="button"
-          className="adm-btn ghost"
-          disabled={!!busy || provider.endpoints.length === 0}
-          onClick={() =>
-            void run(`f-${provider.id}`, async () => {
-              const res = await adminChatProvidersApi.fetchModels(provider.id);
-              if (res.success && res.data) {
-                toast.info(`上游共 ${res.data.total} 个模型，新增 ${res.data.added} 个`);
-              }
-              return res;
-            }, "已拉取模型列表")
-          }
-        >
-          <RefreshCw aria-hidden size={14} />
-          从供应商拉取模型
-        </button>
       </div>
-      {provider.models.length === 0 ? (
-        <p className="cp-none">还没有模型。填好接入地址后点「从供应商拉取模型」。</p>
-      ) : (
-        <table className="cp-table">
-          <thead>
-            <tr>
-              <th>模型</th>
-              <th>
-                输入 / 输出 积分每 1M Token
-                <small>单次费用非零时向上取整为整数积分</small>
-              </th>
-              <th>Token 上限</th>
-              <th>
-                图片
-                <small>关闭时聊天里的「上传图片」是灰的</small>
-              </th>
-              <th>开放</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {provider.models.map((m) => (
-              <ModelRow key={m.id} model={m} busy={busy} run={run} />
-            ))}
-          </tbody>
-        </table>
-      )}
     </div>
   );
 }
 
-function ModelRow({ model, busy, run }: { model: ChatModelVO; busy: string; run: Run }) {
-  const [draft, setDraft] = useState<ChatTokenPricing>(model.pricing ?? emptyPricing());
-  const priced = !!model.pricing;
+/* ---------------------------------------------------------------- models */
 
-  const savePricing = () => {
+function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy: string; run: Run }) {
+  const fetchModels = () =>
+    void run(
+      `f-${provider.id}`,
+      async () => {
+        const res = await adminChatProvidersApi.fetchModels(provider.id);
+        if (res.success && res.data) {
+          toast.info(`上游共 ${res.data.total} 个模型，新增 ${res.data.added} 个`);
+        }
+        return res;
+      },
+      "已拉取模型列表",
+    );
+
+  const removeModel = async (model: ChatModelVO) => {
+    const ok = await confirmDialog({
+      title: "删除模型",
+      message: `删除 ${model.modelKey}？正在用它聊天的用户下次同步后将看不到这个模型。`,
+      confirmText: "删除",
+      danger: true,
+    });
+    if (!ok) return;
+    void run(`md-${model.id}`, () => adminChatProvidersApi.deleteModel(model.id), "已删除模型");
+  };
+
+  return (
+    <div className="cp-section">
+      <div className="cp-section-head">
+        <h4>
+          模型
+          <span className="cp-n">{provider.models.length}</span>
+        </h4>
+        <button type="button" className="adm-btn ghost" disabled={!!busy || provider.endpoints.length === 0} onClick={fetchModels}>
+          <RefreshCw aria-hidden size={14} />
+          从供应商拉取模型
+        </button>
+      </div>
+
+      <AdminTable<ChatModelVO>
+        className="cp-models"
+        label={`${provider.name} 的模型`}
+        rows={provider.models}
+        rowKey={(m) => m.id}
+        pageSize={20}
+        empty={
+          <AdminEmptyState
+            title="还没有模型"
+            description={provider.endpoints.length === 0 ? "先添加一组接入地址，再从供应商拉取模型。" : "点「从供应商拉取模型」把上游的模型列表拉回来。"}
+          />
+        }
+        columns={[
+          {
+            header: "模型",
+            cell: (m) => <ModelNameCell model={m} busy={busy} run={run} />,
+          },
+          {
+            header: (
+              <>
+                单价
+                <small className="cp-th-hint">积分 / 1M Token，输入 / 输出</small>
+              </>
+            ),
+            width: "232px",
+            cell: (m) => <PriceCell model={m} busy={busy} run={run} />,
+          },
+          {
+            header: (
+              <>
+                图片
+                <small className="cp-th-hint">关闭时聊天里不能传图</small>
+              </>
+            ),
+            width: "112px",
+            align: "center",
+            cell: (m) => (
+              <SwitchToggle
+                checked={m.vision}
+                aria-label={`${m.name || m.modelKey} 是否接受图片`}
+                onChange={(vision) => void run(`mv-${m.id}`, () => adminChatProvidersApi.updateModel(m.id, { vision }), "已保存")}
+              />
+            ),
+          },
+          {
+            header: "开放",
+            width: "112px",
+            align: "center",
+            cell: (m) => (
+              <div className="cp-open">
+                <SwitchToggle
+                  checked={m.enabled}
+                  disabled={!m.pricing && !m.enabled}
+                  aria-label={`${m.name || m.modelKey} 是否开放给用户`}
+                  onChange={(enabled) =>
+                    void run(`me-${m.id}`, () => adminChatProvidersApi.updateModel(m.id, { enabled }), enabled ? "已开放" : "已收回")
+                  }
+                />
+                {!m.pricing ? <small>先填单价</small> : null}
+              </div>
+            ),
+          },
+          {
+            header: "",
+            width: "48px",
+            align: "right",
+            cell: (m) => (
+              <button type="button" className="adm-btn ghost danger cp-icon" aria-label={`删除 ${m.modelKey}`} disabled={!!busy} onClick={() => void removeModel(m)}>
+                <Trash2 aria-hidden size={14} />
+              </button>
+            ),
+          },
+        ]}
+      />
+    </div>
+  );
+}
+
+function ModelNameCell({ model, busy, run }: { model: ChatModelVO; busy: string; run: Run }) {
+  return (
+    <div className="cp-model">
+      <InlineText
+        label="模型显示名"
+        className="cp-model-name"
+        value={model.name}
+        placeholder={model.modelKey}
+        disabled={!!busy}
+        onSave={(name) => void run(`mn-${model.id}`, () => adminChatProvidersApi.updateModel(model.id, { name }), "已重命名")}
+      />
+      <code className="cp-model-key">{model.modelKey}</code>
+      {model.priceError ? <span className="cp-warn">{model.priceError}</span> : null}
+    </div>
+  );
+}
+
+// The price editor holds a draft of the four numbers and saves the set when a
+// field loses focus with something changed. Saving on every blur would fire a
+// request per Tab press; saving only on change keeps it to the edits.
+function PriceCell({ model, busy, run }: { model: ChatModelVO; busy: string; run: Run }) {
+  const saved = model.pricing ?? emptyPricing();
+  const savedKey = JSON.stringify(saved);
+  const [draft, setDraft] = useState<ChatTokenPricing>(saved);
+  const [seen, setSeen] = useState(savedKey);
+  if (seen !== savedKey) {
+    setSeen(savedKey);
+    setDraft(saved);
+  }
+
+  const commit = () => {
+    if (JSON.stringify(draft) === savedKey) return;
     if (!draft.inputPointsPerMillion.trim() || !draft.outputPointsPerMillion.trim()) {
       toast.error("请填写输入和输出单价");
       return;
@@ -574,93 +848,58 @@ function ModelRow({ model, busy, run }: { model: ChatModelVO; busy: string; run:
     );
   };
 
+  const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") e.currentTarget.blur();
+  };
+
   return (
-    <tr>
-      <td>
-        <InlineText
-          label="模型显示名"
-          className="cp-name"
-          value={model.name}
-          placeholder={model.modelKey}
+    <div className="cp-price" onBlur={(e) => {
+      // Commit once when focus leaves the whole editor, not per field.
+      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) commit();
+    }}>
+      <div className="cp-price-row">
+        <input
+          inputMode="decimal"
+          aria-label="输入单价，积分每百万 Token"
+          value={draft.inputPointsPerMillion}
           disabled={!!busy}
-          onSave={(name) =>
-            void run(`mn-${model.id}`, () => adminChatProvidersApi.updateModel(model.id, { name }), "已重命名")
-          }
+          onChange={(e) => setDraft({ ...draft, inputPointsPerMillion: e.target.value })}
+          onKeyDown={onKey}
+          placeholder="输入"
         />
-        <small className="mono">{model.modelKey}</small>
-        {model.priceError ? <small className="cp-bad">{model.priceError}</small> : null}
-      </td>
-      <td>
-        <div className="cp-price">
-          <input
-            inputMode="decimal"
-            aria-label="输入积分每百万 Token"
-            value={draft.inputPointsPerMillion}
-            onChange={(e) => setDraft({ ...draft, inputPointsPerMillion: e.target.value })}
-            onBlur={savePricing}
-            placeholder="输入"
-          />
-          <span>/</span>
-          <input
-            inputMode="decimal"
-            aria-label="输出积分每百万 Token"
-            value={draft.outputPointsPerMillion}
-            onChange={(e) => setDraft({ ...draft, outputPointsPerMillion: e.target.value })}
-            onBlur={savePricing}
-            placeholder="输出"
-          />
-        </div>
-      </td>
-      <td>
-        <div className="cp-price">
-          <input
-            type="number"
-            min={1}
-            aria-label="单次输入 Token 上限"
-            value={draft.maxInputTokens ?? 131072}
-            onChange={(e) => setDraft({ ...draft, maxInputTokens: Number(e.target.value) })}
-            onBlur={savePricing}
-          />
-          <span>/</span>
-          <input
-            type="number"
-            min={1}
-            aria-label="单次输出 Token 上限"
-            value={draft.maxOutputTokens ?? 8192}
-            onChange={(e) => setDraft({ ...draft, maxOutputTokens: Number(e.target.value) })}
-            onBlur={savePricing}
-          />
-        </div>
-      </td>
-      <td>
-        <SwitchToggle
-          checked={model.vision}
-          onChange={(vision) => void run(`mv-${model.id}`, () => adminChatProvidersApi.updateModel(model.id, { vision }), "已保存")}
-        />
-      </td>
-      <td>
-        <SwitchToggle
-          checked={model.enabled}
-          disabled={!priced && !model.enabled}
-          onChange={(enabled) =>
-            void run(`me-${model.id}`, () => adminChatProvidersApi.updateModel(model.id, { enabled }), enabled ? "已开放" : "已收回")
-          }
-        />
-        {!priced ? <small className="cp-idle">先填单价</small> : null}
-      </td>
-      <td>
-        <button
-          type="button"
-          className="adm-btn ghost danger"
+        <span className="cp-sep">/</span>
+        <input
+          inputMode="decimal"
+          aria-label="输出单价，积分每百万 Token"
+          value={draft.outputPointsPerMillion}
           disabled={!!busy}
-          onClick={() => {
-            if (!window.confirm(`删除模型 ${model.modelKey}？`)) return;
-            void run(`md-${model.id}`, () => adminChatProvidersApi.deleteModel(model.id), "已删除模型");
-          }}
-        >
-          <Trash2 aria-hidden size={14} />
-        </button>
-      </td>
-    </tr>
+          onChange={(e) => setDraft({ ...draft, outputPointsPerMillion: e.target.value })}
+          onKeyDown={onKey}
+          placeholder="输出"
+        />
+      </div>
+      <div className="cp-price-row cp-price-limits">
+        <span className="cp-unit">上限</span>
+        <input
+          type="number"
+          min={1}
+          aria-label="单次输入 Token 上限"
+          value={draft.maxInputTokens ?? 131072}
+          disabled={!!busy}
+          onChange={(e) => setDraft({ ...draft, maxInputTokens: Number(e.target.value) })}
+          onKeyDown={onKey}
+        />
+        <span className="cp-sep">/</span>
+        <input
+          type="number"
+          min={1}
+          aria-label="单次输出 Token 上限"
+          value={draft.maxOutputTokens ?? 8192}
+          disabled={!!busy}
+          onChange={(e) => setDraft({ ...draft, maxOutputTokens: Number(e.target.value) })}
+          onKeyDown={onKey}
+        />
+      </div>
+    </div>
   );
 }

@@ -1,66 +1,85 @@
 /* /admin/chat-providers — 供应商 / 接入地址 / 模型三层结构。
-   只补这一页需要的排布，颜色、按钮、输入框都沿用 admin.css 的既有变量与类。 */
+
+   只补这一页需要的排布。颜色、圆角、按钮、输入框、表格、状态胶囊都沿用
+   admin.css 的变量与组件类，这里不引入新的色值。
+
+   三层的视觉分工：
+   - 供应商是一个独立区块，头部放名称、计数与开关，是页面上最重的一级；
+   - 接入地址是区块内的一张短列表（通常一到三行），用网格对齐而不是表格；
+   - 模型是区块内的一张数据表，交给 AdminTable。 */
 
 .cp-list {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 24px;
 }
+
+/* ---------------------------------------------------------------- provider */
 
 .cp-provider {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-lg);
   background: var(--surface);
+  overflow: hidden;
 }
 
-.cp-provider > header {
-  display: flex;
+.cp-provider.is-off .cp-section {
+  opacity: 0.72;
+}
+
+.cp-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 16px;
-  padding: 16px 20px;
+  gap: 24px;
+  padding: 20px 24px;
   border-bottom: 1px solid var(--border);
 }
 
-.cp-provider > header > div:first-child {
-  flex: 1;
+.cp-ident {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
-.cp-provider h3 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-title);
-}
-
-.cp-provider header p {
-  margin: 4px 0 0;
+.cp-meta {
+  display: flex;
+  gap: 20px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.cp-meta strong {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-acts {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 
 .cp-switch {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   color: var(--text-dim);
   font-size: 13px;
+  white-space: nowrap;
 }
+
+/* ---------------------------------------------------------------- sections */
 
 .cp-section {
-  padding: 16px 20px;
-  border-top: 1px solid var(--border);
+  padding: 16px 24px 20px;
 }
 
-.cp-section:first-of-type {
-  border-top: 0;
-}
-
-.cp-section h4 {
-  margin: 0 0 12px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-dim);
+.cp-section + .cp-section {
+  border-top: 1px solid var(--border-weak);
 }
 
 .cp-section-head {
@@ -72,106 +91,55 @@
 }
 
 .cp-section-head h4 {
-  margin: 0;
-}
-
-.cp-none {
-  margin: 0 0 12px;
-  color: var(--text-faint);
-  font-size: 13px;
-}
-
-.cp-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 16px;
-  font-size: 13px;
-}
-
-.cp-table th {
-  padding: 8px;
-  border-bottom: 1px solid var(--border);
-  color: var(--text-faint);
-  font-weight: 500;
-  text-align: left;
-}
-
-.cp-table td {
-  padding: 12px 8px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
-}
-
-.cp-table td small {
-  display: block;
-  margin-top: 4px;
-  color: var(--text-faint);
-  font-size: 12px;
-}
-
-.cp-table input {
-  width: 100%;
-  min-width: 0;
-}
-
-.cp-key {
-  max-width: 180px;
-}
-
-.cp-price {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
 }
 
-.cp-price input {
-  width: 92px;
+.cp-n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
-.cp-price span {
+.cp-none {
+  margin: 0;
+  padding: 20px 0 4px;
   color: var(--text-faint);
+  font-size: 13px;
 }
 
-.cp-ok {
-  color: var(--ok, #5aa46a);
-}
+/* ---------------------------------------------------------------- inline edit */
 
-.cp-bad {
-  display: block;
-  color: var(--danger, #d85b64);
-}
-
-.cp-idle {
-  color: var(--text-faint);
-}
-
-@media (max-width: 900px) {
-  .cp-table {
-    display: block;
-    overflow-x: auto;
-  }
-}
-
-/* Inline editing — the same "click the value, blur to save" the model rows
-   already use, applied to the fields that used to be read-only. The control
-   reads as text until it is hovered or focused, so a settings page does not
-   turn into a wall of boxes. */
+/* The page's editing idiom: a value that reads as text and becomes a field on
+   hover or focus, so the settings do not turn into a wall of boxes. */
 .cp-inline {
   width: 100%;
   min-width: 0;
   padding: 4px 8px;
-  /* Pulled left only. A negative vertical margin would make two stacked
-     fields overlap once their hover borders appear. */
   margin: 0 -8px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: inherit;
   font: inherit;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 
-.cp-inline:hover {
+.cp-inline:hover:not(:disabled) {
   border-color: var(--border);
 }
 
@@ -183,12 +151,11 @@
 }
 
 .cp-inline::placeholder {
-  color: var(--text-faint);
+  color: var(--text-placeholder);
   font-weight: 400;
 }
 
 .cp-name {
-  display: block;
   font-size: 16px;
   font-weight: 600;
   color: var(--text-title);
@@ -199,16 +166,52 @@
   color: var(--text-faint);
 }
 
-/* Failover order: which address is tried first. */
+/* ---------------------------------------------------------------- endpoints */
+
+.cp-endpoints {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+
+.cp-endpoint {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) 200px 180px 56px 40px;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-weak);
+}
+
+.cp-endpoint:first-child {
+  border-top: 0;
+}
+
+.cp-endpoint-cols {
+  padding: 8px 16px;
+  background: var(--panel);
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 500;
+}
+
 .cp-order {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
 .cp-order strong {
   color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
+}
+
+.cp-move-group {
+  display: inline-flex;
+  flex-direction: column;
 }
 
 .cp-move {
@@ -216,17 +219,17 @@
   align-items: center;
   justify-content: center;
   width: 20px;
-  height: 20px;
+  height: 14px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-faint);
   cursor: pointer;
 }
 
 .cp-move:hover:not(:disabled) {
-  background: var(--surface-hover, var(--border));
+  background: var(--surface-hover);
   color: var(--text-dim);
 }
 
@@ -235,12 +238,185 @@
   cursor: default;
 }
 
-/* A column whose meaning is not obvious from its label: the toggle decides
-   whether the chat lets the user attach an image at all. */
-.cp-table th small {
+.cp-addr {
+  min-width: 0;
+}
+
+.cp-url {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.cp-addr-sub {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.cp-label {
+  flex: 0 1 160px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.cp-warn {
+  display: inline-block;
+  color: var(--danger);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.cp-keycell {
+  min-width: 0;
+}
+
+.cp-key {
+  width: 100%;
+  height: var(--control-sm);
+  font-family: var(--mono);
+  letter-spacing: 0.08em;
+}
+
+.cp-keycell small,
+.cp-health small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-faint);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-health {
+  min-width: 0;
+}
+
+.cp-toggle {
+  display: flex;
+  justify-content: center;
+}
+
+.cp-rowact {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cp-icon {
+  padding: 0 8px;
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------- models */
+
+.cp-models .cp-th-hint {
   display: block;
   margin-top: 2px;
   font-weight: 400;
   font-size: 11px;
   color: var(--text-faint);
+}
+
+.cp-model {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cp-model-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.cp-model-key {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.cp-price {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cp-price-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cp-price-row input {
+  width: 84px;
+  height: var(--control-sm);
+  padding: 0 8px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-price-limits input {
+  width: 84px;
+  color: var(--text-dim);
+}
+
+/* Spin buttons make numbers wobble under the pointer; the value is what matters. */
+.cp-price-row input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.cp-price-row input[type="number"]::-webkit-inner-spin-button,
+.cp-price-row input[type="number"]::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.cp-sep,
+.cp-unit {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.cp-unit {
+  width: 28px;
+}
+
+.cp-open {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.cp-open small {
+  color: var(--text-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- narrow */
+
+@media (max-width: 1100px) {
+  .cp-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cp-acts {
+    justify-content: space-between;
+  }
+
+  .cp-endpoint {
+    grid-template-columns: 56px minmax(0, 1fr) 160px 56px 40px;
+  }
+
+  .cp-endpoint > .cp-health,
+  .cp-endpoint-cols > :nth-child(4) {
+    display: none;
+  }
 }
