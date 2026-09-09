@@ -39,6 +39,25 @@ export function defaultInpaintQuality(values?: readonly string[]): string {
 
 export type MaskStroke = { erase: boolean; size: number; points: { x: number; y: number }[] };
 
+/** A loop is treated as a lasso: users naturally circle an object instead of
+ * scribbling over every pixel. Open strokes remain ordinary brush strokes. */
+export function closesMaskRegion(stroke: MaskStroke): boolean {
+  if (stroke.points.length < 6) return false;
+  const first = stroke.points[0];
+  const last = stroke.points[stroke.points.length - 1];
+  let minX = first.x, maxX = first.x, minY = first.y, maxY = first.y;
+  for (const point of stroke.points.slice(1)) {
+    minX = Math.min(minX, point.x); maxX = Math.max(maxX, point.x);
+    minY = Math.min(minY, point.y); maxY = Math.max(maxY, point.y);
+  }
+  const width = maxX - minX;
+  const height = maxY - minY;
+  if (width < stroke.size * 2 || height < stroke.size * 2) return false;
+  const diagonal = Math.hypot(width, height);
+  const closingDistance = Math.hypot(last.x - first.x, last.y - first.y);
+  return closingDistance <= Math.max(stroke.size * 1.5, diagonal * 0.14);
+}
+
 export function sourceBrushSize(visiblePixels: number, sourceWidth: number, visibleWidth: number): number {
   if (!Number.isFinite(visiblePixels) || !Number.isFinite(sourceWidth) || !Number.isFinite(visibleWidth)
     || visiblePixels <= 0 || sourceWidth <= 0 || visibleWidth <= 0) return 1;
@@ -77,6 +96,10 @@ export function paintMask(ctx: CanvasRenderingContext2D, strokes: readonly MaskS
     } else {
       ctx.moveTo(first.x, first.y);
       for (const point of stroke.points.slice(1)) ctx.lineTo(point.x, point.y);
+      if (closesMaskRegion(stroke)) {
+        ctx.closePath();
+        ctx.fill();
+      }
       ctx.stroke();
     }
   }

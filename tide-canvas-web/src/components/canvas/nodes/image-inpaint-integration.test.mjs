@@ -27,6 +27,7 @@ test("mask UI sends the displayed model and price and removes only unused new ma
   assert.match(modal,/MAX_MASK_UPLOAD_BYTES = 32 \* 1024 \* 1024/);
   assert.match(modal,/uploadedMask&&!uploadedMask\.reused&&!accepted[\s\S]*?fileApi\.delete/);
   assert.match(modal,/sourceBrushSize\(size,source\.width,e\.currentTarget\.getBoundingClientRect\(\)\.width\)/);
+  assert.match(modal,/闭合圈选会自动填充/);
 });
 
 test("mask editor follows the canvas modal theme instead of a fixed black panel",()=>{

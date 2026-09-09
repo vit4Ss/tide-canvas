@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chooseInpaintModel, defaultInpaintQuality, defaultInpaintResolution, paintMask, renderMaskPreview, sourceBrushSize } from "./inpaint.ts";
+import { chooseInpaintModel, closesMaskRegion, defaultInpaintQuality, defaultInpaintResolution, paintMask, renderMaskPreview, sourceBrushSize } from "./inpaint.ts";
 
 test("inpainting uses the first available admin-configured mask model only", () => {
   const models = [
@@ -65,4 +65,21 @@ test("export uses transparent edit pixels and opaque erased pixels at source coo
   assert.deepEqual(operations[0].slice(2,5),[600,300,30]);
   assert.equal(operations[1][0],"source-over");
   assert.equal(ctx.globalCompositeOperation,"source-over");
+});
+
+test("closed brush loops fill their interior while open strokes remain brushes", () => {
+  const circle = {
+    erase: false,
+    size: 12,
+    points: [
+      {x:100,y:50},{x:135,y:65},{x:150,y:100},{x:135,y:135},
+      {x:100,y:150},{x:65,y:135},{x:50,y:100},{x:65,y:65},{x:96,y:52},
+    ],
+  };
+  assert.equal(closesMaskRegion(circle), true);
+  assert.equal(closesMaskRegion({...circle,points:circle.points.slice(0,6)}), false);
+  const calls=[];
+  const ctx={beginPath(){},closePath(){calls.push("close");},arc(){},fill(){calls.push("fill");},stroke(){calls.push("stroke");},moveTo(){},lineTo(){}};
+  paintMask(ctx,[circle],false);
+  assert.deepEqual(calls,["close","fill","stroke"]);
 });

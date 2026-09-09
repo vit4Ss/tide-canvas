@@ -262,7 +262,7 @@ export default function ImageInpaintModal({ src, onClose, onApply }: {
           </div>
           <div className="shrink-0 space-y-3 px-5 py-4">
             <div className="flex items-center justify-between text-[11px] text-neutral-400 dark:text-white/35">
-              <span>描述选区内需要生成的内容</span>
+              <span>描述选区内需要生成的内容 · 闭合圈选会自动填充</span>
               <span>新增物体与阴影请完整包含在选区内</span>
             </div>
             <textarea aria-label="局部修改提示词" value={prompt} onChange={(e)=>setPrompt(e.target.value)} disabled={busy} maxLength={4000} rows={2}
