@@ -17,17 +17,23 @@ export function buildImageDerivativeMetadata(input: {
   outputType: string;
   modelId?: string;
   generationInput: Record<string, unknown>;
+  /** User-facing prompt for operations whose result node should reproduce the
+   * exact request instead of copying the source concept description. */
+  promptOverride?: string;
 }): Pick<CanvasNode, "generationConfig"> & Partial<Pick<CanvasNode, "prompt">> {
   const { source, outputType, generationInput } = input;
+  const promptOverride = nonEmptyString(input.promptOverride);
   const modelId = nonEmptyString(input.modelId) ?? nonEmptyString(source.generationConfig?.modelId);
   const quality = nonEmptyString(generationInput.quality) ?? nonEmptyString(source.generationConfig?.quality);
   const resolution = nonEmptyString(generationInput.resolution ?? generationInput.clarity)
     ?? nonEmptyString(source.generationConfig?.resolution);
 
   return {
-    ...(preservesConceptIdentity(source.type, outputType) && source.prompt !== undefined
-      ? { prompt: source.prompt }
-      : {}),
+    ...(promptOverride
+      ? { prompt: promptOverride }
+      : preservesConceptIdentity(source.type, outputType) && source.prompt !== undefined
+        ? { prompt: source.prompt }
+        : {}),
     generationConfig: {
       ...(modelId ? { modelId } : {}),
       ...(quality ? { quality } : {}),

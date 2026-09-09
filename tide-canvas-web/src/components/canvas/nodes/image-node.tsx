@@ -1152,7 +1152,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   // 此处的 prompt 仅作历史记录展示标签）；opts.ratio 覆盖输出画幅（三视图/设定图
   // 等预设需要横幅排版）；opts.outputNodeType 允许一次性产物降为普通图片，
   // opts.input 覆盖默认请求参数。
-  const generateEdited = useCallback((title: string, prompt: string, opts?: { handler?: string; modelId?: string; ratio?: string; outputNodeType?: CanvasNode["type"]; input?: Record<string, unknown>; rollbackOnRejected?: boolean }) => {
+  const generateEdited = useCallback((title: string, prompt: string, opts?: { handler?: string; modelId?: string; ratio?: string; outputNodeType?: CanvasNode["type"]; input?: Record<string, unknown>; rollbackOnRejected?: boolean; displayPrompt?: string }) => {
     if (!node.imageSrc) {
       toast.error("请先生成或上传图片");
       return;
@@ -1192,6 +1192,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         outputType,
         modelId: opts?.modelId ?? selectedModelId,
         generationInput,
+        promptOverride: opts?.displayPrompt,
       }),
     }, true);
     st.addConnection({ id: `conn_${node.id}_${nid}`, sourceId: node.id, targetId: nid }, false);
@@ -2351,6 +2352,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 throw new Error("原图已变化，请重新打开局部修改");
               const result = await generateEdited("局部修改", String(input.prompt), {
                 modelId: model.id, ratio: String(input.aspectRatio), input, rollbackOnRejected: true,
+                displayPrompt: String(input.prompt),
               });
               if (!result || result.status === "rejected") throw new Error("任务未提交，请检查积分或模型配置后重试");
             }} />

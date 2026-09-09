@@ -48,6 +48,19 @@ test("an explicitly downgraded image does not masquerade as a character", () => 
   assert.equal(metadata.generationConfig.modelId, "portrait-model");
 });
 
+test("local edits show the exact edit request while identity remains on the connected source", () => {
+  const metadata = buildImageDerivativeMetadata({
+    source,
+    outputType: "character",
+    modelId: "mask-model",
+    generationInput: { prompt: "去掉圈选人物", quality: "high", resolution: "4K" },
+    promptOverride: "去掉圈选人物",
+  });
+  assert.equal(metadata.prompt, "去掉圈选人物");
+  assert.equal(source.prompt, "黑色短发，灰色风衣");
+  assert.equal(metadata.generationConfig.modelId, "mask-model");
+});
+
 test("character close-up titles retain the identity without repeating the suffix", () => {
   assert.equal(imageDerivativeTitle("林默", "角色特写图"), "林默 · 角色特写图");
   assert.equal(imageDerivativeTitle("林默 · 角色特写图", "角色特写图"), "林默 · 角色特写图");

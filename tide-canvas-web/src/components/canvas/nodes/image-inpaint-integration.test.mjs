@@ -11,6 +11,7 @@ test("canvas local edit rolls back only definitely rejected placeholder nodes",(
   assert.match(node,/key: "image\.inpaint"[\s\S]*?setInpaintOpen\(true\)/);
   assert.match(node,/rollbackOnRejected && result\.status === "rejected"[\s\S]*?removeNode\(nid, false\)/);
   assert.match(node,/rollbackOnRejected: true/);
+  assert.match(node,/displayPrompt: String\(input\.prompt\)/);
   assert.doesNotMatch(node,/rollbackOnRejected && result\.status === "ambiguous"/);
 });
 
