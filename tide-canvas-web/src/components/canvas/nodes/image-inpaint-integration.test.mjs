@@ -8,10 +8,15 @@ const tools=readFileSync(new URL("../../../app/tools/[op]/page.tsx",import.meta.
 const adminModels=readFileSync(new URL("../../../app/admin/models/page.tsx",import.meta.url),"utf8");
 
 test("canvas local edit rolls back only definitely rejected placeholder nodes",()=>{
-  assert.match(node,/image\.inpaint[\s\S]*?局部修改/);
+  assert.match(node,/key: "image\.inpaint"[\s\S]*?setInpaintOpen\(true\)/);
   assert.match(node,/rollbackOnRejected && result\.status === "rejected"[\s\S]*?removeNode\(nid, false\)/);
   assert.match(node,/rollbackOnRejected: true/);
   assert.doesNotMatch(node,/rollbackOnRejected && result\.status === "ambiguous"/);
+});
+
+test("character local editing portal remains independent from toolbar visibility",()=>{
+  assert.match(node,/\{inpaintOpen && node\.imageSrc && \(/);
+  assert.doesNotMatch(node,/showAuxUI && inpaintOpen/);
 });
 
 test("mask UI sends the displayed model and price and removes only unused new masks",()=>{

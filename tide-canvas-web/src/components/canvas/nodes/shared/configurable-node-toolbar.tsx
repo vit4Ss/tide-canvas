@@ -53,6 +53,7 @@ export function ConfigurableNodeToolbar({
   const [viewportCap, setViewportCap] = useState(Number.POSITIVE_INFINITY);
   const overflowRef = useRef<HTMLDivElement>(null);
   const overflowButtonRef = useRef<HTMLButtonElement>(null);
+  const overflowCloseTimerRef = useRef<number | null>(null);
   const registry = new Map(actions.map((action) => [action.key, action]));
   const ordered = featureKeys
     .map((key) => registry.get(key))
@@ -102,6 +103,25 @@ export function ConfigurableNodeToolbar({
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [overflowOpen, overflowSignature]);
+
+  useEffect(() => () => {
+    if (overflowCloseTimerRef.current !== null) {
+      window.clearTimeout(overflowCloseTimerRef.current);
+    }
+  }, []);
+
+  const closeOverflowAfterAction = () => {
+    if (overflowCloseTimerRef.current !== null) {
+      window.clearTimeout(overflowCloseTimerRef.current);
+    }
+    // The parent capture handler runs before the action's own onClick. Closing
+    // synchronously can unmount portal/file-picker triggers before they commit.
+    // A new task preserves stopPropagation semantics while letting the action run.
+    overflowCloseTimerRef.current = window.setTimeout(() => {
+      overflowCloseTimerRef.current = null;
+      setOverflowState({ open: false, signature: overflowSignature });
+    }, 0);
+  };
 
   useEffect(() => {
     if (!overflowOpen) return;
@@ -201,7 +221,7 @@ export function ConfigurableNodeToolbar({
                     className="w-full [&_svg]:shrink-0 [&>button]:flex [&>button]:h-9 [&>button]:w-full [&>button]:items-center [&>button]:justify-start [&>button]:gap-2.5 [&>button]:rounded-xl [&>button]:px-2.5 [&>button]:py-0 [&>button]:text-[13px] [&>button]:transition-colors [&>button]:focus-visible:outline-none [&>button]:focus-visible:ring-2 [&>button]:focus-visible:ring-blue-500/35 [&>div]:w-full [&>div>button]:flex [&>div>button]:h-9 [&>div>button]:w-full [&>div>button]:items-center [&>div>button]:justify-start [&>div>button]:rounded-xl [&>div>button]:px-2.5 [&>div>button]:py-0 [&>div>button]:text-[13px]"
                     onClickCapture={() => {
                       if (action.closeOverflowOnSelect !== false) {
-                        setOverflowState({ open: false, signature: overflowSignature });
+                        closeOverflowAfterAction();
                       }
                     }}
                   >

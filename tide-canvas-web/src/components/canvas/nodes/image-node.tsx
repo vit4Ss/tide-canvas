@@ -1932,7 +1932,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       key: "image.inpaint",
       group: "process",
       content: (
-        <button onMouseDown={stop} onClick={(e) => { stop(e); setInpaintOpen(true); }}
+        <button type="button" onMouseDown={stop} onClick={(e) => { stop(e); setInpaintOpen(true); }}
           title="涂抹修改区域，使用后台配置的蒙版模型生成，选区外保留原图"
           className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
           <Brush className="h-4 w-4"/>局部修改
@@ -1944,6 +1944,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       group: "process",
       content: (
         <button
+          type="button"
           onMouseDown={stop}
           onClick={(e) => { stop(e); setAnnotateOpen(true); }}
           disabled={localTransforming === "annotate"}
