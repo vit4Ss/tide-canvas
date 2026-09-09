@@ -11,7 +11,8 @@ const videoResult = read("../components/studio/create-studio/video-result.tsx");
 test("smart upload hashes content and skips transfer when the owner already has it", () => {
   assert.match(api, /crypto\.subtle\.digest\("SHA-256", await file\.arrayBuffer\(\)\)/);
   assert.match(api, /contentHash = await uploadedFileSHA256\(file\)/);
-  assert.match(api, /fileApi\.presign\(\{[\s\S]*contentHash/);
+  assert.match(api, /const presignInput = \{[^\n]*contentHash/);
+  assert.match(api, /fileApi\.presign\(presignInput\)/);
   assert.match(api, /pre\.data\?\.existingFile/);
   assert.match(api, /data: \{ \.\.\.pre\.data\.existingFile, reused: true \}/);
 });

@@ -1,5 +1,6 @@
 import type { Result } from "@/types/api";
 import { resolveBrowserApiUrl } from "@/lib/public-api-url";
+import { parseUploadResponse } from "@/lib/upload-response";
 
 // SERVER_API_URL may intentionally be a loopback/container-internal address:
 // Next SSR and rewrites can reach it, but a user's browser cannot. Native
@@ -97,6 +98,16 @@ async function fetchResult<T>(input: string, init: RequestInit): Promise<Result<
   }
 }
 
+/** 上传接口除了业务 JSON，还可能被反向代理提前以 413/502 HTML 拦截。 */
+async function fetchUploadResult<T>(input: string, init: RequestInit): Promise<Result<T>> {
+  try {
+    const res = await fetch(input, init);
+    return parseUploadResponse<T>(res.status, await res.text());
+  } catch {
+    return parseUploadResponse<T>(0, "");
+  }
+}
+
 async function refreshAccessToken(): Promise<string | null> {
   const refreshToken = localStorage.getItem("refresh_token");
   if (!refreshToken) {
@@ -191,7 +202,7 @@ async function uploadFile<T>(path: string, file: File | FormData): Promise<Resul
     return fd;
   })();
 
-  let result = await fetchResult<T>(buildUrl(path), {
+  let result = await fetchUploadResult<T>(buildUrl(path), {
     method: "POST",
     headers,
     body: formData,
@@ -203,7 +214,7 @@ async function uploadFile<T>(path: string, file: File | FormData): Promise<Resul
 
     if (newToken) {
       headers["Authorization"] = `Bearer ${newToken}`;
-      result = await fetchResult<T>(buildUrl(path), {
+      result = await fetchUploadResult<T>(buildUrl(path), {
         method: "POST",
         headers,
         body: formData,
@@ -241,13 +252,9 @@ async function uploadFileWithProgress<T>(
         };
       }
       xhr.onload = () => {
-        try {
-          resolve(JSON.parse(xhr.responseText) as Result<T>);
-        } catch {
-          resolve({ success: false, code: xhr.status, message: "上传响应解析失败", data: undefined as T, timestamp: Date.now() });
-        }
+        resolve(parseUploadResponse<T>(xhr.status, xhr.responseText));
       };
-      xhr.onerror = () => resolve({ success: false, code: 0, message: "网络错误", data: undefined as T, timestamp: Date.now() });
+      xhr.onerror = () => resolve(parseUploadResponse<T>(0, ""));
       xhr.send(formData);
     });
 

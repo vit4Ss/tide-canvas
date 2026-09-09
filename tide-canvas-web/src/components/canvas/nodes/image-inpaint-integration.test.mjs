@@ -19,8 +19,17 @@ test("mask UI sends the displayed model and price and removes only unused new ma
   assert.match(modal,/withTimeout\([\s\S]*?marketApi\.studioModels\("image"\)[\s\S]*?蒙版模型读取超时/);
   assert.match(modal,/imageTimeout = setTimeout\(\(\) => loadController\.abort\(\), LOAD_TIMEOUT_MS\)/);
   assert.match(modal,/expectedPointCost:cost[\s\S]*?expectedMaskModelId:model\.id/);
+  assert.match(modal,/MAX_MASK_UPLOAD_BYTES = 32 \* 1024 \* 1024/);
   assert.match(modal,/uploadedMask&&!uploadedMask\.reused&&!accepted[\s\S]*?fileApi\.delete/);
   assert.match(modal,/sourceBrushSize\(size,source\.width,e\.currentTarget\.getBoundingClientRect\(\)\.width\)/);
+});
+
+test("mask editor follows the canvas modal theme instead of a fixed black panel",()=>{
+  assert.match(modal,/data-canvas-modal="true"/);
+  assert.match(modal,/bg-white text-neutral-900[\s\S]*?dark:bg-\[#29292b\] dark:text-white/);
+  assert.match(modal,/bg-black\/45[\s\S]*?backdrop-blur-sm/);
+  assert.doesNotMatch(modal,/bg-black\/75/);
+  assert.doesNotMatch(modal,/bg-cyan-300/);
 });
 
 test("tool page keeps the mask editor open until a task is accepted",()=>{

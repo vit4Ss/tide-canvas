@@ -177,6 +177,11 @@ function retryableUploadResult(result: Result<unknown>): boolean {
   return !result.code || result.code === 408 || result.code === 429 || (result.code >= 500 && result.code < 600);
 }
 
+function ambiguousUploadResult(result: Result<unknown>): boolean {
+  return retryableUploadResult(result)
+    || (!!result.code && result.code >= 200 && result.code < 300);
+}
+
 function executableUploadResult<T>(file: File): Result<T> | null {
   const contentType = file.type.toLowerCase().split(";", 1)[0].trim();
   const extension = file.name.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "";
@@ -209,8 +214,9 @@ export async function uploadFileSmart(file: File, onProgress?: (pct: number) => 
   if (executable) return executable;
   const contentType = file.type || "application/octet-stream";
   const contentHash = await uploadedFileSHA256(file).catch(() => undefined);
+  const presignInput = { filename: file.name, contentType, size: file.size, contentHash, category: options?.category };
   try {
-    const pre = await fileApi.presign({ filename: file.name, contentType, size: file.size, contentHash, category: options?.category });
+    const pre = await fileApi.presign(presignInput);
     if (pre.success && pre.data?.existingFile) {
       onProgress?.(100);
       return { ...pre, data: { ...pre.data.existingFile, reused: true } };
@@ -253,13 +259,34 @@ export async function uploadFileSmart(file: File, onProgress?: (pct: number) => 
   } catch {
     // presign 异常 → 回退中转上传
   }
+  let fallbackUpload: File | FormData = file;
   if (options?.category) {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("category", options.category);
-    return http.uploadProgress<FileVO>("/api/files/upload", formData, onProgress);
+    fallbackUpload = formData;
   }
-  return http.uploadProgress<FileVO>("/api/files/upload", file, onProgress);
+  // 没有进度回调时使用 fetch 通道：它与普通 API 共用稳健的非 JSON/网关错误
+  // 解析。只有确实需要进度条的上传才使用 XHR。
+  const uploaded = onProgress
+    ? http.uploadProgress<FileVO>("/api/files/upload", fallbackUpload, onProgress)
+    : http.upload<FileVO>("/api/files/upload", fallbackUpload);
+  const result = await uploaded;
+  if (result.success || !contentHash || !ambiguousUploadResult(result)) return result;
+
+  // The proxy can lose/replace the response after the backend has committed the
+  // file. Re-querying by the immutable content hash turns that ambiguous outcome
+  // into success without uploading the bytes a second time.
+  try {
+    const recovered = await fileApi.presign(presignInput);
+    if (recovered.success && recovered.data?.existingFile) {
+      onProgress?.(100);
+      return { ...recovered, data: { ...recovered.data.existingFile, reused: true } };
+    }
+  } catch {
+    // Preserve the original, more useful upload failure below.
+  }
+  return result;
 }
 
 // ── 画布风格库 API(图片节点的风格选择器)——对接后端 /api/styles ──────────
