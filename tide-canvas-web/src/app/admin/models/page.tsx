@@ -444,6 +444,9 @@ export default function AdminModelsPage() {
                         {r.glyph}
                       </span>
                       <span className="strong">{m.name}</span>
+                      {m.type === "image" && m.config?.supportsMask && (
+                        <StatusPill tone="blue">蒙版</StatusPill>
+                      )}
                     </div>
                   );
                 },
@@ -854,6 +857,7 @@ function ModelModal({
     uploadFormats: c0.uploadFormats ?? [],
     aiOptimizePrimary: c0.aiOptimizePrimary ?? false,
     imagePrimary: c0.imagePrimary ?? false,
+    supportsMask: c0.supportsMask ?? false,
     refLimits: c0.refLimits ?? {},
     errorHints: c0.errorHints ?? [],
     modes: c0.modes ?? [],
@@ -1084,6 +1088,8 @@ function ModelModal({
         status,
         config: {
           ...cfg,
+          // 图片专属能力不能残留到视频等其他模型类型；服务端还会做最终校验。
+          supportsMask: type === "image" && cfg.supportsMask === true,
           // 落库前清掉空文本标签，文本去首尾空格（渲染端也会过滤，双保险）
           badges: (cfg.badges ?? [])
             .map((b) => ({ text: (b.text ?? "").trim(), tone: b.tone ?? ("hot" as const) }))
@@ -1158,7 +1164,7 @@ function ModelModal({
                 const next = e.target.value;
                 setType(next);
                 // 主模型标记只在图片类目内有意义；切走类型时清掉，避免残留影响其他类目的默认解析
-                if (next !== "image") setC({ imagePrimary: false });
+                if (next !== "image") setC({ imagePrimary: false, supportsMask: false });
               }}
             >
               {Object.keys(MODEL_TYPE_FORM_LABEL).map((t) => (
@@ -1489,6 +1495,19 @@ function ModelModal({
               }}
             />
           </FormSection>
+
+          {isImage && (
+            <FormSection
+              label="支持蒙版（局部重绘）"
+              hint="仅为已确认支持蒙版的上游模型开启。局部重绘使用已上架且正常的蒙版模型；多款开启时按后台排序选择第一款，并按该模型计费。"
+            >
+              <SwitchToggle
+                checked={cfg.supportsMask === true}
+                onChange={(next) => setC({ supportsMask: next })}
+                aria-label="支持蒙版局部重绘"
+              />
+            </FormSection>
+          )}
 
           {isImage && (
             <FormSection

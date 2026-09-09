@@ -255,7 +255,13 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 		}
 	}
 
-	m, err := s.repo.findModel(ctx, dto.ModelID)
+	m, err := s.resolveInpaintModel(ctx, &dto)
+	if err != nil {
+		return nil, err
+	}
+	if m == nil {
+		m, err = s.repo.findModel(ctx, dto.ModelID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -284,6 +290,9 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 		return nil, err
 	}
 	if err := validateReferenceCountInput(&dto, m); err != nil {
+		return nil, err
+	}
+	if err := s.validateInpaint(ctx, userID, &dto, m); err != nil {
 		return nil, err
 	}
 	if err := s.prepareUpscalePricingInput(ctx, userID, &dto, m); err != nil {
@@ -738,10 +747,17 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	} else if gh.Name() == skillTextCompletionHandler {
 		res, genErr = s.runSkillTextCompletion(ctx, task.ID, task.UserID, m, input, task.PointCost)
 	} else {
-		res, genErr = gh.Execute(ctx, s.provider, req)
+		req.Input, genErr = s.prepareInpaintProviderInput(ctx, taskID, req.Input)
+		if genErr == nil {
+			res, genErr = gh.Execute(ctx, s.provider, req)
+		}
+		s.cleanupInpaintProviderSource(taskID, input)
 	}
 	if genErr == nil && clipReshoot != nil && (res.ResultURL != "" || len(res.URLs) > 0) {
 		res, genErr = s.composeClipReshootResult(ctx, userID, res, *clipReshoot)
+	}
+	if genErr == nil && res.ResultURL != "" {
+		res, genErr = s.composeInpaintResult(ctx, taskID, dto.Input, res)
 	}
 	// Stop and join the status watcher before finalizing. Otherwise its next
 	// tick can observe our own terminal transition, cancel the shared provider
@@ -782,6 +798,7 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 		// without writing Redis/audit state for an abandoned task, and refund.
 		logger.L().Info("ai: task no longer processing, dropping result", zap.String("taskId", taskID.String()))
 		s.clearTaskState(ctx, taskID)
+		s.cleanupRejectedInpaintResult(taskID, res)
 		refund("生成取消退款")
 		return
 	}
@@ -927,6 +944,18 @@ func (s *service) resumeOrphanedTask(snapshot model.AiTask) {
 	res, genErr := resumer.Resume(resumeCtx, ResumeRequest{
 		Handler: current.Handler, Model: m, UpstreamTaskID: current.UpstreamTaskID,
 	})
+	inpaintComposeFailed := false
+	// Recovery must apply the same mask as the original worker before publishing.
+	if genErr == nil && res.ResultURL != "" {
+		var composeErr error
+		res, composeErr = s.composeInpaintResult(resumeCtx, current.ID, json.RawMessage(current.Input), res)
+		if composeErr != nil {
+			// Match normal execution: a failed composite is a failed task, never
+			// an unmasked success or an endlessly retrying upstream poll.
+			genErr = composeErr
+			inpaintComposeFailed = true
+		}
+	}
 	cancel()
 	<-watchDone
 	s.taskCancels.Delete(current.ID)
@@ -934,11 +963,12 @@ func (s *service) resumeOrphanedTask(snapshot model.AiTask) {
 	// Transport failures are retryable: leave the durable row Processing so the
 	// next reconciler pass can reconnect. A structured upstream failure is final.
 	var upstreamErr *relaymedia.UpstreamError
-	if genErr != nil && !errors.As(genErr, &upstreamErr) {
+	if genErr != nil && !inpaintComposeFailed && !errors.As(genErr, &upstreamErr) {
 		logger.L().Warn("ai: recovery poll interrupted",
 			zap.String("taskId", current.ID.String()), zap.Error(genErr))
 		return
 	}
+	s.cleanupInpaintProviderSource(current.ID, decodeInput(json.RawMessage(current.Input)))
 
 	end := time.Now()
 	current.UpdateTime = end
@@ -958,6 +988,7 @@ func (s *service) resumeOrphanedTask(snapshot model.AiTask) {
 		if persistErr != nil {
 			logger.L().Error("ai: persist recovered task failed", zap.String("taskId", current.ID.String()), zap.Error(persistErr))
 		}
+		s.cleanupRejectedInpaintResult(current.ID, res)
 		return
 	}
 	s.writeTaskState(context.Background(), current)
@@ -1236,6 +1267,7 @@ func (s *service) cancelTask(ctx context.Context, userID idgen.ID, id idgen.ID) 
 	if task.Handler == skillTextCompletionHandler {
 		s.cleanupSkillTextTemporaryInput(task.UserID, task.Input)
 	}
+	s.cleanupInpaintProviderSource(task.ID, decodeInput(json.RawMessage(task.Input)))
 	if err := s.repo.deleteTask(ctx, id); err != nil {
 		return err
 	}

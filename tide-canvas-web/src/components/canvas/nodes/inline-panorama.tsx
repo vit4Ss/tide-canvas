@@ -3,13 +3,47 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import type * as THREE_NS from "three";
 import { fetchWithAuth } from "@/lib/http";
+import { panoramaCaptureSize } from "@/lib/panorama-capture";
+
+const CAPTURE_ENCODE_TIMEOUT_MS = 30_000;
+const TEXTURE_DECODE_TIMEOUT_MS = 30_000;
+
+function encodePanoramaPNG(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("全景截图编码超时，请重试"));
+    }, CAPTURE_ENCODE_TIMEOUT_MS);
+    try {
+      canvas.toBlob((blob) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        if (blob) resolve(blob);
+        else reject(new Error("全景截图编码失败，请重试"));
+      }, "image/png");
+    } catch (error) {
+      settled = true;
+      window.clearTimeout(timer);
+      reject(error);
+    }
+  });
+}
+
+export interface PanoramaCapture {
+  blob: Blob;
+  width: number;
+  height: number;
+}
 
 export interface InlinePanoramaApi {
   reset: () => void;
-  /** 截当前视角为 PNG dataURL */
-  capture: () => string;
-  /** 截 4 个水平视角(当前/+90/+180/+270，平视)为 PNG dataURL 数组 */
-  capture4: () => string[];
+  /** 按原始全景图的角度像素密度截取当前视角。 */
+  capture: () => Promise<PanoramaCapture | null>;
+  /** 逐张截取并交给调用方处理，避免同时持有四张高分辨率 PNG。 */
+  capture4: (consume: (capture: PanoramaCapture, index: number) => Promise<void>) => Promise<void>;
 }
 
 interface Props {
@@ -35,26 +69,51 @@ export function InlinePanorama({ src, gridOn = false, apiRef, interactive = true
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- a changed src starts a new external texture lifecycle; stale loading/error state belongs to the previous source. */
+    setLoading(true);
+    setError(null);
+    /* eslint-enable react-hooks/set-state-in-effect */
     let disposed = false;
     let cleanup = () => {};
+    let pendingBlobURL = "";
+    const controller = new AbortController();
     (async () => {
       try {
         const THREE = await import("three");
-        const resp = await fetchWithAuth(`/api/files/download?url=${encodeURIComponent(src)}`);
+        const resp = await fetchWithAuth(`/api/files/download?url=${encodeURIComponent(src)}`, { signal: controller.signal });
         if (!resp.ok) throw new Error("全景加载失败");
         const buf = await resp.arrayBuffer();
         if (disposed) return;
-        const blobUrl = URL.createObjectURL(new Blob([buf], { type: "image/png" }));
+        const blobUrl = URL.createObjectURL(new Blob([buf], { type: resp.headers.get("Content-Type") || "application/octet-stream" }));
+        pendingBlobURL = blobUrl;
         let texture: THREE_NS.Texture;
         try {
           texture = await new Promise<THREE_NS.Texture>((resolve, reject) => {
-            new THREE.TextureLoader().load(blobUrl, resolve, undefined, () => reject(new Error("贴图解析失败")));
+            let settled = false;
+            const timer = window.setTimeout(() => {
+              if (settled) return;
+              settled = true;
+              reject(new Error("全景贴图解析超时"));
+            }, TEXTURE_DECODE_TIMEOUT_MS);
+            new THREE.TextureLoader().load(blobUrl, (loaded) => {
+              if (settled) { loaded.dispose(); return; }
+              settled = true;
+              window.clearTimeout(timer);
+              resolve(loaded);
+            }, undefined, () => {
+              if (settled) return;
+              settled = true;
+              window.clearTimeout(timer);
+              reject(new Error("贴图解析失败"));
+            });
           });
         } catch (e) {
           URL.revokeObjectURL(blobUrl); // reject 路径也回收 blob,避免泄漏
+          if (pendingBlobURL === blobUrl) pendingBlobURL = "";
           throw e;
         }
         URL.revokeObjectURL(blobUrl);
+        if (pendingBlobURL === blobUrl) pendingBlobURL = "";
         const mount = mountRef.current;
         if (disposed || !mount) { texture.dispose(); return; }
 
@@ -77,6 +136,8 @@ export function InlinePanorama({ src, gridOn = false, apiRef, interactive = true
         scene.add(new THREE.Mesh(geometry, material));
 
         let lon = 180, lat = 0, fov = 74;
+        let capturing = false;
+        let captureQueue: Promise<void> = Promise.resolve();
         let down = false, downX = 0, downY = 0, downLon = 0, downLat = 0;
         const dom = renderer.domElement;
         const onDown = (e: PointerEvent) => {
@@ -105,25 +166,69 @@ export function InlinePanorama({ src, gridOn = false, apiRef, interactive = true
         dom.addEventListener("wheel", onWheel, { passive: false });
 
         const onResize = () => {
+          if (capturing) return;
           const nw = mount.clientWidth || 1, nh = mount.clientHeight || 1;
           camera.aspect = nw / nh; camera.updateProjectionMatrix(); renderer.setSize(nw, nh);
         };
         const ro = new ResizeObserver(onResize);
         ro.observe(mount);
 
-        // 同步渲一帧指定视角并导出 dataURL（preserveDrawingBuffer + 同步 toDataURL，rAF 不会插入覆盖）
-        const renderView = (yaw: number, pitch: number, f: number): string => {
-          camera.fov = f; camera.updateProjectionMatrix();
-          const p = THREE.MathUtils.degToRad(90 - pitch);
-          const t = THREE.MathUtils.degToRad(yaw);
-          camera.lookAt(500 * Math.sin(p) * Math.cos(t), 500 * Math.cos(p), 500 * Math.sin(p) * Math.sin(t));
-          renderer.render(scene, camera);
-          return renderer.domElement.toDataURL("image/png");
+        const image = texture.image as { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number };
+        const sourceWidth = image.naturalWidth || image.width || w;
+        const sourceHeight = image.naturalHeight || image.height || h;
+        const context = renderer.getContext();
+        const maxRenderbufferSize = context.getParameter(context.MAX_RENDERBUFFER_SIZE) as number;
+        const renderView = (yaw: number, pitch: number, requestedFov: number): Promise<PanoramaCapture | null> => {
+          let captured: PanoramaCapture | null = null;
+          const run = captureQueue.then(async () => {
+            if (disposed) return;
+            capturing = true;
+            const viewportWidth = mount.clientWidth || w;
+            const viewportHeight = mount.clientHeight || h;
+            const previewPixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+            const size = panoramaCaptureSize({
+              sourceWidth, sourceHeight, viewportWidth, viewportHeight,
+              previewPixelRatio, verticalFov: requestedFov, maxRenderbufferSize,
+            });
+            try {
+              renderer.setPixelRatio(1);
+              renderer.setSize(size.width, size.height, false);
+              camera.aspect = size.width / size.height;
+              camera.fov = requestedFov;
+              camera.updateProjectionMatrix();
+              const p = THREE.MathUtils.degToRad(90 - pitch);
+              const t = THREE.MathUtils.degToRad(yaw);
+              camera.lookAt(500 * Math.sin(p) * Math.cos(t), 500 * Math.cos(p), 500 * Math.sin(p) * Math.sin(t));
+              renderer.render(scene, camera);
+              const blob = await encodePanoramaPNG(renderer.domElement);
+              if (!disposed) captured = { blob, ...size };
+            } finally {
+              capturing = false;
+              if (!disposed) {
+                const currentWidth = mount.clientWidth || w;
+                const currentHeight = mount.clientHeight || h;
+                renderer.setSize(currentWidth, currentHeight, false);
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+                camera.aspect = currentWidth / currentHeight;
+                camera.fov = fov;
+                camera.updateProjectionMatrix();
+              }
+            }
+          });
+          captureQueue = run.then(() => undefined, () => undefined);
+          return run.then(() => captured);
         };
         if (apiRef) apiRef.current = {
           reset: () => { lon = 180; lat = 0; fov = 74; camera.fov = 74; camera.updateProjectionMatrix(); },
           capture: () => renderView(lon, lat, fov),
-          capture4: () => [0, 90, 180, 270].map((d) => renderView(lon + d, 0, fov)),
+          capture4: async (consume) => {
+            const base = lon;
+            const captureFov = fov;
+            for (const [index, offset] of [0, 90, 180, 270].entries()) {
+              const frame = await renderView(base + offset, 0, captureFov);
+              if (frame) await consume(frame, index);
+            }
+          },
         };
 
         let raf = 0;
@@ -132,7 +237,7 @@ export function InlinePanorama({ src, gridOn = false, apiRef, interactive = true
           const phi = THREE.MathUtils.degToRad(90 - lat);
           const theta = THREE.MathUtils.degToRad(lon);
           camera.lookAt(500 * Math.sin(phi) * Math.cos(theta), 500 * Math.cos(phi), 500 * Math.sin(phi) * Math.sin(theta));
-          renderer.render(scene, camera);
+          if (!capturing) renderer.render(scene, camera);
           if (gizmoRef.current) gizmoRef.current.style.transform = `rotateX(${-lat}deg) rotateY(${lon}deg)`;
           if (readoutRef.current) {
             const yaw = Math.round(((lon % 360) + 360) % 360);
@@ -158,7 +263,12 @@ export function InlinePanorama({ src, gridOn = false, apiRef, interactive = true
         if (!disposed) { setError(e instanceof Error ? e.message : "全景加载失败"); setLoading(false); }
       }
     })();
-    return () => { disposed = true; cleanup(); };
+    return () => {
+      disposed = true;
+      controller.abort();
+      if (pendingBlobURL) { URL.revokeObjectURL(pendingBlobURL); pendingBlobURL = ""; }
+      cleanup();
+    };
   }, [src, apiRef]);
 
   const axis = "absolute left-1/2 top-1/2 origin-left";

@@ -46,6 +46,7 @@ import {
 } from "./video-clip-reshoot";
 import { VideoClipReshootTimeline } from "./video-clip-reshoot-timeline";
 import { BREAKDOWN_NODE_HEIGHT, BREAKDOWN_NODE_WIDTH } from "./video-frame-breakdown";
+import { captureVideoFrame, VideoFrameError } from "@/lib/video-frame";
 
 // 各模式（Tab）对连接源节点的数量/类型限制：hover 时提示，生成时校验。文生视频无需连接。
 // max 只是没有后台配置时的兜底；模型在「模型管理」里配了参考素材数量时以配置为准
@@ -84,45 +85,6 @@ function fmtSec(t: number): string {
 function playVideo(v: HTMLVideoElement) {
   if (v.ended) v.currentTime = 0;
   v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
-}
-
-/**
- * 用隐藏的跨域 video 抓取 {@code src} 在 {@code time} 秒处的帧为 PNG Blob。
- * 仅用于截图，不影响可见视频；若上游未开启 GET 跨域(CORS) 导致 canvas 被污染或加载失败，返回 null。
- */
-function grabFrame(src: string, time: number): Promise<Blob | null> {
-  return new Promise((resolve) => {
-    const v = document.createElement("video");
-    v.crossOrigin = "anonymous";
-    v.muted = true;
-    v.preload = "auto";
-    let done = false;
-    const finish = (b: Blob | null) => {
-      if (done) return;
-      done = true;
-      v.removeAttribute("src");
-      v.load();
-      resolve(b);
-    };
-    const timer = setTimeout(() => finish(null), 8000);
-    v.onerror = () => { clearTimeout(timer); finish(null); };
-    v.onloadedmetadata = () => { v.currentTime = Math.min(time, Math.max(0, (v.duration || time) - 0.01)); };
-    v.onseeked = () => {
-      try {
-        const c = document.createElement("canvas");
-        c.width = v.videoWidth;
-        c.height = v.videoHeight;
-        const ctx = c.getContext("2d");
-        if (!ctx || !c.width || !c.height) { clearTimeout(timer); finish(null); return; }
-        ctx.drawImage(v, 0, 0);
-        c.toBlob((b) => { clearTimeout(timer); finish(b); }, "image/png");
-      } catch {
-        clearTimeout(timer);
-        finish(null);
-      }
-    };
-    v.src = src;
-  });
 }
 
 const VIDEO_CARD_MAX_WIDTH = 608;
@@ -249,6 +211,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [capturing, setCapturing] = useState(false);
+  const captureLockRef = useRef(false);
   // 本地缓存：首次播放下载一次写入 Cache Storage，之后从本地 blob 播放，省流量
   const [srcToUse, setSrcToUse] = useState<string>(playerVideoSrc);
   const [resolved, setResolved] = useState<null | "blob" | "native">(null);
@@ -657,23 +620,23 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
   // 截取 当前/首/尾 帧 → 上传 → 在右侧生成一个独立图片节点（不与视频连线）
   const captureAt = useCallback(async (kind: "current" | "first" | "last") => {
     const v = videoRef.current;
-    if (!v || capturing || !node.videoSrc) return;
+    if (!v || captureLockRef.current || !node.videoSrc) return;
+    captureLockRef.current = true;
     const dur = v.duration || duration || 0;
     const time = kind === "first" ? 0 : kind === "last" ? Math.max(0, dur - 0.05) : v.currentTime;
     setCapturing(true);
     try {
-      // 优先用已缓存的本地 blob 抓帧（同源不污染、省一次下载）；否则用原始 URL（需 GET 跨域）
-      const blob = await grabFrame(objUrlRef.current || node.videoSrc, time);
-      if (!blob) { toast.error("截图失败：请为媒体源开启 GET 跨域(CORS)"); return; }
+      // 统一抓帧器按视频的原始 videoWidth × videoHeight 建立无损 PNG，与卡片显示尺寸无关。
+      const captured = await captureVideoFrame(objUrlRef.current || node.videoSrc, time);
       const label = kind === "first" ? "视频首帧" : kind === "last" ? "视频尾帧" : "视频截图";
-      const file = new File([blob], `frame_${time.toFixed(1)}s.png`, { type: "image/png" });
+      const file = new File([captured.blob], `frame_${time.toFixed(1)}s.png`, { type: "image/png" });
       const res = await uploadFileSmart(file, undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
       if (!res.success || !res.data) { toast.error(res.message || "截图上传失败"); return; }
       const st = useCanvasStore.getState();
       const nid = generateNodeId();
       const cw = node.contentW ?? node.width;
-      const vw = v.videoWidth || cw;
-      const vh = v.videoHeight || Math.round(cw * 9 / 16);
+      const vw = captured.width;
+      const vh = captured.height;
       const ch = Math.round((cw * vh) / vw);
       // 排到目标列里已有节点（含之前的截图）下方，避免多次截图堆叠重叠
       const { x: targetX, y: targetY } = findRightColumnSpot(st.nodes, node, cw, cw);
@@ -695,14 +658,15 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       }, true);
       // 不连线：截图图片为独立节点
       st.selectNode(nid);
-      toast.success(`已截取${kind === "first" ? "首帧" : kind === "last" ? "尾帧" : "当前帧"}`);
-    } catch {
+      toast.success(`已截取${kind === "first" ? "首帧" : kind === "last" ? "尾帧" : "当前帧"} · ${captured.width}×${captured.height}`);
+    } catch (error) {
       // 抓帧/上传异常:给出反馈,避免未处理 rejection 与静默失败。
-      toast.error("截图失败，请重试");
+      toast.error(error instanceof VideoFrameError ? error.message : "截图失败，请重试");
     } finally {
+      captureLockRef.current = false;
       setCapturing(false);
     }
-  }, [capturing, duration, node, selectedModel]);
+  }, [duration, node, selectedModel]);
 
   const copyPrompt = useCallback(async () => {
     const text = node.prompt?.trim();

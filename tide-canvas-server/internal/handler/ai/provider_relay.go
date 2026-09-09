@@ -85,6 +85,7 @@ func (p *relayProviderClient) Generate(ctx context.Context, req GenerateRequest)
 	case "image_to_image":
 		ip := p.imageParams(model, req.Input)
 		ip.ImageURLs = p.upstreamURLs(inputImageURLs(req.Input))
+		ip.MaskURL = p.upstreamURL(inputStr(req.Input, "maskImage"))
 		res, err := p.batchImages(ctx, batchCount(req.Input), func(ctx context.Context) (relaymedia.Result, error) {
 			return p.c.EditImage(ctx, ip)
 		})

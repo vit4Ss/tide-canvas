@@ -392,9 +392,9 @@ var CanonicalAiTools = []AiTool{
 	{
 		// 局部重绘复用通用图生图能力：没有服务端预设指令，用户描述要改的部分。
 		Key: "inpaint", Handler: "image_to_image", Type: AiToolTypeImage, Enabled: true, ShowPage: true,
-		Title: "局部重绘", Desc: "上传图片并描述想修改的部分，AI 精准重绘。",
+		Title: "局部重绘", Desc: "涂抹选区并描述修改内容，选区外保留原图。",
 		Icon: "✎", CoverHues: "[330,286,12]", SortOrder: 2, NeedPrompt: true,
-		Placeholder: "描述要修改的部分…\n例：把天空换成日落晚霞，保持其余不变",
+		Placeholder: "描述选区内要生成的内容…\n例：让手里握着一把斧子，保持原画风与光照",
 	},
 	{
 		// Desc 写明白底:编辑通道无法可靠输出透明 alpha,预设指令即为纯白背景——

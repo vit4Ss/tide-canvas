@@ -33,6 +33,7 @@ export type CanvasNodeFeatureKey =
   | "image.crop"
   | "image.rotate"
   | "image.annotate"
+  | "image.inpaint"
   | "image.gridSplit"
   | "video.clipReshoot"
   | "video.frameBreakdown"

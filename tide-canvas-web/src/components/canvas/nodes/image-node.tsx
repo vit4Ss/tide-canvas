@@ -28,6 +28,7 @@ import { aiApi, uploadFileSmart } from "@/lib/api";
 import { resolveModelReferenceCountLimit, resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
 import { sliceImageGrid, transformImageRaster, type RasterTransform, type RasterTransformResult } from "@/lib/image-slice";
 import ImageAnnotateModal from "./image-annotate-modal";
+import ImageInpaintModal from "./image-inpaint-modal";
 import { disableOssDisplayProcessing, fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
 import { matrixPrice, keyVariants } from "@/lib/price-matrix";
 import { getImageCardSizeForRatio } from "@/lib/image-card-size";
@@ -552,6 +553,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   // 内嵌全景：三分网格开关 + 复位视角（由卡片上方专用工具栏控制）
   const [panoGrid, setPanoGrid] = useState(false);
   const [panoCaptureBusy, setPanoCaptureBusy] = useState<"single" | "grid" | null>(null);
+  // State disables the button after React commits; the ref also closes the
+  // same-tick double-click window before a second capture can be queued.
+  const panoCaptureLockRef = useRef(false);
   const panoApiRef = useRef<InlinePanoramaApi | null>(null);
   const [angleOpen, setAngleOpen] = useState(false);
   const [lightOpen, setLightOpen] = useState(false);
@@ -1038,51 +1042,56 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
 
   // 全景「当前视角截图」→ 上传 → 右侧生成一个连线图片节点
   const handlePanoCapture = useCallback(async () => {
-    if (panoCaptureBusy) return;
+    if (panoCaptureLockRef.current || panoCaptureBusy) return;
+    panoCaptureLockRef.current = true;
     setPanoCaptureBusy("single");
     try {
-      const dataUrl = panoApiRef.current?.capture();
-      if (!dataUrl) { toast.error("截图失败，请重试"); return; }
-      const blob = await (await fetch(dataUrl)).blob();
-      const res = await uploadFileSmart(new File([blob], "全景截图.png", { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
+      const captured = await panoApiRef.current?.capture();
+      if (!captured) { toast.error("截图失败，请重试"); return; }
+      const res = await uploadFileSmart(new File([captured.blob], "全景截图.png", { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
       if (!res.success || !res.data) { toast.error(res.message || "截图上传失败"); return; }
       const st = useCanvasStore.getState();
-      const capH = Math.round(node.width / 2);
+      const capH = Math.round(node.width * captured.height / captured.width);
       const nid = generateNodeId();
       st.addNode({ id: nid, type: derivativeNodeType, x: node.x + node.width + 80, y: node.y, width: node.width, height: capH, contentW: node.width, contentH: capH, title: "全景截图", imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }, true);
       st.addConnection({ id: `conn_${node.id}_${nid}_c`, sourceId: node.id, targetId: nid }, false);
       st.selectNode(nid);
-      toast.success("已截取当前视角");
+      toast.success(`已截取当前视角 · ${captured.width}×${captured.height}`);
     } catch {
       toast.error("截图失败，请重试");
     } finally {
+      panoCaptureLockRef.current = false;
       setPanoCaptureBusy(null);
     }
   }, [derivativeNodeType, node.id, node.x, node.y, node.width, panoCaptureBusy, selectedModel]);
 
-  // 全景「4 大视角截图」→ 当前/+90/+180/+270 平视各截一张 → 各上传 → 右侧竖排 4 个连线图片节点
+  // 全景「4 大视角截图」→ 当前/+90/+180/+270 平视各截一张 → 各上传 → 右侧 2×2 排列连线图片节点
   const handlePanoCapture4 = useCallback(async () => {
-    if (panoCaptureBusy) return;
+    if (panoCaptureLockRef.current || panoCaptureBusy) return;
+    panoCaptureLockRef.current = true;
     setPanoCaptureBusy("grid");
     try {
-      const urls = panoApiRef.current?.capture4();
-      if (!urls || urls.length === 0) { toast.error("截图失败，请重试"); return; }
+      const api = panoApiRef.current;
+      if (!api) { toast.error("截图失败，请重试"); return; }
       toast.info("正在截取 4 个视角…");
       const st = useCanvasStore.getState();
-      const capH = Math.round(node.width / 2);
       const baseX = node.x + node.width + 80;
       // 2×2 视角网格，整组相对源卡片垂直居中：竖排 4 张会拖出一条重心下坠的长条，
       // 连线也被拉出大跨度；网格更符合「四视角」的阅读预期。
       const gapX = 40;
       const gapY = 40;
-      const baseY = node.y + ((node.contentH ?? node.height) - (capH * 2 + gapY)) / 2;
+      let baseY: number | null = null;
       let ok = 0;
-      for (let i = 0; i < urls.length; i++) {
+      let capturedSize = "";
+      let lastError = "";
+      await api.capture4(async (captured, i) => {
         // 单个视角 fetch/上传失败不应中断整批,也不产生未处理 rejection。
         try {
-          const blob = await (await fetch(urls[i])).blob();
-          const res = await uploadFileSmart(new File([blob], `全景视角${i + 1}.png`, { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
-          if (!res.success || !res.data) continue;
+          const res = await uploadFileSmart(new File([captured.blob], `全景视角${i + 1}.png`, { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
+          if (!res.success || !res.data) { lastError = res.message || "截图上传失败"; return; }
+          capturedSize = `${captured.width}×${captured.height}`;
+          const capH = Math.round(node.width * captured.height / captured.width);
+          baseY ??= node.y + ((node.contentH ?? node.height) - (capH * 2 + gapY)) / 2;
           const nid = generateNodeId();
           st.addNode({ id: nid, type: derivativeNodeType, x: baseX + (i % 2) * (node.width + gapX), y: baseY + Math.floor(i / 2) * (capH + gapY), width: node.width, height: capH, contentW: node.width, contentH: capH, title: `全景视角 ${i + 1}`, imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }, i === 0);
           st.addConnection({ id: `conn_${node.id}_${nid}_${i}`, sourceId: node.id, targetId: nid }, false);
@@ -1090,11 +1099,12 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         } catch {
           /* 跳过此视角 */
         }
-      }
-      if (ok > 0) toast.success(`已截取 ${ok} 个视角`); else toast.error("截图失败");
+      });
+      if (ok > 0) toast.success(`已截取 ${ok} 个视角${capturedSize ? ` · ${capturedSize}` : ""}`); else toast.error(lastError || "截图失败");
     } catch {
       toast.error("截图失败，请重试");
     } finally {
+      panoCaptureLockRef.current = false;
       setPanoCaptureBusy(null);
     }
   }, [derivativeNodeType, node.id, node.x, node.y, node.width, node.height, node.contentH, panoCaptureBusy, selectedModel]);
@@ -1142,7 +1152,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   // 此处的 prompt 仅作历史记录展示标签）；opts.ratio 覆盖输出画幅（三视图/设定图
   // 等预设需要横幅排版）；opts.outputNodeType 允许一次性产物降为普通图片，
   // opts.input 覆盖默认请求参数。
-  const generateEdited = useCallback((title: string, prompt: string, opts?: { handler?: string; ratio?: string; outputNodeType?: CanvasNode["type"]; input?: Record<string, unknown> }) => {
+  const generateEdited = useCallback((title: string, prompt: string, opts?: { handler?: string; modelId?: string; ratio?: string; outputNodeType?: CanvasNode["type"]; input?: Record<string, unknown>; rollbackOnRejected?: boolean }) => {
     if (!node.imageSrc) {
       toast.error("请先生成或上传图片");
       return;
@@ -1180,17 +1190,24 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       ...buildImageDerivativeMetadata({
         source: node,
         outputType,
-        modelId: selectedModelId,
+        modelId: opts?.modelId ?? selectedModelId,
         generationInput,
       }),
     }, true);
     st.addConnection({ id: `conn_${node.id}_${nid}`, sourceId: node.id, targetId: nid }, false);
     st.selectNode(nid);
-    generate({
+    return generate({
       nodeId: nid,
       handler: opts?.handler ?? "image_to_image",
-      modelId: selectedModelId || "default",
+      modelId: opts?.modelId ?? (selectedModelId || "default"),
       input: generationInput,
+    }).then((result) => {
+      if (opts?.rollbackOnRejected && result.status === "rejected") {
+        const latest = useCanvasStore.getState();
+        latest.removeNode(nid, false);
+        latest.selectNode(node.id);
+      }
+      return result;
     });
   }, [cardH, cardW, derivativeNodeType, generate, multiAngleRatio, node, qualityRatio.clarity, qualityRatio.quality, selectedModelId]);
 
@@ -1569,6 +1586,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
 
   // ===== 手绘标注:弹层里画完 → 上传合成图 → 创建连线派生节点(尺寸与源图一致) =====
   const [annotateOpen, setAnnotateOpen] = useState(false);
+  const [inpaintOpen, setInpaintOpen] = useState(false);
   const handleAnnotateSave = useCallback(async (result: RasterTransformResult): Promise<boolean> => {
     setLocalTransforming("annotate");
     try {
@@ -1908,6 +1926,17 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           busy={localTransforming === "rotate"}
           onRotate={handleRotate}
         />
+      ),
+    },
+    {
+      key: "image.inpaint",
+      group: "process",
+      content: (
+        <button onMouseDown={stop} onClick={(e) => { stop(e); setInpaintOpen(true); }}
+          title="涂抹修改区域，使用后台配置的蒙版模型生成，选区外保留原图"
+          className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
+          <Brush className="h-4 w-4"/>局部修改
+        </button>
       ),
     },
     {
@@ -2314,6 +2343,17 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         )}
 
         {/* 手绘标注弹层：画完保存 → 上传 → 生成连线派生节点 */}
+        {inpaintOpen && node.imageSrc && (
+          <ImageInpaintModal key={node.imageSrc} src={node.imageSrc} onClose={() => setInpaintOpen(false)}
+            onApply={async (model, input) => {
+              if (useCanvasStore.getState().nodes.find((n) => n.id === node.id)?.imageSrc !== input.sourceImage)
+                throw new Error("原图已变化，请重新打开局部修改");
+              const result = await generateEdited("局部修改", String(input.prompt), {
+                modelId: model.id, ratio: String(input.aspectRatio), input, rollbackOnRejected: true,
+              });
+              if (!result || result.status === "rejected") throw new Error("任务未提交，请检查积分或模型配置后重试");
+            }} />
+        )}
         {annotateOpen && node.imageSrc && (
           <ImageAnnotateModal
             src={node.imageSrc}

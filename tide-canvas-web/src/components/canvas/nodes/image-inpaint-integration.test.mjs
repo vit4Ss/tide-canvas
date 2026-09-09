@@ -1,0 +1,34 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const node=readFileSync(new URL("./image-node.tsx",import.meta.url),"utf8");
+const modal=readFileSync(new URL("./image-inpaint-modal.tsx",import.meta.url),"utf8");
+const tools=readFileSync(new URL("../../../app/tools/[op]/page.tsx",import.meta.url),"utf8");
+const adminModels=readFileSync(new URL("../../../app/admin/models/page.tsx",import.meta.url),"utf8");
+
+test("canvas local edit rolls back only definitely rejected placeholder nodes",()=>{
+  assert.match(node,/image\.inpaint[\s\S]*?局部修改/);
+  assert.match(node,/rollbackOnRejected && result\.status === "rejected"[\s\S]*?removeNode\(nid, false\)/);
+  assert.match(node,/rollbackOnRejected: true/);
+  assert.doesNotMatch(node,/rollbackOnRejected && result\.status === "ambiguous"/);
+});
+
+test("mask UI sends the displayed model and price and removes only unused new masks",()=>{
+  assert.match(modal,/typeof document === "undefined"\) return null/);
+  assert.match(modal,/withTimeout\([\s\S]*?marketApi\.studioModels\("image"\)[\s\S]*?蒙版模型读取超时/);
+  assert.match(modal,/imageTimeout = setTimeout\(\(\) => loadController\.abort\(\), LOAD_TIMEOUT_MS\)/);
+  assert.match(modal,/expectedPointCost:cost[\s\S]*?expectedMaskModelId:model\.id/);
+  assert.match(modal,/uploadedMask&&!uploadedMask\.reused&&!accepted[\s\S]*?fileApi\.delete/);
+  assert.match(modal,/sourceBrushSize\(size,source\.width,e\.currentTarget\.getBoundingClientRect\(\)\.width\)/);
+});
+
+test("tool page keeps the mask editor open until a task is accepted",()=>{
+  assert.match(tools,/const started = await run\([\s\S]*?if \(started !== true\) throw/);
+  assert.doesNotMatch(tools,/setMaskOpen\(false\);\s*await run/);
+});
+
+test("switching away from an image model cannot retain a hidden mask capability",()=>{
+  assert.match(adminModels,/if \(next !== "image"\) setC\(\{ imagePrimary: false, supportsMask: false \}\)/);
+  assert.match(adminModels,/supportsMask: type === "image" && cfg\.supportsMask === true/);
+});

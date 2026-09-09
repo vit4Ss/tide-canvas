@@ -100,7 +100,7 @@ func TestStoredCanvasNodeFeaturesConfigMigratesV9AnnotateInPlace(t *testing.T) {
 		t.Fatalf("version = %d, want %d", got.Version, CanvasNodeFeaturesVersion)
 	}
 	byKey := canvasNodeConfigByKey(got.NodeTypes)
-	want := []string{"media.preview", "image.rotate", "image.annotate", "media.download"}
+	want := []string{"media.preview", "image.rotate", "image.annotate", "image.inpaint", "media.download"}
 	if !reflect.DeepEqual(byKey["image"].Features, want) {
 		t.Fatalf("migrated V9 image features = %#v, want %#v", byKey["image"].Features, want)
 	}
@@ -123,7 +123,7 @@ func TestStoredCanvasNodeFeaturesConfigMigratesV8ThroughV9(t *testing.T) {
 		t.Fatalf("version = %d, want %d", got.Version, CanvasNodeFeaturesVersion)
 	}
 	byKey := canvasNodeConfigByKey(got.NodeTypes)
-	if want := []string{"image.rotate", "image.annotate"}; !reflect.DeepEqual(byKey["image"].Features, want) {
+	if want := []string{"image.rotate", "image.annotate", "image.inpaint"}; !reflect.DeepEqual(byKey["image"].Features, want) {
 		t.Fatalf("V8 chained migration image features = %#v, want %#v", byKey["image"].Features, want)
 	}
 	if _, ok := byKey["3d"]; !ok {

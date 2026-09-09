@@ -60,13 +60,13 @@ export const FALLBACK_TOOLS: FallbackToolDef[] = [
   {
     key: "inpaint",
     title: "局部重绘",
-    desc: "上传图片并描述想修改的部分，AI 精准重绘。",
+    desc: "涂抹选区并描述修改内容，选区外保留原图。",
     handler: "image_to_image",
     type: "image",
     icon: "✎",
     cover: [330, 286, 12],
     needPrompt: true,
-    placeholder: "描述要修改的部分…\n例：把天空换成日落晚霞，保持其余不变",
+    placeholder: "描述选区内要生成的内容…\n例：让手里握着一把斧子，保持原画风与光照",
   },
   {
     key: "rmbg",

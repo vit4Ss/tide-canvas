@@ -113,7 +113,7 @@ func (o *OSSStorage) Save(ctx context.Context, key string, r io.Reader, contentT
 	if rel == "" {
 		return "", errors.New("storage: empty key")
 	}
-	var opts []oss.Option
+	opts := []oss.Option{oss.WithContext(ctx)}
 	if strings.TrimSpace(contentType) != "" {
 		opts = append(opts, oss.ContentType(contentType))
 	}
@@ -127,12 +127,11 @@ func (o *OSSStorage) Save(ctx context.Context, key string, r io.Reader, contentT
 // builders should prefer this path over fetching a public/CDN URL: CDN redirects,
 // hotlink policies and propagation delay must not silently drop source media.
 func (o *OSSStorage) Open(ctx context.Context, key string) (io.ReadCloser, error) {
-	_ = ctx
 	rel := cleanKey(key)
 	if rel == "" {
 		return nil, errors.New("storage: empty key")
 	}
-	stream, err := o.bucket.GetObject(o.objectKey(rel))
+	stream, err := o.bucket.GetObject(o.objectKey(rel), oss.WithContext(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("storage: oss get: %w", err)
 	}
@@ -174,7 +173,7 @@ func (o *OSSStorage) Delete(ctx context.Context, key string) error {
 	if rel == "" {
 		return nil
 	}
-	if err := o.bucket.DeleteObject(o.objectKey(key)); err != nil {
+	if err := o.bucket.DeleteObject(o.objectKey(key), oss.WithContext(ctx)); err != nil {
 		return fmt.Errorf("storage: oss delete: %w", err)
 	}
 	return nil

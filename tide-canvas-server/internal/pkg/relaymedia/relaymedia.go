@@ -119,6 +119,7 @@ type ImageParams struct {
 	Resolution  string   // 1k | 2k | 4k
 	AspectRatio string   // 1:1 | 16:9 | 9:16 …
 	ImageURLs   []string // edits only: reference frames (1–16 public URLs)
+	MaskURL     string   // edits only: transparent pixels are editable
 }
 
 // VideoParams is a normalized video request for the mode-driven endpoint. Which
@@ -378,6 +379,7 @@ func (c *Client) EditImage(ctx context.Context, p ImageParams) (Result, error) {
 		return Result{}, fmt.Errorf("relaymedia: edits require at least one image url")
 	}
 	body := map[string]any{"model": p.Model, "prompt": p.Prompt, "image_urls": p.ImageURLs}
+	putNonEmpty(body, "mask", p.MaskURL)
 	putNonEmpty(body, "quality", p.Quality)
 	putNonEmpty(body, "resolution", p.Resolution)
 	putNonEmpty(body, "aspect_ratio", p.AspectRatio)

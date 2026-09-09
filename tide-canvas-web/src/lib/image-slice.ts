@@ -26,25 +26,40 @@ export interface RasterTransformResult {
 /** 经后端下载代理加载图片为可读像素的 HTMLImageElement(返回的 objUrl 由调用方负责 revoke)。
  *  导出给需要在源图上做自由合成的调用方(如手绘标注弹层),与本文件内的变换共用同一条
  *  免 CORS 污染通道。 */
-export async function loadImageViaProxy(url: string): Promise<{ img: HTMLImageElement; objUrl: string; mimeType: string }> {
+export async function loadImageViaProxy(url: string, signal?: AbortSignal): Promise<{ img: HTMLImageElement; objUrl: string; mimeType: string }> {
+  const abortError = () => new DOMException("Image loading cancelled", "AbortError");
+  if (signal?.aborted) throw abortError();
   let res: Response;
   if (url.startsWith("blob:") || url.startsWith("data:")) {
     // 本地 blob:/data: 已是同源可读像素，直接加载,无需(也无法)走后端下载代理。
-    res = await fetch(url);
+    res = await fetch(url, signal ? { signal } : undefined);
   } else {
     const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
     const headers: Record<string, string> = {};
     if (token) headers.Authorization = `Bearer ${token}`;
-    res = await fetch(`/api/files/download?url=${encodeURIComponent(url)}&name=source`, { headers });
+    res = await fetch(`/api/files/download?url=${encodeURIComponent(url)}&name=source`, { headers, ...(signal ? { signal } : {}) });
   }
   if (!res.ok) throw new Error(`fetch source failed: ${res.status}`);
   const sourceBlob = await res.blob();
+  if (signal?.aborted) throw abortError();
   const objUrl = URL.createObjectURL(sourceBlob);
   const img = new Image();
   try {
     await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error("image decode failed"));
+      const cleanup = () => {
+        signal?.removeEventListener("abort", abort);
+        img.onload = null;
+        img.onerror = null;
+      };
+      const abort = () => {
+        cleanup();
+        img.src = "";
+        reject(abortError());
+      };
+      img.onload = () => { cleanup(); resolve(); };
+      img.onerror = () => { cleanup(); reject(new Error("image decode failed")); };
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) { abort(); return; }
       img.src = objUrl;
     });
   } catch (e) {

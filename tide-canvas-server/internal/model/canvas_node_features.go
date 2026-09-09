@@ -17,7 +17,8 @@ import (
 // registered features are enabled for each registered node type.
 const ConfigKeyCanvasNodeFeatures = "canvas.nodeFeatures.v1"
 
-const CanvasNodeFeaturesVersion = 10
+const CanvasNodeFeaturesVersion = 11
+const canvasNodeFeaturesV10 = 10
 
 const canvasNodeFeaturesV1 = 1
 
@@ -134,7 +135,7 @@ var canvasNodeV4ImageDefaultFeatures = append(cloneStrings(canvasNodeV3ImageDefa
 // 生成模型引用,与裁剪/旋转同一条派生链路)。
 var annotateNodeFeatures = []string{"image.annotate"}
 
-var imageNodeDefaultFeatures = insertFeaturesAfter(
+var imageNodeDefaultFeatures = insertFeaturesAfter(insertFeaturesAfter(
 	insertFeaturesAfter(
 		canvasNodeV3ImageDefaultFeatures,
 		"image.panorama",
@@ -142,7 +143,7 @@ var imageNodeDefaultFeatures = insertFeaturesAfter(
 	),
 	"image.rotate",
 	annotateNodeFeatures,
-)
+), "image.annotate", []string{"image.inpaint"})
 
 var canvasNodeV2CharacterFeatures = []string{
 	"image.subjectCloseup",
@@ -175,7 +176,7 @@ var canvasNodeV3CharacterDefaultFeatures = []string{
 
 var canvasNodeV4CharacterDefaultFeatures = append(cloneStrings(canvasNodeV3CharacterDefaultFeatures), "skill.launcher")
 
-var characterNodeDefaultFeatures = insertFeaturesAfter(
+var characterNodeDefaultFeatures = insertFeaturesAfter(insertFeaturesAfter(
 	insertFeaturesAfter(
 		canvasNodeV3CharacterDefaultFeatures,
 		"image.panorama",
@@ -183,7 +184,7 @@ var characterNodeDefaultFeatures = insertFeaturesAfter(
 	),
 	"image.rotate",
 	annotateNodeFeatures,
-)
+), "image.annotate", []string{"image.inpaint"})
 
 var canvasNodeV3VideoDefaultFeatures = []string{
 	"media.replace",
@@ -330,6 +331,10 @@ var CanvasNodeFeatureCatalog = []CanvasNodeFeatureDefinition{
 	},
 	{
 		Key: "image.annotate", Title: "手绘标注", Description: "在当前图片上手绘圈选与标记,生成标注派生图",
+		Group: "image", SupportedRenderers: []string{"image"},
+	},
+	{
+		Key: "image.inpaint", Title: "局部修改", Description: "通过蒙版模型修改选区，保留选区外原图",
 		Group: "image", SupportedRenderers: []string{"image"},
 	},
 	{
@@ -506,6 +511,9 @@ func StoredCanvasNodeFeaturesConfig(raw string) CanvasNodeFeaturesConfig {
 	}
 	if parsed.Version == canvasNodeFeaturesV9 {
 		parsed = migrateCanvasNodeFeaturesV9(parsed)
+	}
+	if parsed.Version == canvasNodeFeaturesV10 {
+		parsed = migrateCanvasNodeFeaturesV10(parsed)
 	}
 	normalized, err := NormalizeCanvasNodeFeaturesConfig(parsed)
 	if err != nil {
@@ -705,7 +713,7 @@ func migrateCanvasNodeFeaturesV8(input CanvasNodeFeaturesConfig) CanvasNodeFeatu
 // lists) stay untouched — the feature remains in the catalog for manual
 // assignment. Mirrors the V4 panorama-controls migration.
 func migrateCanvasNodeFeaturesV9(input CanvasNodeFeaturesConfig) CanvasNodeFeaturesConfig {
-	input.Version = CanvasNodeFeaturesVersion
+	input.Version = canvasNodeFeaturesV10
 	for i := range input.NodeTypes {
 		def, ok := canonicalCanvasNodeTypeByKey[strings.TrimSpace(input.NodeTypes[i].Key)]
 		if !ok || def.Renderer != "image" {
@@ -716,6 +724,17 @@ func migrateCanvasNodeFeaturesV9(input CanvasNodeFeaturesConfig) CanvasNodeFeatu
 			"image.rotate",
 			annotateNodeFeatures,
 		)
+	}
+	return input
+}
+
+func migrateCanvasNodeFeaturesV10(input CanvasNodeFeaturesConfig) CanvasNodeFeaturesConfig {
+	input.Version = CanvasNodeFeaturesVersion
+	for i := range input.NodeTypes {
+		def, ok := canonicalCanvasNodeTypeByKey[strings.TrimSpace(input.NodeTypes[i].Key)]
+		if ok && def.Renderer == "image" {
+			input.NodeTypes[i].Features = insertFeaturesAfter(input.NodeTypes[i].Features, "image.annotate", []string{"image.inpaint"})
+		}
 	}
 	return input
 }

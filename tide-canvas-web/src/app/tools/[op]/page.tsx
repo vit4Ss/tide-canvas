@@ -26,6 +26,8 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Images, Loader2, Plus, X } from "lucide-react";
 import { AssetPickerModal } from "@/components/studio/create-studio/asset-picker-modal";
+import ImageInpaintModal from "@/components/canvas/nodes/image-inpaint-modal";
+import { chooseInpaintModel } from "@/lib/inpaint";
 import { RATIOS } from "@/components/studio/create-studio/constants";
 import { measureImageSize, nearestAspectRatio } from "@/lib/aspect-ratio";
 import CapturableVideo from "@/components/studio/create-studio/video-result";
@@ -188,6 +190,7 @@ function pointCostLabel(cost: number): string {
 /** 图片工具与创作台一键操作同策略，但选择发生在确认页渲染前；执行时复用同一模型。 */
 function chooseImageModel(def: ToolDef | undefined, models: StudioModelVO[]): StudioModelVO | null {
   if (!def || def.type !== "image") return null;
+  if (def.key === "inpaint") return chooseInpaintModel(models);
   const editable = models.filter(
     (m) =>
       (m.config?.operations?.includes("edits") ?? false) ||
@@ -605,8 +608,9 @@ export default function ToolPage() {
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [activeResolution, activeResolutionPriced, activeVideoModelId, isVideoDef, phase, serverQuoteRevision, source, videoModel]);
 
+  const [maskOpen, setMaskOpen] = useState(false);
   const run = useCallback(
-    async (srcUrl: string, promptText: string, targetResolution?: string) => {
+    async (srcUrl: string, promptText: string, targetResolution?: string, masked?: { model: StudioModelVO; input: Record<string, unknown> }) => {
       if (!def) return;
       const submitResolution = targetResolution || defaultResolution;
       if (def.type === "video" && resolveUpscalePointRate(videoModel?.config, submitResolution) <= 0) {
@@ -634,7 +638,7 @@ export default function ToolPage() {
         }
         // 确认页显示哪个模型，执行时就复用哪个模型；不能临提交再查一次导致
         // 界面报价属于 A 模型、实际任务却调用 B 模型。
-        const pick = def.type === "video" ? videoModel : imageModel;
+        const pick = masked?.model ?? (def.type === "video" ? videoModel : imageModel);
         if (!pick) {
           fail(def.type === "video" ? "没有可用的超分模型" : "没有可用的图像编辑模型");
           return;
@@ -667,6 +671,7 @@ export default function ToolPage() {
                 prompt: promptText,
                 ...(def.extra ?? {}),
                 ...(expandRatio ? { aspectRatio: expandRatio, aspect_ratio: expandRatio, ratio: expandRatio } : {}),
+                ...masked?.input,
                 toolKey: def.key,
                 toolTitle: def.title,
               };
@@ -676,7 +681,7 @@ export default function ToolPage() {
           if (createGeneration !== pollGen.current) return;
           const res = await aiApi.generateIdempotent({
             handler: def.handler,
-            modelId: pick.modelKey || pick.id,
+            modelId: masked ? pick.id : (pick.modelKey || pick.id),
             input,
           }, journalScope, {
             requireDurableJournal: true,
@@ -694,11 +699,12 @@ export default function ToolPage() {
           if (res.success && res.data?.id) {
             if (typeof res.data.pointCost === "number") setSubmittedPointCost(res.data.pointCost);
             poll(res.data.id, ownerUserId);
-            return;
+            return true;
           }
           if (!isAmbiguousAiCreateCode(res.code)) {
-            fail(res.message || "任务创建失败，请重试");
-            return;
+            const message = res.message || "任务创建失败，请重试";
+            fail(message);
+            return message;
           }
           if (!reconnectNoticeShown) {
             reconnectNoticeShown = true;
@@ -961,6 +967,13 @@ export default function ToolPage() {
       )}
 
       {/* ── 图片工具：执行前确认模型、积分；局部重绘同时收修改描述 ── */}
+      {maskOpen && source && (
+        <ImageInpaintModal key={source} src={source} onClose={() => setMaskOpen(false)}
+          onApply={async (model, input) => {
+            const started = await run(source, String(input.prompt), undefined, {model,input});
+            if (started !== true) throw new Error(typeof started === "string" ? started : "任务尚未接受，请检查积分或模型配置后重试");
+          }}/>
+      )}
       {(phase === "confirm" || phase === "prompt") && (
         <div className="tp-card config image-config">
           <section className="tp-preview-column" aria-label="源图片预览">
@@ -984,7 +997,7 @@ export default function ToolPage() {
               <p>{def.desc}</p>
             </header>
 
-            {phase === "prompt" && (
+            {phase === "prompt" && def.key !== "inpaint" && (
               <div className="tp-prompt-field">
                 <label htmlFor="tool-edit-prompt">修改描述</label>
                 <textarea
@@ -1023,14 +1036,14 @@ export default function ToolPage() {
               disabled={
                 imageModelsLoading ||
                 !imageModel ||
-                (phase === "prompt" && !prompt.trim())
+                (phase === "prompt" && def.key !== "inpaint" && !prompt.trim())
               }
-              onClick={() => void run(source, phase === "prompt" ? prompt.trim() : def.title)}
+              onClick={() => def.key === "inpaint" ? setMaskOpen(true) : void run(source, phase === "prompt" ? prompt.trim() : def.title)}
             >
               {imageModelsLoading
                 ? "正在读取价格…"
                 : imageModel
-                  ? `${phase === "prompt" ? "开始重绘" : `开始${def.title}`} · ${pointCostLabel(imagePointCost)}`
+                  ? def.key === "inpaint" ? "选择修改区域" : `${phase === "prompt" ? "开始重绘" : `开始${def.title}`} · ${pointCostLabel(imagePointCost)}`
                   : "暂无可用模型"}
             </button>
           </section>
@@ -1313,7 +1326,7 @@ export default function ToolPage() {
                   (isVideoTool && (!activeResolutionPriced || !serverQuoteReady))
                 }
                 onClick={() =>
-                  void run(
+                  def.key === "inpaint" ? setMaskOpen(true) : void run(
                     source,
                     def.needPrompt ? prompt.trim() || def.title : def.title,
                     activeResolution,

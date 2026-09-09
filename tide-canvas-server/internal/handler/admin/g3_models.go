@@ -295,6 +295,10 @@ func (h *modelsHandler) create(c *gin.Context) {
 	if mType == "" {
 		mType = "image"
 	}
+	if err := validateMaskConfig(mType, dto.Config); err != nil {
+		response.Fail(c, response.CodeBadRequest, err.Error())
+		return
+	}
 	if mType == "upscale" {
 		if err := validateUpscalePricingConfig(dto.Config); err != nil {
 			response.Fail(c, response.CodeBadRequest, err.Error())
@@ -530,6 +534,10 @@ func (h *modelsHandler) update(c *gin.Context) {
 		effectiveConfig := json.RawMessage(current.Config)
 		if dto.Config != nil {
 			effectiveConfig = dto.Config
+		}
+		if err := validateMaskConfig(effectiveType, effectiveConfig); err != nil {
+			response.Fail(c, response.CodeBadRequest, err.Error())
+			return
 		}
 		if effectiveType == "upscale" {
 			if err := validateUpscalePricingConfig(effectiveConfig); err != nil {
