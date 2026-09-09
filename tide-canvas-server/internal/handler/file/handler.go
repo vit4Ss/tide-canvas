@@ -6,10 +6,12 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/pkg/idgen"
+	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/response"
 )
 
@@ -259,6 +261,11 @@ func writeUploadErr(c *gin.Context, err error) {
 	case errors.Is(err, errBadURL):
 		response.Fail(c, response.CodeBadRequest, "invalid request")
 	default:
+		logger.L().Error("file: upload failed",
+			zap.String("requestID", c.GetString(middleware.CtxRequestID)),
+			zap.String("path", c.FullPath()),
+			zap.Error(err),
+		)
 		response.Fail(c, response.CodeServerError, "upload failed")
 	}
 }

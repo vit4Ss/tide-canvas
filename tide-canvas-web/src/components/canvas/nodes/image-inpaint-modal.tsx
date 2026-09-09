@@ -2,11 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CircleAlert, Eraser, Loader2, Paintbrush, Sparkles, Trash2, Undo2, X } from "lucide-react";
+import { CircleAlert, Eraser, Loader2, Paintbrush, Trash2, Undo2, X } from "lucide-react";
 import { marketApi, type StudioModelVO } from "@/lib/market-api";
 import { fileApi, uploadFileSmart } from "@/lib/api";
 import { loadImageViaProxy } from "@/lib/image-slice";
-import { chooseInpaintModel, paintMask, renderMaskPreview, sourceBrushSize, type MaskStroke } from "@/lib/inpaint";
+import { chooseInpaintModel, defaultInpaintQuality, defaultInpaintResolution, paintMask, renderMaskPreview, sourceBrushSize, type MaskStroke } from "@/lib/inpaint";
 import { resolveImageToolPointCost } from "@/lib/price-matrix";
 import { useAppUpdateGuard } from "@/hooks/use-app-update-guard";
 import { useAuthStore } from "@/stores/use-auth-store";
@@ -73,8 +73,8 @@ export default function ImageInpaintModal({ src, onClose, onApply }: {
         if (!selected) throw new Error("管理员尚未配置可用的蒙版模型，请联系管理员开启“支持蒙版”");
         if (disposed) return;
         setModel(selected);
-        setResolution(selected.config?.resolutions?.[0] ?? "");
-        setQuality(selected.config?.qualities?.[0] ?? "");
+        setResolution(defaultInpaintResolution(selected.config?.resolutions));
+        setQuality(defaultInpaintQuality(selected.config?.qualities));
         imageTimeout = setTimeout(() => loadController.abort(), LOAD_TIMEOUT_MS);
         const loaded = await loadImageViaProxy(src, loadController.signal);
         clearTimeout(imageTimeout);
@@ -273,16 +273,12 @@ export default function ImageInpaintModal({ src, onClose, onApply }: {
                 <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0"/><span>{error}</span>
               </div>
             )}
-            <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-500 dark:text-white/45">
-              <span className="flex min-w-0 items-center gap-1.5 rounded-lg bg-neutral-100 px-2.5 py-2 dark:bg-white/6">
-                <Sparkles className="h-3.5 w-3.5 shrink-0"/><span className="max-w-56 truncate">{model?.name || "局部重绘模型"}</span>
-              </span>
-              {!!model?.config?.resolutions?.length && <select aria-label="输出清晰度" disabled={busy} value={resolution} onChange={(e)=>setResolution(e.target.value)} className="h-8 rounded-lg border border-neutral-200 bg-white px-2 text-xs text-neutral-600 outline-none focus:border-neutral-400 dark:border-white/10 dark:bg-white/6 dark:text-white/65">{model.config.resolutions.map(r=><option key={r}>{r}</option>)}</select>}
-              {!!model?.config?.qualities?.length && <select aria-label="输出质量" disabled={busy} value={quality} onChange={(e)=>setQuality(e.target.value)} className="h-8 rounded-lg border border-neutral-200 bg-white px-2 text-xs text-neutral-600 outline-none focus:border-neutral-400 dark:border-white/10 dark:bg-white/6 dark:text-white/65">{model.config.qualities.map(q=><option key={q}>{q}</option>)}</select>}
-              <span className="rounded-lg bg-neutral-100 px-2.5 py-2 tabular-nums dark:bg-white/6">{source.width} × {source.height}</span>
+            <div className="flex items-center gap-3 text-xs text-neutral-500 dark:text-white/45">
+              <span>本次消耗</span>
+              <strong className="tabular-nums text-neutral-900 dark:text-white">{cost} 积分</strong>
               <button type="button" onClick={()=>void submit()} disabled={busy||!count||!prompt.trim()||!model}
                 className="ml-auto flex h-9 items-center gap-2 rounded-lg bg-neutral-900 px-4 text-xs font-medium text-white shadow-sm transition-colors hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-35 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200">
-                {busy&&<Loader2 className="h-3.5 w-3.5 animate-spin"/>}{busy?"正在提交…":`生成修改 · ${cost} 积分`}
+                {busy&&<Loader2 className="h-3.5 w-3.5 animate-spin"/>}{busy?"正在提交…":"生成修改"}
               </button>
             </div>
           </div>

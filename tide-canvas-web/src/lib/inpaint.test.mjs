@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chooseInpaintModel, paintMask, renderMaskPreview, sourceBrushSize } from "./inpaint.ts";
+import { chooseInpaintModel, defaultInpaintQuality, defaultInpaintResolution, paintMask, renderMaskPreview, sourceBrushSize } from "./inpaint.ts";
 
 test("inpainting uses the first available admin-configured mask model only", () => {
   const models = [
@@ -12,6 +12,15 @@ test("inpainting uses the first available admin-configured mask model only", () 
   assert.equal(chooseInpaintModel(models)?.id,"3");
   assert.equal(chooseInpaintModel(models.slice(0,2)),null);
   assert.equal(chooseInpaintModel([{...models[2],type:"video"}]),null);
+});
+
+test("hidden inpaint settings prefer 4K and high without submitting unsupported values", () => {
+  assert.equal(defaultInpaintResolution(), "4k");
+  assert.equal(defaultInpaintResolution(["1k", "4K", "2k"]), "4K");
+  assert.equal(defaultInpaintResolution(["1k", "2k"]), "2k");
+  assert.equal(defaultInpaintQuality(), "high");
+  assert.equal(defaultInpaintQuality(["low", "HIGH", "medium"]), "HIGH");
+  assert.equal(defaultInpaintQuality(["low", "medium"]), "medium");
 });
 
 test("brush size stays visually stable when responsive layout further shrinks the image", () => {

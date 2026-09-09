@@ -13,8 +13,10 @@ test("proxy HTML and empty responses become actionable upload errors", () => {
   assert.match(parseUploadResponse(502, "").message, /HTTP 502/);
   assert.match(parseUploadResponse(200, "not json").message, /无法识别.*HTTP 200/);
   assert.equal(parseUploadResponse(0, "").code, 0);
+  assert.match(parseUploadResponse(500, "", "req-500").message, /请求 ID：req-500/);
 });
 
 test("common gateway JSON errors keep their useful message", () => {
   assert.equal(parseUploadResponse(400, '{"error":"invalid multipart body"}').message, "invalid multipart body");
+  assert.match(parseUploadResponse(500, '{"success":false,"code":500,"message":"upload failed"}', "req-json").message, /请求 ID：req-json/);
 });

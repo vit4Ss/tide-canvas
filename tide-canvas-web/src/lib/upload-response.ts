@@ -31,21 +31,31 @@ function statusMessage(status: number): string {
 
 /** XHR 上传需要自行解析响应。后端正常返回统一 Result；Nginx/网关的
  * HTML、空响应和常见 error/message JSON 都在这里收敛成可直接展示的错误。 */
-export function parseUploadResponse<T>(status: number, responseText: string): Result<T> {
+export function parseUploadResponse<T>(status: number, responseText: string, requestId = ""): Result<T> {
+  const appendRequestId = (message: string) => {
+    const id = requestId.trim().slice(0, 96);
+    return id ? `${message} · 请求 ID：${id}` : message;
+  };
   const text = responseText.trim();
   if (text) {
     try {
       const parsed = JSON.parse(text) as unknown;
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         const record = parsed as Record<string, unknown>;
-        if (typeof record.success === "boolean") return record as unknown as Result<T>;
+        if (typeof record.success === "boolean") {
+          const result = record as unknown as Result<T>;
+          if (!result.success && requestId && (result.code ?? status) >= 500) {
+            return { ...result, message: appendRequestId(result.message || statusMessage(status)) };
+          }
+          return result;
+        }
         const upstreamMessage = typeof record.message === "string"
           ? record.message.trim()
           : typeof record.error === "string"
             ? record.error.trim()
             : "";
         if (upstreamMessage) {
-          return { success: false, code: status, message: upstreamMessage, timestamp: Date.now() } as Result<T>;
+          return { success: false, code: status, message: appendRequestId(upstreamMessage), timestamp: Date.now() } as Result<T>;
         }
       }
     } catch {
@@ -55,7 +65,7 @@ export function parseUploadResponse<T>(status: number, responseText: string): Re
   return {
     success: false,
     code: status,
-    message: statusMessage(status),
+    message: appendRequestId(statusMessage(status)),
     timestamp: Date.now(),
   } as Result<T>;
 }

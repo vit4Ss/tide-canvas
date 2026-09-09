@@ -32,6 +32,14 @@ test("mask editor follows the canvas modal theme instead of a fixed black panel"
   assert.doesNotMatch(modal,/bg-cyan-300/);
 });
 
+test("mask editor hides technical model settings and shows only the point cost",()=>{
+  assert.match(modal,/本次消耗[\s\S]*?\{cost\} 积分[\s\S]*?"生成修改"/);
+  assert.doesNotMatch(modal,/局部重绘模型：/);
+  assert.doesNotMatch(modal,/aria-label="输出清晰度"/);
+  assert.doesNotMatch(modal,/aria-label="输出质量"/);
+  assert.doesNotMatch(modal,/\{source\.width\} × \{source\.height\}/);
+});
+
 test("tool page keeps the mask editor open until a task is accepted",()=>{
   assert.match(tools,/const started = await run\([\s\S]*?if \(started !== true\) throw/);
   assert.doesNotMatch(tools,/setMaskOpen\(false\);\s*await run/);

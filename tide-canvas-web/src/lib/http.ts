@@ -102,7 +102,7 @@ async function fetchResult<T>(input: string, init: RequestInit): Promise<Result<
 async function fetchUploadResult<T>(input: string, init: RequestInit): Promise<Result<T>> {
   try {
     const res = await fetch(input, init);
-    return parseUploadResponse<T>(res.status, await res.text());
+    return parseUploadResponse<T>(res.status, await res.text(), res.headers.get("X-Request-Id") ?? "");
   } catch {
     return parseUploadResponse<T>(0, "");
   }
@@ -252,7 +252,7 @@ async function uploadFileWithProgress<T>(
         };
       }
       xhr.onload = () => {
-        resolve(parseUploadResponse<T>(xhr.status, xhr.responseText));
+        resolve(parseUploadResponse<T>(xhr.status, xhr.responseText, xhr.getResponseHeader("X-Request-Id") ?? ""));
       };
       xhr.onerror = () => resolve(parseUploadResponse<T>(0, ""));
       xhr.send(formData);

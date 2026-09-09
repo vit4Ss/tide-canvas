@@ -15,6 +15,28 @@ export function chooseInpaintModel(models: readonly StudioModelVO[]): StudioMode
   }) ?? null;
 }
 
+function preferredConfiguredValue(values: readonly string[] | undefined, preferred: string, rank: readonly string[]): string {
+  const configured = (values ?? []).filter((value): value is string => typeof value === "string" && !!value.trim());
+  if (!configured.length) return preferred;
+  const exact = configured.find((value) => value.trim().toLowerCase() === preferred);
+  if (exact) return exact;
+  return [...configured].sort((left, right) => {
+    const leftRank = rank.indexOf(left.trim().toLowerCase());
+    const rightRank = rank.indexOf(right.trim().toLowerCase());
+    return (rightRank < 0 ? -1 : rightRank) - (leftRank < 0 ? -1 : leftRank);
+  })[0];
+}
+
+/** The controls are intentionally hidden from end users. Prefer the requested
+ * premium defaults, while still falling back to the highest configured value. */
+export function defaultInpaintResolution(values?: readonly string[]): string {
+  return preferredConfiguredValue(values, "4k", ["1k", "2k", "4k", "8k"]);
+}
+
+export function defaultInpaintQuality(values?: readonly string[]): string {
+  return preferredConfiguredValue(values, "high", ["low", "medium", "high"]);
+}
+
 export type MaskStroke = { erase: boolean; size: number; points: { x: number; y: number }[] };
 
 export function sourceBrushSize(visiblePixels: number, sourceWidth: number, visibleWidth: number): number {
