@@ -9,6 +9,10 @@ const videoNode=readFileSync(new URL("./video-node.tsx",import.meta.url),"utf8")
 test("panorama capture renders at source-aware resolution and streams four views",()=>{
   assert.match(panorama,/setLoading\(true\);\s*setError\(null\);/);
   assert.match(panorama,/panoramaCaptureSize\(\{/);
+  assert.match(panorama,/const geometry = new THREE\.SphereGeometry\(500, 60, 40\)/);
+  assert.match(panorama,/captureGeometry = new THREE\.SphereGeometry\(500, 256, 128\)/);
+  assert.match(panorama,/panoramaMesh\.geometry = denseCaptureGeometry\(\)[\s\S]*?renderer\.render\(scene, camera\)[\s\S]*?panoramaMesh\.geometry = geometry/);
+  assert.match(panorama,/geometry\.dispose\(\); captureGeometry\?\.dispose\(\)/);
   assert.match(panorama,/renderer\.setPixelRatio\(1\)[\s\S]*?renderer\.setSize\(size\.width, size\.height, false\)/);
   assert.match(panorama,/CAPTURE_ENCODE_TIMEOUT_MS = 30_000/);
   assert.match(panorama,/TEXTURE_DECODE_TIMEOUT_MS = 30_000/);

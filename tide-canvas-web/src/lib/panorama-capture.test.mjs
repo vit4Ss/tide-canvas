@@ -15,12 +15,19 @@ test("8K panoramas export near source angular density instead of card resolution
   assert.ok(size.width*size.height<=12_000_000);
 });
 
-test("capture never drops below the existing DPR preview for small sources", () => {
+test("small and 4K panoramas export at a 2K long-edge floor instead of being enlarged after capture", () => {
   const size=panoramaCaptureSize({
     sourceWidth:1024,sourceHeight:512,
     viewportWidth:608,viewportHeight:304,previewPixelRatio:2,verticalFov:74,
   });
-  assert.deepEqual(size,{width:1216,height:608});
+  assert.deepEqual(size,{width:2560,height:1280});
+
+  const widescreen=panoramaCaptureSize({
+    sourceWidth:4096,sourceHeight:2048,
+    viewportWidth:608,viewportHeight:342,previewPixelRatio:2,verticalFov:74,
+  });
+  assert.equal(Math.max(widescreen.width,widescreen.height),2560);
+  assert.ok(Math.abs(widescreen.width/widescreen.height-16/9)<0.002);
 });
 
 test("capture obeys GPU and pixel memory limits for extreme panoramas", () => {

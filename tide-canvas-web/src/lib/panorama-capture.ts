@@ -2,6 +2,13 @@ export interface PixelSize { width: number; height: number }
 
 const MAX_CAPTURE_EDGE = 4096;
 const MAX_CAPTURE_PIXELS = 12_000_000;
+// A source-density-only projection from a common 2K/4K panorama can be merely
+// 1200–1750 px wide. It contains the source detail but looks visibly soft when
+// opened on a modern 2K display because the browser must enlarge it again.
+// Supersample every perspective export to at least a 2560 px long edge; this
+// cannot invent source detail, but it preserves projection edges and prevents a
+// second lossy-looking display upscale. GPU/pixel caps below remain authoritative.
+const MIN_CAPTURE_LONG_EDGE = 2560;
 
 /** Choose a perspective render size from the equirectangular source's angular
  * pixel density. Existing DPR preview quality is the minimum; GPU and PNG
@@ -28,7 +35,8 @@ export function panoramaCaptureSize(input: {
   // output/(2*tan(FOV/2)). Standard 2:1 panoramas produce equal requirements.
   const verticalHeight = 2 * tangent * sourceHeight / Math.PI;
   const horizontalHeight = tangent * sourceWidth / Math.PI;
-  let height = Math.max(viewportHeight * dpr, verticalHeight, horizontalHeight);
+  const minimumExportHeight = MIN_CAPTURE_LONG_EDGE / Math.max(1, aspect);
+  let height = Math.max(viewportHeight * dpr, verticalHeight, horizontalHeight, minimumExportHeight);
   let width = height * aspect;
   const hardwareLimit = positive(input.maxRenderbufferSize ?? MAX_CAPTURE_EDGE, MAX_CAPTURE_EDGE);
   const edgeLimit = Math.min(MAX_CAPTURE_EDGE, hardwareLimit);

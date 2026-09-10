@@ -130,10 +130,22 @@ export function InlinePanorama({ src, gridOn = false, apiRef, interactive = true
         texture.wrapS = THREE.RepeatWrapping;
         texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
         texture.needsUpdate = true;
+        // Keep the always-running card preview cheap. A separate dense sphere is
+        // swapped in only for the capture render: 60×40 triangles become visible
+        // at 2K+, while rendering 256×128 every animation frame would multiply
+        // the cost of every panorama node on the infinite canvas.
         const geometry = new THREE.SphereGeometry(500, 60, 40);
+        let captureGeometry: THREE_NS.SphereGeometry | null = null;
         geometry.scale(-1, 1, 1);
+        const denseCaptureGeometry = () => {
+          if (captureGeometry) return captureGeometry;
+          captureGeometry = new THREE.SphereGeometry(500, 256, 128);
+          captureGeometry.scale(-1, 1, 1);
+          return captureGeometry;
+        };
         const material = new THREE.MeshBasicMaterial({ map: texture });
-        scene.add(new THREE.Mesh(geometry, material));
+        const panoramaMesh = new THREE.Mesh(geometry, material);
+        scene.add(panoramaMesh);
 
         let lon = 180, lat = 0, fov = 74;
         let capturing = false;
@@ -191,6 +203,7 @@ export function InlinePanorama({ src, gridOn = false, apiRef, interactive = true
               previewPixelRatio, verticalFov: requestedFov, maxRenderbufferSize,
             });
             try {
+              panoramaMesh.geometry = denseCaptureGeometry();
               renderer.setPixelRatio(1);
               renderer.setSize(size.width, size.height, false);
               camera.aspect = size.width / size.height;
@@ -203,6 +216,7 @@ export function InlinePanorama({ src, gridOn = false, apiRef, interactive = true
               const blob = await encodePanoramaPNG(renderer.domElement);
               if (!disposed) captured = { blob, ...size };
             } finally {
+              panoramaMesh.geometry = geometry;
               capturing = false;
               if (!disposed) {
                 const currentWidth = mount.clientWidth || w;
@@ -254,7 +268,7 @@ export function InlinePanorama({ src, gridOn = false, apiRef, interactive = true
           window.removeEventListener("pointerup", onUp);
           dom.removeEventListener("wheel", onWheel);
           ro.disconnect();
-          geometry.dispose(); material.dispose(); texture.dispose(); renderer.dispose();
+          geometry.dispose(); captureGeometry?.dispose(); material.dispose(); texture.dispose(); renderer.dispose();
           (renderer as unknown as { forceContextLoss?: () => void }).forceContextLoss?.();
           if (dom.parentNode) dom.parentNode.removeChild(dom);
           if (apiRef) apiRef.current = null;
