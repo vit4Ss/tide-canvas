@@ -108,6 +108,7 @@ import { ModelPicker } from "./create-studio/model-picker";
 import { UploadSlots } from "./create-studio/upload-slots";
 import { MusicSourceFields } from "./create-studio/music-source-fields";
 import { PromptSection } from "./create-studio/prompt-section";
+import { modelPromptCharLimit } from "@/lib/model-prompt-limit";
 import { SongFields, VocalField } from "./create-studio/song-fields";
 import { OptionFields } from "./create-studio/option-fields";
 import { ThreeDOptions } from "./create-studio/three-d-options";
@@ -1400,6 +1401,7 @@ export default function CreateStudio() {
                 ideaOpts={ideaOpts}
                 allowSkills={!is3D}
                 label={tool === "mv2_3d" ? "提示词（可选）" : "提示词"}
+                maxChars={isVideo ? modelPromptCharLimit(mCfg) : 0}
               />
             )}
 

@@ -369,6 +369,7 @@
 .ws-field + .ws-seclabel{margin-top:20px;}
 .ws-pcount{font-family:var(--mono); font-size:11px; font-weight:500; color:var(--text-faint);}
 .ws-pcount b{color:var(--text-dim);}
+.ws-pcount.is-over,.ws-pcount.is-over b{color:#ff9b9f;}
 /* prompt box with inner toolbar */
 /* 提示词是 AI 创作台的灵魂输入：聚焦时点亮品牌渐变描边，全面板唯一的高光时刻 */
 .ws-promptbox{position:relative; background:var(--bg); border:1px solid var(--border); border-radius:14px; transition:border-color .15s, box-shadow .2s;}

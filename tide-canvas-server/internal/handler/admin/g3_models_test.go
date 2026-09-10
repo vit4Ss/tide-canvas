@@ -149,6 +149,32 @@ func TestValidateVideoPerRequestPricingConfig(t *testing.T) {
 	}
 }
 
+func TestValidateVideoPromptLimitConfig(t *testing.T) {
+	for _, raw := range []json.RawMessage{
+		nil,
+		json.RawMessage(`{}`),
+		json.RawMessage(`{"maxPromptChars":null}`),
+		json.RawMessage(`{"maxPromptChars":0}`),
+		json.RawMessage(`{"maxPromptChars":2000}`),
+		json.RawMessage(`{"maxPromptChars":1000000}`),
+	} {
+		if err := validateVideoPromptLimitConfig(raw); err != nil {
+			t.Fatalf("config %s: %v", raw, err)
+		}
+	}
+	for _, raw := range []json.RawMessage{
+		json.RawMessage(`{"maxPromptChars":-1}`),
+		json.RawMessage(`{"maxPromptChars":1.5}`),
+		json.RawMessage(`{"maxPromptChars":"2000"}`),
+		json.RawMessage(`{"maxPromptChars":1000001}`),
+		json.RawMessage(`{"maxPromptChars":`),
+	} {
+		if err := validateVideoPromptLimitConfig(raw); err == nil {
+			t.Fatalf("config %s should be rejected", raw)
+		}
+	}
+}
+
 func TestValidateOmniReferenceConfig(t *testing.T) {
 	for _, raw := range []json.RawMessage{
 		nil,

@@ -10,6 +10,7 @@ import { ModelPicker } from "./model-picker";
 import { uploadFileSmart } from "@/lib/api";
 import { resolveModelReferenceCountLimit, resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
 import { resolveVideoPointCost } from "@/lib/price-matrix";
+import { modelPromptLimitIssue } from "@/lib/model-prompt-limit";
 import { isConceptCanvasNodeType, isImageReferenceNodeType } from "@/lib/canvas-node-types";
 import { AiModelType, type ClipReshootRequest } from "@/types/ai";
 import { NodeHeader } from "./base/node-header";
@@ -809,6 +810,11 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         ? `${buildNativeClipReshootInstruction(clipRanges, clipSourceDuration, `视频${clipSourceRefIndex}`)}${userPrompt.trim() ? `\n修改要求：${userPrompt}` : ""}`
         : `${buildClipReshootRangeInstruction(clipRanges, clipSourceDuration, `视频${clipSourceRefIndex}`, providerGenerationDuration)}\n${userPrompt}`.trim()
       : userPrompt;
+    const promptIssue = modelPromptLimitIssue(finalPrompt, rawConfig);
+    if (promptIssue) {
+      toast.error(promptIssue.message);
+      return;
+    }
     if (isClipReshoot) {
       // 校验参照系与下发内容一致:原生路径 = 原片时间轴;裁拼路径 = 重映射后的
       // 裁剪时间轴(总长 = 选区之和)。

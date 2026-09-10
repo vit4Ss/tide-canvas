@@ -10,6 +10,7 @@ import {
 } from "@/components/studio/mention-prompt-editor";
 import { SkillPromptChip } from "@/components/skill/skill-prompt-chip";
 import type { SkillVO } from "@/types/skill";
+import { promptCharacterCount } from "@/lib/model-prompt-limit";
 
 export function PromptSection({
   prompt,
@@ -27,6 +28,7 @@ export function PromptSection({
   ideaOpts,
   allowSkills = true,
   label = "提示词",
+  maxChars = 0,
 }: {
   prompt: string;
   onPromptChange: (v: string) => void;
@@ -43,13 +45,20 @@ export function PromptSection({
   ideaOpts: string[];
   allowSkills?: boolean;
   label?: string;
+  /** Selected video model's prompt limit; 0 means unlimited. */
+  maxChars?: number;
 }) {
+  const promptChars = promptCharacterCount(prompt.trim());
+  const promptOverLimit = maxChars > 0 && promptChars > maxChars;
   return (
     <>
       <div className="ws-seclabel">
         {label}{" "}
-        <span className="ws-pcount">
-          <b id="pLen">{prompt.length}</b> 字
+        <span
+          className={`ws-pcount${promptOverLimit ? " is-over" : ""}`}
+          aria-label={maxChars > 0 ? `提示词 ${promptChars} 字，上限 ${maxChars} 字` : `提示词 ${promptChars} 字`}
+        >
+          <b id="pLen">{promptChars}</b>{maxChars > 0 ? ` / ${maxChars.toLocaleString()}` : ""} 字
         </span>
       </div>
       <div className="ws-promptbox">

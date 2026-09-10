@@ -308,6 +308,10 @@ func (h *modelsHandler) create(c *gin.Context) {
 	if mType == "text" {
 	}
 	if mType == "video" {
+		if err := validateVideoPromptLimitConfig(dto.Config); err != nil {
+			response.Fail(c, response.CodeBadRequest, err.Error())
+			return
+		}
 		if err := validateOmniReferenceConfig(dto.Config); err != nil {
 			response.Fail(c, response.CodeBadRequest, err.Error())
 			return
@@ -548,6 +552,10 @@ func (h *modelsHandler) update(c *gin.Context) {
 		if effectiveType == "text" {
 		}
 		if effectiveType == "video" {
+			if err := validateVideoPromptLimitConfig(effectiveConfig); err != nil {
+				response.Fail(c, response.CodeBadRequest, err.Error())
+				return
+			}
 			if err := validateOmniReferenceConfig(effectiveConfig); err != nil {
 				response.Fail(c, response.CodeBadRequest, err.Error())
 				return
@@ -664,6 +672,10 @@ func (h *modelsHandler) setStatus(c *gin.Context) {
 		if current.Type == "text" {
 		}
 		if current.Type == "video" {
+			if err := validateVideoPromptLimitConfig(json.RawMessage(current.Config)); err != nil {
+				response.Fail(c, response.CodeBadRequest, err.Error())
+				return
+			}
 			if err := validateOmniReferenceConfig(json.RawMessage(current.Config)); err != nil {
 				response.Fail(c, response.CodeBadRequest, err.Error())
 				return
@@ -911,6 +923,31 @@ func rawToString(raw json.RawMessage) string {
 }
 
 var defaultUpscalePricingResolutions = []string{"720p", "1080p", "2k", "4k"}
+
+func validateVideoPromptLimitConfig(raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	if !json.Valid(raw) {
+		return errors.New("视频提示词字数限制配置无效")
+	}
+	var cfg map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return errors.New("视频提示词字数限制配置无效")
+	}
+	encoded, exists := cfg["maxPromptChars"]
+	if !exists || string(encoded) == "null" {
+		return nil
+	}
+	var limit int
+	if err := json.Unmarshal(encoded, &limit); err != nil {
+		return errors.New("提示词字数限制必须是整数")
+	}
+	if limit < 0 || limit > model.MaxModelPromptChars {
+		return fmt.Errorf("提示词字数限制必须是 0–%d 的整数", model.MaxModelPromptChars)
+	}
+	return nil
+}
 
 func validateUpscalePricingConfig(raw json.RawMessage) error {
 	if len(raw) == 0 || !json.Valid(raw) {

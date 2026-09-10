@@ -25,6 +25,7 @@ import { supportsOmniReference } from "@/lib/omni-reference";
 import { measureImageSize, nearestAspectRatio, videoReferenceImageAspectIssue } from "@/lib/aspect-ratio";
 import { ossDisplayUrl } from "@/lib/oss-display";
 import { MODEL_MAINTENANCE_MESSAGE, modelUnderMaintenance } from "@/lib/model-availability";
+import { modelPromptLimitIssue } from "@/lib/model-prompt-limit";
 import {
   ACTIVE_RUN_KEY,
   activeRunStorageKey,
@@ -973,6 +974,15 @@ export function useGeneration(p: GenerationParams) {
       markRequiredField(".ws-promptbox");
       promptRef.current?.focus();
       return;
+    }
+    if (curType === "video") {
+      const promptIssue = modelPromptLimitIssue(p, selectedStudio?.config);
+      if (promptIssue) {
+        toast.error(promptIssue.message);
+        markRequiredField(".ws-promptbox");
+        promptRef.current?.focus();
+        return;
+      }
     }
 
     // reference assets from the upload slots (real URLs from 本地上传 / 资产库).

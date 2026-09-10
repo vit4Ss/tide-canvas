@@ -42,6 +42,7 @@ import { confirmDialog } from "@/components/shared/confirm";
 import { adminModelsApi } from "@/lib/admin-models-api";
 import { BRAND_ICONS, brandIconUrl, resolveModelSwatch } from "@/lib/model-brand";
 import { usesVideoPerRequestBilling, videoPerRequestRate } from "@/lib/price-matrix";
+import { MAX_MODEL_PROMPT_CHARS } from "@/lib/model-prompt-limit";
 import { MAX_SINGLE_UPLOAD_MB } from "@/lib/upload-limits";
 import { normalizeVideoModes, type VideoMode } from "@/lib/video-modes";
 import {
@@ -858,6 +859,7 @@ function ModelModal({
     aiOptimizePrimary: c0.aiOptimizePrimary ?? false,
     imagePrimary: c0.imagePrimary ?? false,
     supportsMask: c0.supportsMask ?? false,
+    maxPromptChars: c0.maxPromptChars ?? 0,
     refLimits: c0.refLimits ?? {},
     errorHints: c0.errorHints ?? [],
     modes: c0.modes ?? [],
@@ -885,6 +887,7 @@ function ModelModal({
   const [err, setErr] = useState<string | null>(null);
   const threeDImageSizeRef = useRef<HTMLInputElement>(null);
   const threeDMultiViewCountRef = useRef<HTMLInputElement>(null);
+  const promptLimitRef = useRef<HTMLInputElement>(null);
 
   const isImage = type === "image";
   const isVideo = type === "video";
@@ -893,6 +896,7 @@ function ModelModal({
   const isUpscale = type === "upscale";
   const threeDImageSize = Number(cfg.max3DImageSizeMB ?? 0);
   const threeDMultiViewCount = Number(cfg.max3DMultiViewImages ?? MAX_3D_MULTI_VIEW_IMAGES);
+  const maxPromptChars = Number(cfg.maxPromptChars ?? 0);
   const threeDImageSizeError = is3D && (
     !Number.isFinite(threeDImageSize) || threeDImageSize < 0 || threeDImageSize > MAX_SINGLE_UPLOAD_MB
   )
@@ -1046,6 +1050,14 @@ function ModelModal({
         return false;
       }
     }
+    if (
+      isVideo &&
+      (!Number.isInteger(maxPromptChars) || maxPromptChars < 0 || maxPromptChars > MAX_MODEL_PROMPT_CHARS)
+    ) {
+      setErr(`提示词字数限制必须是 0–${MAX_MODEL_PROMPT_CHARS.toLocaleString()} 的整数`);
+      promptLimitRef.current?.focus();
+      return false;
+    }
     if (isPerRequestVideo) {
       const resolutions = cfg.resolutions ?? [];
       if (!resolutions.length) {
@@ -1090,6 +1102,8 @@ function ModelModal({
           ...cfg,
           // 图片专属能力不能残留到视频等其他模型类型；服务端还会做最终校验。
           supportsMask: type === "image" && cfg.supportsMask === true,
+          // 仅视频模型公开并执行此限制；切换为其它类型后不把陈旧值带入配置。
+          maxPromptChars: type === "video" ? maxPromptChars : undefined,
           // 落库前清掉空文本标签，文本去首尾空格（渲染端也会过滤，双保险）
           badges: (cfg.badges ?? [])
             .map((b) => ({ text: (b.text ?? "").trim(), tone: b.tone ?? ("hot" as const) }))
@@ -1680,6 +1694,28 @@ function ModelModal({
 
       {showPrompt && (
         <FormCard title="提示词配置">
+          {isVideo && (
+            <FormSection
+              label="提示词字数限制"
+              hint="按 Unicode 字符计数；0 表示不限制。超限请求会在任务创建与扣积分前被拒绝。"
+            >
+              <div className="fld" style={{ maxWidth: 280 }}>
+                <input
+                  ref={promptLimitRef}
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  max={MAX_MODEL_PROMPT_CHARS}
+                  step={1}
+                  value={String(cfg.maxPromptChars ?? 0)}
+                  onChange={(event) => setC({ maxPromptChars: Number(event.target.value) })}
+                  aria-label="提示词字数限制"
+                  aria-describedby="video-prompt-limit-hint"
+                />
+                <small id="video-prompt-limit-hint">例如填写 2000，用户最多可提交 2000 字；填写 0 则不限。</small>
+              </div>
+            </FormSection>
+          )}
           <FormSection label="默认提示词" hint="创作台提示词框的默认内容；留空则用通用占位文案">
             <div className="fld">
               <textarea

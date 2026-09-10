@@ -22,6 +22,7 @@ import type { AiGenerateDTO } from "@/types/ai";
 import type { StudioModelVO } from "@/lib/market-api";
 import { skillKindOf, skillSupportsOutput, type SkillVO } from "@/types/skill";
 import { MODEL_MAINTENANCE_MESSAGE, modelUnderMaintenance } from "@/lib/model-availability";
+import { modelPromptLimitIssue } from "@/lib/model-prompt-limit";
 import type { SkillRunInput } from "@/types/skill-run";
 import type { ContextUsageVO, ConversationVO, MessageAttachment, MessageVO } from "@/types/chat";
 import { musicTurnSummary, type RefItem, type RefPolicy } from "../_components/chat-utils";
@@ -1084,6 +1085,13 @@ export function useSendMessage({
     }
     // 音乐的自定义/延长/翻唱不强制描述；其余（含灵感模式/音效）仍需文字。
     if (!v && !musicNoDraftOk && !selectedTool) return;
+    if (!selectedTool && selModel?.type === "video") {
+      const promptIssue = modelPromptLimitIssue(v, selModel.config);
+      if (promptIssue) {
+        toast.error(promptIssue.message);
+        return;
+      }
+    }
     if (!selectedTool && isMusicSel) {
       const musicErr = validateMusicParams(v, music);
       if (musicErr) {

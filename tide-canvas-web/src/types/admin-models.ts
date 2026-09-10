@@ -112,6 +112,8 @@ export interface ModelConfig {
   /** 视频模型：原生时间戳级视频编辑(Seedance 2.5 一类)。开启后片段重拍全片
       直发 + 原片时间码指令,跳过服务端裁剪/拼接;仅对实测支持的模型开启。 */
   timestampVideoEdit?: boolean;
+  /** 视频模型最终提交提示词的 Unicode 字符数上限；0 / 缺省 = 不限制。 */
+  maxPromptChars?: number;
   /** raw upstream price modifiers, kept for reference */
   priceModifiers?: unknown;
   /** complete upstream params_schema, including modality-specific 3D options */

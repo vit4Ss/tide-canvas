@@ -86,7 +86,7 @@ func TestNormalizedStudioConfigLeavesUnrelatedLegacyPayloadUntouched(t *testing.
 // errorHints 是管理员的错误提示映射,匹配片段可能含供应商后缀的模型名,
 // 创作台公开目录必须剥离(与 ai 包 publicModelConfigJSON 同口径)。
 func TestNormalizedStudioConfigStripsErrorHints(t *testing.T) {
-	got := normalizedStudioConfig(`{"resolutions":["1080p"],"hideBatchCount":true,"availabilityStatus":"maintenance","errorHints":[{"contains":"vip-Dimensio","message":"文案"}]}`)
+	got := normalizedStudioConfig(`{"resolutions":["1080p"],"hideBatchCount":true,"availabilityStatus":"maintenance","maxPromptChars":2000,"errorHints":[{"contains":"vip-Dimensio","message":"文案"}]}`)
 	var cfg map[string]json.RawMessage
 	if err := json.Unmarshal(got, &cfg); err != nil {
 		t.Fatalf("unmarshal normalized config: %v", err)
@@ -102,5 +102,8 @@ func TestNormalizedStudioConfigStripsErrorHints(t *testing.T) {
 	}
 	if string(cfg["availabilityStatus"]) != `"maintenance"` {
 		t.Fatalf("availability status lost: %s", got)
+	}
+	if string(cfg["maxPromptChars"]) != "2000" {
+		t.Fatalf("prompt character limit lost: %s", got)
 	}
 }
