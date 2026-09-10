@@ -1000,7 +1000,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       st.addConnection({ id: `conn_${node.id}_${nid}`, sourceId: node.id, targetId: nid }, false);
       st.selectNode(nid);
     }
-    toast.info(`正在生成 ${panoRatio} 的 360 全景图`);
+    toast.info(`正在准备 ${panoRatio} 的 720° 全景图`);
     generate({
       nodeId: nid,
       handler: "image_to_image",

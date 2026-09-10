@@ -58,6 +58,39 @@ export function nextCanvasSaveFollowUp(
   return hasQueuedSave ? "immediate" : "none";
 }
 
+/** A generation/SkillRun durability waiter must follow the automatic retry.
+ * Resolving it as failed before that retry makes a transient gateway error
+ * incorrectly cancel an otherwise safe paid operation. */
+export function retainCanvasSaveAcknowledgements(
+  persisted: boolean,
+  followUp: CanvasSaveFollowUp,
+): boolean {
+  return !persisted && followUp === "delayed";
+}
+
+export function settleCanvasSaveAcknowledgements(
+  attempt: Array<(saved: boolean) => void>,
+  retryQueue: Array<(saved: boolean) => void>,
+  persisted: boolean,
+  followUp: CanvasSaveFollowUp,
+): void {
+  if (retainCanvasSaveAcknowledgements(persisted, followUp)) {
+    retryQueue.unshift(...attempt);
+    return;
+  }
+  for (const acknowledge of attempt) acknowledge(persisted);
+}
+
+export function rejectCanvasSaveRetryQueueWhenIdle(
+  retryQueue: Array<(saved: boolean) => void>,
+  persisted: boolean,
+  followUp: CanvasSaveFollowUp,
+): void {
+  if (persisted || followUp !== "none") return;
+  const abandoned = retryQueue.splice(0);
+  for (const acknowledge of abandoned) acknowledge(false);
+}
+
 /** Codes for which the caller cannot prove that a write/read did not happen. */
 export function isTransientCanvasSaveCode(code: number): boolean {
   return code === 0 || code === 408 || code === 409 || code === 429 || code >= 500;

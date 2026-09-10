@@ -4,6 +4,9 @@ import {
   isTransientCanvasSaveCode,
   nextCanvasSaveFollowUp,
   reconcileCanvasSave,
+  retainCanvasSaveAcknowledgements,
+  settleCanvasSaveAcknowledgements,
+  rejectCanvasSaveRetryQueueWhenIdle,
 } from "./canvas-save-reconcile.ts";
 
 test("lost acknowledgement adopts the committed revision and flushes edits queued in flight", () => {
@@ -49,4 +52,25 @@ test("only a higher mismatching snapshot is a real conflict", () => {
     canvasData: attempt.canvasData,
     thumbnail: "https://cdn/other.png",
   }), { kind: "conflict" });
+});
+
+test("durability acknowledgements wait for an automatic retry", () => {
+  assert.equal(retainCanvasSaveAcknowledgements(false, "delayed"), true);
+  assert.equal(retainCanvasSaveAcknowledgements(false, "none"), false);
+  assert.equal(retainCanvasSaveAcknowledgements(true, "immediate"), false);
+
+  const calls = [];
+  const first = (saved) => calls.push(["first", saved]);
+  const later = (saved) => calls.push(["later", saved]);
+  const queue = [later];
+  settleCanvasSaveAcknowledgements([first], queue, false, "delayed");
+  assert.deepEqual(calls, []);
+  assert.deepEqual(queue, [first, later]);
+  settleCanvasSaveAcknowledgements(queue.splice(0), queue, true, "none");
+  assert.deepEqual(calls, [["first", true], ["later", true]]);
+
+  const abandoned = [(saved) => calls.push(["abandoned", saved])];
+  rejectCanvasSaveRetryQueueWhenIdle(abandoned, false, "none");
+  assert.deepEqual(abandoned, []);
+  assert.deepEqual(calls.at(-1), ["abandoned", false]);
 });

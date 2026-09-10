@@ -183,6 +183,8 @@ func (h *handler) fail(c *gin.Context, err error, fallbackMsg string) {
 		response.Fail(c, response.CodeConflict, "画布已在其他窗口更新")
 	case errors.Is(err, errInvalidRevision):
 		response.Fail(c, response.CodeBadRequest, "invalid expectedRevision")
+	case errors.Is(err, errThumbnailTooLong):
+		response.Fail(c, response.CodeBadRequest, "project thumbnail URL is too long")
 	default:
 		response.Fail(c, response.CodeServerError, fallbackMsg)
 	}

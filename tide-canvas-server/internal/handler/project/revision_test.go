@@ -73,3 +73,14 @@ func TestSaveCanvasRejectsMissingOrNegativeRevisionBeforeWrite(t *testing.T) {
 		t.Fatalf("negative revision error = %v, want %v", err, errInvalidRevision)
 	}
 }
+
+func TestSaveCanvasRejectsThumbnailBeyondDatabaseColumnBeforeWrite(t *testing.T) {
+	zero := int64(0)
+	svc := &service{}
+	_, err := svc.saveCanvas(1, 1, CanvasSaveDTO{
+		CanvasData: "{}", Thumbnail: strings.Repeat("封", 513), ExpectedRevision: &zero,
+	})
+	if !errors.Is(err, errThumbnailTooLong) {
+		t.Fatalf("thumbnail error = %v, want %v", err, errThumbnailTooLong)
+	}
+}

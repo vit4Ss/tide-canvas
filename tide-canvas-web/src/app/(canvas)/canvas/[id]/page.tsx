@@ -16,6 +16,8 @@ import {
   isTransientCanvasSaveCode,
   nextCanvasSaveFollowUp,
   reconcileCanvasSave,
+  settleCanvasSaveAcknowledgements,
+  rejectCanvasSaveRetryQueueWhenIdle,
   type CanvasSaveReconciliation,
 } from "@/lib/canvas-save-reconcile";
 import {
@@ -25,6 +27,7 @@ import {
 } from "@/lib/canvas-launch";
 import { parseCanvasDocument } from "@/lib/canvas-document";
 import { useAppUpdateGuard } from "@/hooks/use-app-update-guard";
+import { persistableProjectThumbnail } from "@/lib/canvas-thumbnail";
 
 const AUTOSAVE_DELAY = 3000; // 3 秒无变化触发自动保存
 
@@ -278,6 +281,7 @@ export default function CanvasEditorPage() {
     let persisted = false;
     let reconciliation: CanvasSaveReconciliation | null = null;
     let retryAutomatically = false;
+    let persistenceRequestStarted = false;
     savingRef.current = true;
     setSaving(true);
     try {
@@ -296,12 +300,12 @@ export default function CanvasEditorPage() {
       // 封面兜底：未手动设封面时，自动用画布中第一张图片。
       // 仅取可持久化的 http(s) 地址——data:base64 会超出后端 thumbnail(VARCHAR 512) 导致保存 500，
       // blob: 本地地址刷新即失效（如刚切分尚未上传完成的切片），都不能当封面。
-      const persistable = (u?: string): u is string => !!u && /^https?:\/\//.test(u);
-      const cover = (persistable(thumbnail ?? undefined) ? thumbnail : null)
-        ?? canvasSnapshot.nodes.find((n) => isImageCanvasNodeType(n.type) && persistable(n.imageSrc))?.imageSrc
+      const cover = (persistableProjectThumbnail(thumbnail) ? thumbnail : null)
+        ?? canvasSnapshot.nodes.find((n) => isImageCanvasNodeType(n.type) && persistableProjectThumbnail(n.imageSrc))?.imageSrc
         ?? null;
       const expectedRevision = revisionRef.current;
       const sentThumbnail = cover || undefined;
+      persistenceRequestStarted = true;
       const res = await projectApi.saveCanvas(projectId, {
         canvasData,
         expectedRevision,
@@ -351,16 +355,32 @@ export default function CanvasEditorPage() {
           toast.error(res.message || "保存失败，将自动重试");
         }
       }
+    } catch {
+      // Keep durability waiters attached to the same snapshot. The HTTP client
+      // normally returns a Result, but browser/proxy exceptions must follow the
+      // same bounded retry path instead of becoming an unhandled rejection.
+      reconciliation = { kind: "retry" };
+      retryAutomatically = persistenceRequestStarted;
+      if (!silent) toast.error(persistenceRequestStarted ? "保存失败，将自动重试" : "画布数据异常，无法保存");
     } finally {
-      for (const acknowledge of acknowledgements) acknowledge(persisted);
       savingRef.current = false;
       setSaving(false);
+      let followUp: ReturnType<typeof nextCanvasSaveFollowUp> = "none";
       if (!saveConflictRef.current) {
         const queued = pendingSaveRef.current;
-        const followUp = reconciliation
+        followUp = reconciliation
           ? nextCanvasSaveFollowUp(reconciliation, queued, retryAutomatically)
           : queued ? "immediate" : "none";
         pendingSaveRef.current = false;
+        // Requests that arrived during this save are already in the shared
+        // queue. A transient failure keeps this attempt's waiters in front so
+        // the retry snapshot that contains their task data acknowledges all.
+        settleCanvasSaveAcknowledgements(
+          acknowledgements, saveAcknowledgementsRef.current, persisted, followUp,
+        );
+        rejectCanvasSaveRetryQueueWhenIdle(
+          saveAcknowledgementsRef.current, persisted, followUp,
+        );
         if (followUp === "immediate") {
           // 经 saveRef 取最新版本,带上在途期间的新编辑
           void saveRef.current(true);
@@ -373,6 +393,8 @@ export default function CanvasEditorPage() {
             void saveRef.current(true);
           }, delay);
         }
+      } else {
+        for (const acknowledge of acknowledgements) acknowledge(false);
       }
     }
     return persisted;
@@ -412,6 +434,9 @@ export default function CanvasEditorPage() {
       const event = rawEvent as CustomEvent<CanvasSaveRequestDetail | undefined>;
       const detail = event.detail;
       if (detail?.projectId && detail.projectId !== projectId) return;
+      // requestCanvasSave will retry briefly while the project revision is
+      // still being installed; do not claim the event and strand its waiter.
+      if (revisionRef.current == null) return;
       if (saveConflictRef.current) {
         if (detail) {
           detail.handled = true;

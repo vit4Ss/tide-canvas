@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"gorm.io/gorm"
 
@@ -28,6 +29,7 @@ var (
 	errClientRequestConflict  = errors.New("clientRequestId was already used for a different request")
 	errRevisionConflict       = errors.New("project canvas revision conflict")
 	errInvalidRevision        = errors.New("expectedRevision must be zero or greater")
+	errThumbnailTooLong       = errors.New("project thumbnail is too long")
 )
 
 type service struct {
@@ -209,6 +211,9 @@ func (s *service) remove(id, ownerID idgen.ID) error {
 func (s *service) saveCanvas(id, ownerID idgen.ID, dto CanvasSaveDTO) (*CanvasSaveVO, error) {
 	if dto.ExpectedRevision == nil || *dto.ExpectedRevision < 0 {
 		return nil, errInvalidRevision
+	}
+	if utf8.RuneCountInString(dto.Thumbnail) > 512 {
+		return nil, errThumbnailTooLong
 	}
 	p, err := s.repo.findByID(id)
 	if err != nil {

@@ -23,7 +23,7 @@ type UpdateDTO struct {
 // CanvasSaveDTO is the body for PUT /api/projects/:id/canvas (CanvasSaveDTO).
 type CanvasSaveDTO struct {
 	CanvasData       string `json:"canvasData" binding:"required"`
-	Thumbnail        string `json:"thumbnail" binding:"omitempty,max=1048576"`
+	Thumbnail        string `json:"thumbnail" binding:"omitempty,max=512"`
 	ExpectedRevision *int64 `json:"expectedRevision" binding:"required"`
 }
 
