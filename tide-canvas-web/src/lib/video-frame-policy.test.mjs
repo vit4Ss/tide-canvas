@@ -10,6 +10,7 @@ test("an unplayed video seeks just past zero so the first frame is decoded", () 
 
 test("capture time stays bounded to decodable video frames", () => {
   assert.equal(frameCaptureSeekTarget(3.5, 8), 3.5);
-  assert.equal(frameCaptureSeekTarget(8, 8), 7.98);
+  assert.equal(frameCaptureSeekTarget(8, 8), 7.999);
+  assert.ok(frameCaptureSeekTarget(8, 8) > 8 - 1 / 120, "120fps still selects the final frame");
   assert.equal(frameCaptureSeekTarget(0, 0.0004), 0.0002);
 });

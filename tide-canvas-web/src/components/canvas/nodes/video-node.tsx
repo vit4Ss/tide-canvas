@@ -7,8 +7,8 @@ import { toast } from "@/components/shared/toast";
 import { parseRatio } from "./quality-ratio-picker";
 import { VideoParamPicker, normalizeDurations, type VideoParamValue } from "./video-param-picker";
 import { ModelPicker } from "./model-picker";
-import { uploadFileSmart } from "@/lib/api";
-import { resolveModelReferenceCountLimit, resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
+import { fileApi, uploadFileSmart } from "@/lib/api";
+import { resolveModelReferenceCountLimit } from "@/lib/upload-limits";
 import { resolveVideoPointCost } from "@/lib/price-matrix";
 import { modelPromptLimitIssue } from "@/lib/model-prompt-limit";
 import { isConceptCanvasNodeType, isImageReferenceNodeType } from "@/lib/canvas-node-types";
@@ -624,14 +624,24 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     if (!v || captureLockRef.current || !node.videoSrc) return;
     captureLockRef.current = true;
     const dur = v.duration || duration || 0;
-    const time = kind === "first" ? 0 : kind === "last" ? Math.max(0, dur - 0.05) : v.currentTime;
+    const time = kind === "first" ? 0 : kind === "last" ? dur : v.currentTime;
     setCapturing(true);
+    const projectId = useCanvasStore.getState().currentProjectId;
+    const active = () => mountedRef.current && useCanvasStore.getState().currentProjectId === projectId
+      && useCanvasStore.getState().nodes.some((n) => n.id === node.id && n.videoSrc === node.videoSrc);
     try {
       // 统一抓帧器按视频的原始 videoWidth × videoHeight 建立无损 PNG，与卡片显示尺寸无关。
-      const captured = await captureVideoFrame(objUrlRef.current || node.videoSrc, time);
+      // Use the stable source URL: the player's blob can be revoked on node
+      // replacement/unmount while a queued capture is still waiting.
+      const captured = await captureVideoFrame(node.videoSrc, time);
+      if (!active()) return;
       const label = kind === "first" ? "视频首帧" : kind === "last" ? "视频尾帧" : "视频截图";
       const file = new File([captured.blob], `frame_${time.toFixed(1)}s.png`, { type: "image/png" });
-      const res = await uploadFileSmart(file, undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
+      const res = await uploadFileSmart(file);
+      if (!active()) {
+        if (res.success && res.data && !res.data.reused) await fileApi.delete(res.data.id).catch(() => undefined);
+        return;
+      }
       if (!res.success || !res.data) { toast.error(res.message || "截图上传失败"); return; }
       const st = useCanvasStore.getState();
       const nid = generateNodeId();
@@ -662,12 +672,12 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       toast.success(`已截取${kind === "first" ? "首帧" : kind === "last" ? "尾帧" : "当前帧"} · ${captured.width}×${captured.height}`);
     } catch (error) {
       // 抓帧/上传异常:给出反馈,避免未处理 rejection 与静默失败。
-      toast.error(error instanceof VideoFrameError ? error.message : "截图失败，请重试");
+      if (active()) toast.error(error instanceof VideoFrameError ? error.message : "截图失败，请重试");
     } finally {
       captureLockRef.current = false;
-      setCapturing(false);
+      if (mountedRef.current) setCapturing(false);
     }
-  }, [duration, node, selectedModel]);
+  }, [duration, node, mountedRef]);
 
   const copyPrompt = useCallback(async () => {
     const text = node.prompt?.trim();

@@ -24,12 +24,12 @@ export default function RootLayout({
   return (
     <html lang="zh-CN" className={`${inter.variable} h-full antialiased`} data-scroll-behavior="smooth">
       <head>
-        {/* CSS chunk 加载失败自愈：_next/static 资源按构建哈希命名，部署后（或网络抖动时）
-            样式表可能 404/加载失败且不会自动重试——页面会带着缺失的样式一直坏到手动刷新。
-            捕获同源样式表的 error 事件后整页刷新（最多 2 次，防止死循环）。 */}
+        {/* 构建资源加载失败自愈：_next/static 按构建哈希命名，部署后（或网络抖动时）
+            CSS/JS 可能 404 且不会自动重试。仅初次加载、尚未操作时自动恢复；
+            与错误页共用 5 分钟最多两次额度，load 不清零。 */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){var K="css-fail-reloads";window.addEventListener("error",function(e){var t=e.target;if(!t||t.tagName!=="LINK"||t.rel!=="stylesheet")return;var h=t.href||"";if(h.indexOf("/_next/")===-1)return;try{var n=Number(sessionStorage.getItem(K)||"0");if(n>=2)return;sessionStorage.setItem(K,String(n+1));}catch(_){ }location.reload();},true);window.addEventListener("load",function(){try{sessionStorage.removeItem(K);}catch(_){ }});})();`,
+            __html: `(function(){var K="flowinglight:stale-client-asset-reload",pending=false;["pointerdown","keydown","input","change"].forEach(function(name){window.addEventListener(name,function(e){if(e.isTrusted)window.__flowinglightInteracted=true;},true);});window.addEventListener("error",function(e){var t=e.target,isStyle=t&&t.tagName==="LINK"&&t.rel==="stylesheet",isScript=t&&t.tagName==="SCRIPT";if(pending||window.__flowinglightInteracted||!navigator.onLine||!t||!isStyle&&!isScript)return;try{var u=new URL(isStyle?t.href:t.src,location.href);if(u.origin!==location.origin||!u.pathname.startsWith("/_next/static/"))return;if(!window.dispatchEvent(new Event("flowinglight:can-reload-for-app-update",{cancelable:true})))return;var m=JSON.parse(sessionStorage.getItem(K)||"null"),now=Date.now();if(m!==null&&(!Number.isFinite(m.savedAt)||m.savedAt>now||!Number.isInteger(m.count)||m.count<0))return;var recent=m!==null&&now-m.savedAt<300000,n=recent?m.count:0;if(n>=2)return;var v=JSON.stringify({count:n+1,savedAt:recent?m.savedAt:now});sessionStorage.setItem(K,v);if(sessionStorage.getItem(K)!==v)return;pending=true;location.reload();}catch(_){return;}},true);})();`,
           }}
         />
         {/* 流光设计字体：Sora / Space Grotesk / JetBrains Mono / Noto Sans SC（site/studio/admin 的 liuguang 样式按名引用） */}

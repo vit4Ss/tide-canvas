@@ -4,39 +4,10 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import type * as THREE_NS from "three";
 import { fetchWithAuth } from "@/lib/http";
 import { panoramaCaptureSize } from "@/lib/panorama-capture";
+import { exportPanorama, type PanoramaCapture } from "@/lib/panorama-export";
+export type { PanoramaCapture } from "@/lib/panorama-export";
 
-const CAPTURE_ENCODE_TIMEOUT_MS = 30_000;
 const TEXTURE_DECODE_TIMEOUT_MS = 30_000;
-
-function encodePanoramaPNG(canvas: HTMLCanvasElement): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const timer = window.setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      reject(new Error("全景截图编码超时，请重试"));
-    }, CAPTURE_ENCODE_TIMEOUT_MS);
-    try {
-      canvas.toBlob((blob) => {
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(timer);
-        if (blob) resolve(blob);
-        else reject(new Error("全景截图编码失败，请重试"));
-      }, "image/png");
-    } catch (error) {
-      settled = true;
-      window.clearTimeout(timer);
-      reject(error);
-    }
-  });
-}
-
-export interface PanoramaCapture {
-  blob: Blob;
-  width: number;
-  height: number;
-}
 
 export interface InlinePanoramaApi {
   reset: () => void;
@@ -74,17 +45,25 @@ export function InlinePanorama({ src, gridOn = false, apiRef, interactive = true
     setError(null);
     /* eslint-enable react-hooks/set-state-in-effect */
     let disposed = false;
-    let cleanup = () => {};
+    const disposers: (() => void)[] = [];
+    const cleanup = () => {
+      for (const release of disposers.splice(0).reverse()) {
+        try { release(); } catch { /* Release the remaining resources too. */ }
+      }
+    };
     let pendingBlobURL = "";
     const controller = new AbortController();
+    const networkTimeout = window.setTimeout(() => controller.abort(), 120_000);
+    const captureController = new AbortController();
     (async () => {
       try {
         const THREE = await import("three");
         const resp = await fetchWithAuth(`/api/files/download?url=${encodeURIComponent(src)}`, { signal: controller.signal });
         if (!resp.ok) throw new Error("全景加载失败");
-        const buf = await resp.arrayBuffer();
+        const blob = await resp.blob();
+        window.clearTimeout(networkTimeout);
         if (disposed) return;
-        const blobUrl = URL.createObjectURL(new Blob([buf], { type: resp.headers.get("Content-Type") || "application/octet-stream" }));
+        const blobUrl = URL.createObjectURL(blob);
         pendingBlobURL = blobUrl;
         let texture: THREE_NS.Texture;
         try {
@@ -116,11 +95,17 @@ export function InlinePanorama({ src, gridOn = false, apiRef, interactive = true
         if (pendingBlobURL === blobUrl) pendingBlobURL = "";
         const mount = mountRef.current;
         if (disposed || !mount) { texture.dispose(); return; }
+        disposers.push(() => texture.dispose());
 
         const w = mount.clientWidth || 1, h = mount.clientHeight || 1;
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(74, w / h, 0.1, 1100);
-        const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        disposers.push(() => {
+          renderer.dispose();
+          renderer.forceContextLoss();
+          renderer.domElement.remove();
+        });
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         renderer.setSize(w, h);
         renderer.domElement.style.touchAction = "none";
@@ -130,26 +115,17 @@ export function InlinePanorama({ src, gridOn = false, apiRef, interactive = true
         texture.wrapS = THREE.RepeatWrapping;
         texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
         texture.needsUpdate = true;
-        // Keep the always-running card preview cheap. A separate dense sphere is
-        // swapped in only for the capture render: 60×40 triangles become visible
-        // at 2K+, while rendering 256×128 every animation frame would multiply
-        // the cost of every panorama node on the infinite canvas.
+        // Preview stays cheap. Export samples the decoded original in a worker.
         const geometry = new THREE.SphereGeometry(500, 60, 40);
-        let captureGeometry: THREE_NS.SphereGeometry | null = null;
+        disposers.push(() => geometry.dispose());
         geometry.scale(-1, 1, 1);
-        const denseCaptureGeometry = () => {
-          if (captureGeometry) return captureGeometry;
-          captureGeometry = new THREE.SphereGeometry(500, 256, 128);
-          captureGeometry.scale(-1, 1, 1);
-          return captureGeometry;
-        };
         const material = new THREE.MeshBasicMaterial({ map: texture });
+        disposers.push(() => material.dispose());
         const panoramaMesh = new THREE.Mesh(geometry, material);
         scene.add(panoramaMesh);
 
         let lon = 180, lat = 0, fov = 74;
-        let capturing = false;
-        let captureQueue: Promise<void> = Promise.resolve();
+        let invalidate = () => {};
         let down = false, downX = 0, downY = 0, downLon = 0, downLat = 0;
         const dom = renderer.domElement;
         const onDown = (e: PointerEvent) => {
@@ -162,6 +138,7 @@ export function InlinePanorama({ src, gridOn = false, apiRef, interactive = true
           e.stopPropagation(); e.preventDefault();
           lon = downLon - (e.clientX - downX) * 0.12;
           lat = Math.max(-85, Math.min(85, downLat + (e.clientY - downY) * 0.12));
+          invalidate();
         };
         const onUp = (e: PointerEvent) => {
           down = false;
@@ -171,69 +148,44 @@ export function InlinePanorama({ src, gridOn = false, apiRef, interactive = true
           e.stopPropagation(); e.preventDefault();
           fov = Math.max(30, Math.min(100, fov + e.deltaY * 0.04));
           camera.fov = fov; camera.updateProjectionMatrix();
+          invalidate();
         };
         dom.addEventListener("pointerdown", onDown);
         dom.addEventListener("pointermove", onMove);
         window.addEventListener("pointerup", onUp);
+        window.addEventListener("pointercancel", onUp);
         dom.addEventListener("wheel", onWheel, { passive: false });
+        disposers.push(() => {
+          dom.removeEventListener("pointerdown", onDown);
+          dom.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onUp);
+          window.removeEventListener("pointercancel", onUp);
+          dom.removeEventListener("wheel", onWheel);
+        });
 
         const onResize = () => {
-          if (capturing) return;
           const nw = mount.clientWidth || 1, nh = mount.clientHeight || 1;
           camera.aspect = nw / nh; camera.updateProjectionMatrix(); renderer.setSize(nw, nh);
+          invalidate();
         };
         const ro = new ResizeObserver(onResize);
+        disposers.push(() => ro.disconnect());
         ro.observe(mount);
 
-        const image = texture.image as { naturalWidth?: number; naturalHeight?: number; width?: number; height?: number };
+        const image = texture.image as HTMLImageElement;
         const sourceWidth = image.naturalWidth || image.width || w;
         const sourceHeight = image.naturalHeight || image.height || h;
-        const context = renderer.getContext();
-        const maxRenderbufferSize = context.getParameter(context.MAX_RENDERBUFFER_SIZE) as number;
         const renderView = (yaw: number, pitch: number, requestedFov: number): Promise<PanoramaCapture | null> => {
-          let captured: PanoramaCapture | null = null;
-          const run = captureQueue.then(async () => {
-            if (disposed) return;
-            capturing = true;
-            const viewportWidth = mount.clientWidth || w;
-            const viewportHeight = mount.clientHeight || h;
-            const previewPixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-            const size = panoramaCaptureSize({
-              sourceWidth, sourceHeight, viewportWidth, viewportHeight,
-              previewPixelRatio, verticalFov: requestedFov, maxRenderbufferSize,
-            });
-            try {
-              panoramaMesh.geometry = denseCaptureGeometry();
-              renderer.setPixelRatio(1);
-              renderer.setSize(size.width, size.height, false);
-              camera.aspect = size.width / size.height;
-              camera.fov = requestedFov;
-              camera.updateProjectionMatrix();
-              const p = THREE.MathUtils.degToRad(90 - pitch);
-              const t = THREE.MathUtils.degToRad(yaw);
-              camera.lookAt(500 * Math.sin(p) * Math.cos(t), 500 * Math.cos(p), 500 * Math.sin(p) * Math.sin(t));
-              renderer.render(scene, camera);
-              const blob = await encodePanoramaPNG(renderer.domElement);
-              if (!disposed) captured = { blob, ...size };
-            } finally {
-              panoramaMesh.geometry = geometry;
-              capturing = false;
-              if (!disposed) {
-                const currentWidth = mount.clientWidth || w;
-                const currentHeight = mount.clientHeight || h;
-                renderer.setSize(currentWidth, currentHeight, false);
-                renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-                camera.aspect = currentWidth / currentHeight;
-                camera.fov = fov;
-                camera.updateProjectionMatrix();
-              }
-            }
+          if (disposed) return Promise.resolve(null);
+          const size = panoramaCaptureSize({
+            sourceWidth, sourceHeight,
+            viewportWidth: mount.clientWidth || w, viewportHeight: mount.clientHeight || h,
+            previewPixelRatio: Math.min(window.devicePixelRatio || 1, 2), verticalFov: requestedFov,
           });
-          captureQueue = run.then(() => undefined, () => undefined);
-          return run.then(() => captured);
+          return exportPanorama(image, { ...size, yaw, pitch, verticalFov: requestedFov }, captureController.signal);
         };
         if (apiRef) apiRef.current = {
-          reset: () => { lon = 180; lat = 0; fov = 74; camera.fov = 74; camera.updateProjectionMatrix(); },
+          reset: () => { lon = 180; lat = 0; fov = 74; camera.fov = 74; camera.updateProjectionMatrix(); invalidate(); },
           capture: () => renderView(lon, lat, fov),
           capture4: async (consume) => {
             const base = lon;
@@ -244,42 +196,41 @@ export function InlinePanorama({ src, gridOn = false, apiRef, interactive = true
             }
           },
         };
+        disposers.push(() => { if (apiRef) apiRef.current = null; });
 
         let raf = 0;
         const animate = () => {
-          raf = requestAnimationFrame(animate);
+          raf = 0;
+          if (disposed) return;
           const phi = THREE.MathUtils.degToRad(90 - lat);
           const theta = THREE.MathUtils.degToRad(lon);
           camera.lookAt(500 * Math.sin(phi) * Math.cos(theta), 500 * Math.cos(phi), 500 * Math.sin(phi) * Math.sin(theta));
-          if (!capturing) renderer.render(scene, camera);
+          renderer.render(scene, camera);
           if (gizmoRef.current) gizmoRef.current.style.transform = `rotateX(${-lat}deg) rotateY(${lon}deg)`;
           if (readoutRef.current) {
             const yaw = Math.round(((lon % 360) + 360) % 360);
             readoutRef.current.textContent = `镜 ${yaw}° · 仰 ${Math.round(lat)}°  ·  缩度 ${Math.round(fov)}°`;
           }
         };
+        // An idle panorama is static: no permanent animation loop for every
+        // card, especially while a high-resolution export is running.
+        invalidate = () => { if (!raf && !disposed) raf = requestAnimationFrame(animate); };
+        disposers.push(() => cancelAnimationFrame(raf));
         animate();
         if (!disposed) setLoading(false);
 
-        cleanup = () => {
-          cancelAnimationFrame(raf);
-          dom.removeEventListener("pointerdown", onDown);
-          dom.removeEventListener("pointermove", onMove);
-          window.removeEventListener("pointerup", onUp);
-          dom.removeEventListener("wheel", onWheel);
-          ro.disconnect();
-          geometry.dispose(); captureGeometry?.dispose(); material.dispose(); texture.dispose(); renderer.dispose();
-          (renderer as unknown as { forceContextLoss?: () => void }).forceContextLoss?.();
-          if (dom.parentNode) dom.parentNode.removeChild(dom);
-          if (apiRef) apiRef.current = null;
-        };
       } catch (e) {
+        cleanup();
         if (!disposed) { setError(e instanceof Error ? e.message : "全景加载失败"); setLoading(false); }
+      } finally {
+        window.clearTimeout(networkTimeout);
       }
     })();
     return () => {
       disposed = true;
       controller.abort();
+      captureController.abort();
+      window.clearTimeout(networkTimeout);
       if (pendingBlobURL) { URL.revokeObjectURL(pendingBlobURL); pendingBlobURL = ""; }
       cleanup();
     };

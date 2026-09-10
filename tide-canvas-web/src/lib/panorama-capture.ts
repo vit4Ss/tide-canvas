@@ -1,18 +1,18 @@
 export interface PixelSize { width: number; height: number }
 
-const MAX_CAPTURE_EDGE = 4096;
-const MAX_CAPTURE_PIXELS = 12_000_000;
+const MAX_CAPTURE_EDGE = 8192;
+export const MAX_PANORAMA_OUTPUT_PIXELS = 24_000_000;
 // A source-density-only projection from a common 2K/4K panorama can be merely
 // 1200–1750 px wide. It contains the source detail but looks visibly soft when
 // opened on a modern 2K display because the browser must enlarge it again.
 // Supersample every perspective export to at least a 2560 px long edge; this
 // cannot invent source detail, but it preserves projection edges and prevents a
-// second lossy-looking display upscale. GPU/pixel caps below remain authoritative.
+// second lossy-looking display upscale. Export size/pixel caps remain authoritative.
 const MIN_CAPTURE_LONG_EDGE = 2560;
 
 /** Choose a perspective render size from the equirectangular source's angular
- * pixel density. Existing DPR preview quality is the minimum; GPU and PNG
- * memory are bounded for unusually large panoramas. */
+ * pixel density. Existing DPR preview quality is the minimum; PNG memory is
+ * bounded. Worker exports do not inherit the preview GPU's texture-size limit. */
 export function panoramaCaptureSize(input: {
   sourceWidth: number;
   sourceHeight: number;
@@ -20,6 +20,7 @@ export function panoramaCaptureSize(input: {
   viewportHeight: number;
   previewPixelRatio: number;
   verticalFov: number;
+  /** Optional ceiling for older WebGL callers; worker export leaves it unset. */
   maxRenderbufferSize?: number;
 }): PixelSize {
   const positive = (value: number, fallback: number) => Number.isFinite(value) && value > 0 ? value : fallback;
@@ -40,8 +41,8 @@ export function panoramaCaptureSize(input: {
   let width = height * aspect;
   const hardwareLimit = positive(input.maxRenderbufferSize ?? MAX_CAPTURE_EDGE, MAX_CAPTURE_EDGE);
   const edgeLimit = Math.min(MAX_CAPTURE_EDGE, hardwareLimit);
-  const scale = Math.min(1, edgeLimit / Math.max(width, height), Math.sqrt(MAX_CAPTURE_PIXELS / (width * height)));
-  width = Math.max(1, Math.round(width * scale));
-  height = Math.max(1, Math.round(height * scale));
+  const scale = Math.min(1, edgeLimit / Math.max(width, height), Math.sqrt(MAX_PANORAMA_OUTPUT_PIXELS / (width * height)));
+  width = Math.max(1, Math.floor(width * scale));
+  height = Math.max(1, Math.floor(height * scale));
   return { width, height };
 }

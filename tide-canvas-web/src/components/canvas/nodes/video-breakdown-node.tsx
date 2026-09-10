@@ -67,35 +67,6 @@ function taskText(task: AiTaskVO): string {
   return typeof meta.text === "string" ? meta.text : "";
 }
 
-async function prepareStoryboardFrame(
-  captured: { blob: Blob; width: number; height: number },
-): Promise<{ blob: Blob; width: number; height: number; extension: "jpg" | "png"; mimeType: string }> {
-  if (typeof createImageBitmap !== "function") {
-    return { ...captured, extension: "png", mimeType: "image/png" };
-  }
-  let bitmap: ImageBitmap | undefined;
-  try {
-    bitmap = await createImageBitmap(captured.blob);
-    const scale = Math.min(1, 1920 / Math.max(bitmap.width, bitmap.height));
-    const width = Math.max(1, Math.round(bitmap.width * scale));
-    const height = Math.max(1, Math.round(bitmap.height * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("canvas unavailable");
-    context.drawImage(bitmap, 0, 0, width, height);
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
-    return blob
-      ? { blob, width, height, extension: "jpg", mimeType: "image/jpeg" }
-      : { ...captured, extension: "png", mimeType: "image/png" };
-  } catch {
-    return { ...captured, extension: "png", mimeType: "image/png" };
-  } finally {
-    bitmap?.close();
-  }
-}
-
 async function analyzeStoryboardFrames(
   nodeId: string,
   frames: readonly StoryboardUploadedFrame[],
@@ -339,8 +310,9 @@ export const VideoBreakdownNode = memo(function VideoBreakdownNode({
         const timeSec = times[index];
         const captured = await captureVideoFrame(sourceAtStart, timeSec);
         if (!active()) return;
-        const prepared = await prepareStoryboardFrame(captured);
-        if (!active()) return;
+        // Saved storyboard assets retain the same original pixels as a manual
+        // screenshot. Thumbnail compression belongs exclusively to display.
+        const prepared = { ...captured, extension: "png", mimeType: "image/png" };
         const filename = `storyboard-${String(index + 1).padStart(2, "0")}-${timeSec.toFixed(2)}s.${prepared.extension}`;
         const uploaded = await uploadFileSmart(new File([prepared.blob], filename, { type: prepared.mimeType }));
         if (!uploaded.success || !uploaded.data) {

@@ -24,12 +24,13 @@ import { InlinePanorama, type InlinePanoramaApi } from "./inline-panorama";
 import { type RefItem } from "./prompt-ref-utils";
 import { NodeChrome } from "./base/node-chrome";
 import { NodePorts } from "./base/node-ports";
-import { aiApi, uploadFileSmart } from "@/lib/api";
+import { aiApi, fileApi, uploadFileSmart } from "@/lib/api";
 import { resolveModelReferenceCountLimit, resolveModelReferenceLimitBytes } from "@/lib/upload-limits";
 import { sliceImageGrid, transformImageRaster, type RasterTransform, type RasterTransformResult } from "@/lib/image-slice";
 import ImageAnnotateModal from "./image-annotate-modal";
 import ImageInpaintModal from "./image-inpaint-modal";
-import { disableOssDisplayProcessing, fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
+import { fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
+import { canvasImagePreview } from "@/lib/canvas-image-preview";
 import { matrixPrice, keyVariants } from "@/lib/price-matrix";
 import { getImageCardSizeForRatio } from "@/lib/image-card-size";
 import { CHARACTER_NODE_TYPE, SCENE_NODE_TYPE, isConceptCanvasNodeType, isPanoramaCanvasNode, isVisualReferenceNodeType } from "@/lib/canvas-node-types";
@@ -579,18 +580,21 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const [wideLens, setWideLens] = useState(MULTI_ANGLE_DEFAULT.wideLens);
   const angleDragRef = useRef<{ x: number; y: number; yaw: number; pitch: number } | null>(null);
   const [angleDragging, setAngleDragging] = useState(false);
-  // 卡片展示图:OSS 原图(常为 2K~4K)降采样到 2048 宽。几十张原图同屏参与
-  // GPU 合成是画布掉帧大头;全屏查看/下载/生成参考仍用原始 node.imageSrc。
+  // Only the single focused card decodes the original. Multi-select/overview
+  // keeps lightweight previews so selecting many 4K images cannot exhaust GPU memory.
   const cardDisplaySrc = ossDisplayUrl(node.imageSrc, 2048);
-  const [cardMediaState, setCardMediaState] = useState({ src: "", useOriginal: false, failed: false, retry: 0 });
+  const [cardMediaState, setCardMediaState] = useState({ src: "", failedUrls: [] as string[], retry: 0 });
   const currentImageSrc = node.imageSrc ?? "";
   const currentCardMedia = cardMediaState.src === currentImageSrc
     ? cardMediaState
-    : { src: currentImageSrc, useOriginal: false, failed: false, retry: 0 };
+    : { src: currentImageSrc, failedUrls: [], retry: 0 };
   const currentPreviewMedia = previewMediaState.src === currentImageSrc
     ? previewMediaState
     : { src: currentImageSrc, failed: false, retry: 0 };
-  const activeCardImageSrc = currentCardMedia.useOriginal ? node.imageSrc : cardDisplaySrc;
+  const activeCardImageSrc = canvasImagePreview({
+    original: currentImageSrc, thumbnail: cardDisplaySrc ?? currentImageSrc,
+    preferOriginal: showAuxUI, failedUrls: currentCardMedia.failedUrls,
+  });
   const [handlerCosts, setHandlerCosts] = useState<Record<string, number>>({});
   const { models: imageModels, modelId: selectedModelId, setModelId: setSelectedModelId, selectedModel } = useAiModels(
     AiModelType.IMAGE,
@@ -1045,69 +1049,96 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     if (panoCaptureLockRef.current || panoCaptureBusy) return;
     panoCaptureLockRef.current = true;
     setPanoCaptureBusy("single");
+    const projectId = useCanvasStore.getState().currentProjectId;
+    const active = () => mountedRef.current && useCanvasStore.getState().currentProjectId === projectId
+      && useCanvasStore.getState().nodes.some((n) => n.id === node.id && n.imageSrc === node.imageSrc);
     try {
       const captured = await panoApiRef.current?.capture();
+      if (!active()) return;
       if (!captured) { toast.error("截图失败，请重试"); return; }
-      const res = await uploadFileSmart(new File([captured.blob], "全景截图.png", { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
+      const res = await uploadFileSmart(new File([captured.blob], "全景截图.png", { type: "image/png" }));
+      if (!active()) {
+        if (res.success && res.data && !res.data.reused) await fileApi.delete(res.data.id).catch(() => undefined);
+        return;
+      }
       if (!res.success || !res.data) { toast.error(res.message || "截图上传失败"); return; }
       const st = useCanvasStore.getState();
       const capH = Math.round(node.width * captured.height / captured.width);
       const nid = generateNodeId();
-      st.addNode({ id: nid, type: derivativeNodeType, x: node.x + node.width + 80, y: node.y, width: node.width, height: capH, contentW: node.width, contentH: capH, title: "全景截图", imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }, true);
-      st.addConnection({ id: `conn_${node.id}_${nid}_c`, sourceId: node.id, targetId: nid }, false);
-      st.selectNode(nid);
+      st.addNodesAndConnections(
+        [{ id: nid, type: derivativeNodeType, x: node.x + node.width + 80, y: node.y, width: node.width, height: capH, contentW: node.width, contentH: capH, title: "全景截图", imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }],
+        [{ id: `conn_${node.id}_${nid}_c`, sourceId: node.id, targetId: nid }], nid,
+      );
       toast.success(`已截取当前视角 · ${captured.width}×${captured.height}`);
-    } catch {
-      toast.error("截图失败，请重试");
+    } catch (error) {
+      if (active()) toast.error(error instanceof Error ? error.message : "截图失败，请重试");
     } finally {
       panoCaptureLockRef.current = false;
-      setPanoCaptureBusy(null);
+      if (mountedRef.current) setPanoCaptureBusy(null);
     }
-  }, [derivativeNodeType, node.id, node.x, node.y, node.width, panoCaptureBusy, selectedModel]);
+  }, [derivativeNodeType, node.id, node.imageSrc, node.x, node.y, node.width, panoCaptureBusy, mountedRef]);
 
   // 全景「4 大视角截图」→ 当前/+90/+180/+270 平视各截一张 → 各上传 → 右侧 2×2 排列连线图片节点
   const handlePanoCapture4 = useCallback(async () => {
     if (panoCaptureLockRef.current || panoCaptureBusy) return;
     panoCaptureLockRef.current = true;
     setPanoCaptureBusy("grid");
+    const projectId = useCanvasStore.getState().currentProjectId;
+    const active = () => mountedRef.current && useCanvasStore.getState().currentProjectId === projectId
+      && useCanvasStore.getState().nodes.some((n) => n.id === node.id && n.imageSrc === node.imageSrc);
+    const outputNodes: CanvasNode[] = [];
+    const outputConnections: { id: string; sourceId: string; targetId: string }[] = [];
+    const retainedUploads: { id: string; reused: boolean }[] = [];
+    let lastError = "";
     try {
       const api = panoApiRef.current;
       if (!api) { toast.error("截图失败，请重试"); return; }
       toast.info("正在截取 4 个视角…");
-      const st = useCanvasStore.getState();
       const baseX = node.x + node.width + 80;
       // 2×2 视角网格，整组相对源卡片垂直居中：竖排 4 张会拖出一条重心下坠的长条，
       // 连线也被拉出大跨度；网格更符合「四视角」的阅读预期。
       const gapX = 40;
       const gapY = 40;
       let baseY: number | null = null;
-      let ok = 0;
-      let capturedSize = "";
-      let lastError = "";
       await api.capture4(async (captured, i) => {
+        if (!active()) return;
         // 单个视角 fetch/上传失败不应中断整批,也不产生未处理 rejection。
         try {
-          const res = await uploadFileSmart(new File([captured.blob], `全景视角${i + 1}.png`, { type: "image/png" }), undefined, { maxBytes: resolveModelReferenceLimitBytes(selectedModel, "image"), label: "参考图" });
+          const res = await uploadFileSmart(new File([captured.blob], `全景视角${i + 1}.png`, { type: "image/png" }));
+          if (!active()) {
+            if (res.success && res.data && !res.data.reused) await fileApi.delete(res.data.id).catch(() => undefined);
+            return;
+          }
           if (!res.success || !res.data) { lastError = res.message || "截图上传失败"; return; }
-          capturedSize = `${captured.width}×${captured.height}`;
+          retainedUploads.push({ id: String(res.data.id), reused: res.data.reused === true });
           const capH = Math.round(node.width * captured.height / captured.width);
           baseY ??= node.y + ((node.contentH ?? node.height) - (capH * 2 + gapY)) / 2;
           const nid = generateNodeId();
-          st.addNode({ id: nid, type: derivativeNodeType, x: baseX + (i % 2) * (node.width + gapX), y: baseY + Math.floor(i / 2) * (capH + gapY), width: node.width, height: capH, contentW: node.width, contentH: capH, title: `全景视角 ${i + 1}`, imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType }, i === 0);
-          st.addConnection({ id: `conn_${node.id}_${nid}_${i}`, sourceId: node.id, targetId: nid }, false);
-          ok++;
-        } catch {
-          /* 跳过此视角 */
+          outputNodes.push({ id: nid, type: derivativeNodeType, x: baseX + (i % 2) * (node.width + gapX), y: baseY + Math.floor(i / 2) * (capH + gapY), width: node.width, height: capH, contentW: node.width, contentH: capH, title: `全景视角 ${i + 1}`, imageSrc: res.data.fileUrl, status: "success", fileSize: res.data.fileSize, fileType: res.data.fileType, mimeType: res.data.mimeType });
+          outputConnections.push({ id: `conn_${node.id}_${nid}_${i}`, sourceId: node.id, targetId: nid });
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : "截图上传失败";
         }
       });
-      if (ok > 0) toast.success(`已截取 ${ok} 个视角${capturedSize ? ` · ${capturedSize}` : ""}`); else toast.error(lastError || "截图失败");
-    } catch {
-      toast.error("截图失败，请重试");
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "截图失败，请重试";
     } finally {
+      // Only URLs are retained between exports. Commit all successful views as
+      // one undoable transaction; an earlier failed view cannot break history.
+      if (active()) {
+        if (outputNodes.length) {
+          useCanvasStore.getState().addNodesAndConnections(outputNodes, outputConnections);
+          if (outputNodes.length === 4) toast.success("已截取 4 个视角");
+          else toast.error(`已保存 ${outputNodes.length}/4 个视角，其余失败：${lastError || "请重试"}`);
+        } else if (lastError) toast.error(lastError);
+      } else {
+        await Promise.all(retainedUploads.filter((file) => !file.reused)
+          .map((file) => fileApi.delete(file.id).catch(() => undefined)));
+      }
       panoCaptureLockRef.current = false;
-      setPanoCaptureBusy(null);
+      if (mountedRef.current) setPanoCaptureBusy(null);
     }
-  }, [derivativeNodeType, node.id, node.x, node.y, node.width, node.height, node.contentH, panoCaptureBusy, selectedModel]);
+  }, [derivativeNodeType, node.id, node.imageSrc, node.x, node.y, node.width, node.height, node.contentH, panoCaptureBusy, mountedRef]);
 
   const multiAngleRatio = useMemo(() => {
     if (node.aspectRatio && parseRatio(node.aspectRatio)) return node.aspectRatio;
@@ -2797,10 +2828,20 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
               </div>
             </div>
           )}
+          {showAuxUI && !node.is360 && activeCardImageSrc && activeCardImageSrc !== currentImageSrc
+            && currentCardMedia.failedUrls.includes(currentImageSrc) && (
+            <div className="absolute bottom-2 left-1/2 z-[5] flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-lg bg-black/70 px-3 py-1.5 text-[11px] text-white">
+              <span>原图加载失败，当前显示预览</span>
+              <button type="button" onMouseDown={stop} className="underline underline-offset-2" onClick={(e) => {
+                stop(e);
+                setCardMediaState({ src: currentImageSrc, failedUrls: currentCardMedia.failedUrls.filter((url) => url !== currentImageSrc), retry: currentCardMedia.retry + 1 });
+              }}>重试原图</button>
+            </div>
+          )}
           {node.imageSrc ? (
             node.is360 ? (
               <InlinePanorama src={node.imageSrc} gridOn={panoGrid} apiRef={panoApiRef} interactive={showAuxUI} />
-            ) : currentCardMedia.failed ? (
+            ) : !activeCardImageSrc ? (
               <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-neutral-50 text-neutral-500 dark:bg-neutral-950 dark:text-white/45">
                 <ImageIcon className="h-7 w-7 opacity-60" aria-hidden />
                 <span className="text-xs">图片暂时无法加载</span>
@@ -2811,8 +2852,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                     stop(e);
                     setCardMediaState({
                       src: currentImageSrc,
-                      useOriginal: false,
-                      failed: false,
+                      failedUrls: [],
                       retry: currentCardMedia.retry + 1,
                     });
                   }}
@@ -2824,47 +2864,26 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                key={`${currentImageSrc}:${currentCardMedia.useOriginal ? "original" : "optimized"}:${currentCardMedia.retry}`}
+                key={`${activeCardImageSrc}:${currentCardMedia.retry}`}
                 src={activeCardImageSrc}
                 alt=""
                 draggable={false}
                 onError={() => {
-                  if (!currentCardMedia.useOriginal && node.imageSrc && cardDisplaySrc !== node.imageSrc) {
-                    disableOssDisplayProcessing(node.imageSrc);
-                    setCardMediaState({
-                      src: currentImageSrc,
-                      useOriginal: true,
-                      failed: false,
-                      retry: currentCardMedia.retry,
-                    });
-                    return;
-                  }
-                  setCardMediaState({
+                  setCardMediaState((prev) => ({
                     src: currentImageSrc,
-                    useOriginal: currentCardMedia.useOriginal,
-                    failed: true,
+                    failedUrls: [...new Set([...(prev.src === currentImageSrc ? prev.failedUrls : []), activeCardImageSrc])],
                     retry: currentCardMedia.retry,
-                  });
+                  }));
                 }}
                 onLoad={(e) => {
                   const t = e.currentTarget;
                   if (t.naturalWidth > 0 && t.naturalHeight > 0) {
                     // 降采样不改变宽高比,aspect 用展示图即可
                     setImgAspectState({ src: node.imageSrc || "", aspect: t.naturalWidth / t.naturalHeight });
-                    setImageDims({ w: t.naturalWidth, h: t.naturalHeight });
-                    // 展示图被 OSS 降采样时,分辨率标签改用 image/info 拿原图尺寸
-                    //（跨域/无权限等失败则保留展示图尺寸,仅标签略小,不影响功能）
-                    const orig = node.imageSrc;
-                    if (orig && cardDisplaySrc !== orig) {
-                      fetch(`${orig}?x-oss-process=image/info`)
-                        .then((r) => (r.ok ? r.json() : null))
-                        .then((info) => {
-                          const w = Number(info?.ImageWidth?.value);
-                          const h = Number(info?.ImageHeight?.value);
-                          if (mountedRef.current && w > 0 && h > 0) setImageDims({ w, h });
-                        })
-                        .catch(() => {});
-                    }
+                    // The focused card loads the original and supplies its true
+                    // dimensions. Do not refetch image/info: CDNs that strip its
+                    // query would download the entire original again per card.
+                    if (activeCardImageSrc === node.imageSrc) setImageDims({ w: t.naturalWidth, h: t.naturalHeight });
                   }
                 }}
                 className="h-full w-full object-contain"

@@ -6,7 +6,7 @@ const FIRST_DECODABLE_TIME = 0.001;
 export function frameCaptureSeekTarget(timeSec: number, duration: number): number {
   const requested = Number.isFinite(timeSec) ? Math.max(0, timeSec) : 0;
   if (!Number.isFinite(duration) || duration <= 0) return requested;
-  const lastSafeFrame = Math.max(0, duration - 0.02);
+  const lastSafeFrame = Math.max(0, duration - Math.min(FIRST_DECODABLE_TIME, duration / 2));
   const bounded = Math.min(requested, lastSafeFrame);
   if (bounded > 0) return bounded;
   return Math.min(FIRST_DECODABLE_TIME, duration / 2);

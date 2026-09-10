@@ -7,8 +7,9 @@
  * 可以接受;换来的是任何来源的视频都能稳定截出图。
  */
 
-import { getAccessToken } from "@/lib/http";
+import { fetchWithAuth, getAccessToken } from "@/lib/http";
 import { frameCaptureSeekTarget } from "@/lib/video-frame-policy";
+import { encodeCapturePNG } from "@/lib/capture-png";
 
 const SEEK_TIMEOUT_MS = 20_000;
 
@@ -30,7 +31,14 @@ export interface CapturedFrame {
 /** 已取回的视频(单槽缓存)。从同一个视频连截多帧是最常见的用法，不缓存就要
     把整段视频反复经代理下载一遍。只留一条:换视频即释放上一条，内存占用因此
     封顶在「一个视频」,不会随页面上视频卡的数量增长。 */
-let cached: { src: string; objUrl: string } | null = null;
+let cached: { src: string; authToken: string; objUrl: string } | null = null;
+let cacheTimer: ReturnType<typeof setTimeout> | undefined;
+
+function releaseCachedVideo() {
+  cacheTimer = undefined;
+  if (cached) URL.revokeObjectURL(cached.objUrl);
+  cached = null;
+}
 
 /** 经后端下载代理把视频取成同源 blob URL。返回的 URL 由本模块管理生命周期。 */
 async function fetchVideoAsObjectUrl(url: string): Promise<string> {
@@ -38,13 +46,16 @@ async function fetchVideoAsObjectUrl(url: string): Promise<string> {
     // 本地 blob:/data: 已是同源可读，无需(也无法)走后端代理。
     return url;
   }
-  if (cached?.src === url) return cached.objUrl;
-  const token = getAccessToken();
-  const headers: Record<string, string> = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`/api/files/download?url=${encodeURIComponent(url)}&name=source`, {
-    headers,
-  });
+  const authToken = getAccessToken() ?? "";
+  if (cached?.src === url && cached.authToken === authToken) return cached.objUrl;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 120_000);
+  let res: Response;
+  try {
+    res = await fetchWithAuth(`/api/files/download?url=${encodeURIComponent(url)}&name=source`, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) {
     // 400/403 是确定性拒绝(超过代理 100MB 上限、或这个视频不属于当前账号)，
     // 重试多少次都不会成功——别劝用户重试，直接说清原因。
@@ -53,12 +64,12 @@ async function fetchVideoAsObjectUrl(url: string): Promise<string> {
     throw new VideoFrameError("视频读取失败，请稍后重试");
   }
   const objUrl = URL.createObjectURL(await res.blob());
-  if (cached) URL.revokeObjectURL(cached.objUrl);
-  cached = { src: url, objUrl };
+  releaseCachedVideo();
+  cached = { src: url, authToken, objUrl };
   return objUrl;
 }
 
-function onceEvent(el: HTMLVideoElement, name: string, timeoutMs: number): Promise<void> {
+function onceEvent(el: HTMLVideoElement, name: string, timeoutMs: number, start?: () => void): Promise<void> {
   return new Promise((resolve, reject) => {
     const cleanup = () => {
       el.removeEventListener(name, ok);
@@ -79,6 +90,15 @@ function onceEvent(el: HTMLVideoElement, name: string, timeoutMs: number): Promi
     }, timeoutMs);
     el.addEventListener(name, ok, { once: true });
     el.addEventListener("error", bad, { once: true });
+    try {
+      if (el.error) bad();
+      else start?.();
+    } catch (error) {
+      // src/load/currentTime can throw synchronously. Reject the awaited promise
+      // and remove its timer/listeners, rather than leaving an orphan rejection.
+      cleanup();
+      reject(error);
+    }
   });
 }
 
@@ -106,24 +126,35 @@ export function captureVideoFrame(videoUrl: string, timeSec: number): Promise<Ca
 let queue: Promise<void> = Promise.resolve();
 
 async function captureFrameNow(videoUrl: string, timeSec: number): Promise<CapturedFrame> {
+  clearTimeout(cacheTimer);
+  // Expiry is paused while a decoder owns the cached object URL.
+  try {
+    return await decodeFrame(videoUrl, timeSec);
+  } catch (error) {
+    if (error instanceof VideoFrameError) throw error;
+    throw new VideoFrameError(error instanceof Error && /截图|视频/.test(error.message)
+      ? error.message : "视频原帧读取失败或超时，请检查视频是否可播放后重试");
+  } finally {
+    if (cached) cacheTimer = setTimeout(releaseCachedVideo, 60_000);
+  }
+}
+
+async function decodeFrame(videoUrl: string, timeSec: number): Promise<CapturedFrame> {
   const objUrl = await fetchVideoAsObjectUrl(videoUrl);
   const video = document.createElement("video");
   video.muted = true;
   video.playsInline = true;
   video.preload = "auto";
+  let canvas: HTMLCanvasElement | undefined;
 
   try {
     // Metadata is enough to compute a safe target. Actual frame decoding is
     // forced by the seek below; waiting only for loadeddata at time 0 is flaky
     // on browsers that keep an unplayed, detached video metadata-only.
-    const metadataReady = onceEvent(video, "loadedmetadata", SEEK_TIMEOUT_MS);
-    video.src = objUrl;
-    video.load();
-    await metadataReady;
-
-    const width = video.videoWidth;
-    const height = video.videoHeight;
-    if (!width || !height) throw new Error("video has no decodable frame");
+    await onceEvent(video, "loadedmetadata", SEEK_TIMEOUT_MS, () => {
+      video.src = objUrl;
+      video.load();
+    });
 
     // 末尾处 seek 常常落不到有效帧(不同浏览器对 duration 边界处理不一致):
     // 往回让出一点点,取最后一个能解码出来的帧。
@@ -132,30 +163,35 @@ async function captureFrameNow(videoUrl: string, timeSec: number): Promise<Captu
 
     // 0 秒会被规范化到一个极小的正数，确保从未播放过的视频也真正解码首帧。
     if (Math.abs(video.currentTime - target) > 0.00001) {
-      const seeked = onceEvent(video, "seeked", SEEK_TIMEOUT_MS);
-      video.currentTime = target;
-      await seeked;
+      await onceEvent(video, "seeked", SEEK_TIMEOUT_MS, () => { video.currentTime = target; });
     }
     if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
       await onceEvent(video, "loadeddata", SEEK_TIMEOUT_MS);
     }
 
-    const canvas = document.createElement("canvas");
+    // Dimensions belong to the decoded target frame, not initial metadata
+    // (streams may switch dimensions before the selected timestamp).
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+    if (!width || !height) throw new Error("视频没有可解码画面");
+    if (width * height > 48_000_000) throw new VideoFrameError("视频帧超过 4800 万像素，无法安全截取原图");
+    canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { colorSpace: "srgb" });
     if (!ctx) throw new Error("canvas 2d context unavailable");
-    ctx.drawImage(video, 0, 0, width, height);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(video, 0, 0);
 
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, "image/png"),
-    );
-    if (!blob) throw new Error("frame encode failed");
+    const blob = await encodeCapturePNG(canvas);
     return { blob, width, height };
   } finally {
+    if (canvas) canvas.width = canvas.height = 1;
     // 断开这个临时元素与数据源的关联，释放解码器；blob URL 本身归上面的单槽
     // 缓存所有(换视频时才 revoke)，这里不能撤销，否则下次连截就要重新下载。
-    video.removeAttribute("src");
-    video.load();
+    try {
+      video.removeAttribute("src");
+      video.load();
+    } catch { /* A decoder cleanup failure must not mask the capture result. */ }
   }
 }
