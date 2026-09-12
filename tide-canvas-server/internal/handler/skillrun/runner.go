@@ -845,6 +845,12 @@ func (s *service) resolveTextModelForAssets(configured, requested string, assets
 }
 
 func (s *service) primarySkillText(version *model.SkillVersion) string {
+	// Multi-file imports store a pinned {{skill.*}} wrapper in PromptTemplate so
+	// the standard package references are available to the model. Prefer that
+	// wrapper; single-file and historical versions retain the original behavior.
+	if strings.Contains(version.PromptTemplate, "{{skill.") {
+		return version.PromptTemplate
+	}
 	var file model.SkillFile
 	if version.PrimaryFilePath != "" && s.db.Where("skill_version_id = ? AND path = ?", version.ID, version.PrimaryFilePath).First(&file).Error == nil {
 		return file.Content
@@ -853,6 +859,7 @@ func (s *service) primarySkillText(version *model.SkillVersion) string {
 }
 
 var runtimeSkillFileReferencePattern = regexp.MustCompile(`\{\{skill\.file:([^{}]+)\}\}`)
+var runtimeUnsupportedSkillReferencePattern = regexp.MustCompile(`\{\{skill\.[^{}]*\}\}`)
 
 // expandSkillTemplate resolves only explicitly referenced files from the pinned
 // SkillVersion. It never concatenates the whole package, keeping prompt size and
@@ -929,6 +936,9 @@ func expandSkillTemplateFiles(primaryPath, value string, byPath map[string]strin
 	}
 	if strings.Contains(result, "{{skill.primary}}") || runtimeSkillFileReferencePattern.MatchString(result) {
 		return "", errors.New("skill file references contain a cycle")
+	}
+	if runtimeUnsupportedSkillReferencePattern.MatchString(result) {
+		return "", errors.New("skill prompt contains an unsupported reference")
 	}
 	return result, nil
 }

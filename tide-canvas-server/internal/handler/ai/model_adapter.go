@@ -158,6 +158,17 @@ func modelSupportsHandler(m *model.AiModel, handler string) bool {
 	return false
 }
 
+// MarketModelSupportsHandler exposes the same capability decision used by AI
+// task submission to admin-side preflight checks. Keeping one implementation
+// prevents a Skill from passing validation with a model the runtime will reject.
+func MarketModelSupportsHandler(m *model.MarketModel, handler string) bool {
+	if m == nil {
+		return false
+	}
+	adapted := marketToAiModel(m)
+	return modelSupportsHandler(&adapted, handler)
+}
+
 func modelVideoDurationAllowed(m *model.AiModel, handler string, input json.RawMessage) (requested float64, configured, allowed bool) {
 	switch handler {
 	case "text_to_video", "image_to_video", "start_end_to_video", "reference_to_video":

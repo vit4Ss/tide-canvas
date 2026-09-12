@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -44,6 +45,140 @@ func TestValidateAdminSkillPackageMetadata(t *testing.T) {
 	}
 }
 
+func TestDecodeAdminSkillImportRequestRejectsUnknownAndTrailingJSON(t *testing.T) {
+	for _, raw := range []string{
+		`{"skills":[],"skillz":[]}`,
+		`{"skills":[]} {"skills":[]}`,
+	} {
+		var dto AdminSkillImportDTO
+		if err := decodeAdminSkillImportRequest(strings.NewReader(raw), &dto); err == nil {
+			t.Fatalf("invalid import JSON was accepted: %s", raw)
+		}
+	}
+	var dto AdminSkillImportDTO
+	err := decodeAdminSkillImportRequest(strings.NewReader(`{"skills":[],"skillz":[]}`), &dto)
+	if message := describeSkillImportRequestError(err, "导入"); !strings.Contains(message, "未知字段") || !strings.Contains(message, "skillz") {
+		t.Fatalf("unknown-field reason = %q", message)
+	}
+}
+
+func TestValidateAdminSkillImportsReportsNamedReasonsAndRejectsWholeBatch(t *testing.T) {
+	valid := AdminSkillPackageDTO{
+		Title: "导演审片", AdminSkillVersionCreateDTO: AdminSkillVersionCreateDTO{
+			Kind: model.SkillKindAgent, EntryPoints: []string{"canvas"},
+			PrimaryOutputType: "text", OutputTypes: []string{"text"},
+			PrimaryFilePath: "SKILL.md", Files: []AdminSkillFileDTO{{Path: "SKILL.md", Content: "# Review"}},
+		},
+	}
+	invalid := valid
+	invalid.Title = "错误入口"
+	invalid.EntryPoints = []string{"studio"}
+
+	result, prepared := validateAdminSkillImports(nil, []AdminSkillPackageDTO{valid, invalid}, 0)
+	if result.Valid || prepared != nil {
+		t.Fatalf("invalid batch was prepared: result=%#v prepared=%#v", result, prepared)
+	}
+	if len(result.Items) != 2 || !result.Items[0].Valid || result.Items[1].Valid {
+		t.Fatalf("unexpected validation items: %#v", result.Items)
+	}
+	if len(result.Items[1].Errors) != 1 || !strings.Contains(result.Items[1].Errors[0], "画布入口") {
+		t.Fatalf("missing actionable reason: %#v", result.Items[1])
+	}
+	message := formatSkillImportValidationFailure(result)
+	if !strings.Contains(message, "错误入口") || !strings.Contains(message, "画布入口") {
+		t.Fatalf("unexpected failure summary: %s", message)
+	}
+}
+
+func TestSkillImportAnalysisModelCapabilityMatchesMediaPreparation(t *testing.T) {
+	if !skillImportAnalysisModelSupports("analyze_webpage", model.MarketModel{}) {
+		t.Fatal("webpage analysis should not require file upload")
+	}
+	videoCapable := model.MarketModel{Config: `{"fileUpload":true,"uploadFormats":["png","jpg"]}`}
+	if !skillImportAnalysisModelSupports("analyze_video", videoCapable) {
+		t.Fatal("video analysis rejected a keyframe-capable text model")
+	}
+	if skillImportAnalysisModelSupports("analyze_video", model.MarketModel{Config: `{"fileUpload":true,"uploadFormats":["pdf"]}`}) {
+		t.Fatal("video analysis accepted a text model without image input")
+	}
+	if skillImportAnalysisModelSupports("analyze_audio", model.MarketModel{Config: `{"fileUpload":false}`}) {
+		t.Fatal("audio analysis accepted a text model with file upload disabled")
+	}
+}
+
+func TestSkillImportTreatsFileOutputModelAsText(t *testing.T) {
+	if got := skillImportModelType(" file "); got != "text" {
+		t.Fatalf("file output model type = %q, want text", got)
+	}
+}
+
+func TestNormalizeSkillFilesRejectsCaseDuplicatesAndBlankPrimary(t *testing.T) {
+	if _, _, err := normalizeSkillFiles([]AdminSkillFileDTO{
+		{Path: "SKILL.md", Content: "one"},
+		{Path: "skill.md", Content: "two"},
+	}, "SKILL.md"); err == nil {
+		t.Fatal("case-insensitive duplicate paths were accepted")
+	}
+	if _, _, err := normalizeSkillFiles([]AdminSkillFileDTO{{Path: "SKILL.md", Content: " \n\t"}}, "SKILL.md"); err == nil {
+		t.Fatal("blank primary file was accepted")
+	}
+}
+
+func TestBuildSkillVersionPinsEveryImportedTextFileIntoExecutablePrompt(t *testing.T) {
+	skill := &model.Skill{OutputType: "text"}
+	version, _, err := buildSkillVersion(nil, skill, AdminSkillVersionCreateDTO{
+		Kind: model.SkillKindAgent, EntryPoints: []string{"canvas"},
+		PrimaryOutputType: "text", OutputTypes: []string{"text"}, PrimaryFilePath: "SKILL.md",
+		Files: []AdminSkillFileDTO{
+			{Path: "SKILL.md", Content: "Read the review rules."},
+			{Path: "references/rules.md", Content: "Always cite visible evidence."},
+			{Path: "references/output.txt", Content: "Return a release decision first."},
+		},
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range []string{"{{skill.primary}}", "{{skill.file:references/rules.md}}", "{{skill.file:references/output.txt}}"} {
+		if !strings.Contains(version.PromptTemplate, token) {
+			t.Fatalf("generated package prompt is missing %s: %s", token, version.PromptTemplate)
+		}
+	}
+}
+
+func TestBuildSkillVersionPreservesNativeExplicitPackageReferences(t *testing.T) {
+	skill := &model.Skill{OutputType: "text"}
+	version, _, err := buildSkillVersion(nil, skill, AdminSkillVersionCreateDTO{
+		Kind: model.SkillKindAgent, EntryPoints: []string{"canvas"},
+		PrimaryOutputType: "text", OutputTypes: []string{"text"}, PrimaryFilePath: "SKILL.md",
+		Files: []AdminSkillFileDTO{
+			{Path: "SKILL.md", Content: "Use {{skill.file:references/rules.md}}"},
+			{Path: "references/rules.md", Content: "Keep the evidence visible."},
+			{Path: "references/optional.md", Content: "Optional appendix."},
+		},
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version.PromptTemplate != "{{skill.primary}}" {
+		t.Fatalf("native references were duplicated by generated wrapper: %s", version.PromptTemplate)
+	}
+}
+
+func TestBuildSkillVersionRejectsPackageWhoseExpandedPromptIsTooLarge(t *testing.T) {
+	skill := &model.Skill{OutputType: "text"}
+	_, _, err := buildSkillVersion(nil, skill, AdminSkillVersionCreateDTO{
+		Kind: model.SkillKindAgent, EntryPoints: []string{"canvas"},
+		PrimaryOutputType: "text", OutputTypes: []string{"text"}, PrimaryFilePath: "SKILL.md",
+		Files: []AdminSkillFileDTO{
+			{Path: "SKILL.md", Content: strings.Repeat("a", 600_000)},
+			{Path: "references/rules.md", Content: strings.Repeat("b", 600_000)},
+		},
+	}, 0)
+	if err == nil || !strings.Contains(err.Error(), "expanded prompt exceeds 1 MiB") {
+		t.Fatalf("oversized expanded package prompt error = %v", err)
+	}
+}
+
 func TestBuildSkillVersionLimitsExecutablePromptAndPrimaryFile(t *testing.T) {
 	skill := &model.Skill{OutputType: "image"}
 	atLimit := strings.Repeat("a", maxSkillExecutablePromptBytes)
@@ -71,6 +206,33 @@ func TestBuildSkillVersionLimitsExecutablePromptAndPrimaryFile(t *testing.T) {
 	}, 0)
 	if err == nil {
 		t.Fatal("oversized primary skill file was accepted")
+	}
+}
+
+func TestBuildSkillVersionRejectsValuesThatCannotBePersistedSafely(t *testing.T) {
+	skill := &model.Skill{OutputType: "text"}
+	base := AdminSkillVersionCreateDTO{
+		Kind: model.SkillKindAgent, EntryPoints: []string{"canvas"},
+		PrimaryOutputType: "text", OutputTypes: []string{"text"}, PromptTemplate: "instructions",
+	}
+	tooLongModel := base
+	tooLongModel.ModelID = strings.Repeat("m", maxSkillModelIDRunes+1)
+	if _, _, err := buildSkillVersion(nil, skill, tooLongModel, 0); err == nil {
+		t.Fatal("oversized modelId was accepted")
+	}
+
+	tooLargeDefaults := base
+	tooLargeDefaults.DefaultParams = json.RawMessage(`{"value":"` + strings.Repeat("d", maxSkillDefaultParamsBytes) + `"}`)
+	if _, _, err := buildSkillVersion(nil, skill, tooLargeDefaults, 0); err == nil {
+		t.Fatal("defaultParams larger than the catalog TEXT column was accepted")
+	}
+
+	badMIME := base
+	badMIME.PromptTemplate = ""
+	badMIME.PrimaryFilePath = "SKILL.md"
+	badMIME.Files = []AdminSkillFileDTO{{Path: "SKILL.md", Content: "instructions", MimeType: strings.Repeat("m", maxSkillMimeTypeRunes+1)}}
+	if _, _, err := buildSkillVersion(nil, skill, badMIME, 0); err == nil {
+		t.Fatal("oversized file mimeType was accepted")
 	}
 }
 
@@ -271,8 +433,11 @@ func TestValidateSkillFileReferencesSupportsNestedPackageRoot(t *testing.T) {
 		{Path: "MySkill/SKILL.md", Content: "Use {{skill.file:references/style.md}}"},
 		{Path: "MySkill/references/style.md", Content: "cinematic"},
 	}
-	if err := validateSkillFileReferences(`{"steps":[{"prompt":"{{skill.primary}}"}]}`, files, "MySkill/SKILL.md"); err != nil {
+	if err := validateSkillFileReferences(`{"steps":[{"prompt":"{{skill.primary}}"}]}`, "", files, "MySkill/SKILL.md"); err != nil {
 		t.Fatal(err)
+	}
+	if err := validateSkillFileReferences(`{"kind":"agent"}`, "{{skill.flie:references/style.md}}", files, "MySkill/SKILL.md"); err == nil {
+		t.Fatal("misspelled skill reference was accepted")
 	}
 }
 
@@ -291,6 +456,31 @@ func TestValidateSkillManifestRejectsStepTypeOutputMismatch(t *testing.T) {
 		if err := validateSkillManifest(raw, model.SkillKindAgent, "image", []string{"image", "text"}); err == nil {
 			t.Fatalf("step type/output mismatch was accepted: %s", raw)
 		}
+	}
+}
+
+func TestValidateSkillManifestRejectsSilentlyIgnoredFieldShapes(t *testing.T) {
+	invalid := []json.RawMessage{
+		json.RawMessage(`{"kind":7,"steps":[{"type":"text","outputType":"text","outputRole":"final"}]}`),
+		json.RawMessage(`{"kind":"agent","step":[{"type":"text","outputType":"text","outputRole":"final"}]}`),
+		json.RawMessage(`{"kind":"agent","primaryOutputType":"video","steps":[{"type":"text","outputType":"text","outputRole":"final"}]}`),
+		json.RawMessage(`{"kind":"agent","outputTypes":["image"],"steps":[{"type":"text","outputType":"text","outputRole":"final"}]}`),
+		json.RawMessage(`{"kind":"agent","preferredNodeType":"unknown","steps":[{"type":"text","outputType":"text","outputRole":"final"}]}`),
+		json.RawMessage(`{"kind":"agent","steps":[{"key":9,"type":"text","outputType":"text","outputRole":"final"}]}`),
+		json.RawMessage(`{"kind":"agent","steps":[{"type":"text","prompt":9,"outputType":"text","outputRole":"final"}]}`),
+		json.RawMessage(`{"kind":"agent","steps":[{"type":"text","preferredNodeType":"unknown","outputType":"text","outputRole":"final"}]}`),
+		json.RawMessage(`{"kind":"agent","steps":[{"type":"text","ouputType":"text","outputType":"text","outputRole":"final"}]}`),
+		json.RawMessage(`{"kind":"agent","steps":[{"type":"approval","modelId":"ignored"},{"type":"text","outputType":"text","outputRole":"final"}]}`),
+		json.RawMessage(`{"kind":"agent","steps":[{"type":"text","schema":{},"outputType":"text","outputRole":"final"}]}`),
+	}
+	for _, raw := range invalid {
+		if err := validateSkillManifest(raw, model.SkillKindAgent, "text", []string{"text"}); err == nil {
+			t.Fatalf("malformed manifest field was accepted: %s", raw)
+		}
+	}
+	generateWithIgnoredField := json.RawMessage(`{"kind":"agent","steps":[{"type":"generate","systemPrompt":"ignored","outputType":"image","outputRole":"final"}]}`)
+	if err := validateSkillManifest(generateWithIgnoredField, model.SkillKindAgent, "image", []string{"image"}); err == nil {
+		t.Fatalf("ignored generate field was accepted: %s", generateWithIgnoredField)
 	}
 }
 
@@ -333,10 +523,31 @@ func TestValidateInputSchemaDefinitionRejectsUnsupportedOrMalformedConstraints(t
 		json.RawMessage(`{"type":"object","properties":{"x":{"type":"string","minLenght":2}}}`),
 		json.RawMessage(`{"type":"object","properties":{"x":{"type":"array","minItems":-1}}}`),
 		json.RawMessage(`{"type":"object","properties":{"x":{"type":"string","pattern":"["}}}`),
+		json.RawMessage(`{"type":"object","properties":{"x":{"type":"string","title":7}}}`),
+		json.RawMessage(`{"type":"object","properties":{"x":{"type":"string","minLength":9,"maxLength":2}}}`),
 	} {
 		if err := validateInputSchemaDefinition(raw); err == nil {
 			t.Fatalf("invalid input schema was accepted: %s", raw)
 		}
+	}
+	properties := map[string]any{}
+	for index := 0; index < 129; index++ {
+		properties[fmt.Sprintf("field_%d", index)] = map[string]any{"type": "string"}
+	}
+	oversized, _ := json.Marshal(map[string]any{"type": "object", "properties": properties})
+	if err := validateInputSchemaDefinition(oversized); err == nil {
+		t.Fatal("input schema with more than 128 properties was accepted")
+	}
+}
+
+func TestNormalizeSkillBindingSnapshotsEnforcesPersistenceLimits(t *testing.T) {
+	bindings := make([]AdminSkillBindingDTO, maxSkillImportBindings+1)
+	if _, err := normalizeSkillBindingSnapshots(bindings); err == nil {
+		t.Fatal("oversized binding list was accepted")
+	}
+	tooLargeDefaults := json.RawMessage(`{"value":"` + strings.Repeat("d", maxSkillBindingDefaultsBytes) + `"}`)
+	if _, err := normalizeSkillBindingSnapshots([]AdminSkillBindingDTO{{Surface: "canvas", TargetType: "*", Defaults: tooLargeDefaults}}); err == nil {
+		t.Fatal("binding defaults larger than the live TEXT column were accepted")
 	}
 }
 
@@ -393,6 +604,10 @@ func TestValidateSkillManifestAcceptsRegisteredToolPipeline(t *testing.T) {
 	raw := json.RawMessage(`{"kind":"tool","steps":[{"key":"prepare","type":"text","handler":"skill_text_completion","outputType":"text","outputRole":"intermediate"},{"key":"render","type":"tool","handler":"render_docx","outputType":"file","outputRole":"final"}]}`)
 	if err := validateSkillManifest(raw, model.SkillKindTool, "file", []string{"text", "file"}); err != nil {
 		t.Fatal(err)
+	}
+	imageAnalysis := json.RawMessage(`{"kind":"tool","steps":[{"key":"inspect","type":"tool","handler":"analyze_image","outputType":"text","outputRole":"final"}]}`)
+	if err := validateSkillManifest(imageAnalysis, model.SkillKindTool, "text", []string{"text"}); err != nil {
+		t.Fatalf("runtime-supported image analysis was rejected: %v", err)
 	}
 }
 

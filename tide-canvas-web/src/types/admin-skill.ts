@@ -67,6 +67,30 @@ export interface AdminSkillFileInput {
   mimeType?: string;
 }
 
+export interface AdminSkillArchivePackageVO {
+  root: string;
+  primaryFilePath: string;
+  files: AdminSkillFileInput[];
+}
+
+export interface AdminSkillArchivePreviewVO {
+  packages: AdminSkillArchivePackageVO[];
+  /** Non-text files and text files outside a detected Skill root are never imported. */
+  ignoredFiles: number;
+}
+
+export interface AdminSkillImportValidationItemVO {
+  index: number;
+  title: string;
+  valid: boolean;
+  errors: string[];
+}
+
+export interface AdminSkillImportValidationVO {
+  valid: boolean;
+  items: AdminSkillImportValidationItemVO[];
+}
+
 export interface AdminSkillVersionCreateDTO {
   kind: SkillKind;
   entryPoints: SkillEntryPoint[];

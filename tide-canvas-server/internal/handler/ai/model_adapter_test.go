@@ -83,6 +83,16 @@ func TestMarketToAiModelPublishesDerivedHandlers(t *testing.T) {
 	}
 }
 
+func TestMarketModelSupportsHandlerMatchesRuntimeAdapter(t *testing.T) {
+	row := &model.MarketModel{Type: "video", Config: `{"paramsSchema":{"modes":["omni_ref"]}}`, Status: marketModelListed}
+	if MarketModelSupportsHandler(row, "text_to_video") {
+		t.Fatal("admin-visible capability helper accepted an unsupported runtime handler")
+	}
+	if !MarketModelSupportsHandler(row, "reference_to_video") {
+		t.Fatal("admin-visible capability helper rejected the runtime-supported handler")
+	}
+}
+
 func TestMarketToAiModelPreservesThreeDReferenceLimits(t *testing.T) {
 	got := marketToAiModel(&model.MarketModel{
 		Type:   "3d",

@@ -291,4 +291,7 @@ func TestExpandSkillTemplateFilesResolvesNestedPackageReferences(t *testing.T) {
 	if got != "Rules: cinematic light" {
 		t.Fatalf("unexpected expansion: %q", got)
 	}
+	if _, err := expandSkillTemplateFiles("MySkill/SKILL.md", "{{skill.flie:references/style.md}}", files); err == nil {
+		t.Fatal("runtime accepted a misspelled skill reference")
+	}
 }

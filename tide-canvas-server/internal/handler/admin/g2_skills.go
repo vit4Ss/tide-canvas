@@ -43,6 +43,8 @@ func RegisterSkills(g *gin.RouterGroup, d *app.Deps) {
 	s := g.Group("/skills")
 	s.GET("", h.list)
 	s.POST("", h.create)
+	s.POST("/archive-preview", h.previewSkillArchive)
+	s.POST("/validate-import", h.validateSkillImport)
 	s.POST("/import", h.importSkills)
 	s.PUT("/:id", h.update)
 	s.DELETE("/:id", h.remove)

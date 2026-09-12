@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FileText, FolderOpen, Loader2, Upload } from "lucide-react";
-import { AdminModal, Field, FormCard, FormGrid } from "@/components/admin";
+import { AdminAlert, AdminModal, Field, FormCard, FormGrid } from "@/components/admin";
 import { toast } from "@/components/shared/toast";
 import { adminSkillsApi } from "@/lib/admin-skills-api";
 import type {
   AdminSkillFileInput,
   AdminSkillImportPackage,
+  AdminSkillImportValidationVO,
 } from "@/types/admin-skill";
 import {
   SKILL_CATEGORIES,
@@ -25,7 +26,9 @@ import {
 } from "@/lib/admin-skill-defaults";
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
+const MAX_PRIMARY_FILE_BYTES = 1024 * 1024;
 const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
+const MAX_ARCHIVE_BYTES = 16 * 1024 * 1024;
 const MAX_PACKAGES = 50;
 
 interface PreparedPackage {
@@ -34,6 +37,11 @@ interface PreparedPackage {
   description: string;
   primaryFilePath: string;
   files: AdminSkillFileInput[];
+  ignoredFiles?: number;
+}
+
+function failedImportValidation(title: string, message: string): AdminSkillImportValidationVO {
+  return { valid: false, items: [{ index: -1, title, valid: false, errors: [message] }] };
 }
 
 function truncateRunes(value: string, length: number): string {
@@ -76,31 +84,52 @@ function inferDescription(content: string): string {
   return truncateRunes(lines.slice(1, 3).join(" "), 255);
 }
 
+async function readUTF8File(file: File, path: string): Promise<string> {
+  let bytes: ArrayBuffer;
+  try {
+    bytes = await file.arrayBuffer();
+  } catch {
+    throw new Error(`${path} 无法读取，请重新选择文件`);
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/^\uFEFF/, "");
+  } catch {
+    throw new Error(`${path} 不是有效的 UTF-8 文本`);
+  }
+}
+
 async function prepareFiles(selected: File[]): Promise<PreparedPackage[]> {
   if (!selected.length) return [];
   let total = 0;
   const loaded: Array<{ path: string; content: string; mimeType: string; relative: boolean }> = [];
+  const archives: File[] = [];
   for (const file of selected) {
     const relativePath = file.webkitRelativePath?.replaceAll("\\", "/") || "";
     const filePath = relativePath || file.name;
     const lower = filePath.toLowerCase();
+    if (!relativePath && (lower.endsWith(".zip") || lower.endsWith(".skill"))) {
+      if (file.size <= 0 || file.size > MAX_ARCHIVE_BYTES) {
+        throw new Error(`${file.name} 必须在 16 MB 以内`);
+      }
+      archives.push(file);
+      continue;
+    }
     if (!lower.endsWith(".md") && !lower.endsWith(".txt")) continue;
     if (file.size <= 0 || file.size > MAX_FILE_BYTES) {
       throw new Error(`${filePath} 超过 2 MB 单文件限制`);
     }
     total += file.size;
     if (total > MAX_TOTAL_BYTES) throw new Error("本次导入文件超过 8 MB");
+    const content = await readUTF8File(file, filePath);
     loaded.push({
       path: filePath,
-      content: await file.text(),
+      content,
       mimeType: lower.endsWith(".md")
         ? "text/markdown; charset=utf-8"
         : "text/plain; charset=utf-8",
       relative: !!relativePath,
     });
   }
-  if (!loaded.length) throw new Error("没有找到可导入的 .md 或 .txt 文件");
-
   // Files selected normally are independent skills. A directory selection is
   // one package rooted at its selected top-level folder and must have SKILL.md.
   const groups = new Map<string, typeof loaded>();
@@ -108,14 +137,13 @@ async function prepareFiles(selected: File[]): Promise<PreparedPackage[]> {
     const root = item.relative ? item.path.split("/")[0] : `file:${item.path}`;
     groups.set(root, [...(groups.get(root) ?? []), item]);
   }
-  if (groups.size > MAX_PACKAGES) {
-    throw new Error(`单次最多导入 ${MAX_PACKAGES} 个 Skill`);
-  }
-
-  return [...groups.entries()].map(([key, files]) => {
+  const prepared: PreparedPackage[] = [...groups.entries()].map(([key, files]) => {
     const primary = files.find((item) => /(^|\/)skill\.md$/i.test(item.path)) ??
       (files.length === 1 ? files[0] : undefined);
     if (!primary) throw new Error(`${key} 是多文件目录，但没有 SKILL.md`);
+    if (new Blob([primary.content]).size > MAX_PRIMARY_FILE_BYTES) {
+      throw new Error(`${primary.path} 超过 1 MB 主文件执行上限`);
+    }
     const fallback = primary.path.split("/").at(-1) || key.replace(/^file:/, "");
     return {
       key,
@@ -125,6 +153,38 @@ async function prepareFiles(selected: File[]): Promise<PreparedPackage[]> {
       files: files.map(({ path, content, mimeType }) => ({ path, content, mimeType })),
     };
   });
+
+  // ZIP/.skill archives are inspected server-side. No executable/config file
+  // is returned to the browser, and the final import still uses the existing
+  // immutable-version JSON contract below.
+  for (const archive of archives) {
+    const response = await adminSkillsApi.previewArchive(archive);
+    if (!response.success || !response.data) {
+      throw new Error(response.message || `${archive.name} 解析失败`);
+    }
+    const preview = response.data;
+    preview.packages.forEach((pkg, index) => {
+      const primary = pkg.files.find((file) => file.path.toLowerCase() === pkg.primaryFilePath.toLowerCase());
+      if (!primary) throw new Error(`${archive.name} 中的 ${pkg.root} 缺少主文件`);
+      prepared.push({
+        key: `archive:${archive.name}:${pkg.root}:${index}`,
+        title: inferTitle(primary.content, pkg.root || archive.name.replace(/\.(?:zip|skill)$/i, "")),
+        description: inferDescription(primary.content),
+        primaryFilePath: pkg.primaryFilePath,
+        files: pkg.files,
+        ignoredFiles: index === 0 ? preview.ignoredFiles : 0,
+      });
+    });
+  }
+
+  if (!prepared.length) throw new Error("没有找到可导入的 SKILL.md、.md 或 .txt 文件");
+  if (prepared.length > MAX_PACKAGES) throw new Error(`单次最多导入 ${MAX_PACKAGES} 个 Skill`);
+  const preparedBytes = prepared.reduce(
+    (sum, pkg) => sum + pkg.files.reduce((fileSum, file) => fileSum + new Blob([file.content]).size, 0),
+    0,
+  );
+  if (preparedBytes > MAX_TOTAL_BYTES) throw new Error("本次导入的 Skill 文本文件合计超过 8 MB");
+  return prepared;
 }
 
 export function SkillImportModal({
@@ -138,6 +198,8 @@ export function SkillImportModal({
 }) {
   const [packages, setPackages] = useState<PreparedPackage[]>([]);
   const [reading, setReading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [validation, setValidation] = useState<AdminSkillImportValidationVO | null>(null);
   const [kind, setKind] = useState<SkillKind>("agent");
   const [category, setCategory] = useState<string>(SKILL_CATEGORIES[0]);
   const [authorName, setAuthorName] = useState("官方");
@@ -156,6 +218,10 @@ export function SkillImportModal({
     ),
     [packages],
   );
+  const ignoredFiles = useMemo(
+    () => packages.reduce((sum, pkg) => sum + (pkg.ignoredFiles ?? 0), 0),
+    [packages],
+  );
 
   useEffect(() => () => {
     readSeqRef.current += 1;
@@ -164,12 +230,15 @@ export function SkillImportModal({
   const readSelection = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const selected = [...(event.target.files ?? [])];
     event.target.value = "";
-    if (!selected.length) return;
+    if (!selected.length || submitting) return;
     const readSeq = ++readSeqRef.current;
     setReading(true);
     try {
       const prepared = await prepareFiles(selected);
-      if (readSeq === readSeqRef.current) setPackages(prepared);
+      if (readSeq === readSeqRef.current) {
+        setPackages(prepared);
+        setValidation(null);
+      }
     } catch (error) {
       if (readSeq === readSeqRef.current) {
         toast.error(error instanceof Error ? error.message : "文件读取失败");
@@ -186,23 +255,12 @@ export function SkillImportModal({
     setEntryPoints((current) => current.includes(entry)
       ? current.filter((item) => item !== entry)
       : [...current, entry]);
+    setValidation(null);
   };
 
-  const save = async () => {
-    if (!packages.length) {
-      toast.error("请先选择 Skill 文件或目录");
-      return false;
-    }
-    if (!entryPoints.length) {
-      toast.error("请至少选择一个使用入口");
-      return false;
-    }
-    if (packages.some((pkg) => !pkg.title.trim())) {
-      toast.error("Skill 名称不能为空");
-      return false;
-    }
+  const buildImportPackages = (): AdminSkillImportPackage[] => {
     const normalizedEntryPoints = constrainAdminSkillEntryPoints(kind, entryPoints);
-    const skills: AdminSkillImportPackage[] = packages.map((pkg, index) => ({
+    return packages.map((pkg, index) => ({
       title: truncateRunes(pkg.title.trim(), 64),
       description: pkg.description.trim(),
       category,
@@ -223,15 +281,60 @@ export function SkillImportModal({
       files: pkg.files,
       publish: true,
     }));
-    const res = await adminSkillsApi.importSkills(skills);
-    if (!res.success) {
-      toast.error(res.message || "Skill 导入失败");
+  };
+
+  const save = async () => {
+    if (submitting) return false;
+    if (reading) {
+      toast.info("Skill 文件仍在解析，请稍候");
       return false;
     }
-    toast.success(`已导入 ${skills.length} 个 Skill，检查配置后再上架`);
-    await onImported();
-    setPackages([]);
-    return true;
+    if (!packages.length) {
+      toast.error("请先选择 Skill 文件或目录");
+      return false;
+    }
+    if (!entryPoints.length) {
+      toast.error("请至少选择一个使用入口");
+      return false;
+    }
+    if (packages.some((pkg) => !pkg.title.trim())) {
+      toast.error("Skill 名称不能为空");
+      return false;
+    }
+    const skills = buildImportPackages();
+    setSubmitting(true);
+    try {
+      const checked = await adminSkillsApi.validateImport(skills);
+      if (!checked.success || !checked.data) {
+        const message = checked.message || "Skill 导入校验失败";
+        setValidation(failedImportValidation("校验服务", message));
+        toast.error(message);
+        return false;
+      }
+      setValidation(checked.data);
+      if (!checked.data.valid) {
+        const firstFailure = checked.data.items.find((item) => !item.valid);
+        toast.error(firstFailure?.errors[0] || "Skill 包未通过导入校验");
+        return false;
+      }
+      const res = await adminSkillsApi.importSkills(skills);
+      if (!res.success) {
+        const message = res.message || "Skill 导入失败";
+        setValidation(failedImportValidation("导入写入", message));
+        toast.error(message);
+        return false;
+      }
+      toast.success(`已导入 ${skills.length} 个 Skill，检查配置后再上架`);
+      try {
+        await onImported();
+      } catch {
+        toast.info("Skill 已导入，但列表刷新失败，请手动刷新页面");
+      }
+      setPackages([]);
+      return true;
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -239,17 +342,22 @@ export function SkillImportModal({
       open={open}
       size="lg"
       title="导入 Skill 文件"
-      subtitle="每个独立 .md/.txt 会创建一个 Skill；目录包以 SKILL.md 为主文件。"
-      saveLabel="导入为下架技能"
-      footNote="导入后已有可追溯的已发布 v1，但目录卡片保持下架，便于先检查运行配置。"
+      subtitle="支持标准 ZIP/.skill 包、Skill 目录和独立 Markdown；压缩包可包含多个 SKILL.md。"
+      saveLabel="校验并导入"
+      footNote="系统会先校验文件、入口、步骤、输出和可用模型；全部通过后才会一次性导入。"
       onClose={onClose}
       onSave={save}
     >
-      <FormCard title="文件">
+      <fieldset
+        disabled={reading || submitting}
+        aria-busy={reading || submitting}
+        style={{ border: 0, margin: 0, minWidth: 0, padding: 0 }}
+      >
+        <FormCard title="文件">
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <button type="button" className="adm-btn ghost" disabled={reading} onClick={() => fileInputRef.current?.click()}>
             {reading ? <Loader2 className="adm-spin" aria-hidden size={14} /> : <Upload aria-hidden size={14} />}
-            选择多个文件
+            选择文件或 ZIP
           </button>
           <button type="button" className="adm-btn ghost" disabled={reading} onClick={() => folderInputRef.current?.click()}>
             <FolderOpen aria-hidden size={14} /> 选择 Skill 目录
@@ -257,7 +365,7 @@ export function SkillImportModal({
           <input
             ref={fileInputRef}
             type="file"
-            accept=".md,.txt,text/markdown,text/plain"
+            accept=".md,.txt,.zip,.skill,text/markdown,text/plain,application/zip"
             multiple
             style={{ display: "none" }}
             onChange={(event) => void readSelection(event)}
@@ -273,10 +381,20 @@ export function SkillImportModal({
           />
           <span className="muted" style={{ fontSize: 12 }}>
             {packages.length
-              ? `${packages.length} 个 Skill · ${(totalBytes / 1024).toFixed(1)} KB`
-              : "支持单文件 2 MB、单次 8 MB。"}
+              ? `${packages.length} 个 Skill · ${(totalBytes / 1024).toFixed(1)} KB${ignoredFiles ? ` · 已忽略 ${ignoredFiles} 个包外或非文本文件` : ""}`
+              : "ZIP 最大 16 MB；主文件/展开上下文 1 MB，参考文件 2 MB，文本合计 8 MB。"}
           </span>
         </div>
+        <p className="muted" style={{ margin: "8px 0 0", fontSize: 12, lineHeight: 1.6 }}>
+          包内 .md/.txt 会作为固定参考上下文随 SKILL.md 使用；脚本、YAML 和二进制文件不会导入或执行。
+        </p>
+        {ignoredFiles ? (
+          <div style={{ marginTop: 12 }}>
+            <AdminAlert tone="warning" title={`有 ${ignoredFiles} 个文件不会导入`}>
+              如果该 Skill 必须依赖这些脚本、配置或二进制资源，其对应能力在 FlowingLight 中不可用；纯文本指令和参考资料不受影响。
+            </AdminAlert>
+          </div>
+        ) : null}
         {packages.length ? (
           <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
             {packages.map((pkg, index) => (
@@ -294,20 +412,38 @@ export function SkillImportModal({
                   aria-label={`第 ${index + 1} 个 Skill 名称`}
                   value={pkg.title}
                   maxLength={64}
-                  onChange={(event) => setPackages((current) => current.map((item, itemIndex) =>
-                    itemIndex === index ? { ...item, title: event.target.value } : item,
-                  ))}
+                  onChange={(event) => {
+                    setPackages((current) => current.map((item, itemIndex) =>
+                      itemIndex === index ? { ...item, title: event.target.value } : item,
+                    ));
+                    setValidation(null);
+                  }}
                 />
                 <span className="muted" style={{ fontSize: 11 }}>
-                  {pkg.files.length} 个文件
+                  {pkg.files.length} 个文本文件
                 </span>
               </div>
             ))}
           </div>
         ) : null}
-      </FormCard>
+        </FormCard>
 
-      <FormCard title="导入策略">
+        <FormCard title="导入策略">
+        {validation && !validation.valid ? (
+          <div style={{ marginBottom: 14 }}>
+            <AdminAlert tone="error" title="导入校验未通过">
+              <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                {validation.items.filter((item) => !item.valid).map((item) => (
+                  <li key={`${item.index}:${item.title}`} style={{ marginTop: 4 }}>
+                    <span style={{ color: "var(--text)", fontWeight: 600 }}>{item.title}：</span>
+                    {item.errors.join("；")}
+                  </li>
+                ))}
+              </ul>
+              <div style={{ marginTop: 6 }}>未写入任何 Skill，请根据以上提示处理后重试。</div>
+            </AdminAlert>
+          </div>
+        ) : null}
         <FormGrid>
           <Field label="执行形态" required span={2} hint="预设技能单次生成；智能技能在画布执行；技能工具在创作台或 API 执行。">
             <select
@@ -316,6 +452,7 @@ export function SkillImportModal({
                 const nextKind = event.target.value as SkillKind;
                 setKind(nextKind);
                 setEntryPoints(defaultAdminSkillEntryPoints(nextKind));
+                setValidation(null);
               }}
             >
               <option value="preset">预设技能</option>
@@ -324,12 +461,18 @@ export function SkillImportModal({
             </select>
           </Field>
           <Field label="分类" span={2}>
-            <select value={category} onChange={(event) => setCategory(event.target.value)}>
+            <select value={category} onChange={(event) => {
+              setCategory(event.target.value);
+              setValidation(null);
+            }}>
               {SKILL_CATEGORIES.map((item) => <option key={item} value={item}>{item}</option>)}
             </select>
           </Field>
           <Field label="作者署名" span={2}>
-            <input value={authorName} maxLength={64} onChange={(event) => setAuthorName(event.target.value)} />
+            <input value={authorName} maxLength={64} onChange={(event) => {
+              setAuthorName(event.target.value);
+              setValidation(null);
+            }} />
           </Field>
           <Field label="主输出" span={2} hint="批量导入先按文本产物落库，可在版本配置中改成多模态。">
             <input value="文本" readOnly />
@@ -350,7 +493,8 @@ export function SkillImportModal({
             </div>
           </Field>
         </FormGrid>
-      </FormCard>
+        </FormCard>
+      </fieldset>
     </AdminModal>
   );
 }

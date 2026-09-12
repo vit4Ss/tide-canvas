@@ -153,6 +153,7 @@ export default function AdminSkillsPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [form, setForm] = useState<SkillForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [editorError, setEditorError] = useState("");
   const [coverUploading, setCoverUploading] = useState(false);
   const coverInputRef = useRef<HTMLInputElement>(null);
   // An upload may finish after the editor was closed or reopened for another
@@ -229,6 +230,7 @@ export default function AdminSkillsPage() {
     initialFormFingerprintRef.current = formFingerprint(nextForm);
     setCoverUploading(false);
     setCoverPreviewFailed(false);
+    setEditorError("");
     setContentAccess("editable");
     setEditing(null);
     setForm(nextForm);
@@ -262,6 +264,7 @@ export default function AdminSkillsPage() {
     initialFormFingerprintRef.current = formFingerprint(nextForm);
     setCoverUploading(false);
     setCoverPreviewFailed(false);
+    setEditorError("");
     setContentAccess(r.kind === "preset" && r.currentVersionId ? "checking" : r.kind === "preset" ? "editable" : "locked");
     setEditing(r);
     setForm(nextForm);
@@ -288,6 +291,7 @@ export default function AdminSkillsPage() {
     coverUploadSeqRef.current += 1;
     executionAuditSeqRef.current += 1;
     setCoverUploading(false);
+    setEditorError("");
     setModalOpen(false);
   };
 
@@ -457,6 +461,7 @@ export default function AdminSkillsPage() {
       toast.info("封面仍在上传，请稍候再保存");
       return false;
     }
+    setEditorError("");
     const prepared = buildDTO();
     if (!prepared) return false;
     setSaving(true);
@@ -464,7 +469,9 @@ export default function AdminSkillsPage() {
       if (editing) {
         const res = await adminSkillsApi.update(editing.id, prepared.dto);
         if (!res.success) {
-          toast.error(res.message || "保存失败");
+          const message = res.message || "保存失败";
+          setEditorError(message);
+          toast.error(message);
           return false;
         }
       } else {
@@ -494,9 +501,25 @@ export default function AdminSkillsPage() {
           bindings: defaultAdminSkillBindings(entryPoints, primaryOutputType),
           publish: true,
         };
+        const checked = await adminSkillsApi.validateImport([skillPackage]);
+        if (!checked.success || !checked.data) {
+          const message = checked.message || "创建前校验失败";
+          setEditorError(message);
+          toast.error(message);
+          return false;
+        }
+        if (!checked.data.valid) {
+          const reason = checked.data.items.find((item) => !item.valid)?.errors[0];
+          const message = reason || "当前 Skill 配置无法正常导入使用";
+          setEditorError(message);
+          toast.error(message);
+          return false;
+        }
         const res = await adminSkillsApi.importSkills([skillPackage]);
         if (!res.success) {
-          toast.error(res.message || "创建 Skill 失败");
+          const message = res.message || "创建 Skill 失败";
+          setEditorError(message);
+          toast.error(message);
           return false;
         }
       }
@@ -505,6 +528,7 @@ export default function AdminSkillsPage() {
       skipCloseConfirmationRef.current = true;
       return true;
     } catch {
+      setEditorError("保存失败，请稍后重试");
       toast.error("保存失败，请稍后重试");
       return false;
     } finally {
@@ -738,7 +762,20 @@ export default function AdminSkillsPage() {
         onClose={closeEditor}
         onSave={save}
       >
-        {!editing ? (
+        {editorError ? (
+          <AdminAlert tone="error" title={editing ? "保存失败" : "创建前校验未通过"}>
+            {editorError}
+          </AdminAlert>
+        ) : null}
+        <fieldset
+          disabled={saving}
+          aria-busy={saving}
+          onChangeCapture={() => {
+            if (editorError) setEditorError("");
+          }}
+          style={{ border: 0, margin: 0, minWidth: 0, padding: 0, width: "100%" }}
+        >
+          {!editing ? (
           <FormCard title="执行形态">
             <div className="adm-skill-kind-grid" role="radiogroup" aria-label="技能执行形态">
               {KIND_OPTIONS.map((option) => {
@@ -1031,7 +1068,8 @@ export default function AdminSkillsPage() {
               </Field>
             </FormGrid>
           </div>
-        </details>
+          </details>
+        </fieldset>
       </AdminModal>
 
       <SkillVersionModal

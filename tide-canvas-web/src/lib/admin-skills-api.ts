@@ -12,7 +12,9 @@ import {
 import type {
   AdminSkillBindingDTO,
   AdminSkillBindingVO,
+  AdminSkillArchivePreviewVO,
   AdminSkillImportPackage,
+  AdminSkillImportValidationVO,
   AdminSkillVO,
   AdminSkillVersionCreateDTO,
   AdminSkillVersionVO,
@@ -83,6 +85,13 @@ export const adminSkillsApi = {
     await http.post<AdminSkillVersionVO[]>("/api/admin/skills/import", { skills }),
     (versions) => versions.map(normalizeAdminVersion),
   ),
+  validateImport: (skills: AdminSkillImportPackage[]) =>
+    http.post<AdminSkillImportValidationVO>("/api/admin/skills/validate-import", { skills }),
+  previewArchive: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return http.upload<AdminSkillArchivePreviewVO>("/api/admin/skills/archive-preview", form);
+  },
   listBindings: (skillId: string) =>
     http.get<AdminSkillBindingVO[]>(`/api/admin/skills/${skillId}/bindings`),
   replaceBindings: (skillId: string, bindings: AdminSkillBindingDTO[]) =>

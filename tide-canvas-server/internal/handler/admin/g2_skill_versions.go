@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"path"
 	"reflect"
@@ -18,6 +19,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	aihandler "tidecanvas/internal/handler/ai"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
@@ -25,10 +27,19 @@ import (
 )
 
 const (
-	maxSkillImportFileBytes       = 2 << 20
-	maxSkillImportTotalBytes      = 8 << 20
-	maxSkillImportBodyBytes       = 16 << 20
+	maxSkillImportFileBytes  = 2 << 20
+	maxSkillImportTotalBytes = 8 << 20
+	// JSON escaping can expand valid 8 MiB Markdown significantly (for example
+	// newlines and control characters). The decoded file limits below remain the
+	// authoritative payload guard; this outer cap only leaves room for encoding.
+	maxSkillImportBodyBytes       = 64 << 20
 	maxSkillExecutablePromptBytes = 1 << 20
+	maxSkillImportFiles           = 128
+	maxSkillImportBindings        = 64
+	maxSkillDefaultParamsBytes    = 60 << 10
+	maxSkillBindingDefaultsBytes  = 60 << 10
+	maxSkillModelIDRunes          = 128
+	maxSkillMimeTypeRunes         = 128
 )
 
 type AdminSkillFileDTO struct {
@@ -51,7 +62,7 @@ type AdminSkillVersionCreateDTO struct {
 	ModelID           string                 `json:"modelId"`
 	DefaultParams     json.RawMessage        `json:"defaultParams"`
 	PrimaryFilePath   string                 `json:"primaryFilePath"`
-	Files             []AdminSkillFileDTO    `json:"files" binding:"max=128,dive"`
+	Files             []AdminSkillFileDTO    `json:"files"`
 	Publish           bool                   `json:"publish"`
 	Bindings          []AdminSkillBindingDTO `json:"bindings"`
 }
@@ -91,6 +102,24 @@ type AdminSkillPackageDTO struct {
 
 type AdminSkillImportDTO struct {
 	Skills []AdminSkillPackageDTO `json:"skills"`
+}
+
+type AdminSkillImportValidationItemVO struct {
+	Index  int      `json:"index"`
+	Title  string   `json:"title"`
+	Valid  bool     `json:"valid"`
+	Errors []string `json:"errors"`
+}
+
+type AdminSkillImportValidationVO struct {
+	Valid bool                               `json:"valid"`
+	Items []AdminSkillImportValidationItemVO `json:"items"`
+}
+
+type preparedSkillImport struct {
+	Skill   model.Skill
+	Version *model.SkillVersion
+	Files   []model.SkillFile
 }
 
 func validateAdminSkillPackageMetadata(pkg AdminSkillPackageDTO) error {
@@ -197,6 +226,12 @@ func (h *skillsHandler) createVersion(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, err.Error())
 		return
 	}
+	if dto.Publish {
+		if err := validateConfiguredSkillModels(h.db, version); err != nil {
+			response.Fail(c, response.CodeBadRequest, describeSkillImportError(err))
+			return
+		}
+	}
 	if err := h.db.Transaction(func(tx *gorm.DB) error {
 		return persistSkillVersionTx(tx, &skill, version, files, dto.Publish)
 	}); err != nil {
@@ -211,65 +246,399 @@ func (h *skillsHandler) createVersion(c *gin.Context) {
 func (h *skillsHandler) importSkills(c *gin.Context) {
 	var dto AdminSkillImportDTO
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxSkillImportBodyBytes)
-	if err := c.ShouldBindJSON(&dto); err != nil {
-		response.Fail(c, response.CodeBadRequest, "invalid skill import request")
+	if err := decodeAdminSkillImportRequest(c.Request.Body, &dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, describeSkillImportRequestError(err, "导入"))
 		return
 	}
 	if len(dto.Skills) == 0 || len(dto.Skills) > 50 {
-		response.Fail(c, response.CodeBadRequest, "skills must contain 1 to 50 packages")
+		response.Fail(c, response.CodeBadRequest, "一次必须导入 1 至 50 个 Skill")
 		return
 	}
 	actor := middleware.CurrentUserID(c)
+	validation, prepared := validateAdminSkillImports(h.db, dto.Skills, actor)
+	if !validation.Valid {
+		response.Fail(c, response.CodeBadRequest, formatSkillImportValidationFailure(validation))
+		return
+	}
 	created := make([]AdminSkillVersionVO, 0, len(dto.Skills))
 	err := h.db.Transaction(func(tx *gorm.DB) error {
-		for index := range dto.Skills {
-			pkg := dto.Skills[index]
-			if err := validateAdminSkillPackageMetadata(pkg); err != nil {
-				return fmt.Errorf("skills[%d].%w", index, err)
-			}
-			primary := strings.ToLower(strings.TrimSpace(pkg.PrimaryOutputType))
-			if primary == "" && len(pkg.OutputTypes) > 0 {
-				primary = strings.ToLower(strings.TrimSpace(pkg.OutputTypes[0]))
-			}
-			if primary == "" {
-				primary = "text"
-			}
-			status := 1
-			if pkg.Status != nil {
-				status = *pkg.Status
-			}
-			skill := model.Skill{
-				Title: strings.TrimSpace(pkg.Title), Description: strings.TrimSpace(pkg.Description),
-				UsageScenario: strings.TrimSpace(pkg.UsageScenario), HowTo: strings.TrimSpace(pkg.HowTo),
-				OutputDescription: strings.TrimSpace(pkg.OutputDescription),
-				CoverURL:          strings.TrimSpace(pkg.CoverURL), Category: strings.TrimSpace(pkg.Category),
-				OutputType: primary, PromptTemplate: pkg.PromptTemplate, ModelID: strings.TrimSpace(pkg.ModelID),
-				DefaultParams: string(pkg.DefaultParams), AuthorName: strings.TrimSpace(pkg.AuthorName),
-				Status: status, SortOrder: pkg.SortOrder, Kind: strings.ToLower(strings.TrimSpace(pkg.Kind)),
-			}
-			if skill.Kind == "" {
-				skill.Kind = model.SkillKindPreset
-			}
+		for index := range prepared {
+			plan := prepared[index]
+			skill := plan.Skill
 			if err := tx.Create(&skill).Error; err != nil {
 				return err
 			}
-			version, files, err := buildSkillVersion(tx, &skill, pkg.AdminSkillVersionCreateDTO, actor)
-			if err != nil {
-				return fmt.Errorf("skills[%d]: %w", index, err)
-			}
+			version := *plan.Version
+			version.SkillID = skill.ID
+			files := append([]model.SkillFile(nil), plan.Files...)
 			// Imported packages are immediately runnable; subsequent edits create drafts.
-			if err := persistSkillVersionTx(tx, &skill, version, files, true); err != nil {
+			if err := persistSkillVersionTx(tx, &skill, &version, files, true); err != nil {
 				return err
 			}
-			created = append(created, AdminSkillVersionVO{SkillVersion: *version, Files: files})
+			created = append(created, AdminSkillVersionVO{SkillVersion: version, Files: files})
 		}
 		return nil
 	})
 	if err != nil {
-		response.Fail(c, response.CodeBadRequest, err.Error())
+		response.Fail(c, response.CodeServerError, "Skill 已通过校验，但写入失败，请稍后重试")
 		return
 	}
 	response.OK(c, created)
+}
+
+// validateSkillImport runs the exact same non-mutating checks used by the final
+// import. Returning every package result lets the admin fix all malformed
+// packages in one pass instead of discovering one error after another.
+func (h *skillsHandler) validateSkillImport(c *gin.Context) {
+	var dto AdminSkillImportDTO
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxSkillImportBodyBytes)
+	if err := decodeAdminSkillImportRequest(c.Request.Body, &dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, describeSkillImportRequestError(err, "校验"))
+		return
+	}
+	if len(dto.Skills) == 0 || len(dto.Skills) > 50 {
+		response.Fail(c, response.CodeBadRequest, "一次必须校验 1 至 50 个 Skill")
+		return
+	}
+	validation, _ := validateAdminSkillImports(h.db, dto.Skills, middleware.CurrentUserID(c))
+	response.OK(c, validation)
+}
+
+func describeSkillImportRequestError(err error, action string) string {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return fmt.Sprintf("Skill %s数据超过 64 MB 请求上限", action)
+	}
+	var typeError *json.UnmarshalTypeError
+	if errors.As(err, &typeError) {
+		field := strings.TrimSpace(typeError.Field)
+		if field == "" {
+			field = "请求字段"
+		}
+		return fmt.Sprintf("Skill %s字段 %s 的数据类型不正确", action, field)
+	}
+	if strings.HasPrefix(err.Error(), "json: unknown field ") {
+		return fmt.Sprintf("Skill %s包含未知字段 %s，请检查字段拼写", action, strings.TrimPrefix(err.Error(), "json: unknown field "))
+	}
+	return fmt.Sprintf("Skill %s请求格式无效，请检查字段类型和文件数量", action)
+}
+
+func decodeAdminSkillImportRequest(reader io.Reader, dto *AdminSkillImportDTO) error {
+	decoder := json.NewDecoder(reader)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dto); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("request contains multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func validateAdminSkillImports(db *gorm.DB, packages []AdminSkillPackageDTO, actor idgen.ID) (AdminSkillImportValidationVO, []preparedSkillImport) {
+	result := AdminSkillImportValidationVO{Valid: true, Items: make([]AdminSkillImportValidationItemVO, 0, len(packages))}
+	prepared := make([]preparedSkillImport, 0, len(packages))
+	for index := range packages {
+		pkg := packages[index]
+		title := strings.TrimSpace(pkg.Title)
+		if title == "" {
+			title = fmt.Sprintf("第 %d 个 Skill", index+1)
+		}
+		item := AdminSkillImportValidationItemVO{Index: index, Title: title, Valid: false, Errors: []string{}}
+		if err := validateAdminSkillPackageMetadata(pkg); err != nil {
+			item.Errors = append(item.Errors, describeSkillImportError(err))
+		} else {
+			skill := skillFromImportPackage(pkg)
+			version, files, err := buildSkillVersion(db, &skill, pkg.AdminSkillVersionCreateDTO, actor)
+			if err == nil {
+				err = validateConfiguredSkillModels(db, version)
+			}
+			if err != nil {
+				item.Errors = append(item.Errors, describeSkillImportError(err))
+			} else {
+				item.Valid = true
+				prepared = append(prepared, preparedSkillImport{Skill: skill, Version: version, Files: files})
+			}
+		}
+		if !item.Valid {
+			result.Valid = false
+		}
+		result.Items = append(result.Items, item)
+	}
+	if !result.Valid {
+		// A failed batch is never partially importable. Discard prepared entries so
+		// callers cannot accidentally persist the valid subset.
+		prepared = nil
+	}
+	return result, prepared
+}
+
+func skillFromImportPackage(pkg AdminSkillPackageDTO) model.Skill {
+	primary := strings.ToLower(strings.TrimSpace(pkg.PrimaryOutputType))
+	if primary == "" && len(pkg.OutputTypes) > 0 {
+		primary = strings.ToLower(strings.TrimSpace(pkg.OutputTypes[0]))
+	}
+	if primary == "" {
+		primary = "text"
+	}
+	status := 1
+	if pkg.Status != nil {
+		status = *pkg.Status
+	}
+	kind := strings.ToLower(strings.TrimSpace(pkg.Kind))
+	if kind == "" {
+		kind = model.SkillKindPreset
+	}
+	return model.Skill{
+		Title: strings.TrimSpace(pkg.Title), Description: strings.TrimSpace(pkg.Description),
+		UsageScenario: strings.TrimSpace(pkg.UsageScenario), HowTo: strings.TrimSpace(pkg.HowTo),
+		OutputDescription: strings.TrimSpace(pkg.OutputDescription),
+		CoverURL:          strings.TrimSpace(pkg.CoverURL), Category: strings.TrimSpace(pkg.Category),
+		OutputType: primary, PromptTemplate: pkg.PromptTemplate, ModelID: strings.TrimSpace(pkg.ModelID),
+		DefaultParams: string(pkg.DefaultParams), AuthorName: strings.TrimSpace(pkg.AuthorName),
+		Status: status, SortOrder: pkg.SortOrder, Kind: kind,
+	}
+}
+
+func validateConfiguredSkillModels(db *gorm.DB, version *model.SkillVersion) error {
+	if db == nil || version == nil {
+		return nil
+	}
+	checked := map[string]bool{}
+	check := func(label, candidate, typeName, handler string, analysis bool) error {
+		candidate = strings.TrimSpace(candidate)
+		typeName = skillImportModelType(typeName)
+		checkKey := strings.Join([]string{typeName, candidate, handler, fmt.Sprint(analysis)}, "\x00")
+		if checked[checkKey] {
+			return nil
+		}
+		var rows []model.MarketModel
+		query := db.Model(&model.MarketModel{}).
+			Select("id", "model_key", "config", "type", "status", "sort_order").
+			Where("status = 1 AND type = ?", typeName)
+		if candidate == "" {
+			query = query.Where("model_key <> ''")
+		} else if id, err := idgen.Parse(candidate); err == nil {
+			query = query.Where("model_key = ? OR id = ?", candidate, id)
+		} else {
+			query = query.Where("model_key = ?", candidate)
+		}
+		if err := query.Order("sort_order ASC, id ASC").Find(&rows).Error; err != nil {
+			return errors.New("校验模型配置时数据库不可用")
+		}
+		if len(rows) == 0 {
+			if candidate == "" {
+				return fmt.Errorf("%s没有可用的 %s 类型上架模型", label, typeName)
+			}
+			return fmt.Errorf("%s配置的模型 %q 不存在、未上架或不是 %s 类型", label, candidate, typeName)
+		}
+		if analysis {
+			for i := range rows {
+				if skillImportAnalysisModelSupports(handler, rows[i]) {
+					checked[checkKey] = true
+					return nil
+				}
+			}
+			if candidate == "" {
+				return fmt.Errorf("%s没有支持媒体文件输入的上架文本模型", label)
+			}
+			return fmt.Errorf("%s配置的模型 %q 不支持该媒体分析步骤所需的文件输入", label, candidate)
+		}
+		if handler != "" {
+			for i := range rows {
+				if aihandler.MarketModelSupportsHandler(&rows[i], handler) {
+					checked[checkKey] = true
+					return nil
+				}
+			}
+			if candidate == "" {
+				return fmt.Errorf("%s没有支持处理器 %s 的上架模型", label, handler)
+			}
+			return fmt.Errorf("%s配置的模型 %q 不支持处理器 %s", label, candidate, handler)
+		}
+		checked[checkKey] = true
+		return nil
+	}
+	var manifest struct {
+		Steps []struct {
+			Key        string `json:"key"`
+			Type       string `json:"type"`
+			Handler    string `json:"handler"`
+			OutputType string `json:"outputType"`
+			ModelID    string `json:"modelId"`
+		} `json:"steps"`
+	}
+	if json.Unmarshal([]byte(version.ManifestJSON), &manifest) != nil {
+		return errors.New("manifest 不是有效的 JSON 对象")
+	}
+	primaryType := strings.ToLower(strings.TrimSpace(version.PrimaryOutputType))
+	versionModelType := skillImportModelType(primaryType)
+	if len(manifest.Steps) == 0 {
+		if version.Kind == model.SkillKindAgent && primaryType != "text" && primaryType != "file" {
+			if err := check("技能的提示词规划阶段", "", "text", "skill_text_completion", false); err != nil {
+				return err
+			}
+		}
+		handler := ""
+		if primaryType == "text" || primaryType == "file" {
+			handler = "skill_text_completion"
+		}
+		return check("技能", version.ModelID, primaryType, handler, false)
+	}
+	for index, step := range manifest.Steps {
+		typeName := strings.ToLower(strings.TrimSpace(step.OutputType))
+		handler := strings.TrimSpace(step.Handler)
+		analysis := false
+		switch strings.ToLower(strings.TrimSpace(step.Type)) {
+		case "text":
+			typeName = "text"
+			if handler == "" {
+				handler = "skill_text_completion"
+			}
+		case "generate":
+		case "tool":
+			if !strings.HasPrefix(strings.ToLower(handler), "analyze_") {
+				continue
+			}
+			typeName = "text"
+			analysis = true
+		default:
+			continue
+		}
+		label := fmt.Sprintf("第 %d 步", index+1)
+		if strings.TrimSpace(step.Key) != "" {
+			label += fmt.Sprintf("（%s）", strings.TrimSpace(step.Key))
+		}
+		configured := strings.TrimSpace(step.ModelID)
+		if configured == "" && typeName == versionModelType {
+			configured = version.ModelID
+		}
+		if err := check(label, configured, typeName, handler, analysis); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func skillImportModelType(outputType string) string {
+	typeName := strings.ToLower(strings.TrimSpace(outputType))
+	if typeName == "file" {
+		return "text"
+	}
+	return typeName
+}
+
+func skillImportAnalysisModelSupports(handler string, row model.MarketModel) bool {
+	if handler == "analyze_webpage" || handler == "analyze_account" {
+		return true
+	}
+	var config struct {
+		FileUpload    *bool    `json:"fileUpload"`
+		UploadFormats []string `json:"uploadFormats"`
+		ParamsSchema  struct {
+			FileUpload bool `json:"file_upload"`
+		} `json:"paramsSchema"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(row.Config)), &config) != nil {
+		return false
+	}
+	fileUpload := config.ParamsSchema.FileUpload
+	if config.FileUpload != nil {
+		fileUpload = *config.FileUpload
+	}
+	if !fileUpload {
+		return false
+	}
+	if (handler != "analyze_video" && handler != "analyze_image") || len(config.UploadFormats) == 0 {
+		return true
+	}
+	// Video analysis sends extracted keyframes to the text model, so image input
+	// support is the relevant capability (matching skillrun.analysisModelSupports).
+	for _, format := range config.UploadFormats {
+		switch strings.TrimPrefix(strings.ToLower(strings.TrimSpace(format)), ".") {
+		case "jpg", "jpeg", "png", "webp", "gif":
+			return true
+		}
+	}
+	return false
+}
+
+func describeSkillImportError(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+	exact := map[string]string{
+		"title is required and must not exceed 64 characters":                          "名称不能为空，且不能超过 64 个字符",
+		"status must be 0 or 1":                                                        "上架状态只能是 0（下架）或 1（上架）",
+		"kind must be preset, agent or tool":                                           "执行形态只能是 preset、agent 或 tool",
+		"agent entryPoints must contain canvas only":                                   "智能技能只能绑定画布入口",
+		"tool primaryOutputType must be text or file":                                  "技能工具的主输出只能是文本或文件",
+		"tool skills must contain at least one registered tool step":                   "技能工具必须包含至少一个系统已注册的工具步骤",
+		"multi-step skills must declare a final output or an approval-finalized draft": "多步骤技能必须声明最终输出，或由确认步骤提升上一份草稿",
+		"final outputs must include primaryOutputType":                                 "最终输出中必须包含主输出类型",
+		"promptTemplate or files is required":                                          "提示词模板和 Skill 文件不能同时为空",
+		"primary skill file is missing":                                                "找不到主 Skill 文件",
+		"primary skill file cannot be blank":                                           "主 Skill 文件内容不能为空",
+		"folder import requires a SKILL.md primary file":                               "多文件 Skill 包必须包含 SKILL.md 主文件",
+		"primaryFilePath is not present in files":                                      "primaryFilePath 指向的文件不在导入包中",
+		"skill file package exceeds size limit":                                        "Skill 文件为空，或超过单文件 2 MB/合计 8 MB 限制",
+	}
+	if translated, ok := exact[message]; ok {
+		return translated
+	}
+	if strings.Contains(message, "expanded prompt exceeds 1 MiB") {
+		return "Skill 及其参考文件展开后超过 1 MiB 执行上限，请精简参考资料"
+	}
+	if strings.HasPrefix(message, "duplicate skill file path") {
+		return "Skill 包含同名文件（路径大小写也不能重复）：" + message
+	}
+	if strings.HasPrefix(message, "unsupported skill file") {
+		return "Skill 包含不支持的文件类型，仅允许 .md 和 .txt：" + message
+	}
+	if strings.Contains(message, "entryPoints") {
+		return "使用入口配置不兼容：" + message
+	}
+	if strings.Contains(message, "primaryOutputType") || strings.Contains(message, "outputTypes") {
+		return "输出类型配置不兼容：" + message
+	}
+	if strings.Contains(message, "must not exceed") {
+		return "字段长度超过允许范围：" + message
+	}
+	if strings.Contains(message, "manifest.steps[") {
+		return "执行步骤配置不兼容：" + message
+	}
+	if strings.Contains(message, "inputSchema") {
+		return "输入表单配置不兼容：" + message
+	}
+	if strings.Contains(message, "binding") {
+		return "入口绑定配置不兼容：" + message
+	}
+	if strings.Contains(message, "skill file") || strings.Contains(message, "Skill file") {
+		return "Skill 文件配置不兼容：" + message
+	}
+	return "技能配置不兼容：" + message
+}
+
+func formatSkillImportValidationFailure(validation AdminSkillImportValidationVO) string {
+	parts := make([]string, 0, 3)
+	for _, item := range validation.Items {
+		if item.Valid || len(item.Errors) == 0 {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("「%s」：%s", item.Title, item.Errors[0]))
+		if len(parts) == 3 {
+			break
+		}
+	}
+	if len(parts) == 0 {
+		return "Skill 导入校验未通过"
+	}
+	return "Skill 导入校验未通过：" + strings.Join(parts, "；")
 }
 
 func (h *skillsHandler) publishVersion(c *gin.Context) {
@@ -305,8 +674,12 @@ func (h *skillsHandler) publishVersion(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, err.Error())
 		return
 	}
-	if err := validateSkillFileReferences(version.ManifestJSON, files, version.PrimaryFilePath); err != nil {
+	if err := validateSkillFileReferences(version.ManifestJSON, version.PromptTemplate, files, version.PrimaryFilePath); err != nil {
 		response.Fail(c, response.CodeBadRequest, err.Error())
+		return
+	}
+	if err := validateConfiguredSkillModels(h.db, &version); err != nil {
+		response.Fail(c, response.CodeBadRequest, describeSkillImportError(err))
 		return
 	}
 	if err := publishSkillVersion(h.db, &skill, &version); err != nil {
@@ -466,12 +839,7 @@ func buildSkillVersion(_ *gorm.DB, skill *model.Skill, dto AdminSkillVersionCrea
 	}
 	prompt := dto.PromptTemplate
 	if prompt == "" && len(files) > 0 {
-		for i := range files {
-			if files[i].Path == primary {
-				prompt = files[i].Content
-				break
-			}
-		}
+		prompt = defaultSkillPackagePrompt(primary, files)
 	}
 	if err := validateSkillExecutablePromptSize(prompt, primary, files); err != nil {
 		return nil, nil, err
@@ -489,7 +857,7 @@ func buildSkillVersion(_ *gorm.DB, skill *model.Skill, dto AdminSkillVersionCrea
 	} else if err := validateSkillManifest(manifest, kind, primaryOutput, outputTypes); err != nil {
 		return nil, nil, err
 	}
-	if err := validateSkillFileReferences(string(manifest), files, primary); err != nil {
+	if err := validateSkillFileReferences(string(manifest), prompt, files, primary); err != nil {
 		return nil, nil, err
 	}
 	inputSchema := dto.InputSchema
@@ -507,11 +875,18 @@ func buildSkillVersion(_ *gorm.DB, skill *model.Skill, dto AdminSkillVersionCrea
 	} else if err := requireJSONObject("defaultParams", defaults); err != nil {
 		return nil, nil, err
 	}
+	if len(defaults) > maxSkillDefaultParamsBytes {
+		return nil, nil, errors.New("defaultParams exceeds 60 KiB")
+	}
+	modelID := strings.TrimSpace(dto.ModelID)
+	if len([]rune(modelID)) > maxSkillModelIDRunes {
+		return nil, nil, errors.New("modelId must not exceed 128 characters")
+	}
 	version := &model.SkillVersion{
 		SkillID: skill.ID, Kind: kind, Status: model.SkillVersionDraft,
 		EntryPoints: model.JSONString(entryPoints), PrimaryOutputType: primaryOutput,
 		OutputTypes: model.JSONString(outputTypes), InputSchema: string(inputSchema), ManifestJSON: string(manifest),
-		PromptTemplate: prompt, ModelID: strings.TrimSpace(dto.ModelID), DefaultParams: string(defaults),
+		PromptTemplate: prompt, ModelID: modelID, DefaultParams: string(defaults),
 		PrimaryFilePath: primary, CreatedBy: actor,
 	}
 	if dto.Bindings != nil {
@@ -529,6 +904,34 @@ func buildSkillVersion(_ *gorm.DB, skill *model.Skill, dto AdminSkillVersionCrea
 	}
 	version.ContentHash = skillVersionContentHash(version, files)
 	return version, files, nil
+}
+
+// defaultSkillPackagePrompt turns every imported supporting text file into an
+// explicit, pinned reference. The runtime still expands only declared
+// {{skill.*}} tokens, while standard multi-file Skill packages no longer lose
+// their references/*.md instructions after a successful import.
+func defaultSkillPackagePrompt(primary string, files []model.SkillFile) string {
+	primaryContent := ""
+	for i := range files {
+		if files[i].Path == primary {
+			primaryContent = files[i].Content
+			break
+		}
+	}
+	if len(files) <= 1 {
+		return primaryContent
+	}
+	if skillFileReferencePattern.MatchString(primaryContent) {
+		return "{{skill.primary}}"
+	}
+	parts := []string{"{{skill.primary}}"}
+	for i := range files {
+		if files[i].Path == primary {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("\n\n---\nSkill 参考文件：%s\n\n{{skill.file:%s}}", files[i].Path, files[i].Path))
+	}
+	return strings.Join(parts, "")
 }
 
 func validateSkillExecutablePromptSize(prompt, primaryPath string, files []model.SkillFile) error {
@@ -776,6 +1179,9 @@ func publishSkillVersionTx(tx *gorm.DB, skill *model.Skill, version *model.Skill
 	if err := validateSkillKindContract(version); err != nil {
 		return err
 	}
+	if err := validateConfiguredSkillModels(tx, version); err != nil {
+		return err
+	}
 	var locked model.Skill
 	// Every publish path takes the same parent lock used by legacy update and
 	// version creation. The current-version guard therefore cannot race a direct
@@ -848,6 +1254,9 @@ func replaceSkillBindingsTx(tx *gorm.DB, skillID idgen.ID, input []AdminSkillBin
 		}
 		return nil
 	}
+	if len(input) > maxSkillImportBindings {
+		return fmt.Errorf("bindings may contain at most %d items", maxSkillImportBindings)
+	}
 	validSurfaces := map[string]bool{"chat": true, "studio": true, "canvas": true, "api": true}
 	normalized := make([]model.SkillSurfaceBinding, 0, len(input))
 	seen := map[string]bool{}
@@ -873,6 +1282,9 @@ func replaceSkillBindingsTx(tx *gorm.DB, skillID idgen.ID, input []AdminSkillBin
 			if err := requireJSONObject("bindings.defaults", item.Defaults); err != nil {
 				return err
 			}
+			if len(item.Defaults) > maxSkillBindingDefaultsBytes {
+				return errors.New("bindings.defaults exceeds 60 KiB")
+			}
 			defaults = string(item.Defaults)
 		}
 		enabled := true
@@ -896,6 +1308,9 @@ func replaceSkillBindingsTx(tx *gorm.DB, skillID idgen.ID, input []AdminSkillBin
 }
 
 func normalizeSkillBindingSnapshots(input []AdminSkillBindingDTO) ([]skillBindingSnapshot, error) {
+	if len(input) > maxSkillImportBindings {
+		return nil, fmt.Errorf("bindings may contain at most %d items", maxSkillImportBindings)
+	}
 	validSurfaces := map[string]bool{"chat": true, "studio": true, "canvas": true, "api": true}
 	out := make([]skillBindingSnapshot, 0, len(input))
 	seen := map[string]bool{}
@@ -920,6 +1335,9 @@ func normalizeSkillBindingSnapshots(input []AdminSkillBindingDTO) ([]skillBindin
 		if len(item.Defaults) > 0 {
 			if err := requireJSONObject("bindings.defaults", item.Defaults); err != nil {
 				return nil, err
+			}
+			if len(item.Defaults) > maxSkillBindingDefaultsBytes {
+				return nil, errors.New("bindings.defaults exceeds 60 KiB")
 			}
 			defaults = append(json.RawMessage(nil), item.Defaults...)
 		}
@@ -1153,6 +1571,9 @@ func normalizeSkillFiles(in []AdminSkillFileDTO, requestedPrimary string) ([]mod
 	if len(in) == 0 {
 		return nil, "", nil
 	}
+	if len(in) > maxSkillImportFiles {
+		return nil, "", fmt.Errorf("a Skill package may contain at most %d text files", maxSkillImportFiles)
+	}
 	seen := map[string]bool{}
 	total := 0
 	out := make([]model.SkillFile, 0, len(in))
@@ -1161,14 +1582,18 @@ func normalizeSkillFiles(in []AdminSkillFileDTO, requestedPrimary string) ([]mod
 		if err != nil {
 			return nil, "", err
 		}
-		if seen[p] {
+		pathKey := strings.ToLower(p)
+		if seen[pathKey] {
 			return nil, "", fmt.Errorf("duplicate skill file path %q", p)
 		}
-		seen[p] = true
+		seen[pathKey] = true
 		size := len([]byte(item.Content))
 		total += size
 		if size == 0 || size > maxSkillImportFileBytes || total > maxSkillImportTotalBytes {
 			return nil, "", errors.New("skill file package exceeds size limit")
+		}
+		if strings.ContainsRune(item.Content, '\x00') {
+			return nil, "", fmt.Errorf("skill file %q contains invalid NUL bytes", p)
 		}
 		ext := strings.ToLower(path.Ext(p))
 		if ext != ".md" && ext != ".txt" {
@@ -1182,6 +1607,11 @@ func normalizeSkillFiles(in []AdminSkillFileDTO, requestedPrimary string) ([]mod
 				mime = "text/plain; charset=utf-8"
 			}
 		}
+		if len([]rune(mime)) > maxSkillMimeTypeRunes || strings.IndexFunc(mime, func(r rune) bool {
+			return r < 0x20 || r == 0x7f
+		}) >= 0 {
+			return nil, "", fmt.Errorf("skill file %q has an invalid mimeType", p)
+		}
 		out = append(out, model.SkillFile{Path: p, Content: item.Content, MimeType: mime, Size: int64(size), SHA256: hashAdminText(item.Content)})
 	}
 	primary := ""
@@ -1191,13 +1621,21 @@ func normalizeSkillFiles(in []AdminSkillFileDTO, requestedPrimary string) ([]mod
 		if err != nil {
 			return nil, "", err
 		}
-		if !seen[primary] {
+		primaryKey := strings.ToLower(primary)
+		if !seen[primaryKey] {
 			return nil, "", errors.New("primaryFilePath is not present in files")
+		}
+		for i := range out {
+			if strings.ToLower(out[i].Path) == primaryKey {
+				primary = out[i].Path
+				break
+			}
 		}
 	}
 	if primary == "" {
-		for p := range seen {
-			if p == "SKILL.md" || strings.HasSuffix(p, "/SKILL.md") {
+		for i := range out {
+			p := out[i].Path
+			if strings.EqualFold(p, "SKILL.md") || strings.HasSuffix(strings.ToLower(p), "/skill.md") {
 				if primary == "" || len(p) < len(primary) {
 					primary = p
 				}
@@ -1210,13 +1648,20 @@ func normalizeSkillFiles(in []AdminSkillFileDTO, requestedPrimary string) ([]mod
 	if primary == "" {
 		return nil, "", errors.New("folder import requires a SKILL.md primary file")
 	}
+	for i := range out {
+		if strings.EqualFold(out[i].Path, primary) && strings.TrimSpace(out[i].Content) == "" {
+			return nil, "", errors.New("primary skill file cannot be blank")
+		}
+	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out, primary, nil
 }
 
 func cleanSkillPath(raw string) (string, error) {
 	raw = strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))
-	if raw == "" || strings.ContainsRune(raw, '\x00') || strings.HasPrefix(raw, "/") {
+	if raw == "" || strings.HasPrefix(raw, "/") || strings.ContainsAny(raw, "{}") || strings.IndexFunc(raw, func(r rune) bool {
+		return r < 0x20 || r == 0x7f
+	}) >= 0 {
 		return "", errors.New("invalid skill file path")
 	}
 	clean := path.Clean(raw)
@@ -1312,6 +1757,13 @@ func validateInputSchemaNode(node map[string]any, pathName string, depth int, co
 			return fmt.Errorf("%s.%s is not a supported input constraint", pathName, key)
 		}
 	}
+	for _, key := range []string{"$schema", "title", "label", "description", "placeholder", "format", "x-ui-widget", "key"} {
+		if rawValue, exists := node[key]; exists {
+			if _, ok := rawValue.(string); !ok {
+				return fmt.Errorf("%s.%s must be a string", pathName, key)
+			}
+		}
+	}
 	if rawType, exists := node["type"]; exists {
 		typeName, ok := rawType.(string)
 		valid := map[string]bool{"string": true, "number": true, "integer": true, "boolean": true, "array": true, "object": true}
@@ -1358,6 +1810,13 @@ func validateInputSchemaNode(node map[string]any, pathName string, depth int, co
 			}
 		}
 	}
+	for _, pair := range [][2]string{{"minimum", "maximum"}, {"min", "max"}, {"minLength", "maxLength"}, {"minItems", "maxItems"}} {
+		minimum, hasMinimum := node[pair[0]].(float64)
+		maximum, hasMaximum := node[pair[1]].(float64)
+		if hasMinimum && hasMaximum && minimum > maximum {
+			return fmt.Errorf("%s.%s must not exceed %s", pathName, pair[0], pair[1])
+		}
+	}
 	if rawPattern, exists := node["pattern"]; exists {
 		pattern, ok := rawPattern.(string)
 		if !ok {
@@ -1369,8 +1828,8 @@ func validateInputSchemaNode(node map[string]any, pathName string, depth int, co
 	}
 	if rawProperties, exists := node["properties"]; exists {
 		properties, ok := rawProperties.(map[string]any)
-		if !ok {
-			return fmt.Errorf("%s.properties must be an object", pathName)
+		if !ok || len(properties) > 128 {
+			return fmt.Errorf("%s.properties must be an object with at most 128 fields", pathName)
 		}
 		for key, rawChild := range properties {
 			child, ok := rawChild.(map[string]any)
@@ -1444,8 +1903,74 @@ func validateSkillManifest(
 	}
 	var manifest map[string]any
 	_ = json.Unmarshal(raw, &manifest)
-	if declared, ok := manifest["kind"].(string); ok && declared != "" && strings.ToLower(declared) != kind {
-		return errors.New("manifest.kind must match kind")
+	allowedManifestFields := map[string]bool{
+		"kind": true, "primaryOutputType": true, "outputTypes": true,
+		"preferredNodeType": true, "steps": true,
+		// Legacy preset snapshots may carry these execution fields inline.
+		"promptTemplate": true, "modelId": true, "defaultParams": true,
+	}
+	for field := range manifest {
+		if !allowedManifestFields[field] {
+			return fmt.Errorf("manifest.%s is not supported", field)
+		}
+	}
+	for _, field := range []string{"promptTemplate", "modelId"} {
+		if rawValue, exists := manifest[field]; exists {
+			value, ok := rawValue.(string)
+			if !ok {
+				return fmt.Errorf("manifest.%s must be a string", field)
+			}
+			if field == "modelId" && len(value) > 128 {
+				return errors.New("manifest.modelId is too long")
+			}
+		}
+	}
+	if rawDefaults, exists := manifest["defaultParams"]; exists {
+		encoded, err := json.Marshal(rawDefaults)
+		if err != nil || requireJSONObject("manifest.defaultParams", encoded) != nil {
+			return errors.New("manifest.defaultParams must be an object")
+		}
+	}
+	if rawDeclared, exists := manifest["kind"]; exists {
+		declared, ok := rawDeclared.(string)
+		if !ok {
+			return errors.New("manifest.kind must be a string")
+		}
+		if declared != strings.ToLower(declared) || declared != kind {
+			return errors.New("manifest.kind must match kind and use canonical lowercase form")
+		}
+	}
+	if rawPrimary, exists := manifest["primaryOutputType"]; exists {
+		declared, ok := rawPrimary.(string)
+		if !ok {
+			return errors.New("manifest.primaryOutputType must be a string")
+		}
+		if declared != strings.ToLower(declared) || declared != primaryOutputType {
+			return errors.New("manifest.primaryOutputType must match the version and use canonical lowercase form")
+		}
+	}
+	if rawOutputs, exists := manifest["outputTypes"]; exists {
+		items, ok := rawOutputs.([]any)
+		if !ok || len(items) == 0 {
+			return errors.New("manifest.outputTypes must be a non-empty array")
+		}
+		declared := make([]string, 0, len(items))
+		for _, rawOutput := range items {
+			output, ok := rawOutput.(string)
+			if !ok || output != strings.ToLower(output) {
+				return errors.New("manifest.outputTypes must contain canonical lowercase strings")
+			}
+			declared = append(declared, output)
+		}
+		if !sameStringValues(declared, outputTypes) {
+			return errors.New("manifest.outputTypes must match the version outputTypes")
+		}
+	}
+	if rawPreferred, exists := manifest["preferredNodeType"]; exists {
+		preferred, ok := rawPreferred.(string)
+		if !ok || (preferred != "" && preferred != "character" && preferred != "scene") {
+			return errors.New("manifest.preferredNodeType must be character or scene")
+		}
 	}
 	rawSteps, exists := manifest["steps"]
 	if !exists {
@@ -1465,11 +1990,11 @@ func validateSkillManifest(
 		"image_to_video": true, "start_end_to_video": true, "reference_to_video": true,
 		"text_to_audio": true,
 		"render_pptx":   true, "render_xlsx": true, "render_docx": true, "render_markdown": true,
-		"analyze_video": true, "analyze_audio": true, "analyze_webpage": true, "analyze_account": true,
+		"analyze_image": true, "analyze_video": true, "analyze_audio": true, "analyze_webpage": true, "analyze_account": true,
 	}
 	toolHandlers := map[string]bool{
 		"render_pptx": true, "render_xlsx": true, "render_docx": true, "render_markdown": true,
-		"analyze_video": true, "analyze_audio": true, "analyze_webpage": true, "analyze_account": true,
+		"analyze_image": true, "analyze_video": true, "analyze_audio": true, "analyze_webpage": true, "analyze_account": true,
 	}
 	seen := map[string]bool{}
 	finalOutputTypes := map[string]bool{}
@@ -1479,8 +2004,44 @@ func validateSkillManifest(
 		if !ok {
 			return fmt.Errorf("manifest.steps[%d] must be an object", index)
 		}
+		allowedStepFields := map[string]bool{
+			"key": true, "title": true, "type": true, "handler": true, "modelId": true,
+			"prompt": true, "systemPrompt": true, "outputType": true, "outputRole": true,
+			"registerWork": true, "strictJson": true, "preferredNodeType": true,
+			"message": true, "schema": true, "promotePrevious": true,
+		}
+		for field := range step {
+			if !allowedStepFields[field] {
+				return fmt.Errorf("manifest.steps[%d].%s is not supported", index, field)
+			}
+		}
+		for field, maxRunes := range map[string]int{
+			"key": 128, "title": 128, "handler": 64, "modelId": 128,
+			"prompt": 1 << 20, "systemPrompt": 1 << 20, "message": 2000, "preferredNodeType": 32,
+		} {
+			rawValue, exists := step[field]
+			if !exists {
+				continue
+			}
+			value, ok := rawValue.(string)
+			if !ok {
+				return fmt.Errorf("manifest.steps[%d].%s must be a string", index, field)
+			}
+			if len([]rune(value)) > maxRunes {
+				return fmt.Errorf("manifest.steps[%d].%s is too long", index, field)
+			}
+			if (field == "prompt" || field == "systemPrompt") && len([]byte(value)) > maxSkillExecutablePromptBytes {
+				return fmt.Errorf("manifest.steps[%d].%s exceeds 1 MiB", index, field)
+			}
+		}
+		if preferred, _ := step["preferredNodeType"].(string); preferred != "" && preferred != "character" && preferred != "scene" {
+			return fmt.Errorf("manifest.steps[%d].preferredNodeType must be character or scene", index)
+		}
 		key, _ := step["key"].(string)
 		key = strings.TrimSpace(key)
+		if rawKey, exists := step["key"].(string); exists && rawKey != key {
+			return fmt.Errorf("manifest.steps[%d].key must not contain surrounding whitespace", index)
+		}
 		if key == "" {
 			key = fmt.Sprintf("step_%d", index+1)
 		}
@@ -1542,9 +2103,31 @@ func validateSkillManifest(
 			}
 		}
 		if typeName == "approval" || typeName == "input" {
-			for _, field := range []string{"outputRole", "registerWork", "outputType"} {
+			for _, field := range []string{
+				"handler", "modelId", "prompt", "systemPrompt", "outputRole", "registerWork",
+				"strictJson", "preferredNodeType", "outputType",
+			} {
 				if _, exists := step[field]; exists {
-					return fmt.Errorf("manifest.steps[%d] approval/input cannot declare %s", index, field)
+					return fmt.Errorf("manifest.steps[%d] approval/input cannot declare ignored field %s", index, field)
+				}
+			}
+		}
+		if typeName != "approval" && typeName != "input" {
+			for _, field := range []string{"message", "schema"} {
+				if _, exists := step[field]; exists {
+					return fmt.Errorf("manifest.steps[%d] executable step cannot declare ignored field %s", index, field)
+				}
+			}
+		}
+		if typeName == "generate" {
+			if _, exists := step["systemPrompt"]; exists {
+				return fmt.Errorf("manifest.steps[%d] generate step cannot declare ignored field systemPrompt", index)
+			}
+		}
+		if typeName == "tool" && strings.HasPrefix(handler, "render_") {
+			for _, field := range []string{"modelId", "systemPrompt", "preferredNodeType"} {
+				if _, exists := step[field]; exists {
+					return fmt.Errorf("manifest.steps[%d] render tool cannot declare ignored field %s", index, field)
 				}
 			}
 		}
@@ -1555,12 +2138,6 @@ func validateSkillManifest(
 			if !ok {
 				return fmt.Errorf("manifest.steps[%d].registerWork must be a boolean", index)
 			}
-		}
-		if title, ok := step["title"].(string); ok && len([]rune(title)) > 128 {
-			return fmt.Errorf("manifest.steps[%d].title is too long", index)
-		}
-		if len([]rune(key)) > 128 {
-			return fmt.Errorf("manifest.steps[%d].key is too long", index)
 		}
 		outputType, outputIsString := step["outputType"].(string)
 		if _, exists := step["outputType"]; exists && !outputIsString {
@@ -1631,15 +2208,6 @@ func validateSkillManifest(
 				return fmt.Errorf("manifest.steps[%d].schema is invalid: %w", index, err)
 			}
 		}
-		if modelID, ok := step["modelId"]; ok {
-			value, ok := modelID.(string)
-			if !ok {
-				return fmt.Errorf("manifest.steps[%d].modelId must be a string", index)
-			}
-			if len(value) > 128 {
-				return fmt.Errorf("manifest.steps[%d].modelId is too long", index)
-			}
-		}
 	}
 	if kind == model.SkillKindTool && !hasToolStep {
 		return errors.New("tool skills must contain at least one registered tool step")
@@ -1656,12 +2224,30 @@ func validateSkillManifest(
 	return nil
 }
 
-var skillFileReferencePattern = regexp.MustCompile(`\{\{skill\.file:([^{}]+)\}\}`)
+func sameStringValues(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	counts := make(map[string]int, len(left))
+	for _, value := range left {
+		counts[value]++
+	}
+	for _, value := range right {
+		counts[value]--
+		if counts[value] < 0 {
+			return false
+		}
+	}
+	return true
+}
 
-func validateSkillFileReferences(manifest string, files []model.SkillFile, primary string) error {
+var skillFileReferencePattern = regexp.MustCompile(`\{\{skill\.file:([^{}]+)\}\}`)
+var unsupportedSkillReferencePattern = regexp.MustCompile(`\{\{skill\.[^{}]*\}\}`)
+
+func validateSkillFileReferences(manifest, promptTemplate string, files []model.SkillFile, primary string) error {
 	available := make(map[string]bool, len(files))
 	contents := make(map[string]string, len(files))
-	values := []string{manifest}
+	values := []string{manifest, promptTemplate}
 	for i := range files {
 		available[files[i].Path] = true
 		contents[files[i].Path] = files[i].Content
@@ -1677,7 +2263,9 @@ func validateSkillFileReferences(manifest string, files []model.SkillFile, prima
 			}
 		}
 	}
-	for label, value := range map[string]string{"manifest": manifest, "primary skill file": contents[primary]} {
+	for label, value := range map[string]string{
+		"manifest": manifest, "promptTemplate": promptTemplate, "primary skill file": contents[primary],
+	} {
 		if err := validateSkillExpansion(value, primary, contents, available); err != nil {
 			return fmt.Errorf("%s: %w", label, err)
 		}
@@ -1714,6 +2302,9 @@ func validateSkillExpansion(value, primary string, contents map[string]string, a
 	}
 	if strings.Contains(result, "{{skill.primary}}") || skillFileReferencePattern.MatchString(result) {
 		return errors.New("skill file references contain a cycle")
+	}
+	if unsupportedSkillReferencePattern.MatchString(result) {
+		return errors.New("skill prompt contains an unsupported {{skill.*}} reference")
 	}
 	return nil
 }
