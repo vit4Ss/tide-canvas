@@ -55,6 +55,8 @@ import {
 import { isOperatorEditablePresetVersion } from "@/lib/admin-skill-operator-compat";
 import { SkillVersionModal } from "./_components/skill-version-modal";
 import { SkillImportModal } from "./_components/skill-import-modal";
+import { buildSkillCoverPrompt, SkillCoverAiPanel } from "./_components/skill-cover-ai-panel";
+import { SkillCopyAiButton } from "./_components/skill-copy-ai-button";
 import {
   MAX_OPERATOR_SKILL_DOCUMENT_BYTES,
   OperatorSkillContentEditor,
@@ -155,6 +157,9 @@ export default function AdminSkillsPage() {
   const [saving, setSaving] = useState(false);
   const [editorError, setEditorError] = useState("");
   const [coverUploading, setCoverUploading] = useState(false);
+  const [coverAiOpen, setCoverAiOpen] = useState(false);
+  const [coverAiBusy, setCoverAiBusy] = useState(false);
+  const [copyAiBusy, setCopyAiBusy] = useState(false);
   const coverInputRef = useRef<HTMLInputElement>(null);
   // An upload may finish after the editor was closed or reopened for another
   // skill. Only the editor generation that started it may update the form.
@@ -229,6 +234,9 @@ export default function AdminSkillsPage() {
     closeConfirmationPendingRef.current = false;
     initialFormFingerprintRef.current = formFingerprint(nextForm);
     setCoverUploading(false);
+    setCoverAiOpen(false);
+    setCoverAiBusy(false);
+    setCopyAiBusy(false);
     setCoverPreviewFailed(false);
     setEditorError("");
     setContentAccess("editable");
@@ -263,6 +271,9 @@ export default function AdminSkillsPage() {
     closeConfirmationPendingRef.current = false;
     initialFormFingerprintRef.current = formFingerprint(nextForm);
     setCoverUploading(false);
+    setCoverAiOpen(false);
+    setCoverAiBusy(false);
+    setCopyAiBusy(false);
     setCoverPreviewFailed(false);
     setEditorError("");
     setContentAccess(r.kind === "preset" && r.currentVersionId ? "checking" : r.kind === "preset" ? "editable" : "locked");
@@ -291,6 +302,9 @@ export default function AdminSkillsPage() {
     coverUploadSeqRef.current += 1;
     executionAuditSeqRef.current += 1;
     setCoverUploading(false);
+    setCoverAiOpen(false);
+    setCoverAiBusy(false);
+    setCopyAiBusy(false);
     setEditorError("");
     setModalOpen(false);
   };
@@ -457,6 +471,14 @@ export default function AdminSkillsPage() {
   };
 
   const save = async () => {
+    if (copyAiBusy) {
+      toast.info("AI 说明仍在生成，请等待完成或先停止生成");
+      return false;
+    }
+    if (coverAiBusy) {
+      toast.info("AI 封面仍在生成，请等待完成或先停止生成");
+      return false;
+    }
     if (coverUploading) {
       toast.info("封面仍在上传，请稍候再保存");
       return false;
@@ -653,6 +675,23 @@ export default function AdminSkillsPage() {
   // renderer itself has no market-model modality.
   const formModelType = form.kind === "tool" ? "text" : form.outputType;
   const formModels = models.filter((m) => m.type === formModelType);
+  const missingCopyCount = [form.description, form.usageScenario, form.usageGuide, form.outputDescription]
+    .filter((value) => !value.trim()).length;
+  const loadSkillCopySource = async (): Promise<string> => {
+    if (editing?.currentVersionId) {
+      const response = await adminSkillsApi.getVersion(editing.id, editing.currentVersionId);
+      if (!response.success || !response.data) {
+        throw new Error(response.message || "当前 Skill 版本读取失败");
+      }
+      const version = response.data;
+      const primaryPath = version.primaryFilePath?.trim().toLowerCase();
+      const files = version.files ?? [];
+      const primary = files.find((file) => file.path.trim().toLowerCase() === primaryPath) ??
+        files.find((file) => /(^|\/)skill\.md$/i.test(file.path)) ?? files[0];
+      return primary?.content?.trim() || version.promptTemplate?.trim() || "";
+    }
+    return form.promptTemplate.trim();
+  };
 
   return (
     <div className="adm-page">
@@ -759,6 +798,7 @@ export default function AdminSkillsPage() {
             ? "修改 Skill 内容会生成新的不可变版本；仅修改展示说明不会影响执行效果。"
             : "按引导填写内容即可创建 Skill；模型、入口和默认参数收纳在高级设置中。"}
         saveLabel={saving ? "保存中…" : editing ? "保存" : "创建 Skill"}
+        closeable={!coverAiBusy && !copyAiBusy}
         onClose={closeEditor}
         onSave={save}
       >
@@ -769,7 +809,7 @@ export default function AdminSkillsPage() {
         ) : null}
         <fieldset
           disabled={saving}
-          aria-busy={saving}
+          aria-busy={saving || coverAiBusy || copyAiBusy}
           onChangeCapture={() => {
             if (editorError) setEditorError("");
           }}
@@ -865,6 +905,24 @@ export default function AdminSkillsPage() {
         ) : null}
 
         <FormCard title="使用说明">
+          <SkillCopyAiButton
+            models={models}
+            missingCount={missingCopyCount}
+            title={form.title}
+            category={form.category}
+            kind={form.kind}
+            outputType={form.outputType}
+            disabled={saving || coverAiBusy}
+            loadSkillSource={loadSkillCopySource}
+            onBusyChange={setCopyAiBusy}
+            onGenerated={(copy) => setForm((current) => ({
+              ...current,
+              description: current.description.trim() ? current.description : copy.description,
+              usageScenario: current.usageScenario.trim() ? current.usageScenario : copy.usageScenario,
+              usageGuide: current.usageGuide.trim() ? current.usageGuide : copy.howTo,
+              outputDescription: current.outputDescription.trim() ? current.outputDescription : copy.outputDescription,
+            }))}
+          />
           <FormGrid>
             <Field label="使用场景" required={!editing} span={4}>
               <textarea
@@ -932,6 +990,7 @@ export default function AdminSkillsPage() {
                   <button
                     type="button"
                     className="adm-btn ghost"
+                    disabled={coverAiBusy}
                     onClick={() => {
                       setCoverPreviewFailed(false);
                       setForm((current) => ({ ...current, coverUrl: "" }));
@@ -944,6 +1003,7 @@ export default function AdminSkillsPage() {
               <div className="adm-skill-cover-row">
                 <input
                   value={form.coverUrl}
+                  disabled={coverAiBusy}
                   onChange={(event) => {
                     setCoverPreviewFailed(false);
                     setForm((current) => ({ ...current, coverUrl: event.target.value }));
@@ -953,7 +1013,17 @@ export default function AdminSkillsPage() {
                 <button
                   type="button"
                   className="adm-btn ghost"
-                  disabled={coverUploading}
+                  aria-expanded={coverAiOpen}
+                  disabled={coverUploading || coverAiBusy || copyAiBusy}
+                  onClick={() => setCoverAiOpen((current) => !current)}
+                >
+                  <Sparkles aria-hidden size={14} />
+                  AI 生成
+                </button>
+                <button
+                  type="button"
+                  className="adm-btn ghost"
+                  disabled={coverUploading || coverAiBusy || copyAiBusy}
                   onClick={() => coverInputRef.current?.click()}
                 >
                   <Upload aria-hidden size={14} />
@@ -961,6 +1031,25 @@ export default function AdminSkillsPage() {
                 </button>
                 <input ref={coverInputRef} type="file" accept="image/*" hidden onChange={uploadCover} />
               </div>
+              {coverAiOpen ? (
+                <SkillCoverAiPanel
+                  models={models}
+                  suggestedPrompt={buildSkillCoverPrompt({
+                    title: form.title,
+                    description: form.description,
+                    category: form.category,
+                    usageScenario: form.usageScenario,
+                    outputDescription: form.outputDescription,
+                  })}
+                  disabled={coverUploading || saving || copyAiBusy}
+                  onBusyChange={setCoverAiBusy}
+                  onClose={() => setCoverAiOpen(false)}
+                  onGenerated={(url) => {
+                    setCoverPreviewFailed(false);
+                    setForm((current) => ({ ...current, coverUrl: url }));
+                  }}
+                />
+              ) : null}
             </Field>
           </FormGrid>
         </FormCard>
