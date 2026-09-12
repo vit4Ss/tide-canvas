@@ -12,8 +12,10 @@ import type {
 } from "@/types/admin-skill";
 import {
   SKILL_CATEGORIES,
+  SKILL_OUTPUT_LABEL,
   type SkillEntryPoint,
   type SkillKind,
+  type SkillOutputType,
 } from "@/types/skill";
 import {
   ADMIN_SKILL_ENTRY_POINTS,
@@ -21,15 +23,36 @@ import {
   defaultAdminSkillBindings,
   defaultAdminSkillEntryPoints,
   defaultAdminSkillOutputTypes,
-  starterAdminSkillInputSchema,
   starterAdminSkillManifest,
 } from "@/lib/admin-skill-defaults";
+import { SkillManifestAiControl, type SkillManifestDraftRequest } from "./skill-manifest-ai-control";
+import { SKILL_INPUT_PRESETS, skillInputSchemaFor, type SkillInputPreset } from "./skill-input-schema-presets";
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_PRIMARY_FILE_BYTES = 1024 * 1024;
 const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 16 * 1024 * 1024;
 const MAX_PACKAGES = 50;
+const TOOL_TEXT_INPUT_PRESETS = new Set<SkillInputPreset>(["image", "images", "keyframes", "video", "audio", "webpage"]);
+
+function importInputPresets(kind: SkillKind, output: SkillOutputType) {
+  if (kind === "preset") {
+    const allowed = output === "image"
+      ? new Set<SkillInputPreset>(["text", "image", "images"])
+      : output === "video"
+        ? new Set<SkillInputPreset>(["text", "image"])
+        : new Set<SkillInputPreset>(["text"]);
+    return SKILL_INPUT_PRESETS.filter((preset) => allowed.has(preset.key));
+  }
+  if (kind === "tool" && output === "text") {
+    return SKILL_INPUT_PRESETS.filter((preset) => TOOL_TEXT_INPUT_PRESETS.has(preset.key));
+  }
+  return SKILL_INPUT_PRESETS;
+}
+
+function fallbackImportInputPreset(kind: SkillKind, output: SkillOutputType): SkillInputPreset {
+  return kind === "tool" && output === "text" ? "webpage" : "text";
+}
 
 interface PreparedPackage {
   key: string;
@@ -38,10 +61,44 @@ interface PreparedPackage {
   primaryFilePath: string;
   files: AdminSkillFileInput[];
   ignoredFiles?: number;
+  manifestText?: string;
 }
 
 function failedImportValidation(title: string, message: string): AdminSkillImportValidationVO {
   return { valid: false, items: [{ index: -1, title, valid: false, errors: [message] }] };
+}
+
+function packagePrimaryContent(pkg: PreparedPackage): string {
+  return pkg.files.find((file) => file.path.toLowerCase() === pkg.primaryFilePath.toLowerCase())?.content ?? "";
+}
+
+function importManifestSignature(
+  pkg: PreparedPackage,
+  kind: SkillKind,
+  inputPreset: SkillInputPreset,
+  primaryOutputType: SkillOutputType,
+): string {
+  return JSON.stringify({
+    key: pkg.key,
+    kind,
+    inputPreset,
+    primaryOutputType,
+    outputTypes: defaultAdminSkillOutputTypes(kind, primaryOutputType),
+    primaryFilePath: pkg.primaryFilePath,
+    primaryContent: packagePrimaryContent(pkg),
+  });
+}
+
+function manifestForImport(pkg: PreparedPackage, kind: SkillKind, primaryOutputType: SkillOutputType): Record<string, unknown> {
+  if (kind === "preset") return starterAdminSkillManifest(kind, primaryOutputType);
+  if (!pkg.manifestText?.trim()) throw new Error(`请先为“${pkg.title}”生成并确认 Manifest 草稿`);
+  try {
+    const parsed: unknown = JSON.parse(pkg.manifestText);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("shape");
+    return parsed as Record<string, unknown>;
+  } catch {
+    throw new Error(`“${pkg.title}”的 Manifest 必须是合法 JSON 对象`);
+  }
 }
 
 function truncateRunes(value: string, length: number): string {
@@ -133,8 +190,8 @@ async function prepareFiles(selected: File[]): Promise<PreparedPackage[]> {
   // Files selected normally are independent skills. A directory selection is
   // one package rooted at its selected top-level folder and must have SKILL.md.
   const groups = new Map<string, typeof loaded>();
-  for (const item of loaded) {
-    const root = item.relative ? item.path.split("/")[0] : `file:${item.path}`;
+  for (const [itemIndex, item] of loaded.entries()) {
+    const root = item.relative ? item.path.split("/")[0] : `file:${itemIndex}:${item.path}`;
     groups.set(root, [...(groups.get(root) ?? []), item]);
   }
   const prepared: PreparedPackage[] = [...groups.entries()].map(([key, files]) => {
@@ -157,7 +214,7 @@ async function prepareFiles(selected: File[]): Promise<PreparedPackage[]> {
   // ZIP/.skill archives are inspected server-side. No executable/config file
   // is returned to the browser, and the final import still uses the existing
   // immutable-version JSON contract below.
-  for (const archive of archives) {
+  for (const [archiveIndex, archive] of archives.entries()) {
     const response = await adminSkillsApi.previewArchive(archive);
     if (!response.success || !response.data) {
       throw new Error(response.message || `${archive.name} 解析失败`);
@@ -167,7 +224,7 @@ async function prepareFiles(selected: File[]): Promise<PreparedPackage[]> {
       const primary = pkg.files.find((file) => file.path.toLowerCase() === pkg.primaryFilePath.toLowerCase());
       if (!primary) throw new Error(`${archive.name} 中的 ${pkg.root} 缺少主文件`);
       prepared.push({
-        key: `archive:${archive.name}:${pkg.root}:${index}`,
+        key: `archive:${archiveIndex}:${archive.name}:${pkg.root}:${index}`,
         title: inferTitle(primary.content, pkg.root || archive.name.replace(/\.(?:zip|skill)$/i, "")),
         description: inferDescription(primary.content),
         primaryFilePath: pkg.primaryFilePath,
@@ -199,8 +256,11 @@ export function SkillImportModal({
   const [packages, setPackages] = useState<PreparedPackage[]>([]);
   const [reading, setReading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [manifestBusy, setManifestBusy] = useState(false);
   const [validation, setValidation] = useState<AdminSkillImportValidationVO | null>(null);
   const [kind, setKind] = useState<SkillKind>("agent");
+  const [inputPreset, setInputPreset] = useState<SkillInputPreset>("text");
+  const [primaryOutputType, setPrimaryOutputType] = useState<SkillOutputType>("text");
   const [category, setCategory] = useState<string>(SKILL_CATEGORIES[0]);
   const [authorName, setAuthorName] = useState("官方");
   const [entryPoints, setEntryPoints] = useState<SkillEntryPoint[]>(
@@ -222,6 +282,7 @@ export function SkillImportModal({
     () => packages.reduce((sum, pkg) => sum + (pkg.ignoredFiles ?? 0), 0),
     [packages],
   );
+  const visibleInputPresets = importInputPresets(kind, primaryOutputType);
 
   useEffect(() => () => {
     readSeqRef.current += 1;
@@ -230,7 +291,7 @@ export function SkillImportModal({
   const readSelection = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const selected = [...(event.target.files ?? [])];
     event.target.value = "";
-    if (!selected.length || submitting) return;
+    if (!selected.length || submitting || manifestBusy) return;
     const readSeq = ++readSeqRef.current;
     setReading(true);
     try {
@@ -258,8 +319,29 @@ export function SkillImportModal({
     setValidation(null);
   };
 
+  const clearManifestDrafts = () => {
+    setPackages((current) => current.map((pkg) => ({ ...pkg, manifestText: undefined })));
+    setValidation(null);
+  };
+
+  const loadManifestRequests = async (): Promise<SkillManifestDraftRequest[]> => {
+    if (!packages.length) throw new Error("请先选择 Skill 文件或目录");
+    const inputSchema = skillInputSchemaFor(inputPreset) as Record<string, unknown>;
+    return packages.filter((pkg) => !pkg.manifestText?.trim()).map((pkg) => ({
+      key: pkg.key,
+      title: pkg.title,
+      source: packagePrimaryContent(pkg),
+      kind,
+      primaryOutputType,
+      outputTypes: defaultAdminSkillOutputTypes(kind, primaryOutputType),
+      inputSchema,
+      signature: importManifestSignature(pkg, kind, inputPreset, primaryOutputType),
+    }));
+  };
+
   const buildImportPackages = (): AdminSkillImportPackage[] => {
     const normalizedEntryPoints = constrainAdminSkillEntryPoints(kind, entryPoints);
+    const inputSchema = skillInputSchemaFor(inputPreset);
     return packages.map((pkg, index) => ({
       title: truncateRunes(pkg.title.trim(), 64),
       description: pkg.description.trim(),
@@ -271,12 +353,12 @@ export function SkillImportModal({
       sortOrder: index,
       kind,
       entryPoints: normalizedEntryPoints,
-      primaryOutputType: "text",
-      outputTypes: defaultAdminSkillOutputTypes(kind, "text"),
-      inputSchema: starterAdminSkillInputSchema(kind, "text"),
-      manifest: starterAdminSkillManifest(kind, "text"),
+      primaryOutputType,
+      outputTypes: defaultAdminSkillOutputTypes(kind, primaryOutputType),
+      inputSchema,
+      manifest: manifestForImport(pkg, kind, primaryOutputType),
       defaultParams: {},
-      bindings: defaultAdminSkillBindings(normalizedEntryPoints, "text"),
+      bindings: defaultAdminSkillBindings(normalizedEntryPoints, primaryOutputType),
       primaryFilePath: pkg.primaryFilePath,
       files: pkg.files,
       publish: true,
@@ -285,6 +367,10 @@ export function SkillImportModal({
 
   const save = async () => {
     if (submitting) return false;
+    if (manifestBusy) {
+      toast.info("Manifest 草稿仍在生成，请等待完成或先停止生成");
+      return false;
+    }
     if (reading) {
       toast.info("Skill 文件仍在解析，请稍候");
       return false;
@@ -301,7 +387,13 @@ export function SkillImportModal({
       toast.error("Skill 名称不能为空");
       return false;
     }
-    const skills = buildImportPackages();
+    let skills: AdminSkillImportPackage[];
+    try {
+      skills = buildImportPackages();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Manifest 配置无效");
+      return false;
+    }
     setSubmitting(true);
     try {
       const checked = await adminSkillsApi.validateImport(skills);
@@ -342,9 +434,10 @@ export function SkillImportModal({
       open={open}
       size="lg"
       title="导入 Skill 文件"
-      subtitle="支持标准 ZIP/.skill 包、Skill 目录和独立 Markdown；压缩包可包含多个 SKILL.md。"
+      subtitle="选择输入 Schema 和主输出后，由文本模型生成可确认的 Manifest 草稿。"
       saveLabel="校验并导入"
-      footNote="系统会先校验文件、入口、步骤、输出和可用模型；全部通过后才会一次性导入。"
+      footNote="AI 不会改写 SKILL.md 或填写模型 ID；最终仍需通过服务端完整预检。"
+      closeable={!manifestBusy}
       onClose={onClose}
       onSave={save}
     >
@@ -355,11 +448,11 @@ export function SkillImportModal({
       >
         <FormCard title="文件">
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <button type="button" className="adm-btn ghost" disabled={reading} onClick={() => fileInputRef.current?.click()}>
+          <button type="button" className="adm-btn ghost" disabled={reading || manifestBusy} onClick={() => fileInputRef.current?.click()}>
             {reading ? <Loader2 className="adm-spin" aria-hidden size={14} /> : <Upload aria-hidden size={14} />}
             选择文件或 ZIP
           </button>
-          <button type="button" className="adm-btn ghost" disabled={reading} onClick={() => folderInputRef.current?.click()}>
+          <button type="button" className="adm-btn ghost" disabled={reading || manifestBusy} onClick={() => folderInputRef.current?.click()}>
             <FolderOpen aria-hidden size={14} /> 选择 Skill 目录
           </button>
           <input
@@ -412,6 +505,7 @@ export function SkillImportModal({
                   aria-label={`第 ${index + 1} 个 Skill 名称`}
                   value={pkg.title}
                   maxLength={64}
+                  disabled={manifestBusy}
                   onChange={(event) => {
                     setPackages((current) => current.map((item, itemIndex) =>
                       itemIndex === index ? { ...item, title: event.target.value } : item,
@@ -448,17 +542,41 @@ export function SkillImportModal({
           <Field label="执行形态" required span={2} hint="预设技能单次生成；智能技能在画布执行；技能工具在创作台或 API 执行。">
             <select
               value={kind}
+              disabled={manifestBusy}
               onChange={(event) => {
                 const nextKind = event.target.value as SkillKind;
+                const nextPrimaryOutput = nextKind === "tool" && primaryOutputType !== "text" && primaryOutputType !== "file"
+                  ? "file"
+                  : primaryOutputType;
+                const nextInputPresets = importInputPresets(nextKind, nextPrimaryOutput);
                 setKind(nextKind);
                 setEntryPoints(defaultAdminSkillEntryPoints(nextKind));
-                setValidation(null);
+                setPrimaryOutputType(nextPrimaryOutput);
+                if (!nextInputPresets.some((preset) => preset.key === inputPreset)) {
+                  setInputPreset(fallbackImportInputPreset(nextKind, nextPrimaryOutput));
+                }
+                clearManifestDrafts();
               }}
             >
               <option value="preset">预设技能</option>
               <option value="agent">智能技能</option>
               <option value="tool">技能工具</option>
             </select>
+          </Field>
+          <Field label="输入 Schema" required span={2} hint="由管理员选择输入类型，AI 不会修改。">
+            <select
+              value={inputPreset}
+              disabled={manifestBusy}
+              onChange={(event) => {
+                setInputPreset(event.target.value as SkillInputPreset);
+                clearManifestDrafts();
+              }}
+            >
+              {visibleInputPresets.map((preset) => <option key={preset.key} value={preset.key}>{preset.label}</option>)}
+            </select>
+            <small className="muted" style={{ display: "block", marginTop: 5, fontSize: 11 }}>
+              {SKILL_INPUT_PRESETS.find((preset) => preset.key === inputPreset)?.description}
+            </small>
           </Field>
           <Field label="分类" span={2}>
             <select value={category} onChange={(event) => {
@@ -474,8 +592,25 @@ export function SkillImportModal({
               setValidation(null);
             }} />
           </Field>
-          <Field label="主输出" span={2} hint="批量导入先按文本产物落库，可在版本配置中改成多模态。">
-            <input value="文本" readOnly />
+          <Field label="主输出" required span={2} hint="由管理员确定最终产物类型，AI 只能据此编排步骤。">
+            <select
+              value={primaryOutputType}
+              disabled={manifestBusy}
+              onChange={(event) => {
+                const nextOutput = event.target.value as SkillOutputType;
+                const nextInputPresets = importInputPresets(kind, nextOutput);
+                setPrimaryOutputType(nextOutput);
+                if (!nextInputPresets.some((preset) => preset.key === inputPreset)) {
+                  setInputPreset(fallbackImportInputPreset(kind, nextOutput));
+                }
+                clearManifestDrafts();
+              }}
+            >
+              {(kind === "tool"
+                ? (["text", "file"] as SkillOutputType[])
+                : (["text", "image", "video", "audio", "file"] as SkillOutputType[])
+              ).map((output) => <option key={output} value={output}>{SKILL_OUTPUT_LABEL[output]}</option>)}
+            </select>
           </Field>
           <Field label="可用入口" required span={4} group>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -493,6 +628,49 @@ export function SkillImportModal({
             </div>
           </Field>
         </FormGrid>
+        <div style={{ marginTop: 14 }}>
+          {kind === "preset" ? (
+            <AdminAlert tone="info" title="预设技能使用固定 Manifest">
+              预设技能没有多步骤编排，系统会根据主输出生成最小运行配置，无需调用文本模型。
+            </AdminAlert>
+          ) : (
+            <SkillManifestAiControl
+              key={`${kind}:${inputPreset}:${primaryOutputType}:${packages.map((pkg) => pkg.key).join("|")}`}
+              disabled={reading || submitting || !packages.length || packages.every((pkg) => !!pkg.manifestText?.trim())}
+              loadRequests={loadManifestRequests}
+              onBusyChange={setManifestBusy}
+              onGenerated={(results) => {
+                setPackages((current) => current.map((pkg) => {
+                  const result = results.find((item) => item.key === pkg.key);
+                  if (!result || result.signature !== importManifestSignature(pkg, kind, inputPreset, primaryOutputType)) return pkg;
+                  return { ...pkg, manifestText: JSON.stringify(result.manifest, null, 2) };
+                }));
+                setValidation(null);
+              }}
+            />
+          )}
+        </div>
+        {kind !== "preset" && packages.some((pkg) => pkg.manifestText) ? (
+          <div className="adm-skill-manifest-drafts">
+            {packages.filter((pkg) => pkg.manifestText).map((pkg) => (
+              <details key={pkg.key}>
+                <summary>{pkg.title} · Manifest 草稿</summary>
+                <textarea
+                  rows={10}
+                  value={pkg.manifestText}
+                  aria-label={`${pkg.title} Manifest 草稿`}
+                  spellCheck={false}
+                  disabled={manifestBusy}
+                  onChange={(event) => {
+                    const manifestText = event.target.value;
+                    setPackages((current) => current.map((item) => item.key === pkg.key ? { ...item, manifestText } : item));
+                    setValidation(null);
+                  }}
+                />
+              </details>
+            ))}
+          </div>
+        ) : null}
         </FormCard>
       </fieldset>
     </AdminModal>

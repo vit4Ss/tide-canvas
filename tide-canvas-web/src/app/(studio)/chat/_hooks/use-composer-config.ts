@@ -88,6 +88,7 @@ export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | nul
       const schema = parseSkillInputSchema(toolSkill.inputSchema);
       const kinds = toolAssets.kinds;
       if (!kinds.length) {
+        if (toolAssets.declared) return undefined;
         // 办公工具没有强制素材类型，但应继续继承当前文本模型的上传能力，
         // 让用户用多张参考图、PDF、Word、Excel 等资料驱动文档生成。
         if (!mCfg?.fileUpload) return undefined;
@@ -136,7 +137,7 @@ export function useComposerConfig(models: GenModelsApi, toolSkill: SkillVO | nul
     if (!p) return undefined;
     const kinds = mode === "omni_ref" ? supportedOmniReferenceKinds(mCfg) : p.kinds;
     return { ...p, kinds, max: kinds.length ? p.max : 0, accept: acceptFor(kinds) };
-  }, [toolSkill, toolAssets.kinds, toolModelSupport.acceptsAssets, toolUsesMediaPreprocessing, selModel, mode, mCfg]);
+  }, [toolSkill, toolAssets.declared, toolAssets.kinds, toolModelSupport.acceptsAssets, toolUsesMediaPreprocessing, selModel, mode, mCfg]);
   // text-model uploads are OPTIONAL (a chat can be plain text); generation ref
   // modes (i2i/i2v/…) REQUIRE at least one reference before sending.
   const toolRequiresAssets = useMemo(() => {

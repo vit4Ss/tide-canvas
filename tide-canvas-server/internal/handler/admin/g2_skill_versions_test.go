@@ -519,12 +519,17 @@ func TestValidateInputSchemaDefinitionRejectsUnsupportedOrMalformedConstraints(t
 	if err := validateInputSchemaDefinition(valid); err != nil {
 		t.Fatal(err)
 	}
+	if err := validateInputSchemaDefinition(json.RawMessage(`{"type":"object","x-asset-types":[],"required":["url"],"properties":{"url":{"type":"string"}}}`)); err != nil {
+		t.Fatalf("explicit no-asset schema was rejected: %v", err)
+	}
 	for _, raw := range []json.RawMessage{
 		json.RawMessage(`{"type":"object","properties":{"x":{"type":"string","minLenght":2}}}`),
 		json.RawMessage(`{"type":"object","properties":{"x":{"type":"array","minItems":-1}}}`),
 		json.RawMessage(`{"type":"object","properties":{"x":{"type":"string","pattern":"["}}}`),
 		json.RawMessage(`{"type":"object","properties":{"x":{"type":"string","title":7}}}`),
 		json.RawMessage(`{"type":"object","properties":{"x":{"type":"string","minLength":9,"maxLength":2}}}`),
+		json.RawMessage(`{"type":"object","x-asset-types":["video","video"]}`),
+		json.RawMessage(`{"type":"object","x-asset-types":["unknown"]}`),
 	} {
 		if err := validateInputSchemaDefinition(raw); err == nil {
 			t.Fatalf("invalid input schema was accepted: %s", raw)
@@ -621,6 +626,82 @@ func TestValidateSkillManifestRejectsUnsafeOrMismatchedTools(t *testing.T) {
 		if err := validateSkillManifest(raw, model.SkillKindTool, "file", []string{"text", "file"}); err == nil {
 			t.Fatalf("invalid tool manifest was accepted: %s", raw)
 		}
+	}
+}
+
+func TestValidateSkillManifestInputContractMatchesSelectedSchema(t *testing.T) {
+	videoSchema := json.RawMessage(`{"type":"object","x-asset-types":["video"],"required":["assets"],"properties":{"assets":{"type":"array","minItems":1,"maxItems":1}}}`)
+	videoManifest := json.RawMessage(`{"kind":"tool","steps":[{"type":"tool","handler":"analyze_video","outputType":"text","outputRole":"final"}]}`)
+	if err := validateSkillManifestInputContract(videoManifest, videoSchema, model.SkillKindTool, "text"); err != nil {
+		t.Fatalf("matching video schema was rejected: %v", err)
+	}
+	audioManifest := json.RawMessage(`{"kind":"tool","steps":[{"type":"tool","handler":"analyze_audio","outputType":"text","outputRole":"final"}]}`)
+	if err := validateSkillManifestInputContract(audioManifest, videoSchema, model.SkillKindTool, "text"); err == nil {
+		t.Fatal("audio handler was accepted with a video-only schema")
+	}
+	mixedAnalysisSchema := json.RawMessage(`{"type":"object","x-asset-types":["video","image"],"required":["assets"],"properties":{"assets":{"type":"array","minItems":1,"maxItems":4}}}`)
+	if err := validateSkillManifestInputContract(videoManifest, mixedAnalysisSchema, model.SkillKindTool, "text"); err == nil {
+		t.Fatal("single-media analysis handler was accepted with an ambiguous mixed schema")
+	}
+	unboundedVideoSchema := json.RawMessage(`{"type":"object","x-asset-types":["video"],"required":["assets"],"properties":{"assets":{"type":"array","minItems":1,"maxItems":3}}}`)
+	if err := validateSkillManifestInputContract(videoManifest, unboundedVideoSchema, model.SkillKindTool, "text"); err == nil {
+		t.Fatal("single-video analysis handler was accepted with more than one allowed video")
+	}
+	optionalVideoSchema := json.RawMessage(`{"type":"object","x-asset-types":["video"],"properties":{"assets":{"type":"array","minItems":1}}}`)
+	if err := validateSkillManifestInputContract(videoManifest, optionalVideoSchema, model.SkillKindTool, "text"); err == nil {
+		t.Fatal("video handler was accepted without required assets")
+	}
+	webManifest := json.RawMessage(`{"kind":"tool","steps":[{"type":"tool","handler":"analyze_webpage","outputType":"text","outputRole":"final"}]}`)
+	if err := validateSkillManifestInputContract(webManifest, json.RawMessage(`{"type":"object","required":["url"],"properties":{"url":{"type":"string"}}}`), model.SkillKindTool, "text"); err != nil {
+		t.Fatalf("matching webpage schema was rejected: %v", err)
+	}
+	if err := validateSkillManifestInputContract(webManifest, json.RawMessage(`{"type":"object","properties":{}}`), model.SkillKindTool, "text"); err == nil {
+		t.Fatal("webpage handler was accepted without a url field")
+	}
+	if err := validateSkillManifestInputContract(webManifest, json.RawMessage(`{"type":"object","x-asset-types":["image"],"required":["url"],"properties":{"url":{"type":"string"}}}`), model.SkillKindTool, "text"); err == nil {
+		t.Fatal("webpage handler was accepted with ignored asset input")
+	}
+	if err := validateSkillManifestInputContract(webManifest, json.RawMessage(`{"type":"object","required":["url"],"properties":{"url":{"type":"string"},"assets":{"type":"array"}}}`), model.SkillKindTool, "text"); err == nil {
+		t.Fatal("webpage handler was accepted with an optional ignored assets field")
+	}
+	keyframeManifest := json.RawMessage(`{"kind":"agent","steps":[{"type":"generate","handler":"start_end_to_video","outputType":"video","outputRole":"final"}]}`)
+	keyframeSchema := json.RawMessage(`{"type":"object","x-asset-types":["image"],"required":["assets"],"properties":{"assets":{"type":"array","minItems":2,"maxItems":2}}}`)
+	if err := validateSkillManifestInputContract(keyframeManifest, keyframeSchema, model.SkillKindAgent, "video"); err != nil {
+		t.Fatalf("matching keyframe schema was rejected: %v", err)
+	}
+	if err := validateSkillManifestInputContract(keyframeManifest, json.RawMessage(`{"type":"object","x-asset-types":["image"],"required":["assets"],"properties":{"assets":{"type":"array","minItems":1,"maxItems":9}}}`), model.SkillKindAgent, "video"); err == nil {
+		t.Fatal("start/end handler was accepted without exactly two assets")
+	}
+	imageVideoManifest := json.RawMessage(`{"kind":"agent","steps":[{"type":"generate","handler":"image_to_video","outputType":"video","outputRole":"final"}]}`)
+	if err := validateSkillManifestInputContract(imageVideoManifest, keyframeSchema, model.SkillKindAgent, "video"); err == nil {
+		t.Fatal("single-frame image-to-video handler was accepted with two images")
+	}
+	textVideoManifest := json.RawMessage(`{"kind":"agent","steps":[{"type":"generate","handler":"text_to_video","outputType":"video","outputRole":"final"}]}`)
+	if err := validateSkillManifestInputContract(textVideoManifest, keyframeSchema, model.SkillKindAgent, "video"); err == nil {
+		t.Fatal("text-to-video handler was accepted with ignored image input")
+	}
+	referenceManifest := json.RawMessage(`{"kind":"agent","steps":[{"type":"generate","handler":"reference_to_video","outputType":"video","outputRole":"final"}]}`)
+	mediaSchema := json.RawMessage(`{"type":"object","x-asset-types":["image","video","audio"],"required":["assets"],"properties":{"assets":{"type":"array","minItems":1,"maxItems":12}}}`)
+	if err := validateSkillManifestInputContract(referenceManifest, mediaSchema, model.SkillKindAgent, "video"); err != nil {
+		t.Fatalf("matching multimedia reference schema was rejected: %v", err)
+	}
+	mediaAndFileSchema := json.RawMessage(`{"type":"object","x-asset-types":["image","file"],"required":["assets"],"properties":{"assets":{"type":"array","minItems":1,"maxItems":12}}}`)
+	if err := validateSkillManifestInputContract(referenceManifest, mediaAndFileSchema, model.SkillKindAgent, "video"); err == nil {
+		t.Fatal("reference video handler accepted a schema that permits unsupported files")
+	}
+	if err := validateSkillManifestInputContract(json.RawMessage(`{"kind":"agent"}`), videoSchema, model.SkillKindAgent, "video"); err != nil {
+		t.Fatalf("generic agent was rejected by the schema contract: %v", err)
+	}
+	presetManifest := json.RawMessage(`{"kind":"preset","primaryOutputType":"video","outputTypes":["video"]}`)
+	singleImageSchema := json.RawMessage(`{"type":"object","x-asset-types":["image"],"required":["assets"],"properties":{"assets":{"type":"array","minItems":1,"maxItems":1}}}`)
+	if err := validateSkillManifestInputContract(presetManifest, singleImageSchema, model.SkillKindPreset, "video"); err != nil {
+		t.Fatalf("single-image preset video input was rejected: %v", err)
+	}
+	if err := validateSkillManifestInputContract(presetManifest, keyframeSchema, model.SkillKindPreset, "video"); err == nil {
+		t.Fatal("preset video accepted keyframes even though preset execution cannot select start/end mode")
+	}
+	if err := validateSkillManifestInputContract(presetManifest, mediaSchema, model.SkillKindPreset, "video"); err == nil {
+		t.Fatal("preset video accepted multi-reference input even though preset execution cannot select omni-reference mode")
 	}
 }
 

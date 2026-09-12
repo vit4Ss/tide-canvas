@@ -14,6 +14,8 @@ test("Skill import accepts ZIP archives through a server-side safety preview", (
   assert.doesNotMatch(modal + api, /JSZip|zip\.js|fflate/);
   assert.match(modal, /MAX_PRIMARY_FILE_BYTES/);
   assert.match(modal, /主文件\/展开上下文 1 MB/);
+  assert.match(modal, /archive:\$\{archiveIndex\}/);
+  assert.match(modal, /file:\$\{itemIndex\}/);
 });
 
 test("archive import communicates ignored executable files and retains the existing JSON import", () => {

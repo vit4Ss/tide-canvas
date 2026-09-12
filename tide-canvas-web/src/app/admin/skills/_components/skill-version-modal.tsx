@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, Copy, FileText, Loader2, Plus, Trash2, Upload } from "lucide-react";
 import {
+  AdminAlert,
   AdminEmptyState,
   AdminModal,
   Field,
@@ -38,6 +39,8 @@ import {
   type SkillKind,
   type SkillOutputType,
 } from "@/types/skill";
+import { SkillManifestAiControl, type SkillManifestDraftRequest } from "./skill-manifest-ai-control";
+import { detectSkillInputPreset, SKILL_INPUT_PRESETS, skillInputSchemaFor, type SkillInputPreset } from "./skill-input-schema-presets";
 
 const OUTPUT_TYPES: SkillOutputType[] = ["text", "image", "video", "audio", "file"];
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -266,6 +269,34 @@ function objectJSON(raw: string, label: string): Record<string, unknown> | null 
   }
 }
 
+function silentObjectJSON(raw: string): Record<string, unknown> | null {
+  try {
+    const value: unknown = JSON.parse(raw || "{}");
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function versionManifestSource(form: VersionForm): string {
+  const requested = form.primaryFilePath.trim().toLowerCase();
+  const primary = form.files.find((file) => file.path.trim().toLowerCase() === requested) ??
+    form.files.find((file) => /(^|\/)skill\.md$/i.test(file.path)) ?? form.files[0];
+  return primary?.content?.trim() || form.promptTemplate.trim();
+}
+
+function versionManifestSignature(form: VersionForm): string {
+  return JSON.stringify({
+    kind: form.kind,
+    primaryOutputType: form.primaryOutputType,
+    outputTypes: form.outputTypes,
+    inputSchema: form.inputSchema,
+    source: versionManifestSource(form),
+  });
+}
+
 function versionTone(status: AdminSkillVersionVO["status"]): "green" | "blue" | "gray" {
   if (status === "published") return "green";
   if (status === "draft") return "blue";
@@ -483,6 +514,7 @@ export function SkillVersionModal({
   const [loading, setLoading] = useState(false);
   const [publishingId, setPublishingId] = useState("");
   const [copyingId, setCopyingId] = useState("");
+  const [manifestAiBusy, setManifestAiBusy] = useState(false);
   const [form, setForm] = useState<VersionForm | null>(null);
   const [bindingErrors, setBindingErrors] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -515,6 +547,7 @@ export function SkillVersionModal({
       setLoading(false);
       setPublishingId("");
       setCopyingId("");
+      setManifestAiBusy(false);
       setForm(emptyForm(skill));
       setBindingErrors({});
       void load(generation);
@@ -553,6 +586,35 @@ export function SkillVersionModal({
   );
 
   if (!skill || !form) return null;
+
+  const loadManifestRequests = async (): Promise<SkillManifestDraftRequest[]> => {
+    const inputSchema = silentObjectJSON(form.inputSchema);
+    if (!inputSchema) throw new Error("请先填写合法的输入 Schema JSON 对象");
+    let source = versionManifestSource(form);
+    if (!source && skill.currentVersionId) {
+      const response = await adminSkillsApi.getVersion(skill.id, skill.currentVersionId);
+      if (!response.success || !response.data) {
+        throw new Error(response.message || "当前发布版本读取失败");
+      }
+      const version = response.data;
+      const primaryPath = version.primaryFilePath?.trim().toLowerCase();
+      const files = version.files ?? [];
+      const primary = files.find((file) => file.path.trim().toLowerCase() === primaryPath) ??
+        files.find((file) => /(^|\/)skill\.md$/i.test(file.path)) ?? files[0];
+      source = primary?.content?.trim() || version.promptTemplate?.trim() || "";
+    }
+    return [{
+      key: skill.id,
+      title: skill.title,
+      source,
+      kind: form.kind,
+      primaryOutputType: form.primaryOutputType,
+      outputTypes: form.outputTypes,
+      inputSchema,
+      signature: versionManifestSignature(form),
+    }];
+  };
+  const detectedInputPreset = detectSkillInputPreset(silentObjectJSON(form.inputSchema));
 
   const toggleEntry = (key: SkillEntryPoint) => {
     if (form.kind === "agent") return;
@@ -771,6 +833,10 @@ export function SkillVersionModal({
   };
 
   const save = async () => {
+    if (manifestAiBusy) {
+      toast.info("Manifest 草稿仍在生成，请等待完成或先停止生成");
+      return false;
+    }
     const entryPoints = constrainAdminSkillEntryPoints(form.kind, form.entryPoints);
     const outputTypes = form.kind === "preset"
       ? [form.primaryOutputType]
@@ -910,6 +976,7 @@ export function SkillVersionModal({
       subtitle="已发布版本不可变；修改配置会创建新草稿，确认后再切换线上版本。"
       saveLabel={form.publish ? "创建并发布" : "保存新草稿"}
       footNote="发布只影响之后启动的运行；历史运行始终固定原版本。"
+      closeable={!manifestAiBusy}
       onClose={onClose}
       onSave={save}
     >
@@ -951,7 +1018,7 @@ export function SkillVersionModal({
                   <button
                     type="button"
                     className="adm-btn ghost"
-                    disabled={!!copyingId}
+                    disabled={!!copyingId || manifestAiBusy}
                     onClick={() => void copyVersion(version)}
                   >
                     {copyingId === version.id
@@ -963,7 +1030,7 @@ export function SkillVersionModal({
                     <button
                       type="button"
                       className="adm-btn ghost"
-                      disabled={!!publishingId}
+                      disabled={!!publishingId || manifestAiBusy}
                       onClick={() => void publish(version)}
                     >
                       {publishingId === version.id ? (
@@ -982,7 +1049,27 @@ export function SkillVersionModal({
       </FormCard>
 
       <FormCard title="新版本运行配置">
-        <FormGrid>
+        {form.kind === "preset" ? (
+          <AdminAlert tone="info" title="预设技能使用固定 Manifest">
+            预设技能没有多步骤编排，系统会根据主输出生成最小运行配置，无需调用文本模型。
+          </AdminAlert>
+        ) : (
+          <SkillManifestAiControl
+            key={versionManifestSignature(form)}
+            loadRequests={loadManifestRequests}
+            onBusyChange={setManifestAiBusy}
+            onGenerated={(results) => {
+              const result = results[0];
+              if (!result) return;
+              setForm((current) => {
+                if (!current || result.signature !== versionManifestSignature(current)) return current;
+                return { ...current, manifest: JSON.stringify(result.manifest, null, 2) };
+              });
+            }}
+          />
+        )}
+        <fieldset disabled={manifestAiBusy} style={{ border: 0, margin: "14px 0 0", minWidth: 0, padding: 0 }}>
+          <FormGrid>
           <Field label="执行形态" required span={2}>
             <select
               value={form.kind}
@@ -1181,6 +1268,19 @@ export function SkillVersionModal({
               <option value="publish">立即发布</option>
             </select>
           </Field>
+          <Field label="输入 Schema 模板" span={4} hint="选择常用输入结构；选择后仍可在下方继续编辑 JSON。">
+            <select
+              value={detectedInputPreset ?? "custom"}
+              onChange={(event) => {
+                if (event.target.value === "custom") return;
+                const preset = event.target.value as SkillInputPreset;
+                setForm({ ...form, inputSchema: JSON.stringify(skillInputSchemaFor(preset), null, 2) });
+              }}
+            >
+              {SKILL_INPUT_PRESETS.map((preset) => <option key={preset.key} value={preset.key}>{preset.label}</option>)}
+              <option value="custom">自定义 JSON</option>
+            </select>
+          </Field>
           <Field label="输入 Schema" required span={4} hint="支持 JSON Schema；所有入口共用同一份动态输入定义。">
             <textarea
               rows={7}
@@ -1215,10 +1315,12 @@ export function SkillVersionModal({
               onChange={(event) => setForm({ ...form, defaultParams: event.target.value })}
             />
           </Field>
-        </FormGrid>
+          </FormGrid>
+        </fieldset>
       </FormCard>
 
       <FormCard title="Skill 文件包">
+        <fieldset disabled={manifestAiBusy} style={{ border: 0, margin: 0, minWidth: 0, padding: 0 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <button type="button" className="adm-btn ghost" onClick={() => fileInputRef.current?.click()}>
             <Upload aria-hidden size={14} /> 选择 .md / .txt
@@ -1257,6 +1359,7 @@ export function SkillVersionModal({
             ))}
           </div>
         ) : null}
+        </fieldset>
       </FormCard>
     </AdminModal>
   );

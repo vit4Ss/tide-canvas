@@ -165,6 +165,49 @@ func TestValidateSchemaValuesEnforcesStringAndArrayConstraints(t *testing.T) {
 	}
 }
 
+func TestValidateSchemaValuesEnforcesConfiguredAssetTypesAndExactCount(t *testing.T) {
+	schema := `{"type":"object","x-asset-types":["image"],"required":["assets"],"properties":{"assets":{"type":"array","minItems":2,"maxItems":2}}}`
+	valid := runInputValues(RunInput{Assets: []AssetInput{
+		{Type: "image", URL: "https://cdn.test/start.png"},
+		{Type: "image", URL: "https://cdn.test/end.png"},
+	}})
+	if err := validateSchemaValues(schema, valid); err != nil {
+		t.Fatalf("valid start/end assets rejected: %v", err)
+	}
+	for name, input := range map[string]RunInput{
+		"too few": {Assets: []AssetInput{{Type: "image", URL: "https://cdn.test/start.png"}}},
+		"too many": {Assets: []AssetInput{
+			{Type: "image", URL: "https://cdn.test/one.png"},
+			{Type: "image", URL: "https://cdn.test/two.png"},
+			{Type: "image", URL: "https://cdn.test/three.png"},
+		}},
+		"wrong type": {Assets: []AssetInput{
+			{Type: "image", URL: "https://cdn.test/start.png"},
+			{Type: "video", URL: "https://cdn.test/end.mp4"},
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateSchemaValues(schema, runInputValues(input)); err == nil {
+				t.Fatal("invalid asset input was accepted")
+			}
+		})
+	}
+}
+
+func TestValidateSchemaValuesTreatsEmptyAssetTypesAsNoAttachments(t *testing.T) {
+	schema := `{"type":"object","x-asset-types":[],"required":["url"],"properties":{"url":{"type":"string"}}}`
+	if err := validateSchemaValues(schema, runInputValues(RunInput{Parameters: map[string]any{"url": "https://example.test"}})); err != nil {
+		t.Fatalf("attachment-free webpage input was rejected: %v", err)
+	}
+	input := RunInput{
+		Parameters: map[string]any{"url": "https://example.test"},
+		Assets:     []AssetInput{{Type: "image", URL: "https://cdn.test/ignored.png"}},
+	}
+	if err := validateSchemaValues(schema, runInputValues(input)); err == nil {
+		t.Fatal("explicit no-attachment schema accepted an ignored image")
+	}
+}
+
 func TestMetadataContainsExactOwnedURL(t *testing.T) {
 	raw := `{"urls":["https://cdn.test/a.png","https://cdn.test/b.png"],"images":[{"url":"https://cdn.test/c.png"}]}`
 	for _, url := range []string{"https://cdn.test/a.png", "https://cdn.test/c.png"} {

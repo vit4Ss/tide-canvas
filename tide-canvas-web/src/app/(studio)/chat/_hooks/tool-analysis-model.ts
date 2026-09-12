@@ -5,7 +5,7 @@ const IMAGE_FORMATS = new Set(["jpg", "jpeg", "png", "webp", "gif"]);
 type AssetSchema = {
   "x-asset-types"?: unknown;
   required?: unknown;
-  properties?: { assets?: { minItems?: unknown } };
+  properties?: { assets?: { minItems?: unknown }; url?: unknown };
 };
 
 export interface SkillModelSupport {
@@ -19,9 +19,10 @@ export interface ToolAssetRequirement {
   kinds: ToolAssetKind[];
   required: boolean;
   builtin: boolean;
+  declared: boolean;
 }
 
-const BUILTIN_TOOL_ASSETS: Readonly<Record<string, Omit<ToolAssetRequirement, "builtin">>> = {
+const BUILTIN_TOOL_ASSETS: Readonly<Record<string, Omit<ToolAssetRequirement, "builtin" | "declared">>> = {
   "生成 PPT": { kinds: ["image", "file"], required: false },
   "生成 XLSX": { kinds: ["image", "file"], required: false },
   "生成 Word": { kinds: ["image", "file"], required: false },
@@ -44,7 +45,7 @@ function assetSchema(inputSchema: SkillVO["inputSchema"]): AssetSchema | null {
 
 export function toolAssetRequirement(skill: SkillVO | null | undefined): ToolAssetRequirement {
   const builtin = BUILTIN_TOOL_ASSETS[skill?.title?.trim() || ""];
-  if (builtin) return { ...builtin, kinds: [...builtin.kinds], builtin: true };
+  if (builtin) return { ...builtin, kinds: [...builtin.kinds], builtin: true, declared: true };
   const schema = assetSchema(skill?.inputSchema);
   const rawKinds = schema?.["x-asset-types"];
   const kinds = Array.isArray(rawKinds)
@@ -53,7 +54,12 @@ export function toolAssetRequirement(skill: SkillVO | null | undefined): ToolAss
     : [];
   const required = Array.isArray(schema?.required) && schema.required.includes("assets");
   const minItems = schema?.properties?.assets?.minItems;
-  return { kinds, required: required || (typeof minItems === "number" && minItems > 0), builtin: false };
+  return {
+    kinds,
+    required: required || (typeof minItems === "number" && minItems > 0),
+    builtin: false,
+    declared: Array.isArray(rawKinds) || !!schema?.properties?.url,
+  };
 }
 
 export function modelSupportsFileInput(model: StudioModelVO | null | undefined): boolean {

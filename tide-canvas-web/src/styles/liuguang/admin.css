@@ -3793,6 +3793,65 @@ tr:hover .rowacts,
   gap: 8px;
 }
 .adm-skill-copy-ai > .adm-btn { flex: none; }
+.adm-skill-manifest-ai {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+.adm-skill-manifest-ai > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.adm-skill-manifest-ai > div > strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 12.5px;
+}
+.adm-skill-manifest-ai > div > strong svg { color: var(--accent); }
+.adm-skill-manifest-ai > div > span {
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.adm-skill-manifest-ai > .adm-btn { flex: none; }
+.adm-skill-manifest-drafts {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.adm-skill-manifest-drafts details {
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+.adm-skill-manifest-drafts summary {
+  padding: 9px 11px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.adm-skill-manifest-drafts textarea {
+  width: calc(100% - 20px);
+  min-height: 180px;
+  margin: 0 10px 10px;
+  padding: 9px 10px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font: 12px/1.55 var(--mono);
+  resize: vertical;
+}
 .adm-skill-cover-ai {
   position: relative;
   overflow: hidden;
@@ -4094,6 +4153,8 @@ tr:hover .rowacts,
   .adm-skill-copy-ai > .adm-btn,
   .adm-skill-copy-ai-actions .adm-btn { width: 100%; justify-content: center; }
   .adm-skill-copy-ai-actions { align-items: stretch; flex-direction: column; }
+  .adm-skill-manifest-ai { align-items: stretch; flex-direction: column; }
+  .adm-skill-manifest-ai > .adm-btn { width: 100%; justify-content: center; }
   .adm-skill-cover-ai-grid { grid-template-columns: 1fr; }
   .adm-skill-cover-ai > footer { align-items: stretch; flex-direction: column; }
   .adm-skill-cover-ai > footer .adm-btn { width: 100%; justify-content: center; }

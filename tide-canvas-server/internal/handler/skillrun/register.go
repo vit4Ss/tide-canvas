@@ -1293,6 +1293,35 @@ func validateSchemaValues(schemaJSON string, values map[string]any) error {
 	if err != nil || json.Unmarshal(encodedValues, &values) != nil {
 		return invalid("skill input values are invalid")
 	}
+	if rawAssetTypes, exists := schema["x-asset-types"]; exists {
+		items, ok := rawAssetTypes.([]any)
+		if !ok || len(items) > 4 {
+			return invalid("skill input schema x-asset-types is invalid")
+		}
+		validAssetTypes := map[string]bool{"image": true, "video": true, "audio": true, "file": true}
+		allowed := make(map[string]bool, len(items))
+		for _, rawType := range items {
+			typeName, ok := rawType.(string)
+			typeName = strings.ToLower(strings.TrimSpace(typeName))
+			if !ok || !validAssetTypes[typeName] || allowed[typeName] {
+				return invalid("skill input schema x-asset-types is invalid")
+			}
+			allowed[typeName] = true
+		}
+		if assets, ok := values["assets"].([]any); ok {
+			for index, rawAsset := range assets {
+				asset, ok := rawAsset.(map[string]any)
+				if !ok {
+					return invalidf("input.assets[%d] must be an object", index)
+				}
+				typeName, ok := asset["type"].(string)
+				typeName = strings.ToLower(strings.TrimSpace(typeName))
+				if !ok || !allowed[typeName] {
+					return invalidf("input.assets[%d].type is not allowed by the skill input schema", index)
+				}
+			}
+		}
+	}
 	required := map[string]bool{}
 	if list, ok := schema["required"].([]any); ok {
 		for _, item := range list {

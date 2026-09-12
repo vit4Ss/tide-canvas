@@ -68,9 +68,21 @@ test("official Office tools override stale production schemas and remain text-ca
     inputSchema: { "x-asset-types": ["image", "file"], required: ["assets"] },
   };
   assert.deepEqual(toolAssetRequirement(staleOffice), {
-    kinds: ["image", "file"], required: false, builtin: true,
+    kinds: ["image", "file"], required: false, builtin: true, declared: true,
   });
   assert.deepEqual(skillModelSupport(staleOffice, text), { supported: true, acceptsAssets: false });
+});
+
+test("an explicitly empty asset list means the tool accepts no attachments", () => {
+  assert.deepEqual(toolAssetRequirement(skill([])), {
+    kinds: [], required: false, builtin: false, declared: true,
+  });
+  assert.deepEqual(toolAssetRequirement({ inputSchema: { type: "object" } }), {
+    kinds: [], required: false, builtin: false, declared: false,
+  });
+  assert.deepEqual(toolAssetRequirement({ inputSchema: { type: "object", properties: { url: { type: "string" } } } }), {
+    kinds: [], required: false, builtin: false, declared: true,
+  });
 });
 
 test("optional-reference document skills remain usable but cannot attach files", () => {
@@ -95,6 +107,8 @@ test("every chat tool entry point enforces the selected model capability", () =>
   assert.match(page, /skillUnavailableReason=\{toolUnavailableReason\}/);
   assert.match(page, /setToolSkill\(null\)/);
   assert.match(send, /selectedTool && !selectedToolSupport\.supported/);
+  assert.match(send, /schema\?\.properties\?\.url\s*\? \[\]/);
+  assert.match(config, /if \(toolAssets\.declared\) return undefined/);
   assert.match(config, /if \(!toolModelSupport\.acceptsAssets\) return undefined/);
   assert.match(picker, /aria-disabled=\{!!unavailableReason\}/);
   assert.match(page, /当前模型暂无兼容快捷工具/);

@@ -288,7 +288,62 @@ export function validateSkillRunInputValues(
     }
   }
   if (required.has("prompt") && !input.prompt.trim()) errors.prompt = "请填写创作描述";
-  if (required.has("assets") && input.assets.length === 0) errors.assets = "请至少添加一个参考素材";
+  const properties = schema.properties && typeof schema.properties === "object"
+    ? schema.properties
+    : {};
+  const rawAssetSpec = properties.assets;
+  const assetSpec = rawAssetSpec && typeof rawAssetSpec === "object" && !Array.isArray(rawAssetSpec)
+    ? rawAssetSpec
+    : null;
+  const rawAllowedAssetTypes = schema["x-asset-types"];
+  const hasDeclaredAssetTypes = Array.isArray(rawAllowedAssetTypes);
+  const allowedAssetTypes = new Set(
+    hasDeclaredAssetTypes
+      ? rawAllowedAssetTypes.filter((value): value is string => typeof value === "string")
+      : [],
+  );
+  const unsupportedAssetTypes = [...new Set(
+    input.assets
+      .map((asset) => asset.type)
+      .filter((type) => hasDeclaredAssetTypes && !allowedAssetTypes.has(type)),
+  )];
+  const assetTypeLabel: Record<string, string> = {
+    image: "图片",
+    video: "视频",
+    audio: "音频",
+    file: "文件",
+    text: "文本",
+  };
+  const allowedLabel = [...allowedAssetTypes].map((type) => assetTypeLabel[type] ?? type).join("、");
+  const unsupportedLabel = unsupportedAssetTypes.map((type) => assetTypeLabel[type] ?? type).join("、");
+  if (unsupportedAssetTypes.length) {
+    errors.assets = allowedLabel
+      ? `当前技能只接受${allowedLabel}素材，不能使用${unsupportedLabel}素材`
+      : `当前技能不接受素材附件，请移除${unsupportedLabel}素材`;
+  }
+  const schemaCount = (value: unknown): number | undefined =>
+    typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+  const minItems = schemaCount(assetSpec?.minItems);
+  const maxItems = schemaCount(assetSpec?.maxItems);
+  const singleAssetType = allowedAssetTypes.size === 1 ? [...allowedAssetTypes][0] : "";
+  const unit = singleAssetType === "image"
+    ? "张图片"
+    : singleAssetType === "video"
+      ? "个视频"
+      : singleAssetType === "audio"
+        ? "个音频"
+        : singleAssetType === "file"
+          ? "个文件"
+          : "个参考素材";
+  if (!errors.assets && minItems !== undefined && maxItems === minItems && input.assets.length !== minItems) {
+    errors.assets = `请添加恰好 ${minItems} ${unit}`;
+  } else if (!errors.assets && minItems !== undefined && input.assets.length < minItems) {
+    errors.assets = `请至少添加 ${minItems} ${unit}`;
+  } else if (!errors.assets && maxItems !== undefined && input.assets.length > maxItems) {
+    errors.assets = `最多只能添加 ${maxItems} ${unit}`;
+  } else if (!errors.assets && required.has("assets") && input.assets.length === 0) {
+    errors.assets = "请至少添加一个参考素材";
+  }
   if (required.has("sourceNodeIds") && input.sourceNodeIds.length === 0) {
     errors.sourceNodeIds = "请至少选择一个来源节点";
   }

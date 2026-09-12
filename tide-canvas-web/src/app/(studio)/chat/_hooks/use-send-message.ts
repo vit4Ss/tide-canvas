@@ -141,7 +141,9 @@ function chatToolRunInput(
       ? rawAssetTypes.filter((value): value is RefItem["kind"] =>
           value === "image" || value === "video" || value === "audio" || value === "file",
         )
-      : (["image", "file"] as RefItem["kind"][]),
+      : schema?.properties?.url
+        ? []
+        : (["image", "file"] as RefItem["kind"][]),
   );
   if (webSearch) parameters.webSearch = true;
   if (textModelId) parameters.textModelId = textModelId;

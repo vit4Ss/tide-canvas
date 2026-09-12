@@ -670,8 +670,16 @@ func (h *skillsHandler) publishVersion(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, err.Error())
 		return
 	}
+	if err := validateInputSchemaDefinition(json.RawMessage(version.InputSchema)); err != nil {
+		response.Fail(c, response.CodeBadRequest, describeSkillImportError(err))
+		return
+	}
 	if err := validateSkillKindContract(&version); err != nil {
 		response.Fail(c, response.CodeBadRequest, err.Error())
+		return
+	}
+	if err := validateSkillManifestInputContract(json.RawMessage(version.ManifestJSON), json.RawMessage(version.InputSchema), version.Kind, version.PrimaryOutputType); err != nil {
+		response.Fail(c, response.CodeBadRequest, describeSkillImportError(err))
 		return
 	}
 	if err := validateSkillFileReferences(version.ManifestJSON, version.PromptTemplate, files, version.PrimaryFilePath); err != nil {
@@ -867,6 +875,9 @@ func buildSkillVersion(_ *gorm.DB, skill *model.Skill, dto AdminSkillVersionCrea
 		return nil, nil, err
 	}
 	if err := validateInputSchemaDefinition(inputSchema); err != nil {
+		return nil, nil, err
+	}
+	if err := validateSkillManifestInputContract(manifest, inputSchema, kind, primaryOutput); err != nil {
 		return nil, nil, err
 	}
 	defaults := dto.DefaultParams
@@ -1134,6 +1145,9 @@ func persistSkillVersionTx(tx *gorm.DB, skill *model.Skill, version *model.Skill
 		version.BindingsJSON = model.JSONString(snapshots)
 	}
 	if err := validateSkillKindContract(version); err != nil {
+		return err
+	}
+	if err := validateSkillManifestInputContract(json.RawMessage(version.ManifestJSON), json.RawMessage(version.InputSchema), version.Kind, version.PrimaryOutputType); err != nil {
 		return err
 	}
 	if err := validateAssetBindingOutputs(version); err != nil {
@@ -1737,6 +1751,21 @@ func validateInputSchemaDefinition(raw json.RawMessage) error {
 	if typeName, _ := root["type"].(string); typeName != "" && typeName != "object" {
 		return errors.New("inputSchema root type must be object")
 	}
+	if rawAssetTypes, exists := root["x-asset-types"]; exists {
+		items, ok := rawAssetTypes.([]any)
+		if !ok || len(items) > 4 {
+			return errors.New("inputSchema.x-asset-types must contain at most 4 asset types")
+		}
+		valid := map[string]bool{"image": true, "video": true, "audio": true, "file": true}
+		seen := map[string]bool{}
+		for _, rawItem := range items {
+			item, ok := rawItem.(string)
+			if !ok || !valid[item] || seen[item] {
+				return errors.New("inputSchema.x-asset-types contains an invalid or duplicate asset type")
+			}
+			seen[item] = true
+		}
+	}
 	return validateInputSchemaNode(root, "inputSchema", 0, false)
 }
 
@@ -2219,6 +2248,128 @@ func validateSkillManifest(
 		primary := strings.ToLower(strings.TrimSpace(primaryOutputType))
 		if !finalOutputTypes[primary] {
 			return errors.New("final outputs must include primaryOutputType")
+		}
+	}
+	return nil
+}
+
+func validateSkillManifestInputContract(manifestRaw, inputSchemaRaw json.RawMessage, kind, primaryOutputType string) error {
+	var manifest struct {
+		Steps []struct {
+			Handler string `json:"handler"`
+		} `json:"steps"`
+	}
+	var schema map[string]any
+	if json.Unmarshal(manifestRaw, &manifest) != nil || json.Unmarshal(inputSchemaRaw, &schema) != nil {
+		return errors.New("manifest and inputSchema must be valid JSON objects")
+	}
+	assetTypes := map[string]bool{}
+	if rawTypes, ok := schema["x-asset-types"].([]any); ok {
+		for _, rawType := range rawTypes {
+			if typeName, ok := rawType.(string); ok {
+				assetTypes[strings.ToLower(strings.TrimSpace(typeName))] = true
+			}
+		}
+	}
+	properties, _ := schema["properties"].(map[string]any)
+	assetSpec, _ := properties["assets"].(map[string]any)
+	requiredFields := map[string]bool{}
+	if required, ok := schema["required"].([]any); ok {
+		for _, rawField := range required {
+			if field, ok := rawField.(string); ok {
+				requiredFields[field] = true
+			}
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(kind), model.SkillKindPreset) {
+		primary := strings.ToLower(strings.TrimSpace(primaryOutputType))
+		if len(assetTypes) == 0 {
+			if assetSpec != nil || requiredFields["assets"] {
+				return errors.New("preset inputSchema declares assets but does not declare an accepted asset type")
+			}
+			return nil
+		}
+		if len(assetTypes) != 1 || !assetTypes["image"] {
+			return fmt.Errorf("preset %s output does not support the selected asset input types", primary)
+		}
+		minimum, minimumOK := assetSpec["minItems"].(float64)
+		maximum, maximumOK := assetSpec["maxItems"].(float64)
+		if assetSpec["type"] != "array" || !minimumOK || minimum < 1 || !maximumOK || !requiredFields["assets"] {
+			return errors.New("preset image input requires a bounded, required assets array")
+		}
+		switch primary {
+		case "image":
+			if maximum > 9 {
+				return errors.New("preset image output accepts at most 9 input images")
+			}
+		case "video":
+			if minimum != 1 || maximum != 1 {
+				return errors.New("preset video output supports exactly one input image; use an agent for keyframes or multi-reference video")
+			}
+		default:
+			return fmt.Errorf("preset %s output does not consume asset input", primary)
+		}
+		return nil
+	}
+	requiredAssets := map[string]string{
+		"analyze_image": "image", "analyze_video": "video", "analyze_audio": "audio",
+		"image_to_image": "image", "image_to_video": "image", "start_end_to_video": "image",
+	}
+	for index, step := range manifest.Steps {
+		handler := strings.ToLower(strings.TrimSpace(step.Handler))
+		if (handler == "text_to_image" || handler == "text_to_video" || handler == "text_to_audio" || handler == "analyze_webpage" || handler == "analyze_account") && (len(assetTypes) > 0 || assetSpec != nil || requiredFields["assets"]) {
+			return fmt.Errorf("manifest.steps[%d].handler %s does not consume asset input", index, handler)
+		}
+		if required := requiredAssets[handler]; required != "" {
+			if len(assetTypes) != 1 || !assetTypes[required] {
+				return fmt.Errorf("manifest.steps[%d].handler %s requires inputSchema.x-asset-types to contain only %s", index, handler, required)
+			}
+			minimum, minimumIsNumber := assetSpec["minItems"].(float64)
+			if assetSpec["type"] != "array" || !minimumIsNumber || minimum < 1 || !requiredFields["assets"] {
+				return fmt.Errorf("manifest.steps[%d].handler %s requires inputSchema.properties.assets and required assets", index, handler)
+			}
+		}
+		if handler == "analyze_video" || handler == "analyze_audio" || handler == "image_to_video" {
+			maximum, maximumIsNumber := assetSpec["maxItems"].(float64)
+			if !maximumIsNumber || maximum != 1 {
+				return fmt.Errorf("manifest.steps[%d].handler %s requires inputSchema.properties.assets.maxItems to equal 1", index, handler)
+			}
+		}
+		if handler == "analyze_image" {
+			maximum, maximumIsNumber := assetSpec["maxItems"].(float64)
+			if !maximumIsNumber || maximum < 1 || maximum > 9 {
+				return fmt.Errorf("manifest.steps[%d].handler analyze_image requires inputSchema.properties.assets.maxItems between 1 and 9", index)
+			}
+		}
+		if handler == "reference_to_video" {
+			if len(assetTypes) == 0 || assetTypes["file"] {
+				return fmt.Errorf("manifest.steps[%d].handler reference_to_video only accepts image, video or audio input", index)
+			}
+		}
+		if handler == "reference_to_video" {
+			minimum, minimumIsNumber := assetSpec["minItems"].(float64)
+			if assetSpec["type"] != "array" || !minimumIsNumber || minimum < 1 || !requiredFields["assets"] {
+				return fmt.Errorf("manifest.steps[%d].handler reference_to_video requires inputSchema.properties.assets and required assets", index)
+			}
+		}
+		if handler == "start_end_to_video" {
+			minimum, minimumOK := assetSpec["minItems"].(float64)
+			maximum, maximumOK := assetSpec["maxItems"].(float64)
+			if !minimumOK || !maximumOK || minimum != 2 || maximum != 2 {
+				return fmt.Errorf("manifest.steps[%d].handler start_end_to_video requires exactly two assets", index)
+			}
+		}
+		if handler == "analyze_webpage" {
+			if properties == nil {
+				return fmt.Errorf("manifest.steps[%d].handler analyze_webpage requires inputSchema.properties.url", index)
+			}
+			urlSpec, exists := properties["url"].(map[string]any)
+			if !exists || urlSpec["type"] != "string" {
+				return fmt.Errorf("manifest.steps[%d].handler analyze_webpage requires inputSchema.properties.url", index)
+			}
+			if !requiredFields["url"] {
+				return fmt.Errorf("manifest.steps[%d].handler analyze_webpage requires url in inputSchema.required", index)
+			}
 		}
 	}
 	return nil

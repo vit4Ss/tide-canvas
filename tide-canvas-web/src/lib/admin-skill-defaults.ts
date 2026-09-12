@@ -50,10 +50,13 @@ export function starterAdminSkillInputSchema(
   kind: SkillKind,
   primaryOutputType: SkillOutputType,
 ): Record<string, unknown> {
-  if (kind !== "tool") return { type: "object", properties: {} };
+  if (kind !== "tool") {
+    return { type: "object", "x-asset-types": [], required: ["prompt"], properties: {} };
+  }
   if (primaryOutputType === "text") {
     return {
       type: "object",
+      "x-asset-types": [],
       required: ["url"],
       properties: {
         url: {
@@ -66,7 +69,12 @@ export function starterAdminSkillInputSchema(
       },
     };
   }
-  return { type: "object", required: ["prompt"], properties: {} };
+  return {
+    type: "object",
+    "x-asset-types": ["image", "file"],
+    required: ["prompt"],
+    properties: {},
+  };
 }
 
 /**
