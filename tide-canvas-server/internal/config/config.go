@@ -41,6 +41,7 @@ type Config struct {
 	LLM             LLMConfig             `mapstructure:"llm"`
 	Relay           RelayConfig           `mapstructure:"relay"`
 	LobeHub         LobeHubConfig         `mapstructure:"lobehub"`
+	MCP             MCPConfig             `mapstructure:"mcp"`
 	VideoDownloader VideoDownloaderConfig `mapstructure:"videoDownloader"`
 	WorldLabs       WorldLabsConfig       `mapstructure:"worldLabs"`
 	Eliandapay      EliandapayConfig      `mapstructure:"eliandapay"`
@@ -48,6 +49,11 @@ type Config struct {
 	// credential. The four JWT-backed supplier credentials are stored in
 	// sys_config and overlaid by the admin balance monitor at request time.
 	BalanceMonitor BalanceMonitorConfig `mapstructure:"balanceMonitor"`
+}
+
+// MCPConfig contains the deployment-only, non-user-editable probe target.
+type MCPConfig struct {
+	InternalURL string `mapstructure:"internalUrl"`
 }
 
 // LobeHubConfig keeps first-party SSO credentials server-side. PublicURL is the
@@ -337,6 +343,7 @@ func Load() (*Config, error) {
 	}
 
 	v := viper.New()
+	v.SetDefault("mcp.internalUrl", "http://127.0.0.1:8082")
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")

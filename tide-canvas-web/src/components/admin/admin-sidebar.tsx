@@ -63,6 +63,7 @@ export const ADMIN_NAV: AdminNavEntry[] = [
   { label: "消息管理", href: "/admin/notifications", icon: "bell", perm: "notifications", description: "站内通知、受众与触达记录" },
   { label: "告警通知", href: "/admin/alerts", icon: "alert", perm: "alerts", description: "管理员异常通知、渠道、规则与投递记录" },
   { label: "配置管理", href: "/admin/config", icon: "cog", perm: "config", description: "站点、存储、注册与系统参数" },
+  { label: "MCP 配置", href: "/admin/mcp", icon: "nodes", perm: "config", description: "MCP 接入、生成能力、来源与服务状态" },
   { label: "邮件配置", href: "/admin/email", icon: "mail", perm: "email", description: "邮件模板、发送配置与 API 密钥" },
 ];
 

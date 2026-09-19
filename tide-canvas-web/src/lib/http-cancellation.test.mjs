@@ -67,3 +67,15 @@ test("a successful token refresh removes the optional read abort listener", { ti
   assert.equal((await http.get("/api/ai/tasks",undefined,{ signal:controller.signal })).success,true);
   assert.equal(getEventListeners(controller.signal,"abort").length,0);
 });
+
+test("a cancelled settings save returns an ambiguous result without resubmitting", { timeout:2000 }, async()=>{
+  let calls=0;
+  const {http,storage}=setup((_url,init)=>new Promise((_resolve,reject)=>{
+    calls++;assert.equal(init.method,"PUT");assert.equal(JSON.parse(init.body).revision,3);
+    init.signal.addEventListener("abort",()=>reject(Error("aborted")),{once:true});
+  }));
+  const controller=new AbortController();
+  const pending=http.put("/api/admin/mcp",{revision:3,enabled:false},{signal:controller.signal});
+  controller.abort();
+  assert.equal((await pending).code,0);assert.equal(calls,1);assert.equal(storage.get("access_token"),"access-old");
+});

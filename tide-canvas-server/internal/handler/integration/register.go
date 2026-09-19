@@ -14,6 +14,7 @@ import (
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/eventlog"
+	"tidecanvas/internal/pkg/mcpconfig"
 	"tidecanvas/internal/pkg/response"
 	"tidecanvas/internal/pkg/userkey"
 )
@@ -45,6 +46,17 @@ func fail(c *gin.Context, err error) {
 }
 
 func Register(api *gin.RouterGroup, d *app.Deps) {
+	// Public deployment policy only; contains no keys, identities or internal
+	// probe addresses. MCP and the documentation page consume the same values.
+	api.GET("/mcp/config", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		policy, err := mcpconfig.Read(c.Request.Context(), d.DB)
+		if err != nil {
+			response.Fail(c, response.CodeServerError, "无法读取 MCP 配置")
+			return
+		}
+		response.OK(c, policy)
+	})
 	keys := d.UserKeys
 	g := api.Group("/auth/api-key", middleware.JWTAuth(d), middleware.RateLimit(d, 30, time.Minute))
 	g.Use(func(c *gin.Context) {

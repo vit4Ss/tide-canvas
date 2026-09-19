@@ -8,6 +8,7 @@
 #   8080   —— relay-backend（apirouter 项目，不动）
 #   8090   —— relay-frontend（apirouter 项目，挂"让位版"配置后仅监听回环）
 #   8081   —— tidecanvas-backend
+#   8082   —— tidecanvas-mcp（仅回环，nginx 的 /mcp 入口）
 #   3000   —— tidecanvas 前端 Next SSR（仅监听回环）
 #
 # 使用：
@@ -24,6 +25,7 @@ services:
     environment:
       TIDECANVAS_ENV: test        # 选择 configs/config.test.yaml 叠加层
       TIDECANVAS_SERVER_PORT: "8081" # 8080 被同机 relay-backend 占用
+      TIDECANVAS_MCP_INTERNALURL: "${TIDECANVAS_MCP_INTERNALURL:-http://127.0.0.1:8082}"
       # World Labs Marble 凭据只在运行时注入，不写入镜像或仓库。
       # 可在 deploy/.env 或执行 docker compose 前的宿主机环境中设置。
       TIDECANVAS_WORLDLABS_APIKEY: "${TIDECANVAS_WORLDLABS_APIKEY:-}"
@@ -43,6 +45,18 @@ services:
       # 维护，保存后实时生效；旧的 TIDECANVAS_BALANCEMONITOR_* 环境变量已废弃。
     volumes:
       - uploads-data:/app/data/uploads   # local 存储模式的上传目录（oss 模式下备而不用）
+
+  mcp:
+    image: ghcr.io/vit4ss/tide-canvas-mcp:latest
+    container_name: tidecanvas-mcp
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      FLOWLIGHT_BASE_URL: http://127.0.0.1:8081
+      MCP_ADDR: 127.0.0.1:8082
+      MCP_ALLOWED_ORIGINS: "${MCP_ALLOWED_ORIGINS:-https://test-flowlight.tcmzhan.com,https://flowlight.tcmzhan.com}"
+    depends_on:
+      - backend
 
   frontend:
     image: ghcr.io/vit4ss/tide-canvas-frontend:latest

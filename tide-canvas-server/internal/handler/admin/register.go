@@ -55,6 +55,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	RegisterLogs(mod("logs"), d)
 	RegisterAuditLogs(mod("logs"), d)
 	RegisterConfig(mod("config"), d)
+	RegisterMCP(mod("config"), d)
 	RegisterEmail(mod("email"), d)
 	RegisterNotifications(mod("notifications"), d)
 	RegisterAlerts(mod("alerts"), d)

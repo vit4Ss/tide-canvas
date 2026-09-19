@@ -4,13 +4,14 @@ import Link from "next/link";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { Check, Code2, Copy, KeyRound, ArrowUpRight } from "lucide-react";
 import { aiApi } from "@/lib/api";
+import { mcpConfigApi, mcpClientConfig, type MCPConfig } from "@/lib/mcp-config-api";
 import type { AiHandlerVO, AiModelVO } from "@/types/ai";
 import styles from "./page.module.css";
 
 const noopSubscribe = () => () => {};
 const originSnapshot = () => window.location.origin;
 const serverOrigin = () => "https://你的主站域名";
-const sections = [["start", "接入概览"], ["models", "模型与参数"], ["generate", "提交生成"], ["tasks", "进度与结果"], ["files", "上传与下载"], ["billing", "计费与重试"], ["errors", "错误处理"]];
+const sections = [["start", "接入概览"], ["models", "模型与参数"], ["generate", "提交生成"], ["tasks", "进度与结果"], ["files", "上传与下载"], ["mcp", "MCP 接入"], ["billing", "计费与重试"], ["errors", "错误处理"]];
 const examples: Record<string, { label: string; type: string; input: Record<string, unknown> }> = {
   text_to_image: { label: "文生图", type: "image", input: { prompt: "一座漂浮在云海中的未来城市", ratio: "1:1", batchCount: 1 } },
   image_to_image: { label: "图生图", type: "image", input: { prompt: "保留构图，将天空改为日落", imageUrls: ["上传返回的 fileUrl"], batchCount: 1 } },
@@ -46,6 +47,7 @@ export default function GenerationAPIDocs() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [mcpPolicy, setMCPPolicy] = useState<MCPConfig | null>(null);
   const [handler, setHandler] = useState("text_to_image");
   const [modelID, setModelID] = useState("");
   useEffect(() => {
@@ -55,6 +57,11 @@ export default function GenerationAPIDocs() {
       if (!m.success || !h.success) { setLoadError(true); return; }
       setModels(m.data ?? []); setHandlers(h.data ?? []); setLoadError(false);
     }).catch(() => { if (alive) setLoadError(true); }).finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [revision]);
+  useEffect(() => {
+    let alive = true;
+    void mcpConfigApi.publicConfig().then((res) => { if (alive) setMCPPolicy(res.success ? res.data : null); }).catch(() => { if (alive) setMCPPolicy(null); });
     return () => { alive = false; };
   }, [revision]);
   const example = examples[handler];
@@ -107,6 +114,17 @@ export default function GenerationAPIDocs() {
         </section>
         <section id="files"><h2>上传与下载</h2><Endpoint method="POST" path="/files" /><p>使用 multipart/form-data，文件字段名为 file，单文件上限 100 MiB，同时受账号存储配额和反向代理限制。将返回的 data.fileUrl 放进生成参数，例如 input.imageUrls。</p><Code>{`curl ${shellQuote(`${base}/files`)} \\\n  ${auth} \\\n  -F "file=@reference.png"`}</Code>
           <Endpoint method="GET" path="/files/download?url=…&name=…" /><p>下载当前账号有权限的结果或素材，以二进制附件返回。请只对非错误响应保存文件；文件 URL 需进行 URL 编码。</p><Code>{`curl --fail-with-body --get ${shellQuote(`${base}/files/download`)} \\\n  ${auth} \\\n  --data-urlencode "url=替换为任务返回的 resultUrl" \\\n  --data-urlencode "name=result.png" \\\n  --output result.png`}</Code>
+        </section>
+        <section id="mcp"><h2>MCP 接入</h2>
+          <p>在支持 MCP 的 AI 客户端中，把主站的图片、视频、音频生成接成工具。沿用你的 API Key 和积分，生成记录同步到创作台。</p>
+          <Endpoint method="POST" path={mcpPolicy?.publicUrl || `${origin}/mcp`} />
+          {mcpPolicy && !mcpPolicy.enabled && <p className={styles.note}>管理员暂时关闭了 MCP 接入。</p>}
+          <p className={styles.note}>管理员需先启动独立 MCP 服务并配置反向代理。服务默认监听 127.0.0.1:8082，本机测试直接连接 http://127.0.0.1:8082/mcp。上方是部署后的远程入口，不是普通 REST 接口。</p>
+          <Code label="远程 MCP · URL + Bearer Header">{JSON.stringify(mcpClientConfig(mcpPolicy?.publicUrl ?? "",origin), null, 2)}</Code>
+          <div className={styles.table}><table><thead><tr><th>工具</th><th>能力</th><th>费用</th></tr></thead><tbody>{[["list_models", "查询真实模型与配置", "免费"], ["generate_image", "文生图、图生图", "按主站模型计费"], ["generate_video", "文生、图生、首尾帧、全能参考", "按主站模型计费"], ["generate_audio", "音乐、音效或语音", "按主站模型计费"], ["get_generation_task", "查询进度与结果", "免费"], ["list_generation_tasks", "查看自己的接口调用历史", "免费"], ["get_balance", "查看积分余额", "免费"]].map(([tool, usage, cost]) => <tr key={tool}><td>{tool}</td><td>{usage}</td><td>{cost}</td></tr>)}</tbody></table></div>
+          <p>先查询模型，再生成。生成工具需要 modelId 和唯一 clientRequestId；prompt 描述需求，parameters 携带分辨率、质量、时长等模型参数。参考素材先上传到主站，再把 URL 传给工具。</p>
+          <Code label="工具调用示例 · 图片">{JSON.stringify({ name: "generate_image", arguments: { modelId: "从 list_models 选择真实模型", clientRequestId: "image-job-001", prompt: "云海中的未来城市", parameters: { resolution: "4k", quality: "high", batchCount: 1 } } }, null, 2)}</Code>
+          <p>工具先返回 task.id 和 statusText。processing 表示生成中，每 5–10 秒通过 get_generation_task 查询；succeeded 后读取结果 URL。重试沿用原编号和参数。不同客户端的配置入口不同，请选择 Streamable HTTP 和手动 Bearer Key；本服务也支持 stdio 模式。</p>
         </section>
         <section id="billing"><h2>积分、幂等与记录</h2><p>生成接口和网页共享账号积分、并发限制、后台模型维护状态与计费规则。受理时扣积分，余额不足会在调用模型前拒绝；模型执行失败会进入原有退款流程，可在积分流水核对。</p><p>同一账号、同一请求编号、相同参数只生成一次。相同编号改参数会被拒绝；已经失败的任务也会返回原记录，确需再次生成请使用新编号。HTTP 超时不等于任务失败，先用原编号和原参数重试以找回任务。</p>
           <Endpoint method="POST" path="/upscale-quote" /><p>视频超分预估：<code>{'{"modelId":"…","videoUrl":"…","targetResolution":"4k"}'}</code>。</p><Endpoint method="POST" path="/reference-video-quote" /><p>参考视频附加费用预估：<code>{'{"modelId":"…","resolution":"1080p","videoUrls":["…"]}'}</code>。预估不扣费，正式生成会重新验证归属、时长和价格。</p>
