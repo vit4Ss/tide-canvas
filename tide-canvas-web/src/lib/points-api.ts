@@ -47,7 +47,7 @@ export interface ActivationCodeRedeemVO {
 }
 
 export const pointsApi = {
-  balance: () => http.get<BalanceVO>("/api/points/balance"),
+  balance: (signal?: AbortSignal) => http.get<BalanceVO>("/api/points/balance", undefined, { signal }),
   records: (query: { pageNum?: number; pageSize?: number; changeType?: string }) =>
     http.get<PageData<PointRecordVO>>("/api/points/records", toParams(query)),
   checkinStatus: () => http.get<CheckinStatusVO>("/api/points/checkin"),

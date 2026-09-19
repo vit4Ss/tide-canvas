@@ -83,6 +83,10 @@ export interface ResultCell {
 }
 
 export interface HistItem {
+  isApiCall?: boolean;
+  isText?: boolean;
+  resultText?: string;
+  progress?: number;
   id: string;
   /** run/task group key — every image of one generation shares it (feed grouping). */
   run: string;
@@ -98,7 +102,7 @@ export interface HistItem {
   /** real result image URL (real generations). */
   url?: string;
   /** Failed tasks remain in the Studio feed even though they have no result URL. */
-  status?: "success" | "failed";
+  status?: "success" | "failed" | "processing" | "cancelled";
   /** User-visible failure reason returned by the generation task. */
   errorMsg?: string;
   /** 3D generation keeps every returned format on one history card. */
@@ -118,6 +122,10 @@ export interface HistItem {
 
 /** One generation run = a feed block (header + a row of its result images). */
 export interface HistRun {
+  isApiCall?: boolean;
+  isText?: boolean;
+  resultText?: string;
+  progress?: number;
   run: string;
   ts?: string;
   ratio?: string;
@@ -125,7 +133,7 @@ export interface HistRun {
   prompt: string;
   model: string;
   type: ArtworkType;
-  status?: "success" | "failed";
+  status?: "success" | "failed" | "processing" | "cancelled";
   errorMsg?: string;
   params?: RunParams;
   items: HistItem[];

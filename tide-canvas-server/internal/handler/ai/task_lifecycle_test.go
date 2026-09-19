@@ -8,18 +8,23 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
+	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
 )
 
-type recoveryTestProvider struct{ resumes int }
+type recoveryTestProvider struct {
+	resumes    int
+	restricted bool
+}
 
 func (p *recoveryTestProvider) Type() string { return "test" }
 func (p *recoveryTestProvider) Generate(context.Context, GenerateRequest) (GenerateResult, error) {
 	return GenerateResult{}, nil
 }
-func (p *recoveryTestProvider) Resume(_ context.Context, req ResumeRequest) (GenerateResult, error) {
+func (p *recoveryTestProvider) Resume(ctx context.Context, req ResumeRequest) (GenerateResult, error) {
 	p.resumes++
+	p.restricted = middleware.IsUserAPIKeyRequest(ctx)
 	return GenerateResult{
 		ResultURL:      "https://cdn.example/recovered.png",
 		URLs:           []string{"https://cdn.example/recovered.png"},
@@ -101,7 +106,8 @@ func TestOrphanedTaskResumesWithoutCreatingAnotherGeneration(t *testing.T) {
 	const taskID idgen.ID = 88101
 	task := model.AiTask{
 		ID: taskID, UserID: 1, Handler: "text_to_image", ModelName: "Recovered Image",
-		Status: statusProcessing, Progress: 30, UpstreamTaskID: "remote-restart",
+		IsAPICall: true,
+		Status:    statusProcessing, Progress: 30, UpstreamTaskID: "remote-restart",
 		Input: `{"prompt":"recover me"}`, CreateTime: time.Now().Add(-time.Minute),
 		UpdateTime: time.Now().Add(-orphanResumeGrace - time.Second),
 	}
@@ -111,6 +117,9 @@ func TestOrphanedTaskResumesWithoutCreatingAnotherGeneration(t *testing.T) {
 	provider := &recoveryTestProvider{}
 	svc := &service{repo: newRepo(db), registry: newHandlerRegistry(), provider: provider}
 	svc.resumeOrphanedTask(task)
+	if !provider.restricted {
+		t.Fatal("resumed API task lost its restricted credential scope")
+	}
 
 	got, err := svc.repo.getTask(context.Background(), taskID)
 	if err != nil || got == nil {

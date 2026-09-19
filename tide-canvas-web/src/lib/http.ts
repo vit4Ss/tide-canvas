@@ -173,7 +173,14 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<R
   let result = await fetchResult<T>(url, config);
 
   if (result.code === 401 && token) {
-    const newToken = await refreshTokenOnce();
+    if (config.signal?.aborted) return networkFailResult<T>();
+    let newToken: string | null;
+    try {
+      // Cancel this request's wait without cancelling a token refresh shared
+      // by uploads and other requests. A hung refresh must not hold a poll open.
+      newToken = await waitForRequestSignal(refreshTokenOnce(), config.signal);
+    } catch { return networkFailResult<T>(); }
+    if (config.signal?.aborted) return networkFailResult<T>();
 
     if (newToken) {
       headers["Authorization"] = `Bearer ${newToken}`;
@@ -187,6 +194,19 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<R
   }
 
   return result;
+}
+
+function waitForRequestSignal<T>(pending: Promise<T>, signal?: AbortSignal | null): Promise<T> {
+  if (!signal) return pending;
+  if (signal.aborted) return Promise.reject(new Error("request aborted"));
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(new Error("request aborted"));
+    signal.addEventListener("abort", abort, { once: true });
+    pending.then(
+      (value) => { signal.removeEventListener("abort", abort); resolve(value); },
+      (error) => { signal.removeEventListener("abort", abort); reject(error); },
+    );
+  });
 }
 
 async function uploadFile<T>(path: string, file: File | FormData): Promise<Result<T>> {
@@ -331,8 +351,8 @@ export function apiUrl(path: string): string {
 }
 
 export const http = {
-  get: <T>(path: string, params?: QueryParams) =>
-    request<T>(path, { method: "GET", params }),
+  get: <T>(path: string, params?: QueryParams, options: Omit<RequestOptions, "method" | "body" | "params"> = {}) =>
+    request<T>(path, { ...options, method: "GET", params }),
 
   post: <T>(path: string, body?: unknown, options: Omit<RequestOptions, "method" | "body"> = {}) =>
     request<T>(path, { ...options, method: "POST", body }),

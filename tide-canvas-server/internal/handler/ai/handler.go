@@ -69,6 +69,11 @@ func (h *handler) generate(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "modelId is required")
 		return
 	}
+	h.startGeneration(c, dto)
+}
+
+// Both entry points share validation, billing and the durable task lifecycle.
+func (h *handler) startGeneration(c *gin.Context, dto generateDTO) {
 	uid := middleware.CurrentUserID(c)
 	vo, err := h.svc.generate(c.Request.Context(), uid, dto)
 	if err != nil {

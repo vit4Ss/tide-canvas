@@ -8,7 +8,7 @@ const read = (relative) => readFileSync(new URL(relative, here), "utf8");
 test("failed server tasks become history rows before result URL rendering", () => {
   const source = read("./utils.ts");
   const failureBranch = source.indexOf("if (failed || missingResult)");
-  const mediaGuard = source.indexOf("if (!mappedType) continue", failureBranch);
+  const mediaGuard = source.indexOf("if (!mappedType && !t.isApiCall) continue", failureBranch);
   const failureStatus = source.indexOf('status: "failed"', failureBranch);
   const terminalGate = source.indexOf("t.status !== AiTaskStatus.SUCCESS", failureBranch);
   const successStatus = source.indexOf('status: "success"', terminalGate);
@@ -40,6 +40,6 @@ test("failed rows visibly render the reason and do not offer a fake download", (
   assert.match(source, /className="ws-run-failure" role="group" aria-label="生成失败"/);
   assert.match(source, />失败原因<\/span>/);
   assert.match(source, /r\.errorMsg \|\|/);
-  assert.match(source, /r\.status !== "failed" && \(\s*<button[\s\S]*?onClick=\{\(\) => void downloadRun\(r\)\}/);
+  assert.match(source, /r\.status !== "failed" && r\.status !== "processing" && r\.status !== "cancelled" && downloadableCount > 0 && \(\s*<button[\s\S]*?onClick=\{\(\) => void downloadRun\(r\)\}/);
   assert.match(source, /disabled=\{downloadingRun !== null\}/);
 });

@@ -183,6 +183,9 @@ func (r *repo) listTasks(ctx context.Context, userID idgen.ID, q taskQuery, offs
 
 func applyTaskListFilters(tx *gorm.DB, userID idgen.ID, q taskQuery) *gorm.DB {
 	tx = visibleTaskHistoryScope(tx.Where("user_id = ?", userID))
+	if q.IsAPICall != nil {
+		tx = tx.Where("is_api_call = ?", *q.IsAPICall)
+	}
 	if q.Handler != "" {
 		tx = tx.Where("handler = ?", q.Handler)
 	}
@@ -245,7 +248,7 @@ func toolTaskScope(tx *gorm.DB) *gorm.DB {
 // Untagged legacy rows stay visible: old data must not be guessed from handler.
 func excludeToolTaskScope(tx *gorm.DB) *gorm.DB {
 	predicate, args := taggedToolTaskPredicate()
-	return tx.Where("NOT ("+predicate+")", args...)
+	return tx.Where("(is_api_call = true OR NOT ("+predicate+"))", args...)
 }
 
 // taggedToolTaskPredicate validates attribution against the canonical
@@ -620,6 +623,7 @@ func (r *repo) projectNames(ctx context.Context, ids []idgen.ID) (map[idgen.ID]s
 }
 
 type taskLogState struct {
+	IsAPICall bool
 	ID        idgen.ID
 	Status    int
 	ErrorMsg  string
@@ -635,7 +639,7 @@ func (r *repo) taskLogStates(ctx context.Context, ids []idgen.ID) (map[idgen.ID]
 	}
 	var rows []taskLogState
 	if err := r.db.WithContext(ctx).Model(&model.AiTask{}).
-		Select("id", "status", "error_msg", "point_cost").Where("id IN ?", ids).Find(&rows).Error; err != nil {
+		Select("id", "status", "error_msg", "point_cost", "is_api_call").Where("id IN ?", ids).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	for i := range rows {

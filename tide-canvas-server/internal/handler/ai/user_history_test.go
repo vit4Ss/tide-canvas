@@ -10,6 +10,16 @@ import (
 	"tidecanvas/internal/pkg/idgen"
 )
 
+func TestAPIHistoryProvenanceSurvivesDeletedTask(t *testing.T) {
+	log := &model.AiGenerationLog{IsAPICall: true, HandlerName: "text_to_image", Success: 1}
+	if !toUserHistoryVO(log, nil).IsAPICall || !toUserHistoryDetail(log, nil).IsAPICall {
+		t.Fatal("deleted task lost its API provenance in generation history")
+	}
+	if toUserHistoryVO(&model.AiGenerationLog{}, nil).IsAPICall {
+		t.Fatal("legacy history was mislabeled")
+	}
+}
+
 func TestUserHistorySummaryIsAnExplicitAllowlist(t *testing.T) {
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.Local)
 	log := &model.AiGenerationLog{

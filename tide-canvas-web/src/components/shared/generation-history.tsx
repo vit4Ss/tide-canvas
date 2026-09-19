@@ -373,7 +373,7 @@ function DetailDrawer({ row, onClose }: { row: UserGenerationHistoryVO; onClose:
               </span>
               <span className="strong" style={{ fontSize: 15, wordBreak: "break-all" }}>{detail?.model || row.model || "—"}</span>
             </div>
-            <div className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>{fmtTime(row.createTime)}</div>
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>{fmtTime(row.createTime)} · {row.isApiCall ? "接口调用" : "非接口调用"}</div>
           </div>
 
           {shouldShowGenerationResult(row.mediaType, detail?.mediaType) && (
@@ -633,6 +633,7 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
                   </span>
                   <span className="user-history-summary">
                     <strong title={row.model || undefined}>{row.model || "未知模型"}</strong>
+                    {row.isApiCall && <span className="muted">接口调用</span>}
                     <span title={row.prompt || undefined}>{row.prompt || "无 Prompt"}</span>
                   </span>
                   <span className={`user-history-state ${row.success === 1 ? "is-success" : "is-failed"}`}>

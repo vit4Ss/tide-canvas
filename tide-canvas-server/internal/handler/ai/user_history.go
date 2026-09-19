@@ -36,6 +36,7 @@ type UserHistoryParameterVO struct {
 // ID is an opaque record key used only to request the corresponding safe
 // detail view.
 type UserGenerationHistoryVO struct {
+	IsAPICall  bool     `json:"isApiCall"`
 	ID         idgen.ID `json:"id"`
 	MediaType  string   `json:"mediaType"`
 	Model      string   `json:"model"`
@@ -48,6 +49,7 @@ type UserGenerationHistoryVO struct {
 }
 
 type UserGenerationHistoryDetailVO struct {
+	IsAPICall     bool                     `json:"isApiCall"`
 	MediaType     string                   `json:"mediaType"`
 	Model         string                   `json:"model"`
 	Prompt        string                   `json:"prompt"`
@@ -82,6 +84,7 @@ func userHistoryMediaType(handler, operation string) string {
 
 func toUserHistoryVO(log *model.AiGenerationLog, state *taskLogState) UserGenerationHistoryVO {
 	vo := UserGenerationHistoryVO{
+		IsAPICall:  log.IsAPICall,
 		ID:         log.ID,
 		MediaType:  userHistoryMediaType(log.HandlerName, log.OperationType),
 		Model:      log.Model,
@@ -92,6 +95,7 @@ func toUserHistoryVO(log *model.AiGenerationLog, state *taskLogState) UserGenera
 		CreateTime: fmtTime(log.CreateTime),
 	}
 	if state != nil {
+		vo.IsAPICall = state.IsAPICall
 		cost := state.PointCost
 		vo.PointCost = &cost
 		if state.Status == statusSuccess {
@@ -159,6 +163,7 @@ func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGen
 	hints := cachedErrorHintSnapshot()
 	logFailureReason := publicGenerationFailureReasonScoped(hints, log.ErrorMsg, log.Model)
 	detail := UserGenerationHistoryDetailVO{
+		IsAPICall:    log.IsAPICall,
 		MediaType:    mediaType,
 		Model:        log.Model,
 		Prompt:       generationPromptExcerpt(log.InputParams, 4000),
@@ -181,6 +186,7 @@ func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGen
 	}
 
 	detail.Model = firstNonEmpty(task.ModelName, detail.Model)
+	detail.IsAPICall = task.IsAPICall
 	detail.Prompt = firstNonEmpty(generationPromptExcerpt(task.Input, 4000), detail.Prompt)
 	detail.CompleteTime = fmtTimePtr(task.CompleteTime)
 	cost := task.PointCost

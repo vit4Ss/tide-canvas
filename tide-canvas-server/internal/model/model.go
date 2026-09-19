@@ -684,6 +684,7 @@ func (t *AiTool) BeforeCreate(_ *gorm.DB) error {
 
 // AiTask is a single AI generation task.
 type AiTask struct {
+	IsAPICall bool     `gorm:"not null;default:false;index" json:"isApiCall"`
 	ID        idgen.ID `gorm:"primaryKey;autoIncrement:false" json:"id"`
 	UserID    idgen.ID `gorm:"index;uniqueIndex:idx_ai_task_user_client,priority:1" json:"userId"`
 	ProjectID idgen.ID `gorm:"index" json:"projectId"`
@@ -739,6 +740,7 @@ func (AiTask) TableName() string { return "ai_tasks" }
 
 // AiGenerationLog records an upstream generation request/response for auditing.
 type AiGenerationLog struct {
+	IsAPICall      bool      `gorm:"not null;default:false" json:"isApiCall"`
 	ID             idgen.ID  `gorm:"primaryKey;autoIncrement:false" json:"id"`
 	TaskID         idgen.ID  `gorm:"index" json:"taskId"`
 	UserID         idgen.ID  `gorm:"index" json:"userId"`

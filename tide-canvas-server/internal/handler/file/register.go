@@ -60,6 +60,10 @@ func downloadTicketOrJWT(d *app.Deps) gin.HandlerFunc {
 //	DELETE /api/files/detail/:id     -> void                                  (auth)
 func Register(api *gin.RouterGroup, d *app.Deps) {
 	h := newHandler(d)
+	// Generation clients use the same owner-scoped storage/quota pipeline.
+	open := api.Group("/open/v1/files", middleware.UserAPIKeyAuth(d.UserKeys))
+	open.POST("", middleware.RateLimit(d, 30, time.Minute), h.upload)
+	open.GET("/download", middleware.RateLimit(d, 60, time.Minute), h.download)
 	// Native browser downloads cannot attach Authorization headers. This leaf
 	// accepts either the normal JWT or a two-minute, exact-file ticket issued by
 	// the authenticated endpoint below.

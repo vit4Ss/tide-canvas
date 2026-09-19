@@ -163,6 +163,7 @@ func StartTaskReconciler(ctx context.Context, d *app.Deps) {
 //	GET    /api/ai/history/:id   -> UserGenerationHistoryDetailVO (auth; caller only)
 func Register(api *gin.RouterGroup, d *app.Deps) {
 	h := newHandler(d)
+	h.registerOpenAPI(api, d)
 	g := api.Group("/ai")
 
 	// Public catalog endpoints (no auth — used by anonymous catalog views too).

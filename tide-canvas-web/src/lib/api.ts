@@ -103,13 +103,13 @@ export const aiApi = {
       : first;
   },
   // taskId 同为雪花 ID 字符串（>2^53，number 会丢精度）
-  getTask: (taskId: string) =>
-    http.get<AiTaskVO>(`/api/ai/tasks/${taskId}`),
+  getTask: (taskId: string, signal?: AbortSignal) =>
+    http.get<AiTaskVO>(`/api/ai/tasks/${taskId}`, undefined, { signal }),
   // taskId 是雪花 ID(> 2^53),必须以字符串透传,用 Number() 会丢精度导致删错任务。
   cancelTask: (taskId: string | number) =>
     http.delete<void>(`/api/ai/tasks/${taskId}`),
-  listTasks: (query: AiTaskQuery) =>
-    http.get<PageResult<AiTaskVO>["data"]>("/api/ai/tasks", toParams(query)),
+  listTasks: (query: AiTaskQuery, signal?: AbortSignal) =>
+    http.get<PageResult<AiTaskVO>["data"]>("/api/ai/tasks", toParams(query), { signal }),
   listModels: () =>
     http.get<AiModelVO[]>("/api/ai/models"),
   listHandlers: () =>

@@ -38,6 +38,7 @@ func fmtTimePtr(t *time.Time) string {
 // as a JSON object (RawMessage) when the stored value is valid JSON, else as a
 // string; the frontend (parseTaskMeta) accepts either form.
 type AiTaskVO struct {
+	IsAPICall  bool     `json:"isApiCall"`
 	ID         idgen.ID `json:"id"`
 	Handler    string   `json:"handler"`
 	TargetType string   `json:"targetType"`
@@ -85,6 +86,7 @@ func toTaskVO(t *model.AiTask) AiTaskVO {
 		errorMsg = userFacingCancelledErr
 	}
 	return AiTaskVO{
+		IsAPICall:    t.IsAPICall,
 		ID:           t.ID,
 		Handler:      t.Handler,
 		TargetType:   t.TargetType,
@@ -289,6 +291,7 @@ func toHandlerVO(h *model.AiHandler) AiHandlerVO {
 // compatibility but intentionally omitted. cost is upstream USD cost and is
 // removed from user-facing responses.
 type AiGenerationLogVO struct {
+	IsAPICall      bool     `json:"isApiCall"`
 	ID             idgen.ID `json:"id"`
 	TaskID         idgen.ID `json:"taskId"`
 	UserID         idgen.ID `json:"userId"`
@@ -319,6 +322,7 @@ type AiGenerationLogVO struct {
 
 func toLogVO(l *model.AiGenerationLog) AiGenerationLogVO {
 	vo := AiGenerationLogVO{
+		IsAPICall:      l.IsAPICall,
 		ID:             l.ID,
 		TaskID:         l.TaskID,
 		UserID:         l.UserID,

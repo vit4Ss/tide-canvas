@@ -48,7 +48,7 @@ test("new runs become visible and stale history cannot erase local completion", 
 
   assert.match(feed, /feedRef\.current\.scrollTop = 0/);
   assert.match(css, /\.ws-feed\{[^}]*overflow-anchor:none/);
-  assert.match(studio, /mergeInitialStudioHistory\(prev, items\)/);
+  assert.match(studio, /mergeInitialStudioHistory\(prev, items, removedHistoryRuns\.current\)/);
   assert.doesNotMatch(studio, /if \(!append\) setHist\(\[\]\)/);
 });
 

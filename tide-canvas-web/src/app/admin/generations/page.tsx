@@ -525,6 +525,7 @@ function GenerationDetailDrawer({ id, onClose, onRefunded }: { id: string; onClo
             </div>
             <div className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>
               {fmtTime(d.createTime)} · {d.username || d.userId || "—"}
+              {" · "}{d.isApiCall ? "接口调用" : "非接口调用"}
             </div>
           </div>
 
@@ -758,11 +759,14 @@ export default function AdminGenerationsPage() {
       },
       {
         header: "模型",
-        /* 固定 200：模型名最长 ~160px("Nano Banana 2 (4K)")，不设宽时 fixed 布局
-           把剩余空间均分给模型/Prompt 两列，模型列留下一大块空白死区 */
         width: 200,
         className: "strong",
         cell: (r) => <Trunc text={displayModelName(r)} />,
+      },
+      {
+        header: "来源",
+        width: 100,
+        cell: (r) => <span>{r.isApiCall ? "接口调用" : "非接口调用"}</span>,
       },
       {
         header: "Prompt",

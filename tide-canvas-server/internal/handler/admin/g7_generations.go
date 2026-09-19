@@ -686,6 +686,7 @@ func resolveUpstreamResult(db *gorm.DB, upstreamID, scene string) []genAsset {
 
 // GenerationRowVO 是生成记录列表行。
 type GenerationRowVO struct {
+	IsAPICall      bool     `json:"isApiCall"`
 	ID             idgen.ID `json:"id"`
 	UserID         idgen.ID `json:"userId"`
 	Username       string   `json:"username"`
@@ -1110,6 +1111,11 @@ func listGenerations(c *gin.Context, d *app.Deps) {
 	modelNames := resolveModelNames(db, keys)
 	hosts := storageHosts(d)
 	refunded := resolveGenerationRefunded(db, rows)
+	apiSources, err := resolveGenerationAPISources(db, rows)
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to load generation sources")
+		return
+	}
 
 	vos := make([]GenerationRowVO, 0, len(rows))
 	for i := range rows {
@@ -1120,7 +1126,8 @@ func listGenerations(c *gin.Context, d *app.Deps) {
 		ledgerRef := r.BillingRefID != 0 && r.BillingRefType != "task"
 		canRefund := r.UserID != 0 && pointCost != nil && *pointCost > 0 && (ledgerRef || linkedTask)
 		vos = append(vos, GenerationRowVO{
-			ID: r.ID, UserID: r.UserID, Username: names[r.UserID], Scene: r.Scene, Model: r.Model,
+			IsAPICall: apiSources[r.ID],
+			ID:        r.ID, UserID: r.UserID, Username: names[r.UserID], Scene: r.Scene, Model: r.Model,
 			ModelName: modelNames[r.Model],
 			Prompt:    prompt, Success: r.Success, HttpStatus: r.HttpStatus, ErrorMsg: r.ErrorMsg,
 			PointCost: pointCost,
@@ -1152,9 +1159,15 @@ func generationDetail(c *gin.Context, d *app.Deps) {
 	names := resolveUserNames(db, []idgen.ID{r.UserID})
 	pointCost := pointCostOf(&r, resolvePointCosts(db, []string{r.UpstreamTaskID}))
 	_, _, reliableRefundRef, _ := generationRefundRef(db, &r)
+	apiSources, err := resolveGenerationAPISources(db, []model.ModelCallLog{r})
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to load generation source")
+		return
+	}
 	vo := GenerationDetailVO{
 		GenerationRowVO: GenerationRowVO{
-			ID: r.ID, UserID: r.UserID, Username: names[r.UserID], Scene: r.Scene, Model: r.Model,
+			IsAPICall: apiSources[r.ID],
+			ID:        r.ID, UserID: r.UserID, Username: names[r.UserID], Scene: r.Scene, Model: r.Model,
 			ModelName: resolveModelNames(db, []string{r.Model})[r.Model],
 			Prompt:    req.Prompt, Success: r.Success, HttpStatus: r.HttpStatus, ErrorMsg: r.ErrorMsg,
 			PointCost:      pointCost,

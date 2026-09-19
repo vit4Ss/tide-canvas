@@ -517,10 +517,11 @@ export function StageFeed({
                 <div className="ws-run-head">
                   <span className="ws-run-kind">
                     {SLOT_ICON[r.type]}
-                    {r.type === "video" ? "AI 视频" : r.type === "audio" ? "AI 音乐" : r.type === "3d" ? "AI 3D" : "AI 图片"}
+                    {r.isText ? "AI 文本" : r.type === "video" ? "AI 视频" : r.type === "audio" ? "AI 音乐" : r.type === "3d" ? "AI 3D" : "AI 图片"}
                   </span>
                   <span className="ws-run-div" />
                   {r.model && <span className="ws-run-chip">{r.model}</span>}
+                  {r.isApiCall && <span className="ws-run-chip" title="通过你的 API Key 提交">接口调用</span>}
                   {r.ratio && <span className="ws-run-chip">{ratioLabel(r.ratio)}</span>}
                   {r.status === "failed" && <span className="ws-run-status failed">生成失败</span>}
                   {r.ts && <span className="ws-run-time">{fmtTs(r.ts)}</span>}
@@ -542,7 +543,11 @@ export function StageFeed({
                     </button>
                   </div>
                 )}
-                {r.status === "failed" ? (
+                {r.status === "processing" || r.status === "cancelled" ? (
+                  <div className="ws-run-failure" role="status">
+                    {r.status === "processing" ? `接口任务生成中 · ${Math.max(0, Math.min(100, r.progress ?? 0))}%` : "任务已取消"}
+                  </div>
+                ) : r.status === "failed" ? (
                   <div className="ws-run-failure" role="group" aria-label="生成失败">
                     <span className="ws-run-failure-icon" aria-hidden>
                       <svg viewBox="0 0 24 24">
@@ -558,6 +563,7 @@ export function StageFeed({
                     </div>
                   </div>
                 ) : (
+                r.isText ? <div style={{ padding: "16px 24px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 480, overflow: "auto" }}>{r.resultText || "任务已完成，未返回文本内容"}</div> :
                 <div className={`ws-run-imgs${r.type === "audio" ? " audio-stage" : ""}`}>
                   {/* 音频：Suno/Udio 式歌曲行列表（封面+歌名+波形+时间），
                       两首纵向成列——不走通用的并排卡片。 */}
@@ -649,6 +655,7 @@ export function StageFeed({
                 </div>
                 )}
                 <div className="ws-run-foot">
+                  {!r.isApiCall && <>
                   <button
                     type="button"
                     onClick={() => onEditRun(r)}
@@ -673,7 +680,9 @@ export function StageFeed({
                     </svg>
                     重新生成
                   </button>
-                  {r.status !== "failed" && (
+                  </>}
+                  {r.isText && r.status === "success" && r.resultText && <button type="button" onClick={() => copyPrompt(r.resultText || "")}>复制结果</button>}
+                  {r.status !== "failed" && r.status !== "processing" && r.status !== "cancelled" && downloadableCount > 0 && (
                     <button
                       type="button"
                       onClick={() => void downloadRun(r)}

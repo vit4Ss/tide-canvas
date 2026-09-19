@@ -19,6 +19,7 @@ export interface GenParam {
 
 /** 列表行。 */
 export interface GenerationRowVO {
+  isApiCall?: boolean;
   id: string;
   userId: string;
   username: string;

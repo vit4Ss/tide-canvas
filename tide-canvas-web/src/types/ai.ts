@@ -30,6 +30,7 @@ export interface UpscaleQuoteVO {
 }
 
 export interface AiTaskVO {
+  isApiCall?: boolean;
   id: string; // 后端雪花 ID 序列化为字符串
   handler: string;
   /** Canvas target type, e.g. image | character | scene. */
@@ -114,6 +115,7 @@ export interface AiToolVO {
 }
 
 export interface AiTaskQuery extends PageQuery {
+  isApiCall?: boolean;
   handler?: string;
   /** 资产页服务端媒体筛选，保证分页发生在类型过滤之后。
       "tool" = 智能工具产出(工具中心页「工具作品」区,按 handler + toolKey 精确归因)。 */
@@ -162,6 +164,7 @@ export interface UserHistoryParameterVO {
  * 失败详情只返回服务端归类后的安全文案。
  */
 export interface UserGenerationHistoryVO {
+  isApiCall?: boolean;
   id: string;
   mediaType: "image" | "video" | "audio" | "3d" | "text";
   model: string;
@@ -174,6 +177,7 @@ export interface UserGenerationHistoryVO {
 }
 
 export interface UserGenerationHistoryDetailVO {
+  isApiCall?: boolean;
   mediaType: UserGenerationHistoryVO["mediaType"];
   model: string;
   prompt: string;

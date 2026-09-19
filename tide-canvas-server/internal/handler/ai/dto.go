@@ -30,6 +30,7 @@ type generateDTO struct {
 	// The fields below are internal-only orchestration metadata populated by the
 	// exported GenerationFacade. They are never accepted from the HTTP body.
 	Origin            string   `json:"-"`
+	IsAPICall         bool     `json:"-"`
 	SkillRunID        idgen.ID `json:"-"`
 	SkillRunStepID    idgen.ID `json:"-"`
 	SkillRunRevision  int64    `json:"-"`
@@ -83,6 +84,7 @@ type capturedFrameDTO struct {
 
 // taskQuery is the query string of GET /api/ai/tasks (AiTaskQuery).
 type taskQuery struct {
+	IsAPICall      *bool  `form:"isApiCall"`
 	PageNum        int    `form:"pageNum"`
 	PageSize       int    `form:"pageSize"`
 	OrderBy        string `form:"orderBy"`

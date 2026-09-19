@@ -152,6 +152,8 @@ export function paramsFromTask(handler: string, modelName: string, input: unknow
     str(inp.clarity) || str(inp.resolution) || str(inp.targetResolution) || str(inp.target_resolution);
   // 参考素材：任务 input 里持久化了 imageList/sourceImage 等，取回来恢复上传槽位。
   const imageRefs = strArr(inp.imageList);
+  if (!imageRefs.length) imageRefs.push(...strArr(inp.imageUrls));
+  if (!imageRefs.length) imageRefs.push(...strArr(inp.image_urls));
   if (!imageRefs.length && str(inp.sourceImage)) imageRefs.push(str(inp.sourceImage));
   if (!imageRefs.length && str(inp.imageUrl)) imageRefs.push(str(inp.imageUrl));
   if (!imageRefs.length && str(inp.image_url)) imageRefs.push(str(inp.image_url));
@@ -196,9 +198,9 @@ export function paramsFromTask(handler: string, modelName: string, input: unknow
         : str(inp.aspectRatio) || str(inp.aspect_ratio) || str(inp.ratio) || "1:1",
     imgRes: type === "image" ? reso || "2K" : "2K",
     res: type === "video" ? reso || "1080p" : "1080p",
-    dur: str(inp.duration) || "5s",
+    dur: str(inp.duration) || (typeof inp.duration === "number" && inp.duration > 0 ? `${inp.duration}s` : "5s"),
     quality: str(inp.quality),
-    count: Math.max(1, num(inp.batchCount) || 1),
+    count: Math.max(1, num(inp.batchCount) || num(inp.n) || 1),
     ...(str(inp.skillId) ? { skill: { id: str(inp.skillId) } } : {}),
     imageRefs,
     firstFrame: str(inp.firstFrame) || undefined,
@@ -467,14 +469,29 @@ export function histItemsFromTasks(records: AiTaskVO[]): HistItem[] {
       ? params.prompt.slice(0, 14) + (params.prompt.length > 14 ? "…" : "")
       : t.modelName || "我的创作";
     const failed = t.status === AiTaskStatus.FAILED;
+    const isText = t.handler === "assistant_chat" || t.handler === "skill_text_completion";
+    if (t.isApiCall && (isText || t.status === AiTaskStatus.PROCESSING || t.status === AiTaskStatus.CANCELLED)) {
+      const text = (meta as { text?: unknown })?.text;
+      items.push({
+        id: `task-${t.id}-api`, run: `task-${t.id}`, ts: t.createTime,
+        hues: huesFromId(t.id), type, title, prompt: params.prompt,
+        model: t.modelName || "", isApiCall: true, isText,
+        resultText: typeof text === "string" ? text : "",
+        progress: t.progress,
+        status: failed ? "failed" : t.status === AiTaskStatus.PROCESSING ? "processing" : t.status === AiTaskStatus.CANCELLED ? "cancelled" : "success",
+        errorMsg: t.errorMsg, params,
+      });
+      continue;
+    }
     const missingResult = t.status === AiTaskStatus.SUCCESS && !urls.length;
     if (failed || missingResult) {
       // noProject history can also contain non-media text tasks. Those used to
       // disappear naturally because they have no URL; do not relabel them as a
       // failed AI image now that URL-less media failures are intentionally shown.
-      if (!mappedType) continue;
+      if (!mappedType && !t.isApiCall) continue;
       items.push({
         id: `task-${t.id}-failed`,
+        isApiCall: t.isApiCall,
         run: `task-${t.id}`,
         // Keep the same creation-time ordering as successful and in-flight runs.
         ts: t.createTime,
@@ -503,6 +520,7 @@ export function histItemsFromTasks(records: AiTaskVO[]): HistItem[] {
         : assets.find((asset) => asset.type === "glb")?.url || assets[0]?.url || urls[0];
       items.push({
         id: `task-${t.id}-3d`,
+        isApiCall: t.isApiCall,
         run: `task-${t.id}`,
         ts: t.createTime,
         ratio: "",
@@ -522,6 +540,7 @@ export function histItemsFromTasks(records: AiTaskVO[]): HistItem[] {
     urls.forEach((url, idx) =>
       items.push({
         id: `task-${t.id}-${idx}`,
+        isApiCall: t.isApiCall,
         run: `task-${t.id}`,
         ts: t.createTime,
         ratio: params.ratio,

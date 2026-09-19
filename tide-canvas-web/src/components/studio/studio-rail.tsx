@@ -251,6 +251,13 @@ export default function StudioRail() {
       <div className="ws-rail-sp" />
 
       {user && (
+        <Link className={toolClass("/api-docs")} href="/api-docs" title="API 文档">
+          <span className="ic"><svg viewBox="0 0 24 24"><path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-13-2 16" /></svg></span>
+          <span>API 文档</span>
+        </Link>
+      )}
+
+      {user && (
         <NotificationCenter
           renderTrigger={({ unread, toggle, open }) => (
             <button

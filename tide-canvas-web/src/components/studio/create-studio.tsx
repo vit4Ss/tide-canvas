@@ -100,7 +100,8 @@ import { audioToolOf, histItemsFromTasks, huesFromId, resolutionRank, slotTypeOf
 import { useStudioModels } from "./create-studio/use-studio-models";
 import { useSourceClip } from "./create-studio/use-source-clip";
 import { useHistory } from "./create-studio/use-history";
-import { mergeInitialStudioHistory } from "./create-studio/history-merge";
+import { mergeInitialStudioHistory, nextHistoryRequest } from "./create-studio/history-merge";
+import { useAPIHistorySync } from "./create-studio/use-api-history-sync";
 import { useUploadSlots } from "./create-studio/use-upload-slots";
 import { useGeneration } from "./create-studio/use-generation";
 import { TypeTabs } from "./create-studio/type-tabs";
@@ -170,6 +171,13 @@ function withHistoryRestoreTimeout<T>(promise: Promise<T>, timeoutMs = 15_000): 
 /* ── component ───────────────────────────────────────────────────────────── */
 
 export default function CreateStudio() {
+  const owner = useAuthStore((state) => state.user?.id ?? "anonymous");
+  // A different account must never inherit the previous owner's history,
+  // in-flight cards, references or request-deletion fences.
+  return <StudioSession key={owner} />;
+}
+
+function StudioSession() {
   const router = useRouter();
   /* panel state */
   const [curType, setCurType] = useState<ArtworkType>("image");
@@ -219,10 +227,12 @@ export default function CreateStudio() {
 
   // 真实积分余额（替代原硬编码假数据）。生成结算后刷新——扣减/退款在后端完成。
   const [balance, setBalance] = useState<number | null>(null);
-  const refreshBalance = useCallback(async () => {
+  const refreshBalance = useCallback(async (signal?: AbortSignal) => {
+    const owner = useAuthStore.getState().user?.id;
+    if (!owner) return;
     try {
-      const res = await pointsApi.balance();
-      if (res.success && res.data) setBalance(res.data.points);
+      const res = await pointsApi.balance(signal);
+      if (!signal?.aborted && useAuthStore.getState().user?.id === owner && res.success && res.data) setBalance(res.data.points);
     } catch {
       /* 忽略：余额展示非关键路径 */
     }
@@ -306,6 +316,7 @@ export default function CreateStudio() {
     setExtraClips,
   } = clip;
   const { hist, setHist, pushHistory, clipOptions } = useHistory(clip.extraClips);
+  const removedHistoryRuns = useRef(new Set<string>());
 
   const {
     srcMenu,
@@ -550,11 +561,15 @@ export default function CreateStudio() {
     for (const h of hist) {
       // 3D 归 /three-d 展示；引擎恢复的在飞 3D 任务完成后 pushHistory 仍会入
       // hist，这里在展示层滤掉，避免信息流冒出无法交互的 3D 卡。
-      if (h.type === "3d") continue;
+      if (h.type === "3d" && !h.isApiCall) continue;
       let g = byRun.get(h.run);
       if (!g) {
         g = {
           run: h.run,
+          isApiCall: h.isApiCall,
+          isText: h.isText,
+          resultText: h.resultText,
+          progress: h.progress,
           ts: h.ts,
           ratio: h.ratio,
           title: h.title,
@@ -716,6 +731,8 @@ export default function CreateStudio() {
   const histPageRef = useRef(1);
   const histLoadedCountRef = useRef(0);
   const histLoadingRef = useRef(false);
+  const histRequestRef = useRef<AbortController | null>(null);
+  const histCursorRevision = useRef(0);
   const sentinelCooldownRef = useRef(0);
   const [histHasMore, setHistHasMore] = useState(false);
   const [histLoadingMore, setHistLoadingMore] = useState(false);
@@ -723,12 +740,30 @@ export default function CreateStudio() {
   const [histLoadError, setHistLoadError] = useState(false);
   // 「翻过页」用 state 记:JSX 的到底提示判定不能读 ref(render 期禁止)。
   const [histMultiPage, setHistMultiPage] = useState(false);
+  const revealMoreAPIHistory = useCallback((reloadFromStart: boolean) => {
+    if (reloadFromStart) {
+      histCursorRevision.current++;
+      histPageRef.current = 1;
+      histLoadedCountRef.current = 0;
+      histRequestRef.current?.abort();
+      setHistMultiPage(false);
+    }
+    setHistHasMore(true);
+  }, []);
+  useAPIHistorySync(hist, setHist, removedHistoryRuns, refreshBalance, revealMoreAPIHistory);
 
   const fetchHistory = useCallback(async (page: number, append: boolean) => {
     if (histLoadingRef.current) return;
     histLoadingRef.current = true;
+    const cursorRevision = histCursorRevision.current;
+    const controller = new AbortController();
+    histRequestRef.current = controller;
+    const deadline = setTimeout(() => controller.abort(), 30_000);
     try {
-      await ensureSession();
+      if (!await ensureSession()) return;
+      if (controller.signal.aborted) throw new Error("历史记录请求超时");
+      const owner = useAuthStore.getState().user?.id;
+      if (!owner) return;
       // setState 一律放在首个 await 之后(effect 同步路径不进 setState,过 lint)
       if (append) setHistLoadingMore(true);
       const res = await aiApi.listTasks({
@@ -737,15 +772,17 @@ export default function CreateStudio() {
         noProject: true,
         excludeTools: true,
         excludeCaptures: true,
-      });
-      const records = res.success && res.data ? res.data.records : [];
-      const total = res.success && res.data ? res.data.total : 0;
+      }, controller.signal);
+      if (useAuthStore.getState().user?.id !== owner || cursorRevision !== histCursorRevision.current) return;
+      if (!res.success || !res.data) throw new Error(res.message || "历史记录读取失败");
+      const records = res.data.records;
+      const total = res.data.total;
       // 3D 产物归 /three-d 页展示（listTasks 无排除型过滤，客户端滤掉；
       // 分页按 records 数记账，不受此过滤影响）。
       // Client-side capture filtering preserves correct behavior during a
       // rolling deploy against an older server that ignores excludeCaptures.
       const replayableRecords = records.filter((task) => task.handler !== CAPTURED_FRAME_HANDLER);
-      const items = histItemsFromTasks(replayableRecords).filter((h) => h.type !== "3d");
+      const items = histItemsFromTasks(replayableRecords).filter((h) => h.type !== "3d" || h.isApiCall);
       histPageRef.current = page;
       histLoadedCountRef.current = append ? histLoadedCountRef.current + records.length : records.length;
       setHistHasMore(histLoadedCountRef.current < total);
@@ -755,13 +792,10 @@ export default function CreateStudio() {
       if (append) {
         // 续页去重:新生成经 pushHistory 先入了列表,翻页拉到旧页时 id 不会撞,
         // 这里防的是哨兵/手动触发的重复请求。
-        setHist((prev) => {
-          const seen = new Set(prev.map((h) => h.id));
-          return [...prev, ...items.filter((h) => !seen.has(h.id))];
-        });
+        setHist((prev) => mergeInitialStudioHistory(prev, items, removedHistoryRuns.current));
         return;
       }
-      setHist((prev) => mergeInitialStudioHistory(prev, items));
+      setHist((prev) => mergeInitialStudioHistory(prev, items, removedHistoryRuns.current));
 
       // First load only: if the user has past results and nothing is currently
       // generating / being resumed, show their most recent image in the stage
@@ -797,8 +831,10 @@ export default function CreateStudio() {
     } catch {
       // Never erase a task that completed locally while this request was in
       // flight. The existing feed is still truthful and a retry can merge later.
-      setHistLoadError(true);
+      if (cursorRevision === histCursorRevision.current) setHistLoadError(true);
     } finally {
+      clearTimeout(deadline);
+      if (histRequestRef.current === controller) histRequestRef.current = null;
       histLoadingRef.current = false;
       setHistLoadingMore(false);
       setHistInitialLoading(false);
@@ -811,13 +847,17 @@ export default function CreateStudio() {
     if (now - sentinelCooldownRef.current < 700) return;
     sentinelCooldownRef.current = now;
     setHistLoadError(false);
-    await fetchHistory(histPageRef.current + 1, true);
+    const next = nextHistoryRequest(histPageRef.current, histLoadedCountRef.current);
+    await fetchHistory(next.page, next.append);
   }, [fetchHistory]);
 
   useEffect(() => {
     // setTimeout 0:首屏拉取推迟到挂载后(effect 同步路径不触发 setState,过 lint)
     const t = setTimeout(() => void fetchHistory(1, false), 0);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      histRequestRef.current?.abort();
+    };
   }, [fetchHistory]);
 
   // when the selected model (its config) changes, snap each option control to a
@@ -1305,12 +1345,25 @@ export default function CreateStudio() {
     if (restored) toast.success("已载入该次生成的参数，可修改后重新生成");
   };
 
-  // delete a run: drop it from the feed locally and best-effort remove it server-side.
-  const deleteRun = (r: HistRun) => {
+  // Fence stale refresh responses, and restore the record if deletion fails.
+  const deleteRun = async (r: HistRun) => {
+    if (removedHistoryRuns.current.has(r.run)) return;
+    removedHistoryRuns.current.add(r.run);
+    const owner = useAuthStore.getState().user?.id;
     setHist((prev) => prev.filter((h) => h.run !== r.run));
     const m = /^task-(\d+)$/.exec(r.run);
-    if (m) void aiApi.cancelTask(m[1]).catch(() => {}); // 字符串透传雪花 ID,避免 Number() 丢精度
-    toast.success("已删除");
+    try {
+      if (m) {
+        const res = await aiApi.cancelTask(m[1]);
+        if (!res.success) throw new Error(res.message || "删除失败，请重试");
+      }
+      if (useAuthStore.getState().user?.id === owner) toast.success("已删除");
+    } catch {
+      removedHistoryRuns.current.delete(r.run);
+      if (useAuthStore.getState().user?.id !== owner) return;
+      setHist((prev) => mergeInitialStudioHistory(prev, r.items, removedHistoryRuns.current));
+      toast.error("删除失败，记录已恢复，请稍后重试");
+    }
   };
 
   // 空状态快捷入口：切到对应类型/工具并聚焦提示词；3D 已独立成页，转过去。

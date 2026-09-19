@@ -17,6 +17,7 @@ import (
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/handler/points"
+	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/alerting"
 	"tidecanvas/internal/pkg/cache"
@@ -327,6 +328,7 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 		registerWork = *dto.RegisterWork
 	}
 	task := &model.AiTask{
+		IsAPICall:      dto.IsAPICall,
 		ID:             idgen.Next(),
 		UserID:         userID,
 		ProjectID:      dto.ProjectID,
@@ -395,9 +397,6 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 			return tx.Create(task).Error
 		})
 		if err != nil {
-			if errors.Is(err, points.ErrInsufficient) {
-				return nil, errInsufficientPoints
-			}
 			// A concurrent retry can lose the unique-key race after the winning
 			// transaction commits. Return that durable task instead of surfacing a
 			// spurious 500 (this attempt's debit rolled back with the transaction).
@@ -405,6 +404,11 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 				if existing, found, lookupErr := s.replayDirectTask(ctx, userID, clientRequestID, requestHash); lookupErr != nil || found {
 					return existing, lookupErr
 				}
+			}
+			// The winner may have spent the last available points while this
+			// request waited for its wallet lock. Replay first in that case too.
+			if errors.Is(err, points.ErrInsufficient) {
+				return nil, errInsufficientPoints
 			}
 			return nil, err
 		}
@@ -467,6 +471,7 @@ func directGenerationFingerprint(dto generateDTO) (string, error) {
 		}
 	}
 	payload := struct {
+		IsAPICall  bool     `json:"isApiCall,omitempty"`
 		Handler    string   `json:"handler"`
 		ModelID    string   `json:"modelId"`
 		ProjectID  idgen.ID `json:"projectId"`
@@ -475,7 +480,8 @@ func directGenerationFingerprint(dto generateDTO) (string, error) {
 		TargetType string   `json:"targetType"`
 	}{
 		Handler: strings.TrimSpace(dto.Handler), ModelID: strings.TrimSpace(dto.ModelID), ProjectID: dto.ProjectID,
-		Input: input, EntryPoint: strings.ToLower(strings.TrimSpace(dto.EntryPoint)), TargetType: strings.ToLower(strings.TrimSpace(dto.TargetType)),
+		IsAPICall: dto.IsAPICall,
+		Input:     input, EntryPoint: strings.ToLower(strings.TrimSpace(dto.EntryPoint)), TargetType: strings.ToLower(strings.TrimSpace(dto.TargetType)),
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -607,6 +613,9 @@ func (s *service) createSkillRunTask(ctx context.Context, userID idgen.ID, dto g
 // a detached goroutine; errors are logged, not returned. tool is the preset op's
 // pre-loaded ai_tools config (nil for base handlers / when the row is missing).
 func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m *model.AiModel, userID idgen.ID, dto generateDTO, cost int, tool *model.AiTool) {
+	if dto.IsAPICall {
+		ctx = middleware.WithUserAPIKeyScope(ctx)
+	}
 	// refund credits the up-front charge back on any non-success outcome
 	// (failure / cancel / panic). It is single-shot: once a refund transaction
 	// commits, later terminal paths are no-ops, so the user is never double-paid.
@@ -937,6 +946,9 @@ func (s *service) resumeOrphanedTask(snapshot model.AiTask) {
 	}
 
 	resumeCtx, cancel := context.WithCancel(context.Background())
+	if current.IsAPICall {
+		resumeCtx = middleware.WithUserAPIKeyScope(resumeCtx)
+	}
 	s.taskCancels.Store(current.ID, cancel)
 	watchDone := make(chan struct{})
 	go func() {
@@ -1412,6 +1424,7 @@ func (s *service) writeLog(ctx context.Context, task *model.AiTask, gh GenHandle
 		errMsg = errMessage(genErr)
 	}
 	l := &model.AiGenerationLog{
+		IsAPICall:      task.IsAPICall,
 		ID:             idgen.Next(),
 		TaskID:         task.ID,
 		UserID:         userID,

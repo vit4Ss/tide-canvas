@@ -134,6 +134,7 @@ export function ApiKeyPanel({ accountId }: { accountId: string }) {
             <span>{secret ? "完整密钥将在 60 秒后自动隐藏" : "密钥已隐藏，只有你可以查看完整内容"}</span>
             <div>
               <Link className="pf-btn sec" href="/ai-chat">AI 聊天</Link>
+              <Link className="pf-btn sec" href="/api-docs">API 文档</Link>
               <button type="button" className="pf-btn sec" disabled={busy} onClick={() => act("toggle")}>{keyInfo.enabled ? "停用" : "启用"}</button>
               <button type="button" className="pf-btn sec" disabled={busy} onClick={() => act("rotate")}><RefreshCw size={13} aria-hidden />重置密钥</button>
             </div>

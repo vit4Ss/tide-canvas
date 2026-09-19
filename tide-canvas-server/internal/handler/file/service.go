@@ -23,6 +23,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/alerting"
 	"tidecanvas/internal/pkg/idgen"
@@ -712,10 +713,12 @@ func (s *service) ownsDownloadURL(ctx context.Context, ownerID idgen.ID, raw str
 		}
 	}
 	canInspectAll := false
-	for _, permission := range model.AdminPermsForUser(s.repo.db.WithContext(ctx), &viewer) {
-		if permission == "admin.generations" || permission == "admin.works" {
-			canInspectAll = true
-			break
+	if !middleware.IsUserAPIKeyRequest(ctx) {
+		for _, permission := range model.AdminPermsForUser(s.repo.db.WithContext(ctx), &viewer) {
+			if permission == "admin.generations" || permission == "admin.works" {
+				canInspectAll = true
+				break
+			}
 		}
 	}
 

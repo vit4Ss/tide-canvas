@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -9,6 +10,23 @@ import (
 
 	"tidecanvas/internal/pkg/userkey"
 )
+
+type userAPIKeyScope struct{}
+
+// WithUserAPIKeyScope keeps integration credentials caller-scoped even when a
+// lower layer reloads the account's role from the database. It also applies to
+// detached generation workers; it does not depend on a live HTTP session.
+func WithUserAPIKeyScope(ctx context.Context) context.Context {
+	return context.WithValue(ctx, userAPIKeyScope{}, true)
+}
+
+func IsUserAPIKeyRequest(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	restricted, _ := ctx.Value(userAPIKeyScope{}).(bool)
+	return restricted
+}
 
 // UserAPIKeyAuth is opt-in for integration routes only. It must not be added
 // to JWTAuth: an integration key cannot log in or manage accounts/admin data.
@@ -35,6 +53,7 @@ func UserAPIKeyAuth(keys *userkey.Service) gin.HandlerFunc {
 		}
 		c.Set(CtxUserID, owner.ID)
 		c.Set(CtxRole, 0) // API keys never inherit an administrator role.
+		c.Request = c.Request.WithContext(WithUserAPIKeyScope(c.Request.Context()))
 		c.Set("integration.owner", owner)
 		c.Set("integration.keyRevision", revision)
 		c.Next()
