@@ -148,6 +148,8 @@ location ^~ /mcp/ {
 
 用户在详情页可以复制安装链接或完整安装指令，交给当前使用的 AI 客户端。页面不展示手动 MCP 配置、源文件预览或 ZIP 下载入口；ZIP 接口仍保留供安装工具使用。公开接口无需登录，使客户端能读取安装说明：
 
+安装名称使用技能标题，例如 `ai-director-video-review`；按 [Agent Skills 命名规范](https://agentskills.io/specification#name-field)将大写转换为小写、空格和符号整理为连字符，并限制为 64 字符。标题无法生成有效名称时回退至已校验原 Skill 的名称，Windows 保留目录名增加 `-skill` 后缀。公开详情的 `skillName`、YAML `name` 和 ZIP 目录保持一致；MCP 连接名和地址仍用稳定技能 ID。安装指令读取最新名称，不将 `flowlight-skill-<id>` 继续作为安装名。旧名称仅在确认同一源站同一技能后备份迁移；新目录已有不同来源或用户自建的同名 Skill 时保留原文件并提示选择，不覆盖或悄悄另取数字名称。
+
 - `GET /api/skill-library`：公开目录（pageNum/pageSize/category/keyword）。
 - `GET /api/skill-library/<id>`：公开详情与安装状态。
 - `GET /api/skill-library/<id>/SKILL.md`：动态生成的公开调用版 Skill。

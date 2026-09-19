@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"mime"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -121,7 +122,7 @@ func TestPublicSkillLinkAndZIPOnlyDistributeValidatedWrapper(t *testing.T) {
 	}
 	document := out.Body.String()
 	meta, err := skillformat.ParseDocument(document)
-	if err != nil || meta.Name != "flowlight-skill-101" {
+	if err != nil || meta.Name != "视频审片" {
 		t.Fatalf("invalid public Skill: %+v %v", meta, err)
 	}
 	for _, required := range []string{"https://flowlight.example/mcp/skills/101", "get_skill_info", "run_skill", "get_skill_run", "respond_skill_run", "FLOWLIGHT_API_KEY", "clientRequestId", "expectedRevision", "references/connection.json", "metadataUrl", "不要为验证安装而调用 run_skill"} {
@@ -157,11 +158,12 @@ func TestPublicSkillLinkAndZIPOnlyDistributeValidatedWrapper(t *testing.T) {
 		}
 	}
 	out = libraryRequest(router, "/api/skill-library/101/download")
-	if out.Code != 200 || !strings.Contains(out.Header().Get("Content-Disposition"), "flowlight-skill-101.zip") {
+	_, disposition, dispositionErr := mime.ParseMediaType(out.Header().Get("Content-Disposition"))
+	if out.Code != 200 || dispositionErr != nil || disposition["filename"] != "视频审片.zip" {
 		t.Fatal("ZIP response is not an attachment")
 	}
 	archive, err := zip.NewReader(bytes.NewReader(out.Body.Bytes()), int64(out.Body.Len()))
-	if err != nil || len(archive.File) != 1 || archive.File[0].Name != "flowlight-skill-101/SKILL.md" {
+	if err != nil || len(archive.File) != 1 || archive.File[0].Name != "视频审片/SKILL.md" {
 		t.Fatalf("unsafe ZIP: %+v %v", archive, err)
 	}
 	reader, _ := archive.File[0].Open()

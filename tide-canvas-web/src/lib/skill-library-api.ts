@@ -19,7 +19,7 @@ export function skillInstallPrompt(url: string, apiKey?: string): string {
   const match = /^\/api\/skill-library\/([1-9]\d{0,18})\/SKILL\.md$/.exec(source.pathname);
   if (!match || !["https:", "http:"].includes(source.protocol) || source.username || source.password || source.search || source.hash) return "";
   const id = match[1];
-  const name = `flowlight-skill-${id}`;
+  const legacyName = `flowlight-skill-${id}`;
   const server = `flowlight_skill_${id}`;
   const metadataUrl = new URL(`/api/skill-library/${id}`, source.origin).href;
   const credentials = apiKey
@@ -29,8 +29,8 @@ export function skillInstallPrompt(url: string, apiKey?: string): string {
 ${source.href}
 
 1. 先确认当前客户端和能力：依据会话明确的宿主身份、可用管理工具和当前应用设置识别客户端，不按模型名称、机器上安装了哪个 CLI 或文档里的品牌示例判断。分别确认是否支持 Agent Skills，以及带 Bearer 鉴权的远程 MCP Streamable HTTP；不要把仅支持本地进程的 MCP 等同于支持远程 HTTP。若运行在桌面外壳或嵌入式宿主中，优先使用该宿主提供的 Skill/MCP 管理入口。仅操作当前客户端，不修改其他智能体的配置；不能确认时先询问客户端名称，不猜路径。
-2. 下载上述链接的 SKILL.md，确认请求成功、内容为 Markdown，且 YAML 元数据包含 name: ${name} 和 description；不要把 HTML 页面或 JSON 错误保存为 Skill。
-3. 当前客户端支持 Agent Skills 时，使用它的实际技能安装接口或已确认的个人 Skill 目录，安装为 ${name}/SKILL.md，不固定任何软件的目录。已有同名文件时核对来源，仅更新同一来源的内容并保留本地修改备份；版本号相同也要比较文档内容，避免继续使用旧安装规则。只支持远程 MCP 时跳过本地 Skill 目录创建，完成第5—7步后再报告实际连接状态，不提前报告“已接入”。只支持 Skill、不支持本服务的远程 MCP 时，可以安装说明文件，但应明确报告当前客户端无法执行此云端技能，不继续尝试其他软件的 MCP 配置。两者都不支持时说明限制，不创建无效配置。
+2. 读取 ${metadataUrl}，确认响应成功、data.id 为字符串 "${id}" 且 data.installable 为 true，以最新 data.skillName 作为安装名。它由页面技能标题生成，不使用数字 ID 作为 Skill 名称。下载上述链接的 SKILL.md，确认请求成功、内容为 Markdown，YAML name 必须与 skillName 一致，description 非空，metadata.skill-id 为字符串 "${id}"；name 应符合 Agent Skills 的 1–64 字符命名规范，不包含路径分隔符。名称不一致时重新读取一次元数据和文件，仍不一致则停止，不自行改写文件名或元数据。不要把 HTML 页面或 JSON 错误保存为 Skill。
+3. 当前客户端支持 Agent Skills 时，使用它的实际技能安装接口或已确认的个人 Skill 目录，安装为 <skillName>/SKILL.md，不固定任何软件的目录。已有同名文件时核对来源，仅更新同一源站同一技能的内容并保留本地修改备份；目标属于不同来源、用户自建 Skill 或无法确认来源时不得覆盖，说明冲突请用户决定，不擅自加数字 ID 绕过冲突。检查旧目录 ${legacyName} 和本技能其他旧名称时，必须同时核对来源记录与 metadata.skill-id，不仅凭目录名或相同 ID 迁移。确定同一来源后先备份、完成新名称安装并读回验证，再把旧副本备份到技能扫描目录之外，避免重复加载；专属 MCP 连接 ${server} 保持复用。版本号相同也要比较文档内容，避免继续使用旧安装规则。只支持远程 MCP 时跳过本地 Skill 目录创建，完成第5—7步后再报告实际连接状态，不提前报告“已接入”。只支持 Skill、不支持本服务的远程 MCP 时，可以安装说明文件，但应明确报告当前客户端无法执行此云端技能，不继续尝试其他软件的 MCP 配置。两者都不支持时说明限制，不创建无效配置。
 4. 仅在确实创建了本地技能目录时，才在该目录创建 references/connection.json，内容为：
 ${JSON.stringify({ sourceUrl: source.href, metadataUrl }, null, 2)}
 没有本地技能目录时不要求这个文件，直接使用本次指令中的来源链接和元数据地址；宿主支持附属资料时可保存同样的公开来源信息，不保存密钥。

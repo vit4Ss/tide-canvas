@@ -15,13 +15,21 @@ const { skillInstallPrompt, skillInstallURL, skillCodexConfig, skillMCPConfig } 
 test('one copied instruction installs a real Skill and its uniquely scoped MCP configuration', () => {
   const url = 'https://flowlight.example/api/skill-library/2098715147391471616/SKILL.md';
   const prompt = skillInstallPrompt(url);
-  for (const expected of [url, 'name: flowlight-skill-2098715147391471616', 'flowlight-skill-2098715147391471616/SKILL.md', 'references/connection.json', 'https://flowlight.example/api/skill-library/2098715147391471616', 'flowlight_skill_2098715147391471616', 'FLOWLIGHT_API_KEY', 'MCP Streamable HTTP']) {
+  for (const expected of [url, 'data.skillName', '<skillName>/SKILL.md', 'references/connection.json', 'https://flowlight.example/api/skill-library/2098715147391471616', 'flowlight_skill_2098715147391471616', 'FLOWLIGHT_API_KEY', 'MCP Streamable HTTP']) {
     assert.ok(prompt.includes(expected), expected);
   }
   const savedSource = JSON.parse(prompt.match(/\{\n  "sourceUrl"[\s\S]*?\n\}/)[0]);
   assert.deepEqual(savedSource, { sourceUrl: url, metadataUrl: 'https://flowlight.example/api/skill-library/2098715147391471616' });
   assert.ok(prompt.includes('保留其他 MCP 配置'));
   assert.ok(prompt.includes('保留本地修改备份'));
+});
+
+test('installed names come from current metadata and existing unrelated skills cannot be overwritten', () => {
+  const prompt = skillInstallPrompt('https://flowlight.example/api/skill-library/2098715147391471616/SKILL.md');
+  for (const expected of ['data.skillName', 'YAML name 必须与 skillName 一致', '同一源站', 'skill-id', '不同来源', '不得覆盖', 'flowlight-skill-2098715147391471616', '技能扫描目录之外', '名称不一致时重新读取一次']) assert.ok(prompt.includes(expected), expected);
+  assert.ok(!prompt.includes('name: flowlight-skill-2098715147391471616'));
+  assert.ok(!prompt.includes('安装为 flowlight-skill-2098715147391471616/SKILL.md'));
+  assert.ok(prompt.includes('连接标识 flowlight_skill_2098715147391471616'));
 });
 
 test('missing credentials or service do not require paid verification or block file installation', () => {

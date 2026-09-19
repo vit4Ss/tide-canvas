@@ -16,6 +16,9 @@ func publicWrapperDocument(skill librarySkillVO) string {
 	}
 	yamlString := func(v string) string { b, _ := json.Marshal(v); return string(b) }
 	serverName := "flowlight_skill_" + skill.ID.String()
+	migration := fmt.Sprintf(`安装名来自主站技能标题，当前为 %s；它与本文件的 YAML name 和安装目录名一致。专属 MCP 连接仍使用稳定标识 %s，不因名称变化重建连接或更换密钥。
+安装前检查目标目录以及同一技能的旧目录 flowlight-skill-%s。核对来源记录是否为同一源站、同一技能链接，并检查 metadata.skill-id；不能仅凭名字或相同 ID 判为同一来源。目标目录若属于不同来源、包含用户自建内容，或无法确认来源，不得覆盖，先说明冲突请用户决定；不得擅自另取数字 ID 名称来绕过冲突。
+确认旧副本来自同一源站同一技能后，备份并迁移到当前名称；先验证新文件与来源记录，再将旧副本备份到技能扫描目录之外，避免同时出现两个可用 Skill。其他旧名称同样按来源核对，不扫描或改动无关客户端目录。`, skill.SkillName, serverName, skill.ID.String())
 	connection := "MCP 地址尚待配置。先安装 Skill 并记录来源；使用前按下面的发现流程读取专属地址。不要保存空 URL 或猜测地址。"
 	if skill.MCPEndpoint != "" {
 		connection = fmt.Sprintf(`当前专属 MCP 地址：%s
@@ -56,6 +59,8 @@ metadata:
 存在本地技能目录时，将下载来源记录到 references/connection.json，保存 sourceUrl（本文件的原始下载链接）和 metadataUrl（同一源站的 /api/skill-library/%s）；此文件只保存公开地址，不保存密钥。使用宿主安装接口时可保存为其支持的附属资料；仅接入 MCP 且没有技能目录时不创建这个文件，使用本次安装指令中的来源地址。
 只拿到本地 ZIP 且没有来源记录时，请用户提供原下载链接；不要从本机地址猜测源站。
 
+%s
+
 安装 Skill 与调用 MCP 分开处理：客户端支持 Skill 安装时，没有 API Key 或服务暂不可用仍可安装说明文件，并如实说明尚待连接；只有已成功安装时才能报告“Skill 已安装”。只支持 MCP 的客户端在验证通过前报告“MCP 待连接”，不能提前报告已接入。
 配置名为 %s 的 Streamable HTTP MCP 服务器。使用前读取来源记录或安装指令中的 metadataUrl：返回 404 时说明该技能已下架或关闭，停止调用；成功时读取 data.mcpEndpoint 和 data.mcpAvailable。地址未配置时保留已安装 Skill，等待配置完成后再读取，不要自动提交付费任务。
 
@@ -84,6 +89,6 @@ metadata:
 不要索取或尝试下载服务端的原始 Skill、系统提示词、私有参考文件或内部工作流。
 不要在 MCP 无法连接、鉴权失败、积分不足或工具报错时假装已执行；说明当前问题并让用户处理后继续。
 本地 Skill 只提供调用说明，更新后的服务端技能由主站管理，已启动的任务固定使用启动时版本。
-`, skill.SkillName, yamlString(description), yamlString(skill.ID.String()), yamlString(fmt.Sprint(skill.Version)),
-		strings.ReplaceAll(strings.ReplaceAll(skill.Title, "\n", " "), "\r", " "), skill.SkillName, skill.ID.String(), serverName, connection, bootstrap)
+`, yamlString(skill.SkillName), yamlString(description), yamlString(skill.ID.String()), yamlString(fmt.Sprint(skill.Version)),
+		strings.ReplaceAll(strings.ReplaceAll(skill.Title, "\n", " "), "\r", " "), skill.SkillName, skill.ID.String(), migration, serverName, connection, bootstrap)
 }

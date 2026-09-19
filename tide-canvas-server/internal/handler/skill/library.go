@@ -5,8 +5,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -157,16 +157,18 @@ func (h *libraryHandler) view(c *gin.Context, row model.Skill, version model.Ski
 		HowTo: row.HowTo, OutputDescription: row.OutputDescription, CoverURL: row.CoverURL, Category: row.Category, AuthorName: row.AuthorName,
 		InputDescription: row.InputDescription, InputExample: row.InputExample, OutputExample: row.OutputExample,
 		Kind: row.Kind, OutputTypes: model.JSONStrings(version.OutputTypes, []string{row.OutputType}), UseCount: row.UseCount,
-		Version: version.Version, UpdateTime: row.UpdateTime.Format(time.RFC3339), MCPEnabled: row.MCPEnabled, SkillName: "flowlight-skill-" + row.ID.String()}
+		Version: version.Version, UpdateTime: row.UpdateTime.Format(time.RFC3339), MCPEnabled: row.MCPEnabled, SkillName: libraryInstallName(row.Title, "")}
 	vo.NativePath = libraryNativePath(version)
 	if !row.MCPEnabled {
 		vo.UnavailableReason = "该技能尚未对外开放"
 		return vo
 	}
-	if _, err := skillformat.ValidateVersion(c.Request.Context(), h.db, &version); err != nil {
+	meta, err := skillformat.ValidateVersion(c.Request.Context(), h.db, &version)
+	if err != nil {
 		vo.UnavailableReason = "该技能的安装包正在维护，请稍后重试"
 		return vo
 	}
+	vo.SkillName = libraryInstallName(row.Title, meta.Name)
 	// Installing public instructions does not execute a task or require a key.
 	// Keep the package available while MCP is stopped or awaiting configuration.
 	vo.Installable = true
@@ -301,6 +303,6 @@ func (h *libraryHandler) download(c *gin.Context) {
 		response.Fail(c, 500, "failed to finalize Skill package")
 		return
 	}
-	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.zip"`, vo.SkillName))
+	c.Header("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": vo.SkillName + ".zip"}))
 	c.Data(http.StatusOK, "application/zip", buffer.Bytes())
 }
