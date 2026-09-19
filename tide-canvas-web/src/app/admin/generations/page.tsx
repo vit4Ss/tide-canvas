@@ -515,17 +515,19 @@ function GenerationDetailDrawer({ id, onClose, onRefunded }: { id: string; onClo
         </div>
       ) : (
         <>
-          {/* 头部摘要:场景 pill + 模型 + 时间·用户 */}
+          {/* 头部摘要:场景、来源标签 + 模型 + 时间·用户 */}
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
               <StatusPill tone={sceneTone(d.scene)}>{sceneLabel(d.scene)}</StatusPill>
+              <StatusPill tone={d.isApiCall ? "blue" : "gray"}>
+                {d.isApiCall ? "API" : "主站"}
+              </StatusPill>
               <span className="strong" style={{ fontSize: 15, wordBreak: "break-all" }}>
                 {displayModelName(d)}
               </span>
             </div>
             <div className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>
               {fmtTime(d.createTime)} · {d.username || d.userId || "—"}
-              {" · "}{d.isApiCall ? "接口调用" : "非接口调用"}
             </div>
           </div>
 
@@ -766,7 +768,11 @@ export default function AdminGenerationsPage() {
       {
         header: "来源",
         width: 100,
-        cell: (r) => <span>{r.isApiCall ? "接口调用" : "非接口调用"}</span>,
+        cell: (r) => (
+          <StatusPill tone={r.isApiCall ? "blue" : "gray"}>
+            {r.isApiCall ? "API" : "主站"}
+          </StatusPill>
+        ),
       },
       {
         header: "Prompt",
