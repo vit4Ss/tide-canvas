@@ -122,6 +122,15 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h3 className="genr-sec-t">{children}</h3>;
 }
 
+function SourceBadge({ isApiCall }: { isApiCall?: boolean }) {
+  const label = isApiCall ? "API" : "主站";
+  return (
+    <span className={`user-history-source${isApiCall ? " is-api" : ""}`} aria-label={`来源：${label}`}>
+      {label}
+    </span>
+  );
+}
+
 function AssetIcon({ kind }: { kind: ResultAsset["kind"] }) {
   if (kind === "video") return <Video aria-hidden size={14} />;
   if (kind === "audio") return <Music aria-hidden size={14} />;
@@ -366,14 +375,15 @@ function DetailDrawer({ row, onClose }: { row: UserGenerationHistoryVO; onClose:
       ) : (
         <>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
               <span className="user-history-kind">
                 <AssetIcon kind={mediaAssetKind(row.mediaType)} />
                 {sceneLabel(row)}
               </span>
+              <SourceBadge isApiCall={detail?.isApiCall ?? row.isApiCall} />
               <span className="strong" style={{ fontSize: 15, wordBreak: "break-all" }}>{detail?.model || row.model || "—"}</span>
             </div>
-            <div className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>{fmtTime(row.createTime)} · {row.isApiCall ? "接口调用" : "非接口调用"}</div>
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>{fmtTime(row.createTime)}</div>
           </div>
 
           {shouldShowGenerationResult(row.mediaType, detail?.mediaType) && (
@@ -612,6 +622,7 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
           <div className="user-history-list-head" aria-hidden>
             <span>类型</span>
             <span>模型与 Prompt</span>
+            <span>来源</span>
             <span>状态</span>
             <span>积分</span>
             <span>耗时</span>
@@ -624,7 +635,7 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
                 <button
                   type="button"
                   className="user-history-row"
-                  aria-label={`查看 ${row.model || sceneLabel(row)} 的生成记录详情`}
+                  aria-label={`查看 ${row.model || sceneLabel(row)} 的生成记录详情，来源：${row.isApiCall ? "API" : "主站"}`}
                   onClick={() => openDetail(row)}
                 >
                   <span className="user-history-kind">
@@ -633,9 +644,9 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
                   </span>
                   <span className="user-history-summary">
                     <strong title={row.model || undefined}>{row.model || "未知模型"}</strong>
-                    {row.isApiCall && <span className="muted">接口调用</span>}
                     <span title={row.prompt || undefined}>{row.prompt || "无 Prompt"}</span>
                   </span>
+                  <SourceBadge isApiCall={row.isApiCall} />
                   <span className={`user-history-state ${row.success === 1 ? "is-success" : "is-failed"}`}>
                     <i aria-hidden />
                     {row.success === 1 ? "成功" : "失败"}

@@ -2,13 +2,90 @@ package ai
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
+	"tidecanvas/internal/pkg/response"
 )
+
+func TestUserHistoryEndpointsKeepBothSourcesCallerScoped(t *testing.T) {
+	db := concurrencyTestDB(t)
+	pool, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+	if err := db.AutoMigrate(&model.AiGenerationLog{}); err != nil {
+		t.Fatal(err)
+	}
+	logs := []model.AiGenerationLog{
+		{ID: 101, UserID: 42, HandlerName: "text_to_image", Model: "Main site", Success: 1},
+		{ID: 102, UserID: 42, HandlerName: "text_to_image", Model: "API", Success: 1, IsAPICall: true},
+		{ID: 201, UserID: 43, HandlerName: "text_to_image", Model: "Main site", Success: 1},
+		{ID: 202, UserID: 43, HandlerName: "text_to_image", Model: "API", Success: 1, IsAPICall: true},
+	}
+	if err := db.Create(&logs).Error; err != nil {
+		t.Fatal(err)
+	}
+	h := &handler{svc: &service{repo: newRepo(db)}}
+	for _, caller := range []idgen.ID{42, 43} {
+		for _, role := range []int{1, middleware.AdminRole} {
+			router := gin.New()
+			// Supply the identity normally established by JWTAuth; neither query
+			// parameters nor the administrator role may widen these endpoints.
+			router.Use(func(c *gin.Context) {
+				c.Set(middleware.CtxUserID, caller)
+				c.Set(middleware.CtxRole, role)
+				c.Next()
+			})
+			router.GET("/history", h.listMyHistory)
+			router.GET("/history/:id", h.getMyHistory)
+			request := func(path string) *httptest.ResponseRecorder {
+				out := httptest.NewRecorder()
+				router.ServeHTTP(out, httptest.NewRequest(http.MethodGet, path, nil))
+				return out
+			}
+			for _, query := range []string{"", "?userId=42&isApiCall=true", "?userId=43&isAdmin=true"} {
+				out := request("/history" + query)
+				var result response.Result[response.PageData[UserGenerationHistoryVO]]
+				if err := json.Unmarshal(out.Body.Bytes(), &result); err != nil || !result.Success || result.Data.Total != 2 || len(result.Data.Records) != 2 {
+					t.Fatalf("caller=%s role=%d query=%s list=%s", caller, role, query, out.Body.String())
+				}
+				seen := map[idgen.ID]bool{}
+				for _, row := range result.Data.Records {
+					seen[row.ID] = row.IsAPICall
+				}
+				for _, log := range logs {
+					isAPI, exists := seen[log.ID]
+					if exists != (log.UserID == caller) || (exists && isAPI != log.IsAPICall) {
+						t.Fatalf("caller=%s role=%d wrong owner or source: %+v", caller, role, result.Data.Records)
+					}
+				}
+			}
+			for _, log := range logs {
+				out := request("/history/" + log.ID.String())
+				var result response.Result[UserGenerationHistoryDetailVO]
+				if err := json.Unmarshal(out.Body.Bytes(), &result); err != nil {
+					t.Fatal(err)
+				}
+				if log.UserID != caller {
+					if result.Success || result.Code != response.CodeNotFound {
+						t.Fatalf("caller=%s role=%d foreign detail exposed: %s", caller, role, out.Body.String())
+					}
+				} else if !result.Success || result.Data.IsAPICall != log.IsAPICall {
+					t.Fatalf("own detail lost source: %s", out.Body.String())
+				}
+			}
+		}
+	}
+}
 
 func TestAPIHistoryProvenanceSurvivesDeletedTask(t *testing.T) {
 	log := &model.AiGenerationLog{IsAPICall: true, HandlerName: "text_to_image", Success: 1}
