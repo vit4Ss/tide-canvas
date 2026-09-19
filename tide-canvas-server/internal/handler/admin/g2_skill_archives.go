@@ -271,6 +271,17 @@ func inspectSkillArchive(reader *zip.Reader) (*AdminSkillArchivePreviewVO, error
 		if len(pkg.Files) == 0 || !strings.EqualFold(pkg.Files[0].Path, "SKILL.md") {
 			return nil, fmt.Errorf("%s 的 SKILL.md 无法读取", pkg.Root)
 		}
+		files, primary, err := normalizeSkillFiles(pkg.Files, pkg.PrimaryFilePath)
+		if err != nil {
+			return nil, err
+		}
+		parent := ""
+		if root != "" {
+			parent = path.Base(root)
+		}
+		if _, err := validateStandardSkillFiles(files, primary, parent); err != nil {
+			return nil, fmt.Errorf("%s：%s", pkg.Root, err.Error())
+		}
 		result = append(result, *pkg)
 	}
 	return &AdminSkillArchivePreviewVO{Packages: result, IgnoredFiles: nonDirectoryFiles - acceptedFiles}, nil

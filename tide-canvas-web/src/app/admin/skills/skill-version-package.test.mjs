@@ -5,6 +5,7 @@ import test from "node:test";
 import ts from "typescript";
 import * as defaults from "../../../lib/admin-skill-defaults.ts";
 import * as types from "../../../types/admin-skill.ts";
+import * as packageHelpers from "../../../lib/admin-skill-package.ts";
 
 const source = readFileSync(new URL("./_components/skill-version-modal.tsx", import.meta.url), "utf8");
 const code = ts.transpileModule(source, {
@@ -74,6 +75,7 @@ function setup(overrides = {}, selectedSkill = skill) {
       if (name === "@/lib/admin-skills-api") return { adminSkillsApi: api };
       if (name === "@/lib/admin-skill-defaults") return defaults;
       if (name === "@/types/admin-skill") return types;
+      if (name === "@/lib/admin-skill-package") return packageHelpers;
       if (name === "@/types/skill") return { SKILL_KIND_LABEL: { agent: "智能技能" }, SKILL_OUTPUT_LABEL: { text: "文本" } };
       if (name === "@/components/shared/toast") return { toast: Object.fromEntries(["info", "error", "success"].map((type) => [type, (msg) => messages.push([type, msg])])) };
       if (name.endsWith("skill-input-schema-presets")) return { detectSkillInputPreset: () => "text", SKILL_INPUT_PRESETS: [] };
@@ -143,10 +145,20 @@ test("switching skills discards an old package response", async () => {
 
 test("read failure retains the previously imported package", async () => {
   const env = setup(); await env.flush();
-  env.read([{ name: "new.md", size: 10, text: async () => { throw new Error("cannot read file"); } }]);
+  env.read([{ name: "new.md", size: 10, arrayBuffer: async () => { throw new Error("cannot read file"); } }]);
   await env.flush(); assert.equal(await env.save(), true);
   assert.equal(env.calls.find(([action]) => action === "save")[2].files.length, 2);
-  assert.ok(env.messages.some(([, text]) => text === "cannot read file"));
+  assert.ok(env.messages.some(([, text]) => text.includes("无法读取")));
+});
+
+test("nonstandard replacement files are rejected without overwriting the loaded version", async () => {
+  const env = setup({ validateFiles: async () => ok({ valid: false, items: [{ index: 0, valid: false, errors: ["SKILL.md 缺少 YAML"] }] }) });
+  await env.flush();
+  env.read([{ name: "SKILL.md", size: 10, arrayBuffer: async () => new TextEncoder().encode("Plain text").buffer }]);
+  await env.flush();
+  assert.ok(env.messages.some(([, message]) => message.includes("缺少 YAML")));
+  assert.equal(await env.save(), true);
+  assert.equal(env.calls.find(([action]) => action === "save")[2].files[0].content, "Review the video");
 });
 
 test("skills with no published pointer use the newest draft, truly new skills use the initial form", async () => {

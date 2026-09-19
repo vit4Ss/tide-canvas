@@ -67,7 +67,7 @@ func TestValidateAdminSkillImportsReportsNamedReasonsAndRejectsWholeBatch(t *tes
 		Title: "导演审片", AdminSkillVersionCreateDTO: AdminSkillVersionCreateDTO{
 			Kind: model.SkillKindAgent, EntryPoints: []string{"canvas"},
 			PrimaryOutputType: "text", OutputTypes: []string{"text"},
-			PrimaryFilePath: "SKILL.md", Files: []AdminSkillFileDTO{{Path: "SKILL.md", Content: "# Review"}},
+			PrimaryFilePath: "SKILL.md", Files: []AdminSkillFileDTO{{Path: "SKILL.md", Content: "---\nname: review\ndescription: Review videos\n---\n# Review"}},
 		},
 	}
 	invalid := valid

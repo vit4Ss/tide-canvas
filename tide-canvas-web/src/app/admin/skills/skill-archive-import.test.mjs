@@ -7,7 +7,7 @@ const page = readFileSync(new URL("./page.tsx", import.meta.url), "utf8");
 const api = readFileSync(new URL("../../../lib/admin-skills-api.ts", import.meta.url), "utf8");
 
 test("Skill import accepts ZIP archives through a server-side safety preview", () => {
-  assert.match(modal, /accept="\.md,\.txt,\.zip,\.skill,/);
+  assert.match(modal, /accept="\.md,\.zip,\.skill,/);
   assert.match(modal, /adminSkillsApi\.previewArchive\(archive\)/);
   assert.match(api, /\/api\/admin\/skills\/archive-preview/);
   assert.match(api, /form\.append\("file", file\)/);

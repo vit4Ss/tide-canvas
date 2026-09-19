@@ -5,6 +5,7 @@ import { FileText, FolderOpen, Loader2, Upload } from "lucide-react";
 import { AdminAlert, AdminModal, Field, FormCard, FormGrid } from "@/components/admin";
 import { toast } from "@/components/shared/toast";
 import { adminSkillsApi } from "@/lib/admin-skills-api";
+import { checkedSkillFileMetadata, readUTF8File } from "@/lib/admin-skill-package";
 import type {
   AdminSkillFileInput,
   AdminSkillImportPackage,
@@ -105,61 +106,17 @@ function truncateRunes(value: string, length: number): string {
   return [...value].slice(0, length).join("");
 }
 
-function stripFileSuffix(name: string): string {
-  return name.replace(/\.(?:md|txt)$/i, "").replace(/\s*\(\d+\)\s*$/, "").trim();
-}
-
-function frontMatterValue(content: string, key: string): string {
-  const match = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-  if (!match) return "";
-  const line = match[1]
-    .split(/\r?\n/)
-    .find((item) => item.trim().toLowerCase().startsWith(`${key.toLowerCase()}:`));
-  return line?.slice(line.indexOf(":") + 1).trim().replace(/^['"]|['"]$/g, "") || "";
-}
-
-function inferTitle(content: string, fallback: string): string {
-  const frontMatter = frontMatterValue(content, "name");
-  if (frontMatter) return truncateRunes(frontMatter, 64);
-  const heading = content.match(/^#\s+(.+)$/m)?.[1]?.trim();
-  if (heading) return truncateRunes(heading, 64);
-  const first = content
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line && line !== "---" && !/^[=━─═-]{4,}$/.test(line));
-  return truncateRunes(first || stripFileSuffix(fallback) || "未命名 Skill", 64);
-}
-
-function inferDescription(content: string): string {
-  const frontMatter = frontMatterValue(content, "description");
-  if (frontMatter) return truncateRunes(frontMatter, 255);
-  const lines = content
-    .replace(/^---\s*\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "")
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^#+\s*/, "").trim())
-    .filter((line) => line && !/^[=━─═-]{4,}$/.test(line));
-  return truncateRunes(lines.slice(1, 3).join(" "), 255);
-}
-
-async function readUTF8File(file: File, path: string): Promise<string> {
-  let bytes: ArrayBuffer;
-  try {
-    bytes = await file.arrayBuffer();
-  } catch {
-    throw new Error(`${path} 无法读取，请重新选择文件`);
-  }
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/^\uFEFF/, "");
-  } catch {
-    throw new Error(`${path} 不是有效的 UTF-8 文本`);
-  }
-}
-
 async function prepareFiles(selected: File[]): Promise<PreparedPackage[]> {
   if (!selected.length) return [];
   let total = 0;
+  let ignoredFiles = 0;
   const loaded: Array<{ path: string; content: string; mimeType: string; relative: boolean }> = [];
   const archives: File[] = [];
+  const roots = selected.map((file) => file.webkitRelativePath?.replaceAll("\\", "/") || "")
+    .filter((path) => /(^|\/)SKILL\.md$/.test(path))
+    .map((path) => path.slice(0, -"SKILL.md".length))
+    .sort((a, b) => b.length - a.length || a.localeCompare(b));
+  if (selected.some((file) => file.webkitRelativePath) && !roots.length) throw new Error("所选目录缺少 SKILL.md 主文件（区分大小写）");
   for (const file of selected) {
     const relativePath = file.webkitRelativePath?.replaceAll("\\", "/") || "";
     const filePath = relativePath || file.name;
@@ -171,7 +128,9 @@ async function prepareFiles(selected: File[]): Promise<PreparedPackage[]> {
       archives.push(file);
       continue;
     }
-    if (!lower.endsWith(".md") && !lower.endsWith(".txt")) continue;
+    if (!relativePath && file.name !== "SKILL.md") throw new Error(`${file.name} 不是标准主文件，请选择 SKILL.md 或 Skill 目录/ZIP`);
+    if (relativePath && !roots.some((root) => relativePath.startsWith(root))) { ignoredFiles += 1; continue; }
+    if (!lower.endsWith(".md") && !lower.endsWith(".txt")) { ignoredFiles += 1; continue; }
     if (file.size <= 0 || file.size > MAX_FILE_BYTES) {
       throw new Error(`${filePath} 超过 2 MB 单文件限制`);
     }
@@ -187,25 +146,24 @@ async function prepareFiles(selected: File[]): Promise<PreparedPackage[]> {
       relative: !!relativePath,
     });
   }
-  // Files selected normally are independent skills. A directory selection is
-  // one package rooted at its selected top-level folder and must have SKILL.md.
+  // Match ZIP discovery: each SKILL.md owns its directory; the deepest root
+  // wins so sibling/nested skills cannot absorb each other's reference files.
   const groups = new Map<string, typeof loaded>();
   for (const [itemIndex, item] of loaded.entries()) {
-    const root = item.relative ? item.path.split("/")[0] : `file:${itemIndex}:${item.path}`;
+    const root = item.relative ? roots.find((root) => item.path.startsWith(root)) : `file:${itemIndex}:${item.path}`;
+    if (!root) { ignoredFiles += 1; continue; }
     groups.set(root, [...(groups.get(root) ?? []), item]);
   }
   const prepared: PreparedPackage[] = [...groups.entries()].map(([key, files]) => {
-    const primary = files.find((item) => /(^|\/)skill\.md$/i.test(item.path)) ??
-      (files.length === 1 ? files[0] : undefined);
-    if (!primary) throw new Error(`${key} 是多文件目录，但没有 SKILL.md`);
+    const primary = files.find((item) => /(^|\/)SKILL\.md$/.test(item.path));
+    if (!primary) throw new Error(`${key} 缺少 SKILL.md 主文件（区分大小写），不能导入`);
     if (new Blob([primary.content]).size > MAX_PRIMARY_FILE_BYTES) {
       throw new Error(`${primary.path} 超过 1 MB 主文件执行上限`);
     }
-    const fallback = primary.path.split("/").at(-1) || key.replace(/^file:/, "");
     return {
       key,
-      title: inferTitle(primary.content, fallback),
-      description: inferDescription(primary.content),
+      title: "",
+      description: "",
       primaryFilePath: primary.path,
       files: files.map(({ path, content, mimeType }) => ({ path, content, mimeType })),
     };
@@ -225,8 +183,8 @@ async function prepareFiles(selected: File[]): Promise<PreparedPackage[]> {
       if (!primary) throw new Error(`${archive.name} 中的 ${pkg.root} 缺少主文件`);
       prepared.push({
         key: `archive:${archiveIndex}:${archive.name}:${pkg.root}:${index}`,
-        title: inferTitle(primary.content, pkg.root || archive.name.replace(/\.(?:zip|skill)$/i, "")),
-        description: inferDescription(primary.content),
+        title: "",
+        description: "",
         primaryFilePath: pkg.primaryFilePath,
         files: pkg.files,
         ignoredFiles: index === 0 ? preview.ignoredFiles : 0,
@@ -234,14 +192,18 @@ async function prepareFiles(selected: File[]): Promise<PreparedPackage[]> {
     });
   }
 
-  if (!prepared.length) throw new Error("没有找到可导入的 SKILL.md、.md 或 .txt 文件");
+  if (!prepared.length) throw new Error("没有找到符合规范的 SKILL.md 主文件");
   if (prepared.length > MAX_PACKAGES) throw new Error(`单次最多导入 ${MAX_PACKAGES} 个 Skill`);
   const preparedBytes = prepared.reduce(
     (sum, pkg) => sum + pkg.files.reduce((fileSum, file) => fileSum + new Blob([file.content]).size, 0),
     0,
   );
   if (preparedBytes > MAX_TOTAL_BYTES) throw new Error("本次导入的 Skill 文本文件合计超过 8 MB");
-  return prepared;
+  const metadata = checkedSkillFileMetadata(await adminSkillsApi.validateFiles(prepared.map((pkg) => ({
+    primaryFilePath: pkg.primaryFilePath, files: pkg.files,
+  }))), prepared.length);
+  return prepared.map((pkg, index) => ({ ...pkg, title: metadata[index].name, description: truncateRunes(metadata[index].description, 255),
+    ignoredFiles: (pkg.ignoredFiles ?? 0) + (index === 0 ? ignoredFiles : 0) }));
 }
 
 export function SkillImportModal({
@@ -255,6 +217,7 @@ export function SkillImportModal({
 }) {
   const [packages, setPackages] = useState<PreparedPackage[]>([]);
   const [reading, setReading] = useState(false);
+  const [fileError, setFileError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [manifestBusy, setManifestBusy] = useState(false);
   const [validation, setValidation] = useState<AdminSkillImportValidationVO | null>(null);
@@ -267,6 +230,7 @@ export function SkillImportModal({
     defaultAdminSkillEntryPoints("agent"),
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const validationPendingRef = useRef(false);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const readSeqRef = useRef(0);
   const directoryProps = { webkitdirectory: "", directory: "" } as React.InputHTMLAttributes<HTMLInputElement>;
@@ -293,7 +257,11 @@ export function SkillImportModal({
     event.target.value = "";
     if (!selected.length || submitting || manifestBusy) return;
     const readSeq = ++readSeqRef.current;
+    validationPendingRef.current = true;
     setReading(true);
+    setFileError("");
+    setPackages([]);
+    setValidation(null);
     try {
       const prepared = await prepareFiles(selected);
       if (readSeq === readSeqRef.current) {
@@ -302,10 +270,15 @@ export function SkillImportModal({
       }
     } catch (error) {
       if (readSeq === readSeqRef.current) {
-        toast.error(error instanceof Error ? error.message : "文件读取失败");
+        const message = error instanceof Error ? error.message : "文件读取失败";
+        setFileError(message);
+        toast.error(message);
       }
     } finally {
-      if (readSeq === readSeqRef.current) setReading(false);
+      if (readSeq === readSeqRef.current) {
+        validationPendingRef.current = false;
+        setReading(false);
+      }
     }
   };
 
@@ -325,6 +298,7 @@ export function SkillImportModal({
   };
 
   const loadManifestRequests = async (): Promise<SkillManifestDraftRequest[]> => {
+    if (validationPendingRef.current || reading || fileError) throw new Error("请先选择并通过 Skill 文件格式校验");
     if (!packages.length) throw new Error("请先选择 Skill 文件或目录");
     const inputSchema = skillInputSchemaFor(inputPreset) as Record<string, unknown>;
     return packages.filter((pkg) => !pkg.manifestText?.trim()).map((pkg) => ({
@@ -371,7 +345,7 @@ export function SkillImportModal({
       toast.info("Manifest 草稿仍在生成，请等待完成或先停止生成");
       return false;
     }
-    if (reading) {
+    if (reading || validationPendingRef.current) {
       toast.info("Skill 文件仍在解析，请稍候");
       return false;
     }
@@ -458,7 +432,7 @@ export function SkillImportModal({
           <input
             ref={fileInputRef}
             type="file"
-            accept=".md,.txt,.zip,.skill,text/markdown,text/plain,application/zip"
+            accept=".md,.zip,.skill,text/markdown,application/zip"
             multiple
             style={{ display: "none" }}
             onChange={(event) => void readSelection(event)}
@@ -479,8 +453,15 @@ export function SkillImportModal({
           </span>
         </div>
         <p className="muted" style={{ margin: "8px 0 0", fontSize: 12, lineHeight: 1.6 }}>
-          包内 .md/.txt 会作为固定参考上下文随 SKILL.md 使用；脚本、YAML 和二进制文件不会导入或执行。
+          仅接受标准 Skill：主文件必须为 SKILL.md，包含 YAML 元数据（name、description）和 Markdown 正文；目录名需与 name 一致。
+          包内 .md/.txt 可作为参考资料；脚本、YAML 和二进制文件不会导入或执行。
         </p>
+        {fileError && (
+          <AdminAlert tone="error" title="Skill 格式校验未通过">
+            <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>{fileError}</p>
+            未导入任何文件，请修正后重新选择。
+          </AdminAlert>
+        )}
         {ignoredFiles ? (
           <div style={{ marginTop: 12 }}>
             <AdminAlert tone="warning" title={`有 ${ignoredFiles} 个文件不会导入`}>

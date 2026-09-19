@@ -45,6 +45,7 @@ func RegisterSkills(g *gin.RouterGroup, d *app.Deps) {
 	s.POST("", h.create)
 	s.POST("/archive-preview", h.previewSkillArchive)
 	s.POST("/validate-import", h.validateSkillImport)
+	s.POST("/validate-files", h.validateSkillFiles)
 	s.POST("/import", h.importSkills)
 	s.PUT("/:id", h.update)
 	s.DELETE("/:id", h.remove)

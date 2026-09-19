@@ -67,6 +67,16 @@ export interface AdminSkillFileInput {
   mimeType?: string;
 }
 
+export interface AdminSkillFilePackageDTO {
+  primaryFilePath: string;
+  files: AdminSkillFileInput[];
+}
+
+export interface AdminSkillFileValidationVO {
+  valid: boolean;
+  items: Array<{ index: number; valid: boolean; errors: string[]; name?: string; description?: string }>;
+}
+
 export interface AdminSkillArchivePackageVO {
   root: string;
   primaryFilePath: string;

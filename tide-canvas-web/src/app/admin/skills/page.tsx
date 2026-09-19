@@ -29,6 +29,7 @@ import {
 } from "@/components/admin";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { adminSkillsApi } from "@/lib/admin-skills-api";
+import { authoredSkillFile } from "@/lib/admin-skill-package";
 import { aiApi, uploadFileSmart } from "@/lib/api";
 import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
@@ -518,6 +519,8 @@ export default function AdminSkillsPage() {
           inputSchema: starterAdminSkillInputSchema(form.kind, primaryOutputType),
           manifest: starterAdminSkillManifest(form.kind, primaryOutputType, form.modelId),
           promptTemplate: prepared.dto.promptTemplate,
+          primaryFilePath: "SKILL.md",
+          files: [authoredSkillFile(prepared.dto.title, prepared.dto.description || "", prepared.dto.promptTemplate || "")],
           modelId: form.modelId,
           defaultParams: prepared.defaultParams,
           bindings: defaultAdminSkillBindings(entryPoints, primaryOutputType),

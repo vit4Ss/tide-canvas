@@ -13,6 +13,7 @@ import {
 } from "@/components/admin";
 import { toast } from "@/components/shared/toast";
 import { adminSkillsApi } from "@/lib/admin-skills-api";
+import { checkedSkillFileMetadata, readUTF8File } from "@/lib/admin-skill-package";
 import {
   ADMIN_SKILL_ENTRY_POINTS as ENTRY_POINTS,
   constrainAdminSkillEntryPoints,
@@ -817,7 +818,7 @@ export function SkillVersionModal({
           toast.error("文件包超过 8 MB 限制");
           return;
         }
-        const content = await file.text();
+        const content = await readUTF8File(file, path);
         if (generation !== modalGenerationRef.current || readSeq !== fileReadSeqRef.current) return;
         next.push({
           path,
@@ -828,11 +829,14 @@ export function SkillVersionModal({
         });
       }
       if (generation !== modalGenerationRef.current || readSeq !== fileReadSeqRef.current) return;
-      const skillMd = next.find((file) => /(^|\/)skill\.md$/i.test(file.path));
+      const skillMd = next.find((file) => /(^|\/)SKILL\.md$/.test(file.path));
+      if (!skillMd) throw new Error("文件包必须包含 SKILL.md 主文件（区分大小写）");
+      checkedSkillFileMetadata(await adminSkillsApi.validateFiles([{ primaryFilePath: skillMd.path, files: next }]), 1);
+      if (generation !== modalGenerationRef.current || readSeq !== fileReadSeqRef.current) return;
       setForm((current) => current && ({
         ...current,
         files: next,
-        primaryFilePath: skillMd?.path || (next.length === 1 ? next[0].path : ""),
+        primaryFilePath: skillMd.path,
       }));
       setFilesReplaced(true);
     } catch (error) {
@@ -1382,7 +1386,7 @@ export function SkillVersionModal({
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <button type="button" className="adm-btn ghost" onClick={() => fileInputRef.current?.click()}>
             {readingFiles ? <Loader2 className="adm-spin" aria-hidden size={14} /> : <Upload aria-hidden size={14} />}
-            {readingFiles ? "读取中…" : form.files.length ? "更换文件包" : "选择 .md / .txt"}
+            {readingFiles ? "格式校验中…" : form.files.length ? "更换文件包" : "选择 Skill 文件包"}
           </button>
           <input
             ref={fileInputRef}
@@ -1395,7 +1399,7 @@ export function SkillVersionModal({
           <span className="muted" style={{ fontSize: 12 }}>
             {loading || copyingId ? "正在加载版本文件…" : loadError ? "文件包尚未加载，请先重试。" : form.files.length
               ? `${filesReplaced ? "已选择新文件包" : "已载入文件包"} · ${form.files.length} 个文件 · ${(packageBytes / 1024).toFixed(1)} KB`
-              : "当前没有文件包；可选择 .md / .txt，或直接填写上方提示词。"}
+              : "当前没有文件包；请选择含 name、description 元数据的 SKILL.md，也可直接编写上方提示词。"}
           </span>
         </div>
         {form.files.length > 0 && (
@@ -1412,6 +1416,7 @@ export function SkillVersionModal({
               >
                 <input
                   type="radio"
+                  disabled={!/(^|\/)SKILL\.md$/.test(file.path)}
                   name="skill-primary-file"
                   checked={form.primaryFilePath === file.path}
                   onChange={() => setForm({ ...form, primaryFilePath: file.path })}

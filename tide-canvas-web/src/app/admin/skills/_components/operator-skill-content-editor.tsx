@@ -6,6 +6,8 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { confirmDialog } from "@/components/shared/confirm";
 import { toast } from "@/components/shared/toast";
+import { adminSkillsApi } from "@/lib/admin-skills-api";
+import { checkedSkillFileMetadata, readUTF8File } from "@/lib/admin-skill-package";
 
 export const MAX_OPERATOR_SKILL_DOCUMENT_BYTES = 512 * 1024;
 
@@ -48,6 +50,8 @@ export function OperatorSkillContentEditor({
   onImport: (value: string) => void;
 }) {
   const [mode, setMode] = useState<"edit" | "preview">("edit");
+  const [importing, setImporting] = useState(false);
+  const latestValueRef = useRef(value);
   const inputRef = useRef<HTMLInputElement>(null);
   const editTabRef = useRef<HTMLButtonElement>(null);
   const previewTabRef = useRef<HTMLButtonElement>(null);
@@ -58,6 +62,7 @@ export function OperatorSkillContentEditor({
   const byteStatusId = useId();
   const documentBytes = useMemo(() => new TextEncoder().encode(value).byteLength, [value]);
   const documentOverLimit = documentBytes > MAX_OPERATOR_SKILL_DOCUMENT_BYTES;
+  useEffect(() => { latestValueRef.current = value; }, [value]);
 
   useEffect(() => () => {
     readSequenceRef.current += 1;
@@ -66,10 +71,9 @@ export function OperatorSkillContentEditor({
   const readFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (!file) return;
-    const lowerName = file.name.toLowerCase();
-    if (!lowerName.endsWith(".md") && !lowerName.endsWith(".txt")) {
-      toast.error("仅支持导入 .md 或 .txt 文件");
+    if (!file || importing) return;
+    if (file.name !== "SKILL.md") {
+      toast.error("请选择标准 SKILL.md 主文件（区分大小写）");
       return;
     }
     if (file.size <= 0 || file.size > MAX_OPERATOR_SKILL_DOCUMENT_BYTES) {
@@ -77,9 +81,12 @@ export function OperatorSkillContentEditor({
       return;
     }
     const sequence = ++readSequenceRef.current;
+    setImporting(true);
     try {
-      const content = await file.text();
+      const content = await readUTF8File(file, file.name);
       if (sequence !== readSequenceRef.current) return;
+      checkedSkillFileMetadata(await adminSkillsApi.validateFiles([{ primaryFilePath: "SKILL.md", files: [{ path: "SKILL.md", content }] }]), 1);
+      if (sequence !== readSequenceRef.current || latestValueRef.current !== value) return;
       if (value.trim() && content !== value) {
         const confirmed = await confirmDialog({
           title: "覆盖当前 Skill 内容？",
@@ -87,13 +94,15 @@ export function OperatorSkillContentEditor({
           confirmText: "确认覆盖",
           danger: true,
         });
-        if (sequence !== readSequenceRef.current || !confirmed) return;
+        if (sequence !== readSequenceRef.current || latestValueRef.current !== value || !confirmed) return;
       }
       onImport(content);
       setMode("edit");
       toast.success(`已导入 ${file.name}`);
-    } catch {
-      if (sequence === readSequenceRef.current) toast.error("SKILL.md 读取失败");
+    } catch (error) {
+      if (sequence === readSequenceRef.current) toast.error(error instanceof Error ? error.message : "SKILL.md 格式校验失败");
+    } finally {
+      if (sequence === readSequenceRef.current) setImporting(false);
     }
   };
 
@@ -169,15 +178,16 @@ export function OperatorSkillContentEditor({
             <button
               type="button"
               className="adm-skill-doc-upload"
+              disabled={importing}
               onClick={() => inputRef.current?.click()}
             >
-              <Upload aria-hidden size={13} />导入 SKILL.md
+              <Upload aria-hidden size={13} />{importing ? "格式校验中…" : "导入 SKILL.md"}
             </button>
           </div>
           <input
             ref={inputRef}
             type="file"
-            accept=".md,.txt,text/markdown,text/plain"
+            accept=".md,text/markdown"
             hidden
             onChange={(event) => void readFile(event)}
           />

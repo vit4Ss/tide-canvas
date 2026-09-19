@@ -18,6 +18,8 @@ import type {
   AdminSkillVO,
   AdminSkillVersionCreateDTO,
   AdminSkillVersionVO,
+  AdminSkillFilePackageDTO,
+  AdminSkillFileValidationVO,
 } from "@/types/admin-skill";
 import { constrainAdminSkillEntryPoints } from "@/lib/admin-skill-defaults";
 
@@ -87,6 +89,8 @@ export const adminSkillsApi = {
   ),
   validateImport: (skills: AdminSkillImportPackage[]) =>
     http.post<AdminSkillImportValidationVO>("/api/admin/skills/validate-import", { skills }),
+  validateFiles: (packages: AdminSkillFilePackageDTO[]) =>
+    http.post<AdminSkillFileValidationVO>("/api/admin/skills/validate-files", { packages }),
   previewArchive: (file: File) => {
     const form = new FormData();
     form.append("file", file);

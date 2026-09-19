@@ -50,7 +50,8 @@ type AdminSkillFileDTO struct {
 
 // AdminSkillVersionCreateDTO is also the JSON import contract. Upload clients
 // send a flat path/content array; paths may represent a folder and a root
-// SKILL.md is selected as primary. A lone .md/.txt file is also accepted.
+// SKILL.md is selected as primary. File import routes enforce Agent Skills
+// metadata; manually authored prompt-only versions remain an internal format.
 type AdminSkillVersionCreateDTO struct {
 	Kind              string                 `json:"kind"`
 	EntryPoints       []string               `json:"entryPoints"`
@@ -221,6 +222,12 @@ func (h *skillsHandler) createVersion(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "invalid version: "+err.Error())
 		return
 	}
+	if len(dto.Files) > 0 || strings.HasSuffix(c.FullPath(), "/import") {
+		if _, err := validateStandardSkillPackage(dto.Files, dto.PrimaryFilePath); err != nil {
+			response.Fail(c, response.CodeBadRequest, describeSkillImportError(err))
+			return
+		}
+	}
 	version, files, err := buildSkillVersion(h.db, &skill, dto, middleware.CurrentUserID(c))
 	if err != nil {
 		response.Fail(c, response.CodeBadRequest, err.Error())
@@ -324,6 +331,10 @@ func describeSkillImportRequestError(err error, action string) string {
 }
 
 func decodeAdminSkillImportRequest(reader io.Reader, dto *AdminSkillImportDTO) error {
+	return decodeSkillJSON(reader, dto)
+}
+
+func decodeSkillJSON(reader io.Reader, dto any) error {
 	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dto); err != nil {
@@ -342,6 +353,11 @@ func decodeAdminSkillImportRequest(reader io.Reader, dto *AdminSkillImportDTO) e
 func validateAdminSkillImports(db *gorm.DB, packages []AdminSkillPackageDTO, actor idgen.ID) (AdminSkillImportValidationVO, []preparedSkillImport) {
 	result := AdminSkillImportValidationVO{Valid: true, Items: make([]AdminSkillImportValidationItemVO, 0, len(packages))}
 	prepared := make([]preparedSkillImport, 0, len(packages))
+	groups := make([][]AdminSkillFileDTO, len(packages))
+	for i := range packages {
+		groups[i] = packages[i].Files
+	}
+	batchSizeError := validateSkillBatchFileSize(groups)
 	for index := range packages {
 		pkg := packages[index]
 		title := strings.TrimSpace(pkg.Title)
@@ -349,7 +365,11 @@ func validateAdminSkillImports(db *gorm.DB, packages []AdminSkillPackageDTO, act
 			title = fmt.Sprintf("第 %d 个 Skill", index+1)
 		}
 		item := AdminSkillImportValidationItemVO{Index: index, Title: title, Valid: false, Errors: []string{}}
-		if err := validateAdminSkillPackageMetadata(pkg); err != nil {
+		if batchSizeError != nil {
+			item.Errors = append(item.Errors, batchSizeError.Error())
+		} else if err := validateAdminSkillPackageMetadata(pkg); err != nil {
+			item.Errors = append(item.Errors, describeSkillImportError(err))
+		} else if _, err := validateStandardSkillPackage(pkg.Files, pkg.PrimaryFilePath); err != nil {
 			item.Errors = append(item.Errors, describeSkillImportError(err))
 		} else {
 			skill := skillFromImportPackage(pkg)
@@ -570,6 +590,10 @@ func skillImportAnalysisModelSupports(handler string, row model.MarketModel) boo
 func describeSkillImportError(err error) string {
 	if err == nil {
 		return ""
+	}
+	var formatErr *skillFormatError
+	if errors.As(err, &formatErr) {
+		return formatErr.Error()
 	}
 	message := err.Error()
 	exact := map[string]string{

@@ -48,7 +48,7 @@ func archiveReader(t *testing.T, entries []struct{ name, content string }) *zip.
 func TestPreviewSkillArchiveAcceptsMultipartZIP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	data := archiveData(t, []struct{ name, content string }{
-		{"bundle/review/SKILL.md", "# Review"},
+		{"bundle/review/SKILL.md", "---\nname: review\ndescription: Review videos\n---\n# Review"},
 		{"bundle/review/references/rules.md", "rules"},
 		{"bundle/review/scripts/run.py", "print('ignored')"},
 	})
@@ -81,7 +81,7 @@ func TestPreviewSkillArchiveAcceptsMultipartZIP(t *testing.T) {
 
 func TestInspectSkillArchiveFindsNestedPackageAndIgnoresExecutableFiles(t *testing.T) {
 	reader := archiveReader(t, []struct{ name, content string }{
-		{"release/skill/SKILL.md", "---\nname: review\n---\n# Review"},
+		{"release/skill/SKILL.md", "---\nname: skill\ndescription: Review videos\n---\n# Review"},
 		{"release/skill/references/rules.md", "rules"},
 		{"release/skill/references/notes.txt", "notes"},
 		{"release/skill/scripts/run.py", "print('never execute')"},
@@ -111,9 +111,9 @@ func TestInspectSkillArchiveFindsNestedPackageAndIgnoresExecutableFiles(t *testi
 
 func TestInspectSkillArchiveSupportsSeveralIndependentSkills(t *testing.T) {
 	reader := archiveReader(t, []struct{ name, content string }{
-		{"bundle/a/SKILL.md", "# A"},
+		{"bundle/a/SKILL.md", "---\nname: a\ndescription: A review\n---\n# A"},
 		{"bundle/a/ref.md", "A ref"},
-		{"bundle/b/SKILL.md", "# B"},
+		{"bundle/b/SKILL.md", "---\nname: b\ndescription: B review\n---\n# B"},
 		{"bundle/b/ref.md", "B ref"},
 	})
 	preview, err := inspectSkillArchive(reader)
@@ -132,7 +132,7 @@ func TestInspectSkillArchiveSupportsSeveralIndependentSkills(t *testing.T) {
 
 func TestArchivePreviewPackagePassesTheFinalImportValidation(t *testing.T) {
 	preview, err := inspectSkillArchive(archiveReader(t, []struct{ name, content string }{
-		{"release/director/SKILL.md", "---\nname: director-review\ndescription: Review videos\n---\n# Director Review"},
+		{"release/director/SKILL.md", "---\nname: director\ndescription: Review videos\n---\n# Director Review"},
 		{"release/director/references/rules.md", "Cite visible evidence."},
 		{"release/director/references/output.md", "Return the decision first."},
 		{"release/director/scripts/review.py", "print('not executed')"},
