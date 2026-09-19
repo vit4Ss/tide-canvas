@@ -21,6 +21,8 @@ const (
 // GenerationCommand is the internal contract used by SkillRun. Orchestration
 // metadata is persisted on AiTask and never forwarded to an upstream provider.
 type GenerationCommand struct {
+	IsAPICall         bool
+	PublicInput       json.RawMessage
 	ProjectID         idgen.ID
 	Handler           string
 	ModelID           string
@@ -46,6 +48,15 @@ type TaskSnapshot struct {
 	ErrorMessage string
 }
 
+// Provider execution continues to use dto.Input. Only the explicitly supplied
+// user input is persisted into user-visible tasks/history for private Skills.
+func persistedGenerationInput(dto generateDTO) json.RawMessage {
+	if dto.SkillRunID != 0 && dto.IsAPICall && len(dto.PublicInput) > 0 {
+		return normalizeInput(dto.PublicInput)
+	}
+	return normalizeInput(dto.Input)
+}
+
 // GenerationFacade exposes the existing task/model/points/provider pipeline to
 // in-process orchestrators without making an HTTP loopback call.
 type GenerationFacade struct{ svc *service }
@@ -64,6 +75,7 @@ func (f *GenerationFacade) Submit(ctx context.Context, userID idgen.ID, cmd Gene
 	}
 	registerWork := cmd.RegisterWork
 	vo, err := f.svc.generate(ctx, userID, generateDTO{
+		IsAPICall: cmd.IsAPICall, PublicInput: cmd.PublicInput,
 		Handler: cmd.Handler, ModelID: cmd.ModelID, ProjectID: cmd.ProjectID,
 		Input: raw, Origin: cmd.Origin, SkillRunID: cmd.SkillRunID,
 		SkillRunStepID: cmd.SkillRunStepID, SkillRunRevision: cmd.SkillRunRevision,

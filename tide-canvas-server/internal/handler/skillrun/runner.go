@@ -23,6 +23,7 @@ import (
 	"tidecanvas/internal/pkg/chatcontext"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
+	"tidecanvas/internal/pkg/skillformat"
 	"tidecanvas/internal/pkg/storage"
 )
 
@@ -136,6 +137,12 @@ func (s *service) execute(runID idgen.ID) {
 		return
 	}
 	var input RunInput
+	if run.EntryPoint == "mcp" {
+		if _, err := skillformat.ValidateVersion(ctx, s.db, &version); err != nil {
+			s.failRun(run.ID, run.Revision, "技能未通过标准 Skill 格式校验，请联系管理员")
+			return
+		}
+	}
 	if json.Unmarshal([]byte(run.Input), &input) != nil {
 		s.failRun(run.ID, run.Revision, "invalid run input")
 		return
@@ -417,7 +424,12 @@ func (s *service) executeGenerationStep(ctx context.Context, run *model.SkillRun
 		return s.completedStepResult(step)
 	}
 	if step.AiTaskID == 0 {
+		var publicInput json.RawMessage
+		if run.EntryPoint == "mcp" {
+			publicInput = mcpPublicGenerationInput(run.Input)
+		}
 		taskID, err := s.ai.Submit(ctx, run.UserID, ai.GenerationCommand{
+			IsAPICall: run.EntryPoint == "mcp", PublicInput: publicInput,
 			ProjectID: run.ProjectID, Handler: spec.Handler, ModelID: spec.ModelID, Input: input,
 			Origin: "skill_run", SkillRunID: run.ID, SkillRunStepID: step.ID,
 			SkillRunRevision: run.Revision, SkillRunWorkerID: s.workerID,

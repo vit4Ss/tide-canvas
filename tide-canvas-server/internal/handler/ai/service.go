@@ -343,7 +343,7 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 		SkillRunStepID: dto.SkillRunStepID,
 		OutputRole:     outputRole,
 		RegisterWork:   registerWork,
-		Input:          string(normalizeInput(dto.Input)),
+		Input:          string(persistedGenerationInput(dto)),
 		CreateTime:     now,
 		UpdateTime:     now,
 	}
@@ -1435,7 +1435,7 @@ func (s *service) writeLog(ctx context.Context, task *model.AiTask, gh GenHandle
 		Operation:      gh.OperationType(),
 		RequestUrl:     res.RequestURL,
 		RequestBody:    res.RequestBody,
-		InputParams:    string(normalizeInput(dto.Input)),
+		InputParams:    string(persistedGenerationInput(dto)),
 		HttpStatus:     res.HttpStatus,
 		ResponseBody:   res.ResponseBody,
 		UpstreamTaskID: res.UpstreamTaskID,

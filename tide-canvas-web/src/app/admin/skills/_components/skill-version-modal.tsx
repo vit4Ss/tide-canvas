@@ -1361,7 +1361,7 @@ export function SkillVersionModal({
               onChange={(event) => setForm({ ...form, manifest: event.target.value })}
             />
           </Field>
-          <Field label="提示词 / 主说明" span={4} hint="无文件时必填；导入文件包时可以由主文件提供。">
+          <Field label="提示词 / 主说明" span={4} hint="无文件时须填写完整的标准 SKILL.md（含 name、description 元数据及正文）；导入包由主文件提供。">
             <textarea
               rows={6}
               value={form.promptTemplate}

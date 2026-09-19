@@ -24,6 +24,7 @@ import {
   Panel,
   RowActions,
   StatusPill,
+  SwitchToggle,
   TableSkeleton,
   type Column,
 } from "@/components/admin";
@@ -56,6 +57,7 @@ import {
 import { isOperatorEditablePresetVersion } from "@/lib/admin-skill-operator-compat";
 import { SkillVersionModal } from "./_components/skill-version-modal";
 import { SkillImportModal } from "./_components/skill-import-modal";
+import { SkillMCPSettings } from "./_components/skill-mcp-settings";
 import { buildSkillCoverPrompt, SkillCoverAiPanel } from "./_components/skill-cover-ai-panel";
 import { SkillCopyAiButton } from "./_components/skill-copy-ai-button";
 import {
@@ -93,6 +95,7 @@ const KIND_OPTIONS: Array<{
 ];
 
 interface SkillForm {
+  mcpEnabled: boolean;
   kind: SkillKind;
   entryPoints: SkillEntryPoint[];
   title: string;
@@ -112,6 +115,7 @@ interface SkillForm {
 }
 
 const EMPTY_FORM: SkillForm = {
+  mcpEnabled: false,
   kind: "preset",
   entryPoints: defaultAdminSkillEntryPoints("preset"),
   title: "",
@@ -149,6 +153,10 @@ export default function AdminSkillsPage() {
   const [catIdx, setCatIdx] = useState(0);
   const [query, setQuery] = useState("");
   const [keyword, setKeyword] = useState("");
+  const [exposurePending, setExposurePending] = useState<Set<string>>(new Set());
+  const exposurePendingRef = useRef(new Set<string>());
+  const exposureRevisionRef = useRef(0);
+  const exposureChangesRef = useRef(new Map<string, { enabled: boolean; revision: number }>());
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<AdminSkillVO | null>(null);
@@ -196,6 +204,7 @@ export default function AdminSkillsPage() {
   const reqIdRef = useRef(0);
   const load = useCallback(async () => {
     const id = ++reqIdRef.current;
+    const exposureRevision = exposureRevisionRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -209,7 +218,14 @@ export default function AdminSkillsPage() {
       });
       if (id !== reqIdRef.current) return;
       if (res.success && res.data) {
-        setRows(res.data.records);
+        // A list request started before a toggle must not undo its confirmed state.
+        setRows(res.data.records.map((row) => {
+          const change = exposureChangesRef.current.get(row.id);
+          return change && change.revision > exposureRevision ? { ...row, mcpEnabled: change.enabled } : row;
+        }));
+        for (const [skillId, change] of exposureChangesRef.current) {
+          if (change.revision <= exposureRevision) exposureChangesRef.current.delete(skillId);
+        }
         setTotal(res.data.total);
       } else {
         setError(res.message || "加载失败");
@@ -249,6 +265,7 @@ export default function AdminSkillsPage() {
   const openEdit = (r: AdminSkillVO) => {
     const kind = r.kind || "preset";
     const nextForm: SkillForm = {
+      mcpEnabled: r.mcpEnabled === true,
       kind,
       entryPoints: constrainAdminSkillEntryPoints(kind, r.entryPoints),
       title: r.title,
@@ -453,6 +470,8 @@ export default function AdminSkillsPage() {
     return {
       defaultParams,
       dto: {
+        // A metadata-only save must not restore a flag changed by another admin.
+        mcpEnabled: !editing || form.mcpEnabled !== (editing.mcpEnabled === true) ? form.mcpEnabled : undefined,
         title: form.title.trim(),
         description: form.description.trim(),
         usageScenario: form.usageScenario.trim(),
@@ -502,6 +521,7 @@ export default function AdminSkillsPage() {
         const entryPoints = constrainAdminSkillEntryPoints(form.kind, form.entryPoints);
         const outputTypes = defaultAdminSkillOutputTypes(form.kind, primaryOutputType);
         const skillPackage: AdminSkillImportPackage = {
+          mcpEnabled: form.mcpEnabled,
           title: prepared.dto.title,
           description: prepared.dto.description,
           usageScenario: prepared.dto.usageScenario,
@@ -580,6 +600,30 @@ export default function AdminSkillsPage() {
     else toast.error(res.message || "状态更新失败");
   };
 
+  const toggleExposure = async (r: AdminSkillVO, enabled: boolean) => {
+    if (exposurePendingRef.current.has(r.id)) return;
+    exposurePendingRef.current.add(r.id);
+    setExposurePending(new Set(exposurePendingRef.current));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    try {
+      const res = await adminSkillsApi.setExposure(r.id, enabled, controller.signal);
+      if (!res.success || res.data?.id !== r.id || res.data.mcpEnabled !== enabled) {
+        toast.error(res.message || "对外开放设置保存失败，请重试");
+        return;
+      }
+      exposureChangesRef.current.set(r.id, { enabled, revision: ++exposureRevisionRef.current });
+      setRows((current) => current.map((row) => row.id === r.id ? { ...row, mcpEnabled: enabled } : row));
+      toast.success(enabled ? (r.status === 1 ? "已对外开放，可在 Skill 广场展示并通过 MCP 使用" : "已开启对外开放，上架后生效") : "已关闭对外开放");
+    } catch {
+      toast.error("对外开放设置保存失败，请重试");
+    } finally {
+      clearTimeout(timer);
+      exposurePendingRef.current.delete(r.id);
+      setExposurePending(new Set(exposurePendingRef.current));
+    }
+  };
+
   const remove = async (r: AdminSkillVO) => {
     if (
       !(await confirmDialog({
@@ -627,7 +671,9 @@ export default function AdminSkillsPage() {
             )}
           </span>
           <span style={{ minWidth: 0 }}>
-            <span className="strong" style={{ display: "block" }}>{r.title}</span>
+            <span style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+              <span className="strong">{r.title}</span>
+            </span>
             <span className="muted" style={{ display: "block", fontSize: 12, maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {r.description || "—"}
             </span>
@@ -650,6 +696,21 @@ export default function AdminSkillsPage() {
     },
     { header: "关联模型", className: "muted", cell: (r) => (r.modelId ? modelName(r.modelId) : "跟随用户") },
     { header: "使用数", align: "right", cell: (r) => r.useCount, sortValue: (r) => r.useCount },
+    {
+      header: "对外开放",
+      align: "center",
+      width: 96,
+      cell: (r) => (
+        <span title="开启且上架后，在前台 Skill 广场展示并开放 MCP 调用" aria-busy={exposurePending.has(r.id)}>
+          <SwitchToggle
+            checked={r.mcpEnabled === true}
+            disabled={exposurePending.has(r.id)}
+            aria-label={`对外开放：${r.title}`}
+            onChange={(enabled) => void toggleExposure(r, enabled)}
+          />
+        </span>
+      ),
+    },
     { header: "排序", align: "right", className: "muted", cell: (r) => r.sortOrder },
     {
       header: "状态",
@@ -661,14 +722,16 @@ export default function AdminSkillsPage() {
       header: "操作",
       align: "right",
       cell: (r) => (
-        <RowActions
-          actions={[
-            { label: "编辑资料", onClick: () => openEdit(r) },
-            { label: "版本与运行配置", onClick: () => setVersioning(r) },
-            { label: r.status === 1 ? "下架" : "上架", onClick: () => toggleStatus(r) },
-            { label: "删除", danger: true, onClick: () => remove(r) },
-          ]}
-        />
+        <fieldset disabled={exposurePending.has(r.id)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+          <RowActions
+            actions={[
+              { label: "编辑资料", onClick: () => openEdit(r) },
+              { label: "版本与运行配置", onClick: () => setVersioning(r) },
+              { label: r.status === 1 ? "下架" : "上架", onClick: () => toggleStatus(r) },
+              { label: "删除", danger: true, onClick: () => remove(r) },
+            ]}
+          />
+        </fieldset>
       ),
     },
   ];
@@ -715,7 +778,7 @@ export default function AdminSkillsPage() {
 
       <Panel
         title="技能广场"
-        sub={`共 ${total} 个技能 · 第 ${pageNum}/${pageCount} 页 · 上下架即时生效于对话 / 创作台 / 画布`}
+        sub={`共 ${total} 个技能 · 第 ${pageNum}/${pageCount} 页 · 对外开放默认关闭，开启且上架后展示于 Skill 广场并开放 MCP`}
         tools={
           <>
             <div className="adm-search" role="search">
@@ -1065,6 +1128,14 @@ export default function AdminSkillsPage() {
             </p>
           </FormCard>
         ) : null}
+
+        <SkillMCPSettings
+          enabled={form.mcpEnabled}
+          disabled={saving}
+          skillId={editing?.id}
+          savedEnabled={editing?.mcpEnabled === true}
+          onChange={(enabled) => setForm((current) => ({ ...current, mcpEnabled: enabled }))}
+        />
 
         <details ref={advancedRef} className="adm-skill-advanced">
           <summary>

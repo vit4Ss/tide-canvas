@@ -39,9 +39,11 @@ type Skill struct {
 	// 删除都不会被种子重建)。空 = 非种子来源;不下发前端。
 	SeedKey string `gorm:"column:seed_key;size:64;default:'';index" json:"-"`
 	// Status:0 下架 / 1 上架(公开列表仅返回上架)。
-	Status    int   `gorm:"column:status;default:1" json:"status"`
-	SortOrder int   `gorm:"column:sort_order;default:0" json:"sortOrder"`
-	UseCount  int64 `gorm:"column:use_count;default:0" json:"useCount"`
+	Status int `gorm:"column:status;default:1" json:"status"`
+	// MCPEnabled opts into both the public Skill library and per-Skill MCP.
+	MCPEnabled bool  `gorm:"column:mcp_enabled;not null;default:false" json:"mcpEnabled"`
+	SortOrder  int   `gorm:"column:sort_order;default:0" json:"sortOrder"`
+	UseCount   int64 `gorm:"column:use_count;default:0" json:"useCount"`
 	// Kind identifies the runtime semantics of the currently published version.
 	// Existing rows are backfilled as preset, preserving the original v1 behavior.
 	Kind string `gorm:"column:kind;size:16;not null;default:'preset';index" json:"kind"`

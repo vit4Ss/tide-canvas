@@ -131,6 +131,35 @@ func TestLegacyUpdateAllowsAdvancedPresetMetadataOnlyAndRejectsExecutionChange(t
 	if afterMetadata.Title != "metadata title" || afterMetadata.UsageScenario != usage || afterMetadata.CurrentVersionID != version.ID {
 		t.Fatalf("metadata-only update produced unexpected skill: %#v", afterMetadata)
 	}
+	// MCP is mutable catalog metadata: toggling it must not create or modify a
+	// published execution version, and old clients omitting it must preserve it.
+	enableMCP := true
+	invalidMCPDTO := metadataDTO
+	invalidMCPDTO.MCPEnabled = &enableMCP
+	if out := callUpdate(invalidMCPDTO); out.Code != http.StatusBadRequest || !strings.Contains(out.Body.String(), "格式不符合规范") {
+		t.Fatalf("legacy plaintext must not become an MCP Skill: %s", out.Body.String())
+	}
+	var rejected model.Skill
+	if err := db.First(&rejected, "id = ?", skill.ID).Error; err != nil || rejected.MCPEnabled {
+		t.Fatal("invalid MCP enable was persisted")
+	}
+	if err := db.Model(&file).Update("content", standardSkillText("review")).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, enabled := range []bool{true, false} {
+		dto := metadataDTO
+		dto.MCPEnabled = &enabled
+		if out := callUpdate(dto); out.Code != http.StatusOK {
+			t.Fatalf("MCP toggle failed: %s", out.Body.String())
+		}
+		if out := callUpdate(metadataDTO); out.Code != http.StatusOK {
+			t.Fatalf("legacy save failed: %s", out.Body.String())
+		}
+		var checked model.Skill
+		if err := db.First(&checked, "id = ?", skill.ID).Error; err != nil || checked.MCPEnabled != enabled || checked.CurrentVersionID != version.ID {
+			t.Fatalf("MCP metadata/legacy save changed published execution: %+v %v", checked, err)
+		}
+	}
 	var versionCount int64
 	if err := db.Model(&model.SkillVersion{}).Where("skill_id = ?", skill.ID).Count(&versionCount).Error; err != nil {
 		t.Fatal(err)

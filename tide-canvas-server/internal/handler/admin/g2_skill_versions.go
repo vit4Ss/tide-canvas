@@ -24,6 +24,7 @@ import (
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/response"
+	"tidecanvas/internal/pkg/skillformat"
 )
 
 const (
@@ -88,6 +89,7 @@ type skillBindingSnapshot struct {
 }
 
 type AdminSkillPackageDTO struct {
+	MCPEnabled        bool   `json:"mcpEnabled"`
 	Title             string `json:"title"`
 	Description       string `json:"description"`
 	UsageScenario     string `json:"usageScenario"`
@@ -222,11 +224,14 @@ func (h *skillsHandler) createVersion(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "invalid version: "+err.Error())
 		return
 	}
-	if len(dto.Files) > 0 || strings.HasSuffix(c.FullPath(), "/import") {
-		if _, err := validateStandardSkillPackage(dto.Files, dto.PrimaryFilePath); err != nil {
-			response.Fail(c, response.CodeBadRequest, describeSkillImportError(err))
-			return
-		}
+	if len(dto.Files) == 0 && !strings.HasSuffix(c.FullPath(), "/import") {
+		// Manual version authoring must also provide a complete standard document.
+		dto.PrimaryFilePath = "SKILL.md"
+		dto.Files = []AdminSkillFileDTO{{Path: "SKILL.md", Content: dto.PromptTemplate}}
+	}
+	if _, err := validateStandardSkillPackage(dto.Files, dto.PrimaryFilePath); err != nil {
+		response.Fail(c, response.CodeBadRequest, describeSkillImportError(err))
+		return
 	}
 	version, files, err := buildSkillVersion(h.db, &skill, dto, middleware.CurrentUserID(c))
 	if err != nil {
@@ -420,7 +425,7 @@ func skillFromImportPackage(pkg AdminSkillPackageDTO) model.Skill {
 		CoverURL:          strings.TrimSpace(pkg.CoverURL), Category: strings.TrimSpace(pkg.Category),
 		OutputType: primary, PromptTemplate: pkg.PromptTemplate, ModelID: strings.TrimSpace(pkg.ModelID),
 		DefaultParams: string(pkg.DefaultParams), AuthorName: strings.TrimSpace(pkg.AuthorName),
-		Status: status, SortOrder: pkg.SortOrder, Kind: kind,
+		Status: status, SortOrder: pkg.SortOrder, Kind: kind, MCPEnabled: pkg.MCPEnabled,
 	}
 }
 
@@ -688,6 +693,10 @@ func (h *skillsHandler) publishVersion(c *gin.Context) {
 	}
 	if err := validateSkillExecutablePromptSize(version.PromptTemplate, version.PrimaryFilePath, files); err != nil {
 		response.Fail(c, response.CodeBadRequest, err.Error())
+		return
+	}
+	if _, err := validateStandardSkillFiles(files, version.PrimaryFilePath, ""); err != nil {
+		response.Fail(c, response.CodeBadRequest, describeSkillImportError(err))
 		return
 	}
 	if err := validateSkillManifest(json.RawMessage(version.ManifestJSON), version.Kind, version.PrimaryOutputType, model.JSONStrings(version.OutputTypes, nil)); err != nil {
@@ -1144,6 +1153,9 @@ func persistSkillVersion(db *gorm.DB, skill *model.Skill, version *model.SkillVe
 }
 
 func persistSkillVersionTx(tx *gorm.DB, skill *model.Skill, version *model.SkillVersion, files []model.SkillFile, publish bool) error {
+	if _, err := validateStandardSkillFiles(files, version.PrimaryFilePath, ""); err != nil {
+		return err
+	}
 	// Locking the parent serializes MAX(version_no)+1 on MySQL. The unique index
 	// remains the final guard for engines that ignore row locks (for example SQLite).
 	var locked model.Skill
@@ -1213,6 +1225,9 @@ func publishSkillVersion(db *gorm.DB, skill *model.Skill, version *model.SkillVe
 func publishSkillVersionTx(tx *gorm.DB, skill *model.Skill, version *model.SkillVersion) error {
 	if skill == nil || skill.ID == 0 {
 		return errors.New("invalid skill")
+	}
+	if _, err := skillformat.ValidateVersion(tx.Statement.Context, tx, version); err != nil {
+		return err
 	}
 	if err := validateSkillKindContract(version); err != nil {
 		return err

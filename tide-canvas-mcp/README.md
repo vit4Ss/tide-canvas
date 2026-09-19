@@ -98,6 +98,61 @@ MCP 1.1.0+ 通过主站公开策略端点 `/api/mcp/config` 读取非敏感设�
 
 stdout 只输出 MCP 协议，日志写 stderr。不要把真实密钥提交到 Git。
 
+## 把已导入的 Skill 开放为独立 MCP
+
+MCP 1.2.0 起，在主站后台「技能广场」列表开启「对外开放」，或在导入/新建/编辑界面勾选「开放至 MCP / Skill 广场」。此开关默认关闭，同时控制前台 Skill 广场与专属 MCP 接入，不影响原有站内技能入口。开启前必须通过标准 Skill 格式校验。同一份已发布 Skill 会得到稳定的专属地址：
+
+```text
+https://你的主站域名/mcp/skills/<技能ID>
+```
+
+一个 Skill 一个地址，所有地址由同一个 MCP 容器提供。原 `/mcp` 的 7 个生成/查询工具保持原样。每个技能地址只提供 `get_skill_info`、`run_skill`、`get_skill_run`、`respond_skill_run` 和 `get_balance`，不会混入其他技能。
+
+- 导入后的技能默认下架；需要上架且主站 MCP 总开关开启才可远程启动。
+- 普通导入与 MCP 使用同一套 Agent Skills 格式校验；必须有有效的 `SKILL.md`、YAML `name`/`description` 及正文。已有技能开放 MCP 时会复核已发布版本；不合规的历史内容需修正并重新发布，不能通过勾选 MCP 绕过校验。
+- 编辑页可复制地址和接入 JSON，用户填写自己的主站 API Key。
+- `get_skill_info` 返回公开说明和输入 Schema；`run_skill` 接受 `clientRequestId` 和 `input`（prompt/assets/parameters），返回异步任务 id。
+- 等待确认或输入时，将 `pendingAction` 和草稿给用户看；`respond_skill_run` 提交用户决定，带上最新 revision 及独立的操作编号。
+- 按现有模型调用规则扣积分，没有额外的 Skill 固定费用。长流程可能调用多个模型步骤；已成功步骤的费用不会因后续步骤失败一概退回，失败生成按原规则处理。
+- 同一次提交/操作重试沿用原编号和参数。新任务固定使用启动时的已发布版本；发布新版本只影响之后的新任务。
+- 单独关闭或下架某个 Skill 后，拥有该技能既有任务的用户仍可通过该 MCP 地址查询和取消自己的任务；不能新建、继续或重试。无任务的用户不能读取关闭技能的配置。MCP 总开关关闭时仍会拒绝 MCP 连接。
+- Skill 文件、Manifest、私有提示词及步骤输入留在服务端。对外只返回公开输入说明、用户交互所需的草稿和最终产物；模型输出仍可能包含它生成的内容，不承诺绝对防提示词提取。
+
+部署时需要同步更新后端、前端和 MCP 镜像，并在现有 HTTPS vhost 的 `location = /mcp` 旁新增：
+
+```nginx
+location ^~ /mcp/ {
+    proxy_pass http://127.0.0.1:8082;
+    proxy_set_header Host 127.0.0.1:8082;
+    proxy_set_header Authorization $http_authorization;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_read_timeout 90s;
+    proxy_buffering off;
+    proxy_cache off;
+    client_max_body_size 2m;
+}
+```
+
+这里的 `proxy_pass` 不带路径，保留 `/mcp/skills/<技能ID>`。之后执行 `nginx -t && systemctl reload nginx`。
+
+## 前台 Skill 广场与公开安装包
+
+主站导航和创作台侧栏的「Skill 广场」打开 `/skills`，详情为 `/skills/<技能ID>`。目录只展示已开启「对外开放」、已上架且具有已发布版本的技能，支持搜索和分类。关闭后目录、详情、公开 SKILL.md 和安装包均不可访问，MCP 不再接受新任务；已受理任务的所有者仍可查询或取消，原有站内技能入口按原配置运行。
+
+用户在详情页可以复制安装链接或完整安装指令，交给支持 Skill 的 AI 客户端；也可下载 ZIP 手动安装。公开接口无需登录，使客户端能读取安装说明：
+
+- `GET /api/skill-library`：公开目录（pageNum/pageSize/category/keyword）。
+- `GET /api/skill-library/<id>`：公开详情与安装状态。
+- `GET /api/skill-library/<id>/SKILL.md`：动态生成的公开调用版 Skill。
+- `GET /api/skill-library/<id>/download`：只含 `<公开技能名>/SKILL.md` 的 ZIP。
+
+这些接口不返回原始 Skill 文件、Manifest、私有提示词、默认参数或用户密钥。公开文件自身也经过同一套标准 Skill 校验。执行仍经专属 MCP 并要求使用者自己的主站 API Key，阅读/下载说明不会发起收费任务。
+
+需在「MCP 配置」保存正确的对外接入地址；未配置时不会把回环地址或请求 Host 猜测为外部 MCP 地址。技能下架、MCP 关闭、原始文件不合规时，安装链接停止分发；已下载的说明仍受执行端鉴权和开关约束。
+
 ## 工具参数示例
 
 图片工具 generate_image 的 arguments：

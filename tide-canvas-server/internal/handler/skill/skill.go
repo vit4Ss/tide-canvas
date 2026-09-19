@@ -69,6 +69,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 		panic(fmt.Errorf("seed tool skills: %w", err))
 	}
 	h := &handler{db: d.DB}
+	registerSkillLibrary(api, d)
 	g := api.Group("/skills")
 	g.Use(middleware.JWTAuth(d))
 	g.GET("", h.list)

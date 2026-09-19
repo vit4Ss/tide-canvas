@@ -154,7 +154,7 @@ func (s *service) registerWorkOnDB(db *gorm.DB, task *model.AiTask, gh GenHandle
 
 	// dto.Input 里存的是用户原文（技能模板由 applySkill 在发上游时才拼），
 	// 所以标题/描述拿到的是用户自己写的那句，不是技能模板开头。
-	prompt := strField(decodeInput(dto.Input), "prompt")
+	prompt := strField(decodeInput(persistedGenerationInput(dto)), "prompt")
 	title := workTitle(prompt, m.Name)
 
 	// 批量出图：一张图算一件作品。res.URLs 是本次的全部产出，只有一张时退回

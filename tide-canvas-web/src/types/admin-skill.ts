@@ -12,6 +12,7 @@ import type {
  * details and must never be required by a public surface.
  */
 export interface AdminSkillVO extends SkillVO {
+  mcpEnabled?: boolean;
   usageScenario: string;
   howTo: string;
   outputDescription: string;
@@ -136,6 +137,7 @@ export interface AdminSkillBindingVO {
 }
 
 export interface AdminSkillImportPackage extends AdminSkillVersionCreateDTO {
+  mcpEnabled?: boolean;
   title: string;
   description?: string;
   usageScenario?: string;

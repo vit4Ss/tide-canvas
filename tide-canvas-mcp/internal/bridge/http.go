@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net"
@@ -28,7 +29,12 @@ func NewHTTPHandler(client *Client, allowedOrigins []string) (http.Handler, erro
 		allowed[origin] = true
 	}
 	server := NewServer(client)
-	transport := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{
+	transport := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+		if skill, ok := r.Context().Value(skillContextKey{}).(SkillDescriptor); ok {
+			return NewSkillServer(client, skill)
+		}
+		return server
+	}, &mcp.StreamableHTTPOptions{
 		Stateless: true, JSONResponse: true, MaxRequestBodyBytes: 2 << 20,
 	})
 	mux := http.NewServeMux()
@@ -42,7 +48,15 @@ func NewHTTPHandler(client *Client, allowedOrigins []string) (http.Handler, erro
 		policy, err := client.Policy(r.Context())
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "service": "flowlight-mcp", "version": serverVersion, "adminConfig": true, "policyRevision": policy.Revision, "policyAvailable": err == nil && policy.SchemaVersion == 1})
 	})
-	mux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
+	serveMCP := func(w http.ResponseWriter, r *http.Request) {
+		skillID := ""
+		if r.URL.Path != "/mcp" {
+			skillID = strings.TrimPrefix(r.URL.Path, "/mcp/skills/")
+			if !validTaskID(skillID) {
+				writeHTTPError(w, 404, "技能 MCP 地址不存在", "")
+				return
+			}
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		parts := strings.Fields(r.Header.Get("Authorization"))
 		if r.Method == http.MethodPost && (len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer")) {
@@ -106,8 +120,29 @@ func NewHTTPHandler(client *Client, allowedOrigins []string) (http.Handler, erro
 			return
 		}
 		credentials.Identity = identity
-		transport.ServeHTTP(w, r.WithContext(WithCredentials(r.Context(), credentials)))
-	})
+		ctx = WithCredentials(r.Context(), credentials)
+		if skillID != "" {
+			// Older active-only metadata responses did not include enabled.
+			skill := SkillDescriptor{Enabled: true}
+			if err := client.request(ctx, "GET", "/api/open/v1/mcp/skills/"+skillID, nil, true, &skill); err != nil {
+				status := 503
+				var apiErr *APIError
+				if errors.As(err, &apiErr) && apiErr.Code >= 400 && apiErr.Code < 500 {
+					status = apiErr.Code
+				}
+				writeHTTPError(w, status, err.Error(), "")
+				return
+			}
+			if skill.ID != skillID {
+				writeHTTPError(w, 503, "技能 MCP 配置响应不匹配", "")
+				return
+			}
+			ctx = context.WithValue(ctx, skillContextKey{}, skill)
+		}
+		transport.ServeHTTP(w, r.WithContext(ctx))
+	}
+	mux.HandleFunc("/mcp", serveMCP)
+	mux.HandleFunc("/mcp/skills/", serveMCP)
 	return mux, nil
 }
 

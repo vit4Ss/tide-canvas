@@ -28,6 +28,7 @@ import (
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/response"
+	"tidecanvas/internal/pkg/skillformat"
 )
 
 type service struct {
@@ -77,6 +78,7 @@ type RunInput struct {
 }
 
 type CreateDTO struct {
+	MCP             bool     `json:"-"` // Set only by the API-key-protected MCP adapter.
 	SkillID         string   `json:"skillId" binding:"required"`
 	EntryPoint      string   `json:"entryPoint" binding:"required,oneof=chat studio canvas asset api"`
 	TargetType      string   `json:"targetType" binding:"omitempty,max=32"`
@@ -164,6 +166,7 @@ func Register(apiGroup *gin.RouterGroup, deps *app.Deps) {
 	g.GET("/:id", h.get)
 	g.GET("/:id/artifacts", h.artifacts)
 	g.POST("/:id/actions", h.action)
+	h.registerMCPRoutes(apiGroup, deps)
 
 	// Durable queued/running work survives process restarts. The AI startup sweep
 	// runs before route registration, so orphaned child tasks resolve as failure.
@@ -284,13 +287,22 @@ func (h *handler) artifacts(c *gin.Context) {
 		return
 	}
 	var rows []model.SkillRunArtifact
-	if err := h.svc.db.Where("run_id = ?", run.ID).Order("sort_order ASC, create_time ASC").Find(&rows).Error; err != nil {
+	tx := h.svc.db.Where("run_id = ?", run.ID)
+	if run.EntryPoint == "mcp" {
+		tx = tx.Where("is_final = ?", true)
+	}
+	if err := tx.Order("sort_order ASC, create_time ASC").Find(&rows).Error; err != nil {
 		response.Fail(c, response.CodeServerError, "failed to list artifacts")
 		return
 	}
 	out := make([]ArtifactVO, 0, len(rows))
 	for i := range rows {
-		out = append(out, artifactVO(&rows[i]))
+		vo := artifactVO(&rows[i])
+		if run.EntryPoint == "mcp" {
+			vo.Metadata = nil
+			vo.PreferredNodeType = ""
+		}
+		out = append(out, vo)
 	}
 	response.OK(c, out)
 }
@@ -346,6 +358,9 @@ func (h *handler) ownedRun(c *gin.Context) (*model.SkillRun, bool) {
 }
 
 func (s *service) createRun(ctx context.Context, userID idgen.ID, dto CreateDTO) (*model.SkillRun, bool, error) {
+	if dto.EntryPoint == "mcp" && !dto.MCP {
+		return nil, false, invalid("MCP skills require the dedicated authenticated endpoint")
+	}
 	clientID := strings.TrimSpace(dto.ClientRequestID)
 	if clientID == "" {
 		return nil, false, invalid("clientRequestId is required")
@@ -396,14 +411,22 @@ func (s *service) createRun(ctx context.Context, userID idgen.ID, dto CreateDTO)
 	if !model.ValidSkillKind(version.Kind) {
 		return nil, false, invalid("skill kind is unsupported")
 	}
-	if version.Kind == model.SkillKindAgent && entryPoint != "canvas" {
+	if dto.MCP && (!skill.MCPEnabled || entryPoint != "mcp") {
+		return nil, false, invalid("skill MCP access is disabled")
+	}
+	if dto.MCP {
+		if _, err := skillformat.ValidateVersion(ctx, s.db, &version); err != nil {
+			return nil, false, invalid("此技能未通过标准 Skill 格式校验，请管理员修正 SKILL.md 后重新发布")
+		}
+	}
+	if !dto.MCP && version.Kind == model.SkillKindAgent && entryPoint != "canvas" {
 		return nil, false, invalid("agent skills can only run on canvas")
 	}
-	if version.Kind == model.SkillKindTool && entryPoint != "studio" && entryPoint != "api" {
+	if !dto.MCP && version.Kind == model.SkillKindTool && entryPoint != "studio" && entryPoint != "api" {
 		return nil, false, invalid("tool skills can only run in studio or api")
 	}
 	if version.Kind == model.SkillKindPreset {
-		if entryPoint != "chat" && entryPoint != "studio" && entryPoint != "canvas" {
+		if !dto.MCP && entryPoint != "chat" && entryPoint != "studio" && entryPoint != "canvas" {
 			return nil, false, invalid("preset skills can only run in chat, studio or canvas")
 		}
 		outputs := model.JSONStrings(version.OutputTypes, nil)
@@ -415,10 +438,17 @@ func (s *service) createRun(ctx context.Context, userID idgen.ID, dto CreateDTO)
 	if len(targetType) > 32 || strings.ContainsAny(targetType, " /\\\x00") {
 		return nil, false, invalid("invalid targetType")
 	}
-	if !contains(model.JSONStrings(version.EntryPoints, nil), entryPoint) {
+	if !dto.MCP && !contains(model.JSONStrings(version.EntryPoints, nil), entryPoint) {
 		return nil, false, invalid("skill does not support this entry point")
 	}
-	binding, err := s.versionPlacement(&version, entryPoint, targetType)
+	var binding *versionBinding
+	if dto.MCP {
+		// MCP is an independent opt-in surface. Existing canvas/studio placements
+		// are unchanged; remote execution uses the published version's defaults.
+		binding, err = &versionBinding{Surface: "mcp", TargetType: "*", Enabled: true, Defaults: json.RawMessage(`{}`)}, nil
+	} else {
+		binding, err = s.versionPlacement(&version, entryPoint, targetType)
+	}
 	if err != nil {
 		return nil, false, err
 	}
@@ -474,6 +504,11 @@ func (s *service) createRun(ctx context.Context, userID idgen.ID, dto CreateDTO)
 	run.ClientRequestID = &clientID
 	run.ClientRequestHash = requestHash
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if dto.MCP {
+			if err := lockMCPSkillAccess(tx, skill.ID, version.ID); err != nil {
+				return err
+			}
+		}
 		if err := tx.Create(run).Error; err != nil {
 			return err
 		}
@@ -779,6 +814,11 @@ func (s *service) ownedAssetURLCandidates(raw string) []string {
 }
 
 func (s *service) applyAction(ctx context.Context, run *model.SkillRun, dto ActionDTO) error {
+	if run.EntryPoint == "mcp" && dto.Action != "cancel" {
+		if err := s.allowMCPContinuation(ctx, run.SkillID); err != nil {
+			return err
+		}
+	}
 	requestID := strings.TrimSpace(dto.ClientRequestID)
 	if requestID == "" {
 		return invalid("clientRequestId is required")
@@ -824,12 +864,16 @@ func (s *service) applyAction(ctx context.Context, run *model.SkillRun, dto Acti
 		return tx.Create(&model.SkillRunActionReceipt{RunID: run.ID, ClientRequestID: requestID,
 			RequestHash: actionHash, Action: dto.Action}).Error
 	}
-	checkRevision := func(locked *model.SkillRun) error {
+	checkRevision := func(tx *gorm.DB, locked *model.SkillRun) error {
 		if dto.ExpectedRevision == nil {
 			return invalid("expectedRevision is required")
 		}
 		if locked.StateRevision != *dto.ExpectedRevision {
 			return invalid("run state changed; refresh and try again")
+		}
+		if locked.EntryPoint == "mcp" && dto.Action != "cancel" {
+			// Accepted runs keep their pinned version across later publications.
+			return lockMCPSkillAccess(tx, locked.SkillID, 0)
 		}
 		return nil
 	}
@@ -856,7 +900,7 @@ func (s *service) applyAction(ctx context.Context, run *model.SkillRun, dto Acti
 			if replay {
 				return nil
 			}
-			if err := checkRevision(&locked); err != nil {
+			if err := checkRevision(tx, &locked); err != nil {
 				return err
 			}
 			if isTerminal(locked.Status) {
@@ -919,7 +963,7 @@ func (s *service) applyAction(ctx context.Context, run *model.SkillRun, dto Acti
 			if replay {
 				return nil
 			}
-			if err := checkRevision(&locked); err != nil {
+			if err := checkRevision(tx, &locked); err != nil {
 				return err
 			}
 			if locked.Status != model.SkillRunFailed && locked.Status != model.SkillRunCancelled {
@@ -969,7 +1013,7 @@ func (s *service) applyAction(ctx context.Context, run *model.SkillRun, dto Acti
 			if replay {
 				return nil
 			}
-			if err := checkRevision(&locked); err != nil {
+			if err := checkRevision(tx, &locked); err != nil {
 				return err
 			}
 			expected := model.SkillRunWaitingConfirmation
@@ -1137,6 +1181,30 @@ func (s *service) toVO(run *model.SkillRun) (RunVO, error) {
 		PointCost: run.PointCost, Revision: run.StateRevision, CreateTime: formatTime(run.CreateTime), UpdateTime: formatTime(run.UpdateTime)}
 	if run.CompletedAt != nil {
 		vo.CompleteTime = formatTime(*run.CompletedAt)
+	}
+	if run.EntryPoint == "mcp" {
+		// Native history must not expose private execution details either.
+		vo.Input = mcpPublicGenerationInput(run.Input)
+		vo.CurrentStep, vo.CurrentStepTitle = "", ""
+		vo.Steps = []StepVO{}
+		vo.Artifacts = []ArtifactVO{}
+		for _, item := range artifactVOs {
+			if item.IsFinal {
+				item.Metadata = nil
+				item.PreferredNodeType = ""
+				vo.Artifacts = append(vo.Artifacts, item)
+			}
+		}
+		if vo.ErrorMessage != "" {
+			vo.ErrorMessage = "技能执行失败，请检查输入、模型可用状态和积分余额后重试"
+			vo.ErrorMsg = vo.ErrorMessage
+		}
+		var pending mcpPendingVO
+		if json.Unmarshal(vo.PendingAction, &pending) == nil {
+			vo.PendingAction, _ = json.Marshal(pending)
+		} else {
+			vo.PendingAction = nil
+		}
 	}
 	return vo, nil
 }

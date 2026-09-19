@@ -28,6 +28,7 @@ import {
 } from "@/lib/admin-skill-defaults";
 import { SkillManifestAiControl, type SkillManifestDraftRequest } from "./skill-manifest-ai-control";
 import { SKILL_INPUT_PRESETS, skillInputSchemaFor, type SkillInputPreset } from "./skill-input-schema-presets";
+import { SkillMCPSettings } from "./skill-mcp-settings";
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_PRIMARY_FILE_BYTES = 1024 * 1024;
@@ -226,6 +227,7 @@ export function SkillImportModal({
   const [primaryOutputType, setPrimaryOutputType] = useState<SkillOutputType>("text");
   const [category, setCategory] = useState<string>(SKILL_CATEGORIES[0]);
   const [authorName, setAuthorName] = useState("官方");
+  const [mcpEnabled, setMcpEnabled] = useState(false);
   const [entryPoints, setEntryPoints] = useState<SkillEntryPoint[]>(
     defaultAdminSkillEntryPoints("agent"),
   );
@@ -321,6 +323,7 @@ export function SkillImportModal({
       description: pkg.description.trim(),
       category,
       authorName: authorName.trim(),
+      mcpEnabled,
       // The immutable v1 is published, but the catalog card stays offline until
       // an administrator reviews it and explicitly toggles it online.
       status: 0,
@@ -609,6 +612,10 @@ export function SkillImportModal({
             </div>
           </Field>
         </FormGrid>
+        <SkillMCPSettings enabled={mcpEnabled} disabled={submitting} onChange={(enabled) => {
+          setMcpEnabled(enabled);
+          setValidation(null);
+        }} />
         <div style={{ marginTop: 14 }}>
           {kind === "preset" ? (
             <AdminAlert tone="info" title="预设技能使用固定 Manifest">

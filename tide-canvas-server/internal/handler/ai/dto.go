@@ -29,15 +29,16 @@ type generateDTO struct {
 	ClientRequestID string `json:"clientRequestId"`
 	// The fields below are internal-only orchestration metadata populated by the
 	// exported GenerationFacade. They are never accepted from the HTTP body.
-	Origin            string   `json:"-"`
-	IsAPICall         bool     `json:"-"`
-	SkillRunID        idgen.ID `json:"-"`
-	SkillRunStepID    idgen.ID `json:"-"`
-	SkillRunRevision  int64    `json:"-"`
-	SkillRunWorkerID  string   `json:"-"`
-	OutputRole        string   `json:"-"`
-	RegisterWork      *bool    `json:"-"`
-	PinnedSkillPrompt string   `json:"-"`
+	Origin            string          `json:"-"`
+	IsAPICall         bool            `json:"-"`
+	SkillRunID        idgen.ID        `json:"-"`
+	SkillRunStepID    idgen.ID        `json:"-"`
+	SkillRunRevision  int64           `json:"-"`
+	SkillRunWorkerID  string          `json:"-"`
+	OutputRole        string          `json:"-"`
+	RegisterWork      *bool           `json:"-"`
+	PinnedSkillPrompt string          `json:"-"`
+	PublicInput       json.RawMessage `json:"-"` // Safe user input for private server-side skill execution.
 }
 
 // upscaleQuoteDTO requests an authoritative pre-submit quote. The service

@@ -214,3 +214,133 @@ func TestSkillImportBatchSizeIsNotJustAPerPackageLimit(t *testing.T) {
 		t.Fatalf("validation=%#v", validation)
 	}
 }
+
+func TestMCPAndOrdinarySkillImportsUseIdenticalFormatRules(t *testing.T) {
+	for _, document := range []string{
+		"plain instructions", "---\nname: review\n---\nBody", standardSkillText("Bad_Name"), standardSkillText("review"),
+	} {
+		var ordinaryErrors string
+		for _, mcpEnabled := range []bool{false, true} {
+			pkg := AdminSkillPackageDTO{Title: "Review", MCPEnabled: mcpEnabled, AdminSkillVersionCreateDTO: AdminSkillVersionCreateDTO{
+				Kind: "agent", EntryPoints: []string{"canvas"}, PrimaryOutputType: "text", OutputTypes: []string{"text"},
+				Manifest: json.RawMessage(`{"kind":"agent"}`), PrimaryFilePath: "SKILL.md", Files: []AdminSkillFileDTO{{Path: "SKILL.md", Content: document}},
+			}}
+			result, prepared := validateAdminSkillImports(nil, []AdminSkillPackageDTO{pkg}, 0)
+			valid := document == standardSkillText("review")
+			if result.Valid != valid {
+				t.Fatalf("mcp=%v valid=%v document=%q", mcpEnabled, result.Valid, document)
+			}
+			if valid {
+				if len(prepared) != 1 || prepared[0].Skill.MCPEnabled != mcpEnabled {
+					t.Fatal("valid package lost its MCP setting")
+				}
+			} else if len(prepared) != 0 {
+				t.Fatal("invalid package prepared for writing")
+			}
+			errors := strings.Join(result.Items[0].Errors, "|")
+			if !mcpEnabled {
+				ordinaryErrors = errors
+			} else if errors != ordinaryErrors {
+				t.Fatalf("MCP changed format validation: %s / %s", ordinaryErrors, errors)
+			}
+		}
+	}
+}
+
+func TestHistoricalInvalidSkillCannotPublishOrCreateByAnotherRoute(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, _ := db.DB()
+	defer pool.Close()
+	if err := db.AutoMigrate(&model.Skill{}, &model.SkillVersion{}, &model.SkillFile{}); err != nil {
+		t.Fatal(err)
+	}
+	skill := model.Skill{BaseModel: model.BaseModel{ID: 10}, Title: "Review", Kind: "agent", CurrentVersionID: 11}
+	version := model.SkillVersion{BaseModel: model.BaseModel{ID: 12}, SkillID: 10, Version: 2, Kind: "agent", Status: model.SkillVersionDraft,
+		EntryPoints: `["canvas"]`, PrimaryOutputType: "text", OutputTypes: `["text"]`, InputSchema: `{"type":"object"}`, ManifestJSON: `{"kind":"agent"}`, PrimaryFilePath: "SKILL.md", PromptTemplate: "plain prompt"}
+	file := model.SkillFile{SkillVersionID: 12, Path: "SKILL.md", Content: "plain prompt"}
+	for _, row := range []any{&skill, &version, &file} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := &skillsHandler{db: db}
+	router := gin.New()
+	group := router.Group("/skills")
+	group.POST("", h.create)
+	registerSkillVersionRoutes(group, h)
+	for _, mcpEnabled := range []bool{false, true} {
+		if err := db.Model(&skill).Update("mcp_enabled", mcpEnabled).Error; err != nil {
+			t.Fatal(err)
+		}
+		createBody, _ := json.Marshal(AdminSkillSaveDTO{Title: "Not a Skill", OutputType: "image", PromptTemplate: "plain prompt", MCPEnabled: &mcpEnabled})
+		for _, input := range []struct {
+			path string
+			body string
+		}{
+			{"/skills/10/versions/12/publish", `{}`},
+			{"/skills/10/versions", `{"kind":"agent","entryPoints":["canvas"],"primaryOutputType":"text","promptTemplate":"plain prompt"}`},
+			{"/skills", string(createBody)},
+		} {
+			out := httptest.NewRecorder()
+			req := httptest.NewRequest("POST", input.path, strings.NewReader(input.body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(out, req)
+			if out.Code != 400 || !strings.Contains(out.Body.String(), "格式不符合规范") {
+				t.Fatalf("mcp=%v %s accepted non-Skill: %s", mcpEnabled, input.path, out.Body.String())
+			}
+		}
+		var saved model.Skill
+		db.First(&saved, "id = ?", 10)
+		if saved.CurrentVersionID != 11 {
+			t.Fatal("invalid draft replaced published version")
+		}
+		var count int64
+		db.Model(&model.Skill{}).Count(&count)
+		if count != 1 {
+			t.Fatal("invalid create was not rolled back")
+		}
+	}
+}
+
+func TestStandardSkillCanBeImportedAndPublishedWithOrWithoutMCP(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, _ := db.DB()
+	defer pool.Close()
+	if err := db.AutoMigrate(&model.Skill{}, &model.SkillVersion{}, &model.SkillFile{}, &model.SkillSurfaceBinding{}, &model.MarketModel{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.MarketModel{Name: "Test text", ModelKey: "skill-test-text", Type: "text", Status: 1, Config: `{}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	h := &skillsHandler{db: db}
+	router := gin.New()
+	router.POST("/import", h.importSkills)
+	for _, mcpEnabled := range []bool{false, true} {
+		pkg := AdminSkillPackageDTO{Title: "Review", MCPEnabled: mcpEnabled, AdminSkillVersionCreateDTO: AdminSkillVersionCreateDTO{
+			Kind: "agent", EntryPoints: []string{"canvas"}, PrimaryOutputType: "text", OutputTypes: []string{"text"},
+			Manifest: json.RawMessage(`{"kind":"agent"}`), InputSchema: json.RawMessage(`{"type":"object"}`), DefaultParams: json.RawMessage(`{}`), PrimaryFilePath: "SKILL.md", Files: []AdminSkillFileDTO{{Path: "SKILL.md", Content: standardSkillText("review")}}, Publish: true,
+		}}
+		body, _ := json.Marshal(AdminSkillImportDTO{Skills: []AdminSkillPackageDTO{pkg}})
+		out := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/import", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(out, req)
+		if out.Code != 200 || !strings.Contains(out.Body.String(), `"success":true`) {
+			t.Fatalf("mcp=%v valid import rejected: %s", mcpEnabled, out.Body.String())
+		}
+		var saved model.Skill
+		if err := db.Order("id DESC").First(&saved).Error; err != nil || saved.CurrentVersionID == 0 || saved.MCPEnabled != mcpEnabled {
+			t.Fatalf("wrong imported skill: %+v %v", saved, err)
+		}
+		var file model.SkillFile
+		if err := db.Where("skill_version_id = ?", saved.CurrentVersionID).First(&file).Error; err != nil || file.Content != standardSkillText("review") {
+			t.Fatal("imported Skill document was changed")
+		}
+	}
+}

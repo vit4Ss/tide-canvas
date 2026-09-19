@@ -28,6 +28,7 @@ import (
 	"tidecanvas/internal/pkg/eventlog"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/response"
+	"tidecanvas/internal/pkg/skillformat"
 )
 
 type skillsHandler struct{ db *gorm.DB }
@@ -48,6 +49,7 @@ func RegisterSkills(g *gin.RouterGroup, d *app.Deps) {
 	s.POST("/validate-files", h.validateSkillFiles)
 	s.POST("/import", h.importSkills)
 	s.PUT("/:id", h.update)
+	s.PUT("/:id/exposure", h.setExposure)
 	s.DELETE("/:id", h.remove)
 	registerSkillVersionRoutes(s, h)
 }
@@ -87,6 +89,7 @@ func validLegacyOutputType(value string) bool {
 // AdminSkillSaveDTO is the create/update body(前端 SkillSaveDTO)。
 // defaultParams 为 JSON 对象字符串(如 {"aspectRatio":"16:9"}),空串 = 无默认参数。
 type AdminSkillSaveDTO struct {
+	MCPEnabled        *bool   `json:"mcpEnabled"`
 	Title             string  `json:"title" binding:"required,max=64"`
 	Description       string  `json:"description" binding:"omitempty,max=255"`
 	UsageScenario     *string `json:"usageScenario" binding:"omitempty,max=2000"`
@@ -111,6 +114,9 @@ func adminOptionalText(value *string) string {
 }
 
 func applyAdminSkillGuidanceFields(fields map[string]any, dto AdminSkillSaveDTO) {
+	if dto.MCPEnabled != nil {
+		fields["mcp_enabled"] = *dto.MCPEnabled
+	}
 	if dto.UsageScenario != nil {
 		fields["usage_scenario"] = strings.TrimSpace(*dto.UsageScenario)
 	}
@@ -194,6 +200,9 @@ func (h *skillsHandler) create(c *gin.Context) {
 	if dto.Status != nil {
 		row.Status = *dto.Status
 	}
+	if dto.MCPEnabled != nil {
+		row.MCPEnabled = *dto.MCPEnabled
+	}
 	if dto.SortOrder != nil {
 		row.SortOrder = *dto.SortOrder
 	}
@@ -203,6 +212,11 @@ func (h *skillsHandler) create(c *gin.Context) {
 		}
 		return publishLegacyPresetVersionTx(tx, row, middleware.CurrentUserID(c))
 	}); err != nil {
+		var formatError *skillformat.Error
+		if errors.As(err, &formatError) {
+			response.Fail(c, response.CodeBadRequest, formatError.Error())
+			return
+		}
 		response.Fail(c, response.CodeServerError, "failed to create initial skill version")
 		return
 	}
@@ -232,7 +246,7 @@ func (h *skillsHandler) update(c *gin.Context) {
 
 	var row model.Skill
 	validationMessage := ""
-	err = h.db.Transaction(func(tx *gorm.DB) error {
+	err = h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", id).First(&row).Error; err != nil {
 			return err
 		}
@@ -290,9 +304,19 @@ func (h *skillsHandler) update(c *gin.Context) {
 		if executionChanged {
 			return publishLegacyPresetVersionTx(tx, &row, middleware.CurrentUserID(c))
 		}
+		// Taking a broken historical package offline must always be possible.
+		// An explicit opt-in still validates even when it is prepared offline.
+		if row.MCPEnabled && (row.Status == 1 || (dto.MCPEnabled != nil && *dto.MCPEnabled)) {
+			return validateSkillExposureVersion(tx, &row)
+		}
 		return nil
 	})
 	if err != nil {
+		var formatError *skillformat.Error
+		if errors.As(err, &formatError) {
+			response.Fail(c, response.CodeBadRequest, formatError.Error())
+			return
+		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			response.Fail(c, response.CodeNotFound, "skill not found")
 			return
@@ -317,6 +341,74 @@ func (h *skillsHandler) update(c *gin.Context) {
 		OperatorID: middleware.CurrentUserID(c),
 	})
 	response.OK(c, row)
+}
+
+// The catalogue and per-Skill MCP endpoint share one opt-in flag. This narrow
+// mutation must not overwrite prompts, bindings or the published version.
+func (h *skillsHandler) setExposure(c *gin.Context) {
+	id, err := idgen.Parse(c.Param("id"))
+	if err != nil || id <= 0 {
+		response.Fail(c, response.CodeBadRequest, "invalid skill id")
+		return
+	}
+	var dto struct {
+		Enabled *bool `json:"enabled" binding:"required"`
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, "请明确设置是否对外开放")
+		return
+	}
+	var row model.Skill
+	err = h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, "id = ?", id).Error; err != nil {
+			return err
+		}
+		if *dto.Enabled {
+			if err := validateSkillExposureVersion(tx, &row); err != nil {
+				return err
+			}
+		}
+		// Disabling is always possible, including for legacy/invalid packages.
+		return tx.Model(&row).Update("mcp_enabled", *dto.Enabled).Error
+	})
+	if err != nil {
+		var formatError *skillformat.Error
+		switch {
+		case errors.As(err, &formatError):
+			response.Fail(c, response.CodeBadRequest, formatError.Error())
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			response.Fail(c, response.CodeNotFound, "skill not found")
+		default:
+			response.Fail(c, response.CodeServerError, "对外开放设置保存失败，请稍后重试")
+		}
+		return
+	}
+	summary := "管理员关闭技能对外开放："
+	if *dto.Enabled {
+		summary = "管理员开启技能对外开放："
+	}
+	eventlog.Biz(&model.BizLog{
+		Action: "skill_exposure_update", Summary: summary + row.Title,
+		RefID: row.ID, RefType: "skill", OperatorID: middleware.CurrentUserID(c),
+	})
+	response.OK(c, struct {
+		ID         idgen.ID `json:"id"`
+		MCPEnabled bool     `json:"mcpEnabled"`
+	}{row.ID, *dto.Enabled})
+}
+
+func validateSkillExposureVersion(tx *gorm.DB, row *model.Skill) error {
+	var version model.SkillVersion
+	err := tx.Where("id = ? AND skill_id = ? AND status = ?", row.CurrentVersionID, row.ID, model.SkillVersionPublished).First(&version).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return skillformat.Invalid("对外开放前必须有符合规范的已发布 Skill 版本")
+	}
+	if err != nil {
+		return err
+	}
+	_, err = skillformat.ValidateVersion(tx.Statement.Context, tx, &version)
+	return err
 }
 
 func (h *skillsHandler) remove(c *gin.Context) {

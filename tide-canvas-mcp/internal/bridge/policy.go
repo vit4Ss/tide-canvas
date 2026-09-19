@@ -12,7 +12,7 @@ import (
 )
 
 const policyTTL = 5 * time.Second
-const serverVersion = "1.1.0"
+const serverVersion = "1.2.0"
 
 type policyContextKey struct{}
 

@@ -250,6 +250,11 @@ export default function StudioRail() {
 
       <div className="ws-rail-sp" />
 
+      <Link className={toolClass("/skills")} href="/skills" title="Skill 广场">
+        <span className="ic"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><path d="M14 17.5h7M17.5 14v7" /></svg></span>
+        <span>Skill 广场</span>
+      </Link>
+
       {user && (
         <Link className={toolClass("/api-docs")} href="/api-docs" title="API 文档">
           <span className="ic"><svg viewBox="0 0 24 24"><path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-13-2 16" /></svg></span>

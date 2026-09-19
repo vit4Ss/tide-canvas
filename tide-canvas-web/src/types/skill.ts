@@ -93,6 +93,7 @@ export interface SkillQuery {
 
 /** admin 新建/编辑技能（AdminSkillSaveDTO） */
 export interface SkillSaveDTO {
+  mcpEnabled?: boolean;
   title: string;
   description?: string;
   usageScenario?: string;

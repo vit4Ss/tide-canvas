@@ -60,6 +60,8 @@ export const adminSkillsApi = {
     normalizeAdminSkill,
   ),
   delete: (id: string) => http.delete<null>(`/api/admin/skills/${id}`),
+  setExposure: (id: string, enabled: boolean, signal?: AbortSignal) =>
+    http.put<{ id: string; mcpEnabled: boolean }>(`/api/admin/skills/${id}/exposure`, { enabled }, { signal }),
   listVersions: async (id: string) => withNormalizedData(
     await http.get<AdminSkillVersionVO[]>(`/api/admin/skills/${id}/versions`),
     (versions) => versions.map(normalizeAdminVersion),
