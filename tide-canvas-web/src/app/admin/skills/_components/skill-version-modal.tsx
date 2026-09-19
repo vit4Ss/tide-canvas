@@ -258,6 +258,49 @@ function emptyForm(skill: AdminSkillVO): VersionForm {
   };
 }
 
+function initialVersionId(skill: AdminSkillVO, versions: readonly AdminSkillVersionVO[]): string | undefined {
+  // A newer draft must not silently replace the version that users actually run.
+  if (skill.currentVersionId && skill.currentVersionId !== "0") return skill.currentVersionId;
+  const newest = [...versions].sort((a, b) => b.version - a.version);
+  return (newest.find((version) => version.status === "published") ?? newest[0])?.id;
+}
+
+function formFromVersion(version: AdminSkillVersionVO, fallbackBindings: readonly BindingFormRow[]): VersionForm {
+  const entryPoints = constrainAdminSkillEntryPoints(version.kind, parseAdminStringList<SkillEntryPoint>(version.entryPoints));
+  const outputTypes = parseAdminStringList<SkillOutputType>(version.outputTypes);
+  const versionBindings = parseAdminBindings(version.bindings);
+  const sourceBindings = versionBindings.length
+    ? bindingRows(versionBindings, `version-${version.id}`)
+    : fallbackBindings.map((binding) => ({ ...binding, key: bindingRowKey(`version-${version.id}-fallback`) }));
+  const stringify = (value: unknown): string => {
+    if (typeof value !== "string") return JSON.stringify(value ?? {}, null, 2);
+    try { return JSON.stringify(JSON.parse(value), null, 2); } catch { return value; }
+  };
+  const files = version.files ?? [];
+  // Never silently drop files from a partial/list response then save that as a
+  // new version. Imported packages must be restored from complete detail data.
+  if ((version.primaryFilePath && !files.some((file) => file.path === version.primaryFilePath))
+    || files.some((file) => typeof file.content !== "string" || !!file.storageKey)) {
+    throw new Error("版本文件内容不完整，无法载入新草稿，请重新加载");
+  }
+  return {
+    kind: version.kind,
+    entryPoints,
+    primaryOutputType: version.primaryOutputType,
+    outputTypes: version.kind === "preset" ? [version.primaryOutputType]
+      : outputTypes.length ? outputTypes : [version.primaryOutputType],
+    inputSchema: stringify(version.inputSchema),
+    manifest: stringify(version.manifest),
+    promptTemplate: version.promptTemplate || "",
+    modelId: version.modelId || "",
+    defaultParams: stringify(version.defaultParams),
+    primaryFilePath: version.primaryFilePath || "",
+    files: files.map((file) => ({ path: file.path, content: file.content!, mimeType: file.mimeType })),
+    publish: false,
+    bindings: constrainBindingRows(version.kind, entryPoints, version.primaryOutputType, sourceBindings),
+  };
+}
+
 function objectJSON(raw: string, label: string): Record<string, unknown> | null {
   try {
     const value: unknown = JSON.parse(raw || "{}");
@@ -512,67 +555,91 @@ export function SkillVersionModal({
 }) {
   const [versions, setVersions] = useState<AdminSkillVersionVO[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [sourceVersion, setSourceVersion] = useState<AdminSkillVersionVO | null>(null);
+  const [filesReplaced, setFilesReplaced] = useState(false);
+  const [readingFiles, setReadingFiles] = useState(false);
   const [publishingId, setPublishingId] = useState("");
   const [copyingId, setCopyingId] = useState("");
   const [manifestAiBusy, setManifestAiBusy] = useState(false);
   const [form, setForm] = useState<VersionForm | null>(null);
   const [bindingErrors, setBindingErrors] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // Loading the live bindings happens independently from version history. If
-  // the admin copies/edits a version before that request resolves, its stale
-  // response must not overwrite the chosen immutable snapshot.
-  const bindingHydrationRef = useRef(0);
+  const loadingRef = useRef(false);
+  const copyingRef = useRef(false);
+  const readingFilesRef = useRef(false);
   const modalGenerationRef = useRef(0);
   const copySeqRef = useRef(0);
   const fileReadSeqRef = useRef(0);
   const publishSeqRef = useRef(0);
+  const loadSeqRef = useRef(0);
 
-  const load = useCallback(async (generation = modalGenerationRef.current) => {
+  const load = useCallback(async (generation = modalGenerationRef.current, initialize = false) => {
     if (!skill) return;
+    const seq = ++loadSeqRef.current;
+    const active = () => generation === modalGenerationRef.current && seq === loadSeqRef.current;
+    loadingRef.current = true;
     setLoading(true);
-    const res = await adminSkillsApi.listVersions(skill.id);
-    if (generation !== modalGenerationRef.current) return;
-    setLoading(false);
-    if (res.success && res.data) setVersions(res.data);
-    else toast.error(res.message || "版本加载失败");
+    setLoadError("");
+    try {
+      const res = await adminSkillsApi.listVersions(skill.id);
+      if (!active()) return;
+      if (!res.success || !Array.isArray(res.data)) throw new Error(res.message || "版本加载失败");
+      setVersions(res.data);
+      if (initialize) {
+        const versionId = initialVersionId(skill, res.data);
+        const [bindings, detail] = await Promise.all([
+          adminSkillsApi.listBindings(skill.id),
+          versionId ? adminSkillsApi.getVersion(skill.id, versionId) : Promise.resolve(null),
+        ]);
+        if (!active()) return;
+        if (!bindings.success || !Array.isArray(bindings.data)) throw new Error(bindings.message || "入口配置加载失败");
+        const base = emptyForm(skill);
+        base.bindings = constrainBindingRows(base.kind, base.entryPoints, base.primaryOutputType, bindingRows(bindings.data, "live"));
+        if (versionId) {
+          if (!detail?.success || !detail.data || detail.data.id !== versionId || detail.data.skillId !== skill.id) {
+            throw new Error(detail?.message || "版本详情加载失败");
+          }
+          setForm(formFromVersion(detail.data, base.bindings));
+          setSourceVersion(detail.data);
+        } else {
+          setForm(base);
+          setSourceVersion(null);
+        }
+        setFilesReplaced(false);
+        setBindingErrors({});
+      }
+    } catch (error) {
+      if (active()) setLoadError(error instanceof Error ? error.message : "版本加载失败，请重试");
+    } finally {
+      if (active()) {
+        loadingRef.current = false;
+        setLoading(false);
+      }
+    }
   }, [skill]);
 
   useEffect(() => {
     if (!open || !skill) return;
-    let cancelled = false;
     const generation = ++modalGenerationRef.current;
-    const hydration = ++bindingHydrationRef.current;
     const frame = requestAnimationFrame(() => {
       setVersions([]);
       setLoading(false);
       setPublishingId("");
       setCopyingId("");
       setManifestAiBusy(false);
+      setReadingFiles(false);
+      readingFilesRef.current = false;
+      copyingRef.current = false;
       setForm(emptyForm(skill));
+      setSourceVersion(null);
+      setFilesReplaced(false);
       setBindingErrors({});
-      void load(generation);
-      void adminSkillsApi.listBindings(skill.id).then((res) => {
-        if (
-          cancelled ||
-          hydration !== bindingHydrationRef.current ||
-          !res.success ||
-          !res.data
-        ) return;
-        setForm((current) => current && ({
-          ...current,
-          bindings: constrainBindingRows(
-            current.kind,
-            current.entryPoints,
-            current.primaryOutputType,
-            bindingRows(res.data, "live"),
-          ),
-        }));
-      });
+      void load(generation, true);
     });
     return () => {
-      cancelled = true;
       modalGenerationRef.current += 1;
-      bindingHydrationRef.current += 1;
+      loadSeqRef.current += 1;
       copySeqRef.current += 1;
       fileReadSeqRef.current += 1;
       publishSeqRef.current += 1;
@@ -586,6 +653,7 @@ export function SkillVersionModal({
   );
 
   if (!skill || !form) return null;
+  const editorBlocked = loading || !!loadError || !!copyingId || readingFiles || !!publishingId;
 
   const loadManifestRequests = async (): Promise<SkillManifestDraftRequest[]> => {
     const inputSchema = silentObjectJSON(form.inputSchema);
@@ -620,7 +688,6 @@ export function SkillVersionModal({
     if (form.kind === "agent") return;
     if (form.kind === "preset" && key === "api") return;
     if (form.kind === "tool" && key !== "studio" && key !== "api") return;
-    bindingHydrationRef.current += 1;
     setBindingErrors({});
     setForm((current) => {
       if (!current) return current;
@@ -649,7 +716,6 @@ export function SkillVersionModal({
   };
 
   const updateBinding = (key: string, patch: Partial<Omit<BindingFormRow, "key" | "surface">>) => {
-    bindingHydrationRef.current += 1;
     setBindingErrors((current) => {
       if (!current[key]) return current;
       const next = { ...current };
@@ -665,7 +731,6 @@ export function SkillVersionModal({
   };
 
   const addBinding = (surface: SkillEntryPoint) => {
-    bindingHydrationRef.current += 1;
     setBindingErrors({});
     setForm((current) => {
       if (!current) return current;
@@ -697,7 +762,6 @@ export function SkillVersionModal({
   };
 
   const removeBinding = (key: string) => {
-    bindingHydrationRef.current += 1;
     setBindingErrors((current) => {
       if (!current[key]) return current;
       const next = { ...current };
@@ -729,110 +793,94 @@ export function SkillVersionModal({
     const selected = [...(event.target.files ?? [])];
     event.target.value = "";
     if (!selected.length) return;
+    if (editorBlocked || manifestAiBusy || loadingRef.current || copyingRef.current || readingFilesRef.current) return;
     const generation = modalGenerationRef.current;
     const readSeq = ++fileReadSeqRef.current;
-    let total = 0;
-    const next: AdminSkillFileInput[] = [];
-    for (const file of selected) {
-      const path = (file.webkitRelativePath || file.name).replaceAll("\\", "/");
-      const lower = path.toLowerCase();
-      if (!lower.endsWith(".md") && !lower.endsWith(".txt")) {
-        toast.error(`不支持的文件：${path}`);
-        return;
+    readingFilesRef.current = true;
+    setReadingFiles(true);
+    try {
+      let total = 0;
+      const next: AdminSkillFileInput[] = [];
+      for (const file of selected) {
+        const path = (file.webkitRelativePath || file.name).replaceAll("\\", "/");
+        const lower = path.toLowerCase();
+        if (!lower.endsWith(".md") && !lower.endsWith(".txt")) {
+          toast.error(`不支持的文件：${path}`);
+          return;
+        }
+        if (file.size <= 0 || file.size > MAX_FILE_BYTES) {
+          toast.error(`${path} 超过 2 MB 单文件限制`);
+          return;
+        }
+        total += file.size;
+        if (total > MAX_PACKAGE_BYTES) {
+          toast.error("文件包超过 8 MB 限制");
+          return;
+        }
+        const content = await file.text();
+        if (generation !== modalGenerationRef.current || readSeq !== fileReadSeqRef.current) return;
+        next.push({
+          path,
+          content,
+          mimeType: lower.endsWith(".md")
+            ? "text/markdown; charset=utf-8"
+            : "text/plain; charset=utf-8",
+        });
       }
-      if (file.size <= 0 || file.size > MAX_FILE_BYTES) {
-        toast.error(`${path} 超过 2 MB 单文件限制`);
-        return;
-      }
-      total += file.size;
-      if (total > MAX_PACKAGE_BYTES) {
-        toast.error("文件包超过 8 MB 限制");
-        return;
-      }
-      const content = await file.text();
       if (generation !== modalGenerationRef.current || readSeq !== fileReadSeqRef.current) return;
-      next.push({
-        path,
-        content,
-        mimeType: lower.endsWith(".md")
-          ? "text/markdown; charset=utf-8"
-          : "text/plain; charset=utf-8",
-      });
+      const skillMd = next.find((file) => /(^|\/)skill\.md$/i.test(file.path));
+      setForm((current) => current && ({
+        ...current,
+        files: next,
+        primaryFilePath: skillMd?.path || (next.length === 1 ? next[0].path : ""),
+      }));
+      setFilesReplaced(true);
+    } catch (error) {
+      if (generation === modalGenerationRef.current && readSeq === fileReadSeqRef.current) {
+        toast.error(error instanceof Error ? error.message : "文件读取失败，已保留原文件包");
+      }
+    } finally {
+      if (generation === modalGenerationRef.current && readSeq === fileReadSeqRef.current) {
+        readingFilesRef.current = false;
+        setReadingFiles(false);
+      }
     }
-    if (generation !== modalGenerationRef.current || readSeq !== fileReadSeqRef.current) return;
-    const skillMd = next.find((file) => /(^|\/)skill\.md$/i.test(file.path));
-    setForm((current) => current && ({
-      ...current,
-      files: next,
-      primaryFilePath: skillMd?.path || (next.length === 1 ? next[0].path : ""),
-    }));
   };
 
   const copyVersion = async (summary: AdminSkillVersionVO) => {
-    if (copyingId) return;
+    if (editorBlocked || manifestAiBusy || copyingRef.current || loadingRef.current || readingFilesRef.current) return;
     const generation = modalGenerationRef.current;
     const copySeq = ++copySeqRef.current;
-    bindingHydrationRef.current += 1;
+    const active = () => generation === modalGenerationRef.current && copySeq === copySeqRef.current;
+    copyingRef.current = true;
     setCopyingId(summary.id);
-    const detail = await adminSkillsApi.getVersion(skill.id, summary.id);
-    if (generation !== modalGenerationRef.current || copySeq !== copySeqRef.current) return;
-    setCopyingId("");
-    if (!detail.success || !detail.data) {
-      toast.error(detail.message || "版本详情加载失败");
-      return;
+    try {
+      const detail = await adminSkillsApi.getVersion(skill.id, summary.id);
+      if (!active()) return;
+      if (!detail.success || !detail.data || detail.data.id !== summary.id || detail.data.skillId !== skill.id) {
+        throw new Error(detail.message || "版本详情加载失败");
+      }
+      const next = formFromVersion(detail.data, form.bindings);
+      setForm(next);
+      setSourceVersion(detail.data);
+      setFilesReplaced(false);
+      setBindingErrors({});
+      toast.info(`已载入 v${detail.data.version} 配置和文件，保存时创建新草稿`);
+    } catch (error) {
+      if (active()) toast.error(error instanceof Error ? error.message : "版本详情加载失败，已保留当前草稿");
+    } finally {
+      if (active()) {
+        copyingRef.current = false;
+        setCopyingId("");
+      }
     }
-    const version = detail.data;
-    const parsedEntryPoints = parseAdminStringList<SkillEntryPoint>(version.entryPoints);
-    const entryPoints = constrainAdminSkillEntryPoints(version.kind, parsedEntryPoints);
-    const outputTypes = parseAdminStringList<SkillOutputType>(version.outputTypes);
-    const versionBindings = parseAdminBindings(version.bindings);
-    const sourceBindings = versionBindings.length
-      ? bindingRows(versionBindings, `version-${version.id}`)
-      : form.bindings.map((binding) => ({
-          ...binding,
-          key: bindingRowKey(`version-${version.id}-fallback`),
-        }));
-    const stringify = (value: unknown) =>
-      typeof value === "string"
-        ? (() => {
-            try {
-              return JSON.stringify(JSON.parse(value), null, 2);
-            } catch {
-              return value;
-            }
-          })()
-        : JSON.stringify(value ?? {}, null, 2);
-    setBindingErrors({});
-    setForm({
-      kind: version.kind,
-      entryPoints,
-      primaryOutputType: version.primaryOutputType,
-      outputTypes: version.kind === "preset"
-        ? [version.primaryOutputType]
-        : outputTypes.length ? outputTypes : [version.primaryOutputType],
-      inputSchema: stringify(version.inputSchema),
-      manifest: stringify(version.manifest),
-      promptTemplate: version.promptTemplate || "",
-      modelId: version.modelId || "",
-      defaultParams: stringify(version.defaultParams),
-      primaryFilePath: version.primaryFilePath || "",
-      files: (version.files ?? []).flatMap((file) => file.content === undefined ? [] : [{
-        path: file.path,
-        content: file.content,
-        mimeType: file.mimeType,
-      }]),
-      publish: false,
-      bindings: constrainBindingRows(
-        version.kind,
-        entryPoints,
-        version.primaryOutputType,
-        sourceBindings,
-      ),
-    });
-    toast.info(`已复制 v${version.version} 配置和文件，请检查后创建新版本`);
   };
 
   const save = async () => {
+    if (editorBlocked || loadingRef.current || copyingRef.current || readingFilesRef.current) {
+      toast.info(loadError ? "请先重新加载版本后再保存" : "版本或文件正在加载，请稍候");
+      return false;
+    }
     if (manifestAiBusy) {
       toast.info("Manifest 草稿仍在生成，请等待完成或先停止生成");
       return false;
@@ -951,7 +999,7 @@ export function SkillVersionModal({
   };
 
   const publish = async (version: AdminSkillVersionVO) => {
-    if (publishingId) return;
+    if (editorBlocked || manifestAiBusy || loadingRef.current || copyingRef.current || readingFilesRef.current) return;
     const generation = modalGenerationRef.current;
     const publishSeq = ++publishSeqRef.current;
     setPublishingId(version.id);
@@ -981,7 +1029,12 @@ export function SkillVersionModal({
       onSave={save}
     >
       <FormCard title="版本历史">
-        {loading ? (
+        {loadError ? (
+          <AdminAlert tone="error" title="版本加载失败">
+            {loadError}
+            <button type="button" className="adm-btn ghost" onClick={() => void load(modalGenerationRef.current, !sourceVersion)}>重新加载</button>
+          </AdminAlert>
+        ) : loading ? (
           <div style={{ minHeight: 100, display: "grid", placeItems: "center" }}>
             <Loader2 className="adm-spin" aria-hidden size={18} />
           </div>
@@ -1018,19 +1071,19 @@ export function SkillVersionModal({
                   <button
                     type="button"
                     className="adm-btn ghost"
-                    disabled={!!copyingId || manifestAiBusy}
+                    disabled={editorBlocked || manifestAiBusy}
                     onClick={() => void copyVersion(version)}
                   >
                     {copyingId === version.id
                       ? <Loader2 className="adm-spin" aria-hidden size={13} />
                       : <Copy aria-hidden size={13} />}
-                    复制配置
+                    载入此版本
                   </button>
                   {version.status !== "published" ? (
                     <button
                       type="button"
                       className="adm-btn ghost"
-                      disabled={!!publishingId || manifestAiBusy}
+                      disabled={editorBlocked || manifestAiBusy}
                       onClick={() => void publish(version)}
                     >
                       {publishingId === version.id ? (
@@ -1049,11 +1102,16 @@ export function SkillVersionModal({
       </FormCard>
 
       <FormCard title="新版本运行配置">
+        {sourceVersion && (
+          <AdminAlert tone="info" title={`已载入${sourceVersion.id === skill.currentVersionId ? "当前发布" : ""}版本 v${sourceVersion.version}`}>
+            配置和文件包已自动带入，无需再次导入。修改后保存为新草稿，发布后才会替换线上版本。
+          </AdminAlert>
+        )}
         {form.kind === "preset" ? (
           <AdminAlert tone="info" title="预设技能使用固定 Manifest">
             预设技能没有多步骤编排，系统会根据主输出生成最小运行配置，无需调用文本模型。
           </AdminAlert>
-        ) : (
+        ) : !editorBlocked ? (
           <SkillManifestAiControl
             key={versionManifestSignature(form)}
             loadRequests={loadManifestRequests}
@@ -1067,8 +1125,8 @@ export function SkillVersionModal({
               });
             }}
           />
-        )}
-        <fieldset disabled={manifestAiBusy} style={{ border: 0, margin: "14px 0 0", minWidth: 0, padding: 0 }}>
+        ) : null}
+        <fieldset disabled={manifestAiBusy || editorBlocked} style={{ border: 0, margin: "14px 0 0", minWidth: 0, padding: 0 }}>
           <FormGrid>
           <Field label="执行形态" required span={2}>
             <select
@@ -1320,10 +1378,11 @@ export function SkillVersionModal({
       </FormCard>
 
       <FormCard title="Skill 文件包">
-        <fieldset disabled={manifestAiBusy} style={{ border: 0, margin: 0, minWidth: 0, padding: 0 }}>
+        <fieldset disabled={manifestAiBusy || editorBlocked} style={{ border: 0, margin: 0, minWidth: 0, padding: 0 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <button type="button" className="adm-btn ghost" onClick={() => fileInputRef.current?.click()}>
-            <Upload aria-hidden size={14} /> 选择 .md / .txt
+            {readingFiles ? <Loader2 className="adm-spin" aria-hidden size={14} /> : <Upload aria-hidden size={14} />}
+            {readingFiles ? "读取中…" : form.files.length ? "更换文件包" : "选择 .md / .txt"}
           </button>
           <input
             ref={fileInputRef}
@@ -1334,11 +1393,16 @@ export function SkillVersionModal({
             onChange={(event) => void readFiles(event)}
           />
           <span className="muted" style={{ fontSize: 12 }}>
-            {form.files.length
-              ? `${form.files.length} 个文件 · ${(packageBytes / 1024).toFixed(1)} KB`
-              : "单文件可直接导入；目录包需包含 SKILL.md。"}
+            {loading || copyingId ? "正在加载版本文件…" : loadError ? "文件包尚未加载，请先重试。" : form.files.length
+              ? `${filesReplaced ? "已选择新文件包" : "已载入文件包"} · ${form.files.length} 个文件 · ${(packageBytes / 1024).toFixed(1)} KB`
+              : "当前没有文件包；可选择 .md / .txt，或直接填写上方提示词。"}
           </span>
         </div>
+        {form.files.length > 0 && (
+          <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>
+            {filesReplaced ? "新文件包仅用于待保存的草稿，请核对提示词和 Manifest 中的文件引用。" : "不更换则沿用以上版本文件；更换不会修改已发布版本。"}
+          </p>
+        )}
         {form.files.length ? (
           <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
             {form.files.map((file) => (
