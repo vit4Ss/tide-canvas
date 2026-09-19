@@ -19,27 +19,23 @@ func publicWrapperDocument(skill librarySkillVO) string {
 	connection := "MCP 地址尚待配置。先安装 Skill 并记录来源；使用前按下面的发现流程读取专属地址。不要保存空 URL 或猜测地址。"
 	if skill.MCPEndpoint != "" {
 		connection = fmt.Sprintf(`当前专属 MCP 地址：%s
+连接标识：%s
+传输协议：MCP Streamable HTTP
+鉴权请求头：Authorization: Bearer <用户自己的主站 API Key>
 
-以下是未配置鉴权时的 Codex 示例；已有有效鉴权时保留原配置，不能直接覆盖。只新增或更新本技能的配置段：
-
-~~~toml
-[mcp_servers.%s]
-url = %s
-bearer_token_env_var = "FLOWLIGHT_API_KEY"
-startup_timeout_sec = 30
-tool_timeout_sec = 90
-~~~`, skill.MCPEndpoint, serverName, yamlString(skill.MCPEndpoint))
+以上是通用连接参数。请映射到当前客户端实际支持的配置格式；已有有效鉴权时保留原配置。不要将它当成某个软件的完整配置文件覆盖写入。`, skill.MCPEndpoint, serverName)
 	}
 	bootstrap := fmt.Sprintf(`## 自动接入 MCP
 
-首次安装以及每次使用本 Skill 时，先确认名为 %s 的专属 MCP 是否已配置并能提供 get_skill_info。缺少连接时，在当前客户端允许的权限内自动完成接入，然后继续用户任务。
+首次安装以及每次使用本 Skill 时，先确认当前客户端，再检查标识为 %s 的专属 MCP。缺少连接时，在当前客户端允许的权限内自动接入，再继续用户任务。
 
-1. 读取 references/connection.json 中的 metadataUrl，获取最新 data.mcpEndpoint；同时检查 data.mcpAvailable。地址缺失、技能关闭或服务暂不可用时保留已安装的文件并说明待连接，不猜测地址。
-2. Codex 使用 codex mcp get %s --json 检查现有连接。将结果留在本地检查名称、URL 和启用状态，不在回复中输出完整请求头。只有明确确认该连接不存在时才新增；配置解析失败或权限不足时报告具体错误，不把读取失败当成未安装。配置存在且地址一致则复用；用户显式停用的配置保持停用。同一技能的旧地址只更新本配置段。
-3. 鉴权顺序：本次安装指令明确提供的新密钥 > 本技能已有的本地鉴权 > FLOWLIGHT_API_KEY。没有新密钥时保留现有 http_headers、env_http_headers 或 bearer_token_env_var，不要用示例覆盖。连接不存在且已有本地 FLOWLIGHT_API_KEY 时，执行 codex mcp add %s --url <最新专属地址> --bearer-token-env-var FLOWLIGHT_API_KEY。如果安装指令提供的是直接密钥，则添加 URL 后将它写入本技能的本地 http_headers.Authorization，移除本技能过时的 bearer_token_env_var/env_http_headers.Authorization，避免冲突。缺少密钥时仍先建立连接配置，再说明需要配置用户自己的 Key。不要把占位符作为真实地址或密钥保存。
-4. Codex CLI 不可用但允许编辑配置时，先备份用户级 config.toml，再只合并 mcp_servers.%s 配置段；保留其他 MCP、模型和账户设置。其他客户端采用其实际支持的远程 MCP 配置方式。无需安装或启动本地 FlowLight 服务端。
-5. 配置后使用客户端提供的重新连接或刷新工具能力，再调用 get_skill_info 验证。客户端不能热加载时明确提示“MCP 已配置，需重新连接或开启新会话后使用”，不要声称工具已可调用。
-6. 权限不足、鉴权失败或远程地址不可用时说明具体原因。自动修复最多一次，不重复安装、不重置密钥、不为检查连接运行付费生成。`, serverName, serverName, serverName, serverName)
+1. 依据当前会话的宿主身份、管理工具和应用设置识别客户端，不根据模型名称或机器上存在的 CLI 判断。分别确认 Agent Skills 与带 Bearer 鉴权的远程 MCP Streamable HTTP 能力；不能把仅支持本地进程的 MCP 当作远程 HTTP 支持。嵌入式或桌面外壳提供 MCP 管理时，优先使用宿主入口。仅操作当前客户端，不修改其他智能体的配置；无法确认时先询问客户端名称。
+2. 从已有 references/connection.json、宿主保存的来源资料或本次安装指令取得 metadataUrl，确认响应成功且 data.id 为字符串 "%s"，获取最新 data.mcpEndpoint 和 data.mcpAvailable。没有本地文件系统时不强求来源文件。所有来源信息都缺失时请用户提供原下载链接，不从本机目录或 MCP 域名反推主站地址。元数据读取失败、data.mcpAvailable 不为 true 或地址缺失时停止接入，说明具体原因并保留已有文件与配置，不猜测端点或保存无效连接。
+3. 使用当前客户端的 MCP/扩展/连接器管理工具查询连接。配置存在且地址一致则复用；用户显式停用的配置保持停用。只有明确确认连接不存在时才新增，读取失败不能当成未安装。缺少管理工具时，先检查当前客户端的帮助和实际配置格式，确认其配置位置后备份，只新增或更新本技能连接，保留其他 MCP、模型和账户设置。
+4. 仅为当前客户端已确认的 MCP 连接设置鉴权；没有可配置的连接时不要保存密钥。鉴权顺序：本次安装指令明确提供的新密钥 > 本技能已有的鉴权 > 当前客户端支持读取的 FLOWLIGHT_API_KEY。没有新密钥时保留已有有效鉴权。使用当前客户端的安全凭据存储或连接请求头设置 Authorization: Bearer；按照该客户端的规则处理本连接中的旧鉴权冲突，不套用其他软件的字段格式。缺少密钥时先完成可完成的安装，再说明需要用户自己的 Key，不保存占位密钥。
+5. 本服务使用远程 MCP Streamable HTTP。只支持 MCP 的客户端可以接入工具，但不能报告本地 Skill 已安装；只支持 Skill、不支持远程 MCP 的客户端可安装说明文件，但应报告无法执行此云端技能，不转而修改其他软件。两者都不支持时说明能力限制。无需安装或启动本地 FlowLight 服务端。
+6. 配置后使用当前客户端的刷新或重新连接能力加载工具，有有效密钥且服务允许调用时，只调用 get_skill_info 验证。核对工具属于连接 %s，返回 id 为 %s 且 enabled 为 true，才报告“连接验证通过”；其他 Skill 的同名工具不能代替验证。不能热加载时明确提示需重新连接或开启新会话，不把写入配置当成已连通，也不预设某个客户端的 Skill 调用命令。
+7. 权限不足、鉴权失败或远程地址不可用时说明具体原因。自动修复最多一次，不重复安装、不重置密钥、不为检查连接运行付费生成。`, serverName, skill.ID.String(), serverName, skill.ID.String())
 	return fmt.Sprintf(`---
 name: %s
 description: %s
@@ -56,14 +52,14 @@ metadata:
 
 ## 安装与连接
 
-将本文件保存在当前 AI 客户端支持的 Skill 目录下，目录名必须为 %s，主文件名必须为 SKILL.md。
-安装时将下载来源记录到本地 references/connection.json，保存 sourceUrl（本文件的原始下载链接）和 metadataUrl（同一源站的 /api/skill-library/%s）；此文件只保存公开地址，不保存密钥。
+先识别当前客户端。支持 Agent Skills 时，通过其实际技能安装入口或已确认的技能目录安装本文件，目录名必须为 %s，主文件名必须为 SKILL.md；不固定任何软件的目录。不支持本地 Skill 但支持远程 MCP 时，可直接接入工具并如实报告接入状态。
+存在本地技能目录时，将下载来源记录到 references/connection.json，保存 sourceUrl（本文件的原始下载链接）和 metadataUrl（同一源站的 /api/skill-library/%s）；此文件只保存公开地址，不保存密钥。使用宿主安装接口时可保存为其支持的附属资料；仅接入 MCP 且没有技能目录时不创建这个文件，使用本次安装指令中的来源地址。
 只拿到本地 ZIP 且没有来源记录时，请用户提供原下载链接；不要从本机地址猜测源站。
 
-安装 Skill 与调用 MCP 分开处理：没有 API Key 或服务暂不可用时，仍可安装本文件，说明尚待连接；不代表只能在主站使用。
-配置名为 %s 的 Streamable HTTP MCP 服务器。使用前读取来源记录中的 metadataUrl：返回 404 时说明该技能已下架或关闭，停止调用；成功时读取 data.mcpEndpoint 和 data.mcpAvailable。地址未配置时保留已安装 Skill，等待配置完成后再读取，不要自动提交付费任务。
+安装 Skill 与调用 MCP 分开处理：客户端支持 Skill 安装时，没有 API Key 或服务暂不可用仍可安装说明文件，并如实说明尚待连接；只有已成功安装时才能报告“Skill 已安装”。只支持 MCP 的客户端在验证通过前报告“MCP 待连接”，不能提前报告已接入。
+配置名为 %s 的 Streamable HTTP MCP 服务器。使用前读取来源记录或安装指令中的 metadataUrl：返回 404 时说明该技能已下架或关闭，停止调用；成功时读取 data.mcpEndpoint 和 data.mcpAvailable。地址未配置时保留已安装 Skill，等待配置完成后再读取，不要自动提交付费任务。
 
-需要 Authorization: Bearer <用户自己的主站 API Key>。使用本地 MCP 私有配置中的请求头或 FLOWLIGHT_API_KEY 环境变量；安装指令附带用户自己的密钥时，用它配置本技能的本地用户级 MCP。不要将真实密钥写入这个可分享的 Skill 文件、来源记录或安装链接，不要在回复中重复输出密钥。
+需要 Authorization: Bearer <用户自己的主站 API Key>。使用当前客户端的私有连接配置或安全凭据存储；确认客户端支持环境变量时，也可使用 FLOWLIGHT_API_KEY。安装指令附带用户自己的密钥时，仅为当前客户端的本技能连接配置它。不要将真实密钥写入这个可分享的 Skill 文件、来源记录或安装链接，不要在回复中重复输出密钥。
 没有密钥时，请用户在主站个人中心获取并在本地配置。此服务使用 API Key，不使用 MCP OAuth 登录。
 
 %s

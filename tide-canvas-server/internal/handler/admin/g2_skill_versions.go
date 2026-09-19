@@ -95,6 +95,9 @@ type AdminSkillPackageDTO struct {
 	UsageScenario     string `json:"usageScenario"`
 	HowTo             string `json:"howTo"`
 	OutputDescription string `json:"outputDescription"`
+	InputDescription  string `json:"inputDescription"`
+	InputExample      string `json:"inputExample"`
+	OutputExample     string `json:"outputExample"`
 	CoverURL          string `json:"coverUrl"`
 	Category          string `json:"category"`
 	AuthorName        string `json:"authorName"`
@@ -139,6 +142,9 @@ func validateAdminSkillPackageMetadata(pkg AdminSkillPackageDTO) error {
 		{name: "usageScenario", value: pkg.UsageScenario, max: 2000},
 		{name: "howTo", value: pkg.HowTo, max: 2000},
 		{name: "outputDescription", value: pkg.OutputDescription, max: 2000},
+		{name: "inputDescription", value: pkg.InputDescription, max: 2000},
+		{name: "inputExample", value: pkg.InputExample, max: 4000},
+		{name: "outputExample", value: pkg.OutputExample, max: 6000},
 		{name: "coverUrl", value: pkg.CoverURL, max: 512},
 		{name: "category", value: pkg.Category, max: 32},
 		{name: "authorName", value: pkg.AuthorName, max: 64},
@@ -422,6 +428,9 @@ func skillFromImportPackage(pkg AdminSkillPackageDTO) model.Skill {
 		Title: strings.TrimSpace(pkg.Title), Description: strings.TrimSpace(pkg.Description),
 		UsageScenario: strings.TrimSpace(pkg.UsageScenario), HowTo: strings.TrimSpace(pkg.HowTo),
 		OutputDescription: strings.TrimSpace(pkg.OutputDescription),
+		InputDescription:  strings.TrimSpace(pkg.InputDescription),
+		InputExample:      strings.TrimSpace(pkg.InputExample),
+		OutputExample:     strings.TrimSpace(pkg.OutputExample),
 		CoverURL:          strings.TrimSpace(pkg.CoverURL), Category: strings.TrimSpace(pkg.Category),
 		OutputType: primary, PromptTemplate: pkg.PromptTemplate, ModelID: strings.TrimSpace(pkg.ModelID),
 		DefaultParams: string(pkg.DefaultParams), AuthorName: strings.TrimSpace(pkg.AuthorName),

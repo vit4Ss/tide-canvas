@@ -20,6 +20,9 @@ type Skill struct {
 	UsageScenario     string `gorm:"column:usage_scenario;type:text" json:"usageScenario"`
 	HowTo             string `gorm:"column:how_to;type:text" json:"howTo"`
 	OutputDescription string `gorm:"column:output_description;type:text" json:"outputDescription"`
+	InputDescription  string `gorm:"column:input_description;type:text" json:"inputDescription"`
+	InputExample      string `gorm:"column:input_example;type:text" json:"inputExample"`
+	OutputExample     string `gorm:"column:output_example;type:text" json:"outputExample"`
 	CoverURL          string `gorm:"column:cover_url;size:512" json:"coverUrl"`
 	// Category:专业影视/商业广告/短剧漫剧/动漫游戏/音乐MV/自媒体创作/通用技能…
 	// 自由串,前后台用同一份推荐目录(web types/skill.ts SKILL_CATEGORIES)。

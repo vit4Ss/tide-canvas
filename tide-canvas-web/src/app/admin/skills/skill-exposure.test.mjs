@@ -22,6 +22,7 @@ function serialize(previous, current, creating = false) {
     title: 'New display title', description: 'Review videos', coverUrl: '', category: '专业影视',
     outputType: 'text', promptTemplate: 'Private instructions', usageScenario: 'Video review',
     usageGuide: 'Provide a video', outputDescription: 'A review', modelId: '', defaultParams: '{}',
+    inputDescription: 'Input guidance', inputExample: 'Example request', outputExample: 'Example result',
     authorName: '官方', status: 1, sortOrder: '0', entryPoints: ['canvas'], mcpEnabled: current,
   };
   const context = {
@@ -40,6 +41,9 @@ test('metadata edits omit unchanged exposure, preserving changes by another admi
     assert.equal(Object.hasOwn(dto, 'mcpEnabled'), false);
     assert.equal(dto.title, 'New display title');
     assert.equal(dto.status, 1);
+    assert.equal(dto.inputDescription, 'Input guidance');
+    assert.equal(dto.inputExample, 'Example request');
+    assert.equal(dto.outputExample, 'Example result');
   }
 });
 

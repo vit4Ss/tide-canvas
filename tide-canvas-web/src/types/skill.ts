@@ -47,6 +47,9 @@ export interface SkillVO {
   usageScenario?: string;
   howTo?: string;
   outputDescription?: string;
+  inputDescription?: string;
+  inputExample?: string;
+  outputExample?: string;
   coverUrl: string;
   category: string;
   /** image | video | audio | text —— 卡片角标 + 各入口按模态过滤 */
@@ -99,6 +102,9 @@ export interface SkillSaveDTO {
   usageScenario?: string;
   howTo?: string;
   outputDescription?: string;
+  inputDescription?: string;
+  inputExample?: string;
+  outputExample?: string;
   coverUrl?: string;
   category?: string;
   outputType: string;

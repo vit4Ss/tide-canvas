@@ -6,8 +6,8 @@ import ts from "typescript";
 
 const source=readFileSync(new URL("./mcp-config-api.ts",import.meta.url),"utf8");
 const loaded={exports:{}};
-runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,{module:loaded,exports:loaded.exports,require:()=>({http:{}})});
-const {mcpClientConfig,mcpServiceState}=loaded.exports;
+runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,{URL,module:loaded,exports:loaded.exports,require:()=>({http:{}})});
+const {mcpClientConfig,mcpServiceState,mcpSuggestedPublicURL}=loaded.exports;
 
 test("MCP client examples use the saved endpoint without exposing credentials",()=>{
   const config=mcpClientConfig(" https://custom.test/tools/mcp ","https://site.test");
@@ -24,4 +24,10 @@ test("an online process is not reported as synchronized until supported policy r
   const status={reachable:true,adminConfig:true,policyAvailable:true,policyRevision:1};
   assert.equal(mcpServiceState(status,2).label,"等待配置同步");
   assert.equal(mcpServiceState(status,1).label,"配置已同步");
+});
+
+test("MCP form suggestions are explicit current-site HTTP addresses, not credentials or paths",()=>{
+  assert.equal(mcpSuggestedPublicURL("https://flowlight.tcmzhan.com"),"https://flowlight.tcmzhan.com/mcp");
+  assert.equal(mcpSuggestedPublicURL("http://localhost:3319"),"http://localhost:3319/mcp");
+  for(const value of ["","not a URL","file:///tmp","https://user:secret@example.com","https://example.com/path","https://example.com?key=secret"]) assert.equal(mcpSuggestedPublicURL(value),"");
 });

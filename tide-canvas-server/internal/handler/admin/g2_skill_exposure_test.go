@@ -172,3 +172,44 @@ func TestInvalidExposedSkillCanBeTakenOfflineWithoutRevalidating(t *testing.T) {
 		t.Fatal("omitted exposure flag restored an earlier setting")
 	}
 }
+
+func TestSkillUsageExamplesCanBeEditedWithoutChangingExecution(t *testing.T) {
+	db, router := exposureTestServer(t)
+	put := func(body string) *httptest.ResponseRecorder {
+		out := httptest.NewRecorder()
+		req := httptest.NewRequest("PUT", "/api/admin/skills/101", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(out, req)
+		return out
+	}
+	if out := put(`{"title":"review","inputDescription":"  上传视频并说明关注点  ","inputExample":"  帮我检查人物一致性  ","outputExample":"  ## 审查结果\n- 修改动作衔接  "}`); out.Code != 200 {
+		t.Fatal(out.Body.String())
+	}
+	// Legacy status/metadata saves omit the new fields and must preserve them.
+	if out := put(`{"title":"renamed","status":0}`); out.Code != 200 {
+		t.Fatal(out.Body.String())
+	}
+	var row model.Skill
+	if err := db.First(&row, "id = ?", 101).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.InputDescription != "上传视频并说明关注点" || row.InputExample != "帮我检查人物一致性" || row.OutputExample != "## 审查结果\n- 修改动作衔接" || row.CurrentVersionID != 201 || row.PromptTemplate != "private prompt" || row.ModelID != "private-model" {
+		t.Fatalf("guidance edit changed or lost data: %+v", row)
+	}
+	for field, max := range map[string]int{"inputDescription": 2000, "inputExample": 4000, "outputExample": 6000} {
+		body, _ := json.Marshal(map[string]any{"title": "must not save", field: strings.Repeat("字", max+1)})
+		if out := put(string(body)); out.Code != 400 {
+			t.Fatalf("oversized %s accepted: %s", field, out.Body.String())
+		}
+	}
+	if out := put(`{"title":"renamed","inputDescription":"","inputExample":"","outputExample":""}`); out.Code != 200 {
+		t.Fatal(out.Body.String())
+	}
+	if err := db.First(&row, "id = ?", 101).Error; err != nil || row.InputDescription != "" || row.InputExample != "" || row.OutputExample != "" {
+		t.Fatal("explicit clearing failed")
+	}
+	var count int64
+	if err := db.Model(&model.SkillVersion{}).Count(&count).Error; err != nil || count != 1 {
+		t.Fatal("guide edits created execution versions")
+	}
+}

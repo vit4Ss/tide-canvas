@@ -38,6 +38,9 @@ type PublicSkillVO struct {
 	UsageScenario     string          `json:"usageScenario"`
 	HowTo             string          `json:"howTo"`
 	OutputDescription string          `json:"outputDescription"`
+	InputDescription  string          `json:"inputDescription"`
+	InputExample      string          `json:"inputExample"`
+	OutputExample     string          `json:"outputExample"`
 	CoverURL          string          `json:"coverUrl"`
 	Category          string          `json:"category"`
 	OutputType        string          `json:"outputType"`
@@ -339,6 +342,7 @@ func (h *handler) publicVOs(rows []model.Skill, entryPoint, targetType string) (
 		result = append(result, PublicSkillVO{
 			ID: row.ID, Title: row.Title, Description: row.Description,
 			UsageScenario: row.UsageScenario, HowTo: row.HowTo, OutputDescription: row.OutputDescription,
+			InputDescription: row.InputDescription, InputExample: row.InputExample, OutputExample: row.OutputExample,
 			CoverURL: row.CoverURL,
 			Category: row.Category, OutputType: outputType, Kind: kind,
 			CurrentVersionID: row.CurrentVersionID, EntryPoints: entryPoints, OutputTypes: outputTypes,

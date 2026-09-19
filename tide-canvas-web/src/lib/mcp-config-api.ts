@@ -33,6 +33,16 @@ export const mcpConfigApi = {
   status: (signal?: AbortSignal) => http.get<MCPStatus>("/api/admin/mcp/status", undefined, { signal }),
 };
 
+// Suggest a value for the editable form only. It must be explicitly saved
+// before public Skill metadata or the saved-configuration preview can use it.
+export function mcpSuggestedPublicURL(origin: string): string {
+  try {
+    const url = new URL(origin);
+    if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== "/") return "";
+    return `${url.origin}/mcp`;
+  } catch { return ""; }
+}
+
 export function mcpClientConfig(publicUrl: string, origin: string) {
   return {
     mcpServers: {

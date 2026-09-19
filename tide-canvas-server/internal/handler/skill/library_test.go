@@ -129,14 +129,31 @@ func TestPublicSkillLinkAndZIPOnlyDistributeValidatedWrapper(t *testing.T) {
 			t.Fatalf("wrapper missing %s", required)
 		}
 	}
-	for _, forbidden := range []string{"private-", "original-private-source", "private-provider-key"} {
+	for _, forbidden := range []string{"private-", "original-private-source", "private-provider-key", "codex mcp", "config.toml", "mcp_servers.", "~/.codex", "~/.agents", "--bearer-token-env-var"} {
 		if strings.Contains(document, forbidden) {
 			t.Fatalf("wrapper exposes source: %s", forbidden)
 		}
 	}
-	for _, required := range []string{"## 自动接入 MCP", "每次使用本 Skill", "codex mcp get flowlight_skill_101 --json", "codex mcp add flowlight_skill_101 --url", "mcp_servers.flowlight_skill_101", "配置存在且地址一致则复用", "显式停用", "自动修复最多一次", "需重新连接或开启新会话", "本次安装指令明确提供的新密钥 > 本技能已有的本地鉴权 > FLOWLIGHT_API_KEY", "已有有效鉴权时保留原配置"} {
+	for _, required := range []string{"## 自动接入 MCP", "每次使用本 Skill", "先确认当前客户端", "不根据模型名称或机器上存在的 CLI 判断", "不修改其他智能体的配置", "flowlight_skill_101", "当前客户端的 MCP/扩展/连接器管理工具", "配置存在且地址一致则复用", "显式停用", "自动修复最多一次", "需重新连接或开启新会话", "只支持 MCP 的客户端", "已有有效鉴权时保留原配置"} {
 		if !strings.Contains(document, required) {
 			t.Fatalf("public Skill cannot bootstrap its MCP: missing %s", required)
+		}
+	}
+	for _, required := range []string{
+		"不能把仅支持本地进程的 MCP 当作远程 HTTP 支持",
+		"只支持 Skill、不支持远程 MCP 的客户端",
+		"没有本地文件系统时不强求来源文件",
+		"仅接入 MCP 且没有技能目录时不创建这个文件",
+		`data.id 为字符串 "101"`,
+		"data.mcpAvailable 不为 true 或地址缺失时停止接入",
+		"没有可配置的连接时不要保存密钥",
+		"核对工具属于连接 flowlight_skill_101，返回 id 为 101 且 enabled 为 true",
+		"其他 Skill 的同名工具不能代替验证",
+		"只有已成功安装时才能报告“Skill 已安装”",
+		"不能提前报告已接入",
+	} {
+		if !strings.Contains(document, required) {
+			t.Fatalf("public Skill misrepresents client capabilities or verification: missing %s", required)
 		}
 	}
 	out = libraryRequest(router, "/api/skill-library/101/download")
@@ -295,5 +312,26 @@ func TestHiddenLibrarySkillRemainsAvailableOnItsNativeSurface(t *testing.T) {
 	}
 	if out := libraryRequest(router, "/api/skill-library/102"); out.Code != 404 {
 		t.Fatalf("native surface exposed hidden install page: %s", out.Body.String())
+	}
+}
+
+func TestLibraryDetailsPublishUsageExamplesWithoutPrivateFiles(t *testing.T) {
+	db, router := libraryTestServer(t)
+	if err := db.Model(&model.Skill{}).Where("id = ?", 101).Updates(map[string]any{
+		"input_description": "提供任务目标与参考素材", "input_example": "请检查这段视频的人物一致性", "output_example": "## 示例报告\n| 项目 | 结果 |\n|---|---|\n| 一致性 | 需复核 |",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	out := libraryRequest(router, "/api/skill-library/101")
+	var result response.Result[librarySkillVO]
+	if err := json.Unmarshal(out.Body.Bytes(), &result); err != nil || !result.Success || result.Data.InputDescription != "提供任务目标与参考素材" || result.Data.InputExample != "请检查这段视频的人物一致性" || !strings.Contains(result.Data.OutputExample, "示例报告") {
+		t.Fatal(out.Body.String())
+	}
+	if strings.Contains(out.Body.String(), "private-") {
+		t.Fatal("public examples disclosed execution files")
+	}
+	list := libraryRequest(router, "/api/skill-library")
+	if list.Code != 200 || strings.Contains(list.Body.String(), "inputExample") || strings.Contains(list.Body.String(), "outputExample") {
+		t.Fatal("catalog loaded full example documents")
 	}
 }

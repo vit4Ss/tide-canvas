@@ -23,6 +23,9 @@ export interface GeneratedSkillCopy {
   usageScenario: string;
   howTo: string;
   outputDescription: string;
+  inputDescription?: string;
+  inputExample?: string;
+  outputExample?: string;
 }
 
 function parseModelConfig(model: AiModelVO): ModelConfig {
@@ -94,7 +97,14 @@ export function parseGeneratedSkillCopy(raw: string): GeneratedSkillCopy | null 
     howTo: limitedText(parsed.howTo ?? parsed.usageGuide, 2000),
     outputDescription: limitedText(parsed.outputDescription, 2000),
   };
-  return Object.values(result).every(Boolean) ? result : null;
+  if (!Object.values(result).every(Boolean)) return null;
+  // Older accepted copy tasks returned four fields; preserve that response
+  // shape while accepting the new public usage/example metadata.
+  const extended: GeneratedSkillCopy = result;
+  if (typeof parsed.inputDescription === "string") extended.inputDescription = limitedText(parsed.inputDescription, 2000);
+  if (typeof parsed.inputExample === "string") extended.inputExample = limitedText(parsed.inputExample, 4000);
+  if (typeof parsed.outputExample === "string") extended.outputExample = limitedText(parsed.outputExample, 6000);
+  return extended;
 }
 
 function excerpt(value: string, maxCharacters: number): string {
@@ -121,7 +131,7 @@ function buildCopyPrompt({
 }): string {
   const config = parseModelConfig(model);
   const modelLimit = modelPromptCharLimit(config);
-  const sourceLimit = Math.max(100, Math.min(16_000, modelLimit ? modelLimit - 900 : 16_000));
+  const sourceLimit = Math.max(100, Math.min(16_000, modelLimit ? modelLimit - 1500 : 16_000));
   return `请根据下面的 Skill 定义，为技能广场生成准确、具体、面向普通用户的运营说明。
 
 技能名称：${excerpt(title, 64) || "未命名 Skill"}
@@ -134,9 +144,9 @@ ${excerpt(source, sourceLimit)}
 </skill_definition>
 
 只返回严格 JSON 对象，不要代码围栏，不要解释：
-{"description":"不超过255字的一句话核心介绍","usageScenario":"具体说明适合哪些用户、任务和使用时机","howTo":"说明用户应提供哪些信息或素材，以及如何得到更好结果","outputDescription":"说明最终会得到什么、包含哪些内容及质量标准"}
+{"description":"不超过255字的一句话核心介绍","usageScenario":"具体说明适合哪些用户、任务和使用时机","howTo":"用简短步骤说明安装后怎样使用，不重复 MCP 或密钥配置","inputDescription":"用户要提供哪些信息或素材，哪些必需、哪些可选","outputDescription":"最终会得到什么、包含哪些内容","inputExample":"一条可直接复制的具体示例提问，包含目标、背景和要求","outputExample":"与输入示例对应的典型结果演示，可用 Markdown 列表或表格，建议600字以内"}
 
-要求：四个字段都必须是非空中文字符串；忠实依据 Skill 定义，不虚构平台、模型、自动化或外部工具能力；不要写宣传口号，不要重复同一句话。`;
+要求：七个字段都必须是中文字符串；忠实依据 Skill 定义，不虚构平台、模型、自动化或外部工具能力。输入与输出示例是一对教学演示，不得冒充真实运行记录；无法确定的素材使用明确占位说明，不伪造真实下载链接。不要引用私有提示词、内部工作流或源码。说明要短，不要写宣传口号，不要重复同一句话。`;
 }
 
 function wait(ms: number): Promise<void> {
@@ -301,7 +311,7 @@ export function SkillCopyAiButton({
           if (!copy) throw new Error("文本模型已返回结果，但说明字段不完整，请重试");
           onGenerated(copy);
           setProgress(100);
-          toast.success("AI 已补全空白说明，请检查后保存");
+          toast.success("AI 说明已填入空白字段，请检查后保存");
           return;
         }
         if (task.status === AiTaskStatus.FAILED || task.status === AiTaskStatus.CANCELLED) {

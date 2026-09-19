@@ -34,6 +34,9 @@ type librarySkillVO struct {
 	UsageScenario        string          `json:"usageScenario"`
 	HowTo                string          `json:"howTo"`
 	OutputDescription    string          `json:"outputDescription"`
+	InputDescription     string          `json:"inputDescription,omitempty"`
+	InputExample         string          `json:"inputExample,omitempty"`
+	OutputExample        string          `json:"outputExample,omitempty"`
 	CoverURL             string          `json:"coverUrl"`
 	Category             string          `json:"category"`
 	AuthorName           string          `json:"authorName"`
@@ -80,6 +83,7 @@ func (h *libraryHandler) published(c *gin.Context) *gorm.DB {
 }
 
 const libraryColumns = "skill.id, skill.title, skill.description, skill.usage_scenario, skill.how_to, skill.output_description, skill.cover_url, skill.category, skill.author_name, skill.kind, skill.output_type, skill.use_count, skill.current_version_id, skill.mcp_enabled, skill.update_time"
+const libraryDetailColumns = libraryColumns + ", skill.input_description, skill.input_example, skill.output_example"
 
 func (h *libraryHandler) list(c *gin.Context) {
 	page, err := strconv.Atoi(c.DefaultQuery("pageNum", "1"))
@@ -151,6 +155,7 @@ func (h *libraryHandler) list(c *gin.Context) {
 func (h *libraryHandler) view(c *gin.Context, row model.Skill, version model.SkillVersion, policy mcpconfig.Snapshot, policyErr error) librarySkillVO {
 	vo := librarySkillVO{ID: row.ID, Title: row.Title, Description: row.Description, UsageScenario: row.UsageScenario,
 		HowTo: row.HowTo, OutputDescription: row.OutputDescription, CoverURL: row.CoverURL, Category: row.Category, AuthorName: row.AuthorName,
+		InputDescription: row.InputDescription, InputExample: row.InputExample, OutputExample: row.OutputExample,
 		Kind: row.Kind, OutputTypes: model.JSONStrings(version.OutputTypes, []string{row.OutputType}), UseCount: row.UseCount,
 		Version: version.Version, UpdateTime: row.UpdateTime.Format(time.RFC3339), MCPEnabled: row.MCPEnabled, SkillName: "flowlight-skill-" + row.ID.String()}
 	vo.NativePath = libraryNativePath(version)
@@ -213,7 +218,7 @@ func (h *libraryHandler) get(c *gin.Context) (*librarySkillVO, bool) {
 		return nil, false
 	}
 	var row model.Skill
-	if err := h.published(c).Select(libraryColumns).Where("skill.id = ?", id).First(&row).Error; err != nil {
+	if err := h.published(c).Select(libraryDetailColumns).Where("skill.id = ?", id).First(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			response.Fail(c, 404, "技能不存在或已下架")
 		} else {

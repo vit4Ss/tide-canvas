@@ -95,6 +95,9 @@ type AdminSkillSaveDTO struct {
 	UsageScenario     *string `json:"usageScenario" binding:"omitempty,max=2000"`
 	HowTo             *string `json:"howTo" binding:"omitempty,max=2000"`
 	OutputDescription *string `json:"outputDescription" binding:"omitempty,max=2000"`
+	InputDescription  *string `json:"inputDescription" binding:"omitempty,max=2000"`
+	InputExample      *string `json:"inputExample" binding:"omitempty,max=4000"`
+	OutputExample     *string `json:"outputExample" binding:"omitempty,max=6000"`
 	CoverURL          string  `json:"coverUrl" binding:"omitempty,max=512"`
 	Category          string  `json:"category" binding:"omitempty,max=32"`
 	OutputType        string  `json:"outputType" binding:"omitempty,max=16"`
@@ -125,6 +128,15 @@ func applyAdminSkillGuidanceFields(fields map[string]any, dto AdminSkillSaveDTO)
 	}
 	if dto.OutputDescription != nil {
 		fields["output_description"] = strings.TrimSpace(*dto.OutputDescription)
+	}
+	if dto.InputDescription != nil {
+		fields["input_description"] = strings.TrimSpace(*dto.InputDescription)
+	}
+	if dto.InputExample != nil {
+		fields["input_example"] = strings.TrimSpace(*dto.InputExample)
+	}
+	if dto.OutputExample != nil {
+		fields["output_example"] = strings.TrimSpace(*dto.OutputExample)
 	}
 }
 
@@ -188,6 +200,9 @@ func (h *skillsHandler) create(c *gin.Context) {
 		UsageScenario:     adminOptionalText(dto.UsageScenario),
 		HowTo:             adminOptionalText(dto.HowTo),
 		OutputDescription: adminOptionalText(dto.OutputDescription),
+		InputDescription:  adminOptionalText(dto.InputDescription),
+		InputExample:      adminOptionalText(dto.InputExample),
+		OutputExample:     adminOptionalText(dto.OutputExample),
 		CoverURL:          strings.TrimSpace(dto.CoverURL),
 		Category:          strings.TrimSpace(dto.Category),
 		OutputType:        dto.OutputType,

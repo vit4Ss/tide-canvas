@@ -15,7 +15,7 @@ const { skillInstallPrompt, skillInstallURL, skillCodexConfig, skillMCPConfig } 
 test('one copied instruction installs a real Skill and its uniquely scoped MCP configuration', () => {
   const url = 'https://flowlight.example/api/skill-library/2098715147391471616/SKILL.md';
   const prompt = skillInstallPrompt(url);
-  for (const expected of [url, 'name: flowlight-skill-2098715147391471616', '~/.agents/skills/flowlight-skill-2098715147391471616/SKILL.md', 'references/connection.json', 'https://flowlight.example/api/skill-library/2098715147391471616', 'codex mcp add flowlight_skill_2098715147391471616', '--bearer-token-env-var FLOWLIGHT_API_KEY', '$flowlight-skill-2098715147391471616']) {
+  for (const expected of [url, 'name: flowlight-skill-2098715147391471616', 'flowlight-skill-2098715147391471616/SKILL.md', 'references/connection.json', 'https://flowlight.example/api/skill-library/2098715147391471616', 'flowlight_skill_2098715147391471616', 'FLOWLIGHT_API_KEY', 'MCP Streamable HTTP']) {
     assert.ok(prompt.includes(expected), expected);
   }
   const savedSource = JSON.parse(prompt.match(/\{\n  "sourceUrl"[\s\S]*?\n\}/)[0]);
@@ -26,7 +26,7 @@ test('one copied instruction installs a real Skill and its uniquely scoped MCP c
 
 test('missing credentials or service do not require paid verification or block file installation', () => {
   const prompt = skillInstallPrompt('http://localhost:3000/api/skill-library/101/SKILL.md');
-  assert.ok(prompt.includes('先完成安装'));
+  assert.ok(prompt.includes('先完成可完成的安装'));
   assert.ok(prompt.includes('Skill 已安装，MCP 待连接'));
   assert.ok(prompt.includes('只调用 get_skill_info'));
   assert.ok(prompt.includes('不要运行 run_skill 或发起付费任务'));
@@ -51,7 +51,8 @@ test('personalized installation and MCP copies use the supplied user key only in
   const skill = { id: '101', mcpEndpoint: 'https://flowlight.example/mcp/skills/101' };
   const personalized = skillInstallPrompt(url, key);
   assert.ok(personalized.includes(key));
-  assert.ok(personalized.includes('http_headers'));
+  assert.ok(personalized.includes('当前客户端支持的安全凭据存储'));
+  assert.ok(personalized.includes('Authorization: Bearer'));
   assert.ok(personalized.includes('不要输出或复述密钥'));
   assert.ok(!personalized.includes('--bearer-token-env-var FLOWLIGHT_API_KEY'));
   const sourceRecord = JSON.parse(personalized.match(/\{\n  "sourceUrl"[\s\S]*?\n\}/)[0]);
@@ -66,9 +67,34 @@ test('personalized installation and MCP copies use the supplied user key only in
 test('missing MCP is installed automatically while existing connections and user disablement are respected', () => {
   for (const key of [undefined, 'tc_sk_' + 'A'.repeat(43)]) {
     const prompt = skillInstallPrompt('https://flowlight.example/api/skill-library/101/SKILL.md', key);
-    for (const expected of ['codex mcp get flowlight_skill_101 --json', '连接不存在时，直接执行 codex mcp add flowlight_skill_101', '连接已存在且地址一致时复用', 'mcp_servers.flowlight_skill_101', '保留其他 MCP 配置', '显式停用', '每次使用 Skill 时', '自动修复一次', '需重新连接或开启新会话', '不要把写入配置当成已连通']) assert.ok(prompt.includes(expected), expected);
+    for (const expected of ['先确认当前客户端', '当前客户端的 MCP/扩展/连接器管理工具', '只有明确确认连接不存在时才新增', '连接已存在且地址一致时复用', 'flowlight_skill_101', '保留其他 MCP 配置', '显式停用', '每次使用 Skill 时', '自动修复一次', '需重新连接或开启新会话', '不要把写入配置当成已连通']) assert.ok(prompt.includes(expected), expected);
+    for (const forbidden of ['codex mcp', 'config.toml', '~/.codex', '~/.agents', 'mcp_servers.', '--bearer-token-env-var']) assert.ok(!prompt.includes(forbidden), forbidden);
+    assert.ok(prompt.indexOf('先确认当前客户端') < prompt.indexOf('下载上述链接'));
+    assert.ok(prompt.includes('当前客户端不支持本地 Skill'));
+    assert.ok(prompt.includes('不修改其他智能体的配置'));
+    assert.ok(prompt.includes('版本号相同也要比较文档内容'));
   }
   const existing = skillInstallPrompt('https://flowlight.example/api/skill-library/101/SKILL.md');
-  assert.ok(existing.includes('优先保留本技能现有的本地鉴权配置'));
-  assert.ok(existing.includes('不要用示例环境变量覆盖已有的 http_headers'));
+  assert.ok(existing.includes('优先保留本技能现有的鉴权配置'));
+  assert.ok(existing.includes('不要覆盖已有有效鉴权'));
+});
+
+test('client capabilities, metadata and the exact skill identity gate connection success', () => {
+  const prompt = skillInstallPrompt('https://flowlight.example/api/skill-library/2098715147391471616/SKILL.md');
+  for (const expected of [
+    '不要把仅支持本地进程的 MCP 等同于支持远程 HTTP',
+    '只支持远程 MCP 时跳过本地 Skill 目录创建',
+    '不提前报告“已接入”',
+    '只支持 Skill、不支持本服务的远程 MCP',
+    '当前客户端无法执行此云端技能',
+    '两者都不支持时说明限制，不创建无效配置',
+    '没有本地技能目录时不要求这个文件',
+    'data.id 为字符串 "2098715147391471616"',
+    'data.mcpAvailable 不为 true 或地址缺失时停止接入',
+    '没有可配置的连接时不要保存密钥',
+    '工具属于连接 flowlight_skill_2098715147391471616',
+    '返回 id 为 2098715147391471616、enabled 为 true',
+    '其他 Skill 的同名工具、只列出工具或仅写入配置都不算验证通过',
+    '未写入技能时不能报告已安装',
+  ]) assert.ok(prompt.includes(expected), expected);
 });

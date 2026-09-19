@@ -322,7 +322,7 @@ func TestStandardSkillCanBeImportedAndPublishedWithOrWithoutMCP(t *testing.T) {
 	router := gin.New()
 	router.POST("/import", h.importSkills)
 	for _, mcpEnabled := range []bool{false, true} {
-		pkg := AdminSkillPackageDTO{Title: "Review", MCPEnabled: mcpEnabled, AdminSkillVersionCreateDTO: AdminSkillVersionCreateDTO{
+		pkg := AdminSkillPackageDTO{Title: "Review", MCPEnabled: mcpEnabled, InputDescription: " Upload a video ", InputExample: " Review continuity ", OutputExample: " Example review result ", AdminSkillVersionCreateDTO: AdminSkillVersionCreateDTO{
 			Kind: "agent", EntryPoints: []string{"canvas"}, PrimaryOutputType: "text", OutputTypes: []string{"text"},
 			Manifest: json.RawMessage(`{"kind":"agent"}`), InputSchema: json.RawMessage(`{"type":"object"}`), DefaultParams: json.RawMessage(`{}`), PrimaryFilePath: "SKILL.md", Files: []AdminSkillFileDTO{{Path: "SKILL.md", Content: standardSkillText("review")}}, Publish: true,
 		}}
@@ -337,6 +337,9 @@ func TestStandardSkillCanBeImportedAndPublishedWithOrWithoutMCP(t *testing.T) {
 		var saved model.Skill
 		if err := db.Order("id DESC").First(&saved).Error; err != nil || saved.CurrentVersionID == 0 || saved.MCPEnabled != mcpEnabled {
 			t.Fatalf("wrong imported skill: %+v %v", saved, err)
+		}
+		if saved.InputDescription != "Upload a video" || saved.InputExample != "Review continuity" || saved.OutputExample != "Example review result" {
+			t.Fatal("import lost public usage examples")
 		}
 		var file model.SkillFile
 		if err := db.Where("skill_version_id = ?", saved.CurrentVersionID).First(&file).Error; err != nil || file.Content != standardSkillText("review") {

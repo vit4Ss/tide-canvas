@@ -5,6 +5,9 @@ export interface LibrarySkill {
   usageScenario: string;
   howTo: string;
   outputDescription: string;
+  inputDescription?: string;
+  inputExample?: string;
+  outputExample?: string;
   coverUrl: string;
   category: string;
   authorName: string;

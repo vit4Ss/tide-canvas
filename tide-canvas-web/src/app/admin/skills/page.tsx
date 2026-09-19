@@ -107,6 +107,9 @@ interface SkillForm {
   usageScenario: string;
   usageGuide: string;
   outputDescription: string;
+  inputDescription: string;
+  inputExample: string;
+  outputExample: string;
   modelId: string;
   defaultParams: string;
   authorName: string;
@@ -127,6 +130,9 @@ const EMPTY_FORM: SkillForm = {
   usageScenario: "",
   usageGuide: "",
   outputDescription: "",
+  inputDescription: "",
+  inputExample: "",
+  outputExample: "",
   modelId: "",
   defaultParams: "",
   authorName: "官方",
@@ -277,6 +283,9 @@ export default function AdminSkillsPage() {
       usageScenario: r.usageScenario || "",
       usageGuide: r.howTo || "",
       outputDescription: r.outputDescription || "",
+      inputDescription: r.inputDescription || "",
+      inputExample: r.inputExample || "",
+      outputExample: r.outputExample || "",
       modelId: r.modelId,
       defaultParams: r.defaultParams,
       authorName: r.authorName,
@@ -477,6 +486,9 @@ export default function AdminSkillsPage() {
         usageScenario: form.usageScenario.trim(),
         howTo: form.usageGuide.trim(),
         outputDescription: form.outputDescription.trim(),
+        inputDescription: form.inputDescription.trim(),
+        inputExample: form.inputExample.trim(),
+        outputExample: form.outputExample.trim(),
         coverUrl: form.coverUrl.trim(),
         category: form.category,
         outputType: form.outputType,
@@ -527,6 +539,9 @@ export default function AdminSkillsPage() {
           usageScenario: prepared.dto.usageScenario,
           howTo: prepared.dto.howTo,
           outputDescription: prepared.dto.outputDescription,
+          inputDescription: prepared.dto.inputDescription,
+          inputExample: prepared.dto.inputExample,
+          outputExample: prepared.dto.outputExample,
           coverUrl: prepared.dto.coverUrl,
           category: prepared.dto.category,
           authorName: prepared.dto.authorName,
@@ -741,7 +756,7 @@ export default function AdminSkillsPage() {
   // renderer itself has no market-model modality.
   const formModelType = form.kind === "tool" ? "text" : form.outputType;
   const formModels = models.filter((m) => m.type === formModelType);
-  const missingCopyCount = [form.description, form.usageScenario, form.usageGuide, form.outputDescription]
+  const missingCopyCount = [form.description, form.usageScenario, form.usageGuide, form.inputDescription, form.outputDescription, form.inputExample, form.outputExample]
     .filter((value) => !value.trim()).length;
   const loadSkillCopySource = async (): Promise<string> => {
     if (editing?.currentVersionId) {
@@ -970,7 +985,7 @@ export default function AdminSkillsPage() {
           </FormCard>
         ) : null}
 
-        <FormCard title="使用说明">
+        <FormCard title="用户使用指南与样例">
           <SkillCopyAiButton
             models={models}
             missingCount={missingCopyCount}
@@ -987,10 +1002,13 @@ export default function AdminSkillsPage() {
               usageScenario: current.usageScenario.trim() ? current.usageScenario : copy.usageScenario,
               usageGuide: current.usageGuide.trim() ? current.usageGuide : copy.howTo,
               outputDescription: current.outputDescription.trim() ? current.outputDescription : copy.outputDescription,
+              inputDescription: current.inputDescription.trim() ? current.inputDescription : copy.inputDescription || "",
+              inputExample: current.inputExample.trim() ? current.inputExample : copy.inputExample || "",
+              outputExample: current.outputExample.trim() ? current.outputExample : copy.outputExample || "",
             }))}
           />
           <FormGrid>
-            <Field label="使用场景" required={!editing} span={4}>
+            <Field label="使用场景" required={!editing} span={2}>
               <textarea
                 rows={3}
                 value={form.usageScenario}
@@ -999,16 +1017,21 @@ export default function AdminSkillsPage() {
                 onChange={(event) => setForm((current) => ({ ...current, usageScenario: event.target.value }))}
               />
             </Field>
-            <Field label="如何使用" required={!editing} span={4}>
+            <Field label="如何使用" required={!editing} span={2}>
               <textarea
                 rows={3}
                 value={form.usageGuide}
                 maxLength={2000}
-                placeholder="说明用户需要输入哪些信息，例如主题、风格、时长或参考素材"
+                placeholder="说明安装后如何开始任务、怎样与智能体沟通和查看结果"
                 onChange={(event) => setForm((current) => ({ ...current, usageGuide: event.target.value }))}
               />
             </Field>
-            <Field label="输出内容" required={!editing} span={4}>
+            <Field label="输入说明" span={2} hint="说明用户需要提供什么，显示在前台「输入什么」区域。">
+              <textarea rows={4} value={form.inputDescription} maxLength={2000}
+                placeholder="需要哪些目标、背景、参考素材或参数？哪些是必需的？"
+                onChange={(event) => setForm((current) => ({ ...current, inputDescription: event.target.value }))} />
+            </Field>
+            <Field label="输出内容" required={!editing} span={2}>
               <textarea
                 rows={3}
                 value={form.outputDescription}
@@ -1016,6 +1039,16 @@ export default function AdminSkillsPage() {
                 placeholder="描述用户使用后会得到什么结果，以及结果应满足的标准"
                 onChange={(event) => setForm((current) => ({ ...current, outputDescription: event.target.value }))}
               />
+            </Field>
+            <Field label="输入示例" span={4} hint="写一条完整的示例提问，用户可以直接复制给智能体。">
+              <textarea rows={4} value={form.inputExample} maxLength={4000}
+                placeholder="用一条具体提问展示：任务目标 + 参考素材/背景 + 输出要求"
+                onChange={(event) => setForm((current) => ({ ...current, inputExample: event.target.value }))} />
+            </Field>
+            <Field label="输出示例" span={4} hint="展示一份典型结果，支持 Markdown 列表与表格。">
+              <textarea rows={7} value={form.outputExample} maxLength={6000}
+                placeholder="填写与输入示例对应的结果样例，例如结论、清单、报告或表格"
+                onChange={(event) => setForm((current) => ({ ...current, outputExample: event.target.value }))} />
             </Field>
           </FormGrid>
         </FormCard>

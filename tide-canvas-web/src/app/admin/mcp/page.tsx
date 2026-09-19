@@ -4,13 +4,14 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AudioLines, Check, Copy, ExternalLink, ImageIcon, LoaderCircle, Network, RefreshCw, Save, ShieldCheck, Video } from "lucide-react";
 import { Field, FormCard, SectionHeader, SwitchToggle } from "@/components/admin";
-import { mcpClientConfig, mcpConfigApi, mcpServiceState, type MCPConfig, type MCPSettings, type MCPStatus } from "@/lib/mcp-config-api";
+import { mcpClientConfig, mcpConfigApi, mcpServiceState, mcpSuggestedPublicURL, type MCPConfig, type MCPSettings, type MCPStatus } from "@/lib/mcp-config-api";
+import { copyText } from "@/lib/clipboard";
 import { toast } from "@/components/shared/toast";
 import styles from "./page.module.css";
 
 const subscribe = () => () => {};
 const browserOrigin = () => window.location.origin;
-const initialOrigin = () => "https://你的主站域名";
+const initialOrigin = () => "";
 const media = [
   { key: "imageEnabled", title: "图片生成", tool: "generate_image", text: "文生图与图生图", icon: ImageIcon },
   { key: "videoEnabled", title: "视频生成", tool: "generate_video", text: "文生、图生、首尾帧与全能参考", icon: Video },
@@ -45,8 +46,10 @@ export default function MCPAdminPage() {
     return { signal:controller.signal, finish:() => {clearTimeout(deadline);requests.current.delete(controller);} };
   },[]);
 
-  const apply = useCallback((data: MCPConfig) => {
-    setSaved(data); setDraft(editable(data)); setOriginsText((data.allowedOrigins ?? []).join("\n")); setCopied(false);
+  const apply = useCallback((data: MCPConfig, suggestAddress = false) => {
+    const next = editable(data);
+    if (suggestAddress && !next.publicUrl.trim()) next.publicUrl = mcpSuggestedPublicURL(window.location.origin);
+    setSaved(data); setDraft(next); setOriginsText((data.allowedOrigins ?? []).join("\n")); setCopied(false);
   },[]);
 
   const checkStatus = useCallback(async () => {
@@ -72,7 +75,7 @@ export default function MCPAdminPage() {
       if (!alive.current || version!==loadVersion.current) return;
       if (request.signal.aborted) {setError("读取配置超时，请重试");return;}
       if (!res.success || !res.data) {setError(res.message || "MCP 配置读取失败，请确认主站已更新");return;}
-      apply(res.data); void checkStatus();
+      apply(res.data, true); void checkStatus();
     } catch {if (alive.current && version===loadVersion.current) setError("配置读取失败，请稍后重试");}
     finally {request.finish();if (alive.current && version===loadVersion.current) setLoading(false);}
   },[apply,checkStatus,startRequest]);
@@ -94,8 +97,8 @@ export default function MCPAdminPage() {
   const settings = draft ? { ...draft, allowedOrigins:originsText.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) } : null;
   const dirty = !!(settings && saved && JSON.stringify(settings)!==JSON.stringify(editable(saved)));
   const service = mcpServiceState(status,saved?.revision ?? 0);
-  const endpoint = saved?.publicUrl || `${origin}/mcp`;
-  const configText = JSON.stringify(mcpClientConfig(saved?.publicUrl ?? "",origin),null,2);
+  const endpoint = saved?.publicUrl.trim() || "";
+  const configText = endpoint ? JSON.stringify(mcpClientConfig(endpoint,origin),null,2) : "";
   const change = <K extends keyof MCPSettings>(key: K,value: MCPSettings[K]) => setDraft((prev) => prev ? { ...prev,[key]:value } : prev);
 
   const save = async () => {
@@ -108,7 +111,7 @@ export default function MCPAdminPage() {
       if (!alive.current) return;
       if (request.signal.aborted || res.code===0) {setError("保存结果暂时无法确认，请重新加载核对；不会自动重复保存");return;}
       if (!res.success || !res.data) {setError(res.message || "保存失败");return;}
-      apply(res.data);toast.success("配置已保存，后续 MCP 请求约 5 秒内生效");
+      apply(res.data);toast.success(res.data.publicUrl.trim() ? "配置已保存，后续 MCP 请求约 5 秒内生效" : "配置已保存；未设置对外地址，Skill 的 MCP 连接仍待配置");
       if (followup.current) clearTimeout(followup.current);
       followup.current=setTimeout(() => void checkStatus(),5500);
     } catch {if (alive.current) setError("保存失败，请重新加载核对配置后再试");}
@@ -133,7 +136,7 @@ export default function MCPAdminPage() {
           <FormCard title="接入设置">
             <div className={styles.toggleRow}><div><strong>允许 MCP 接入</strong><p>关闭后拒绝新的 MCP 调用，已受理的生成任务继续在主站执行。</p></div><SwitchToggle checked={draft.enabled} disabled={saving} onChange={(v) => change("enabled",v)} aria-label="允许 MCP 接入"/></div>
             <div className={styles.fields}>
-              <Field label="对外接入地址" hint="用于生成客户端配置。域名与反向代理需已部署；留空使用当前主站域名加 /mcp。"><input type="url" value={draft.publicUrl} placeholder={`${origin}/mcp`} disabled={saving} onChange={(e) => change("publicUrl",e.target.value)}/></Field>
+              <Field label="对外接入地址" hint="Skill 安装器只读取已保存的地址。首次加载会填入当前站点的建议地址，请确认域名与反向代理后点击保存。"><input type="url" value={draft.publicUrl} placeholder="https://你的主站域名/mcp" disabled={saving} onChange={(e) => change("publicUrl",e.target.value)}/></Field>
               <Field label="建议轮询间隔（秒）" hint="3–60 秒，返回给客户端作为查询任务的等待时间。"><input type="number" min={3} max={60} step={1} value={draft.pollIntervalSeconds || ""} disabled={saving} onChange={(e) => change("pollIntervalSeconds",Number(e.target.value))}/></Field>
             </div>
           </FormCard>
@@ -144,7 +147,8 @@ export default function MCPAdminPage() {
           <FormCard title="允许的浏览器来源"><Field label="来源列表" hint="每行一个 origin，例如 https://example.com，不带路径或通配符。首次保存后以本列表替代环境默认白名单；通过反向代理接入的网页请显式填写来源。留空不开放跨域来源，原生 MCP 客户端不受影响。"><textarea rows={4} value={originsText} placeholder={origin} disabled={saving} spellCheck={false} onChange={(e) => setOriginsText(e.target.value)}/></Field></FormCard>
         </div>
         <aside className={styles.side}>
-          <section className={styles.connectCard}><h3><ShieldCheck size={17}/>客户端配置</h3><p>使用已保存的地址。每位用户填写自己在个人中心获取的 API Key。</p><code className={styles.endpoint}>{endpoint}</code><pre>{configText}</pre><button type="button" className="adm-btn ghost" onClick={async () => {try{await navigator.clipboard.writeText(configText);setCopied(true);}catch{toast.error("复制失败，请手动选择配置内容复制");}}}>{copied ? <Check size={14}/> : <Copy size={14}/>} {copied ? "已复制" : "复制已保存配置"}</button></section>
+          <section className={styles.connectCard}><h3><ShieldCheck size={17}/>客户端配置</h3>{endpoint ? <><p>使用已保存的地址。每位用户填写自己在个人中心获取的 API Key。</p><code className={styles.endpoint}>{endpoint}</code><pre>{configText}</pre><button type="button" className="adm-btn ghost" onClick={async () => {setCopied(false);if(await copyText(configText))setCopied(true);else toast.error("复制失败，请手动选择配置内容复制");}}>{copied ? <Check size={14}/> : <Copy size={14}/>} {copied ? "已复制" : "复制已保存配置"}</button></> : <div role="status"><strong>对外接入地址尚未保存</strong><p>左侧填入的是建议地址，尚未写入服务端。确认后点击「保存配置」，Skill 安装器才能获取专属 MCP 地址。</p><button type="button" className="adm-btn" disabled={!dirty || saving || !settings?.publicUrl.trim()} onClick={() => void save()}>保存接入地址</button></div>}</section>
+          <section className={styles.runtime}><h3>Skill 专属入口</h3><p>除 /mcp 外，还需将 /mcp/skills/ 下的请求转发给 MCP 服务，并更新 MCP 容器。仅配置 /mcp 时，生成工具可连接，Skill 专属连接仍会返回 404。</p><p>下方连接检测只验证内部服务和配置同步；公网路由需要按部署文档配置。</p><Link href="/api-docs#mcp">查看接入文档</Link></section>
           <section className={styles.runtime}><h3>运行状态</h3><dl><div><dt>接入策略</dt><dd>{saved.enabled ? "已启用" : "已停用"}</dd></div><div><dt>保存版本</dt><dd>{saved.configured ? `v${saved.revision}` : "默认配置"}</dd></div><div><dt>服务版本</dt><dd>{status?.version || "—"}</dd></div><div><dt>已同步版本</dt><dd>{status?.policyAvailable ? `v${status.policyRevision}` : "—"}</dd></div><div><dt>最近保存</dt><dd>{saved.updatedAt ? new Date(saved.updatedAt).toLocaleString() : "尚未保存"}</dd></div></dl><p>{status?.message || "点击检测连接，读取 MCP 服务的实际状态。"}</p>{status?.internalUrl && <p>内部检测地址：<code>{status.internalUrl}</code></p>}<p>检测地址来自主站部署变量 TIDECANVAS_MCP_INTERNALURL，默认本机 8082。进程监听地址和主站连接地址仍在 MCP 部署环境中设置。</p></section>
         </aside>
       </div>

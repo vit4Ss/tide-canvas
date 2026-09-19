@@ -60,11 +60,26 @@ interface PreparedPackage {
   key: string;
   title: string;
   description: string;
+  usageScenario?: string;
+  howTo?: string;
+  inputDescription?: string;
+  outputDescription?: string;
+  inputExample?: string;
+  outputExample?: string;
   primaryFilePath: string;
   files: AdminSkillFileInput[];
   ignoredFiles?: number;
   manifestText?: string;
 }
+
+const IMPORT_GUIDANCE_FIELDS = [
+  { key: "howTo", label: "如何使用", max: 2000, rows: 3 },
+  { key: "inputDescription", label: "输入说明", max: 2000, rows: 3 },
+  { key: "outputDescription", label: "输出内容", max: 2000, rows: 3 },
+  { key: "usageScenario", label: "使用场景", max: 2000, rows: 3 },
+  { key: "inputExample", label: "输入示例", max: 4000, rows: 4 },
+  { key: "outputExample", label: "输出示例", max: 6000, rows: 6 },
+] as const;
 
 function failedImportValidation(title: string, message: string): AdminSkillImportValidationVO {
   return { valid: false, items: [{ index: -1, title, valid: false, errors: [message] }] };
@@ -321,6 +336,12 @@ export function SkillImportModal({
     return packages.map((pkg, index) => ({
       title: truncateRunes(pkg.title.trim(), 64),
       description: pkg.description.trim(),
+      usageScenario: pkg.usageScenario?.trim(),
+      howTo: pkg.howTo?.trim(),
+      inputDescription: pkg.inputDescription?.trim(),
+      outputDescription: pkg.outputDescription?.trim(),
+      inputExample: pkg.inputExample?.trim(),
+      outputExample: pkg.outputExample?.trim(),
       category,
       authorName: authorName.trim(),
       mcpEnabled,
@@ -475,8 +496,8 @@ export function SkillImportModal({
         {packages.length ? (
           <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
             {packages.map((pkg, index) => (
+              <div key={pkg.key}>
               <div
-                key={pkg.key}
                 style={{
                   display: "grid",
                   gridTemplateColumns: "20px minmax(0,1fr) auto",
@@ -500,6 +521,24 @@ export function SkillImportModal({
                 <span className="muted" style={{ fontSize: 11 }}>
                   {pkg.files.length} 个文本文件
                 </span>
+              </div>
+              <details style={{ margin: "12px 0", padding: 12, border: "1px solid var(--border)", borderRadius: 8 }}>
+                <summary style={{ cursor: "pointer", fontSize: 12 }}>使用指南与样例（选填）</summary>
+                <p className="muted" style={{ fontSize: 12 }}>前台按「怎么用 → 输入什么 → 输出什么」展示，导入后也可在编辑资料中补充。</p>
+                <FormGrid>
+                  {IMPORT_GUIDANCE_FIELDS.map((field) => (
+                    <Field key={field.key} label={field.label} span={field.max > 2000 ? 4 : 2}>
+                      <textarea rows={field.rows} maxLength={field.max} value={pkg[field.key] || ""}
+                        aria-label={`第 ${index + 1} 个 Skill ${field.label}`} disabled={manifestBusy}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setPackages((current) => current.map((item) => item.key === pkg.key ? { ...item, [field.key]: value } : item));
+                          setValidation(null);
+                        }} />
+                    </Field>
+                  ))}
+                </FormGrid>
+              </details>
               </div>
             ))}
           </div>

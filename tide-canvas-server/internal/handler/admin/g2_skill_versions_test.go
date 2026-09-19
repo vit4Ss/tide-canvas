@@ -20,6 +20,7 @@ func TestValidateAdminSkillPackageMetadata(t *testing.T) {
 		Category: strings.Repeat("x", 32), AuthorName: strings.Repeat("a", 64),
 		UsageScenario: strings.Repeat("u", 2000), HowTo: strings.Repeat("h", 2000),
 		OutputDescription: strings.Repeat("o", 2000), Status: &status,
+		InputDescription: strings.Repeat("i", 2000), InputExample: strings.Repeat("e", 4000), OutputExample: strings.Repeat("r", 6000),
 	}
 	if err := validateAdminSkillPackageMetadata(pkg); err != nil {
 		t.Fatalf("boundary metadata was rejected: %v", err)
@@ -36,6 +37,9 @@ func TestValidateAdminSkillPackageMetadata(t *testing.T) {
 		{Title: "skill", UsageScenario: strings.Repeat("u", 2001)},
 		{Title: "skill", HowTo: strings.Repeat("h", 2001)},
 		{Title: "skill", OutputDescription: strings.Repeat("o", 2001)},
+		{Title: "skill", InputDescription: strings.Repeat("i", 2001)},
+		{Title: "skill", InputExample: strings.Repeat("e", 4001)},
+		{Title: "skill", OutputExample: strings.Repeat("r", 6001)},
 		{Title: "skill", Status: &invalidStatus},
 	}
 	for index, item := range cases {
