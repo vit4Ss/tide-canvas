@@ -28,29 +28,31 @@ type libraryHandler struct{ db *gorm.DB }
 // Public marketing metadata only. Never serialize model.Skill/SkillVersion or
 // original package files into the install catalogue.
 type librarySkillVO struct {
-	ID                idgen.ID        `json:"id"`
-	Title             string          `json:"title"`
-	Description       string          `json:"description"`
-	UsageScenario     string          `json:"usageScenario"`
-	HowTo             string          `json:"howTo"`
-	OutputDescription string          `json:"outputDescription"`
-	CoverURL          string          `json:"coverUrl"`
-	Category          string          `json:"category"`
-	AuthorName        string          `json:"authorName"`
-	Kind              string          `json:"kind"`
-	OutputTypes       []string        `json:"outputTypes"`
-	UseCount          int64           `json:"useCount"`
-	Version           int             `json:"version"`
-	UpdateTime        string          `json:"updateTime"`
-	MCPEnabled        bool            `json:"mcpEnabled"`
-	Installable       bool            `json:"installable"`
-	UnavailableReason string          `json:"unavailableReason,omitempty"`
-	MCPEndpoint       string          `json:"mcpEndpoint,omitempty"`
-	InstallPath       string          `json:"installPath,omitempty"`
-	DownloadPath      string          `json:"downloadPath,omitempty"`
-	SkillName         string          `json:"skillName"`
-	NativePath        string          `json:"nativePath,omitempty"`
-	InputSchema       json.RawMessage `json:"inputSchema,omitempty"`
+	ID                   idgen.ID        `json:"id"`
+	Title                string          `json:"title"`
+	Description          string          `json:"description"`
+	UsageScenario        string          `json:"usageScenario"`
+	HowTo                string          `json:"howTo"`
+	OutputDescription    string          `json:"outputDescription"`
+	CoverURL             string          `json:"coverUrl"`
+	Category             string          `json:"category"`
+	AuthorName           string          `json:"authorName"`
+	Kind                 string          `json:"kind"`
+	OutputTypes          []string        `json:"outputTypes"`
+	UseCount             int64           `json:"useCount"`
+	Version              int             `json:"version"`
+	UpdateTime           string          `json:"updateTime"`
+	MCPEnabled           bool            `json:"mcpEnabled"`
+	Installable          bool            `json:"installable"`
+	UnavailableReason    string          `json:"unavailableReason,omitempty"`
+	MCPAvailable         bool            `json:"mcpAvailable"`
+	MCPUnavailableReason string          `json:"mcpUnavailableReason,omitempty"`
+	MCPEndpoint          string          `json:"mcpEndpoint,omitempty"`
+	InstallPath          string          `json:"installPath,omitempty"`
+	DownloadPath         string          `json:"downloadPath,omitempty"`
+	SkillName            string          `json:"skillName"`
+	NativePath           string          `json:"nativePath,omitempty"`
+	InputSchema          json.RawMessage `json:"inputSchema,omitempty"`
 }
 
 func registerSkillLibrary(api *gin.RouterGroup, d *app.Deps) {
@@ -152,25 +154,31 @@ func (h *libraryHandler) view(c *gin.Context, row model.Skill, version model.Ski
 		Kind: row.Kind, OutputTypes: model.JSONStrings(version.OutputTypes, []string{row.OutputType}), UseCount: row.UseCount,
 		Version: version.Version, UpdateTime: row.UpdateTime.Format(time.RFC3339), MCPEnabled: row.MCPEnabled, SkillName: "flowlight-skill-" + row.ID.String()}
 	vo.NativePath = libraryNativePath(version)
-	switch {
-	case !row.MCPEnabled:
-		vo.UnavailableReason = "该技能目前仅支持在主站使用"
-		if vo.NativePath == "" {
-			vo.UnavailableReason = "该技能暂未开放客户端安装"
-		}
-	case policyErr != nil || !policy.Enabled:
-		vo.UnavailableReason = "客户端接入暂不可用，请稍后再试"
-	case strings.TrimSpace(policy.PublicURL) == "":
-		vo.UnavailableReason = "该技能暂未开放客户端安装"
-	default:
-		if _, err := skillformat.ValidateVersion(c.Request.Context(), h.db, &version); err != nil {
-			vo.UnavailableReason = "该技能的安装包正在维护"
-			break
-		}
-		vo.Installable = true
+	if !row.MCPEnabled {
+		vo.UnavailableReason = "该技能尚未对外开放"
+		return vo
+	}
+	if _, err := skillformat.ValidateVersion(c.Request.Context(), h.db, &version); err != nil {
+		vo.UnavailableReason = "该技能的安装包正在维护，请稍后重试"
+		return vo
+	}
+	// Installing public instructions does not execute a task or require a key.
+	// Keep the package available while MCP is stopped or awaiting configuration.
+	vo.Installable = true
+	vo.InstallPath = "/api/skill-library/" + row.ID.String() + "/SKILL.md"
+	vo.DownloadPath = "/api/skill-library/" + row.ID.String() + "/download"
+	if policyErr == nil && strings.TrimSpace(policy.PublicURL) != "" {
 		vo.MCPEndpoint = strings.TrimRight(policy.PublicURL, "/") + "/skills/" + row.ID.String()
-		vo.InstallPath = "/api/skill-library/" + row.ID.String() + "/SKILL.md"
-		vo.DownloadPath = "/api/skill-library/" + row.ID.String() + "/download"
+	}
+	switch {
+	case policyErr != nil:
+		vo.MCPUnavailableReason = "可先安装 Skill；调用配置暂时无法读取，请稍后连接 MCP"
+	case !policy.Enabled:
+		vo.MCPUnavailableReason = "可先安装 Skill；MCP 调用暂时关闭，恢复后即可连接使用"
+	case vo.MCPEndpoint == "":
+		vo.MCPUnavailableReason = "可先安装 Skill；MCP 接入地址尚未配置，智能体会在使用前重新读取"
+	default:
+		vo.MCPAvailable = true
 	}
 	return vo
 }

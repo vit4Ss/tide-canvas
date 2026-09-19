@@ -2,12 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowDown, ArrowRight, Box, Check, ChevronLeft, ChevronRight, Copy, Download, KeyRound, Layers3, Search, Sparkles, Workflow } from "lucide-react";
-import { copyText } from "@/lib/clipboard";
+import { ArrowDown, ArrowRight, Box, ChevronLeft, ChevronRight, Download, KeyRound, Layers3, Search, Sparkles, Workflow } from "lucide-react";
 import { fallbackOssDisplayImage, ossDisplayUrl, restoreOssDisplayImage } from "@/lib/oss-display";
-import { LIBRARY_OUTPUT_LABELS, skillInstallURL, skillLibraryApi } from "@/lib/skill-library-api";
-import { toast } from "@/components/shared/toast";
+import { LIBRARY_OUTPUT_LABELS, skillLibraryApi } from "@/lib/skill-library-api";
 import type { LibraryPage, LibrarySkill } from "@/types/skill-library";
+import { SkillCopyButton } from "./skill-copy-button";
 import styles from "./skill-library.module.css";
 
 export function SkillCover({ skill, detail = false }: { skill: LibrarySkill; detail?: boolean }) {
@@ -24,13 +23,6 @@ export function SkillCover({ skill, detail = false }: { skill: LibrarySkill; det
 }
 
 function SkillCard({ skill }: { skill: LibrarySkill }) {
-  const [copied, setCopied] = useState(false);
-  useEffect(() => { if (!copied) return; const timer = setTimeout(() => setCopied(false), 2000); return () => clearTimeout(timer); }, [copied]);
-  const copy = async () => {
-    const url = skillInstallURL(skill, window.location.origin);
-    if (url && await copyText(url)) { setCopied(true); toast.success("安装链接已复制，可发送给 AI 安装"); }
-    else toast.error("复制失败，请进入详情页复制");
-  };
   return <article className={styles.card}>
     <Link className={styles.cardCoverLink} href={`/skills/${skill.id}`} aria-label={`查看 ${skill.title}`}><SkillCover skill={skill} key={skill.coverUrl} /></Link>
     <div className={styles.cardBody}>
@@ -42,9 +34,7 @@ function SkillCard({ skill }: { skill: LibrarySkill }) {
         <span className={styles.usage}>{skill.useCount.toLocaleString()} 次使用</span>
       </div>
       <div className={styles.cardFoot}>
-        <button className={styles.copyButton} disabled={!skill.installable} title={skill.unavailableReason} onClick={() => void copy()}>
-          {copied ? <Check size={14} /> : <Copy size={14} />}{copied ? "已复制" : skill.installable ? "复制安装链接" : skill.nativePath ? "仅站内可用" : "暂未开放安装"}
-        </button>
+        <SkillCopyButton skill={skill} className={styles.copyButton} />
         <Link className={styles.detailLink} href={`/skills/${skill.id}`}>了解技能<ArrowRight size={15} /></Link>
       </div>
     </div>
@@ -108,6 +98,6 @@ export function SkillLibrary() {
             : <div className={styles.grid}>{data.records.map(skill => <SkillCard skill={skill} key={skill.id} />)}</div>}
       {!loading && !error && data && data.pages > 1 && <nav className={styles.pagination} aria-label="技能分页"><button aria-label="上一页" disabled={page <= 1} onClick={() => setPage(n => n - 1)}><ChevronLeft size={18} /></button><span>{page} / {data.pages}</span><button aria-label="下一页" disabled={page >= data.pages} onClick={() => setPage(n => n + 1)}><ChevronRight size={18} /></button></nav>}
     </section>
-    <section className={styles.bottomNote}><KeyRound size={20} /><div><h2>一把 Key，连接你的主站账号</h2><p>执行技能使用账号积分。密钥由你在本地配置，安装链接中不包含密钥。</p></div><Link href="/account#account-api-key-title">管理 API Key<ArrowRight size={16} /></Link></section>
+    <section className={styles.bottomNote}><KeyRound size={20} /><div><h2>一把 Key，连接你的主站账号</h2><p>登录后复制安装指令会附带当前账号的 API Key，执行技能使用你的账号积分。公开链接与安装包不含密钥。</p></div><Link href="/account#account-api-key-title">管理 API Key<ArrowRight size={16} /></Link></section>
   </div>;
 }

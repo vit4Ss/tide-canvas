@@ -16,6 +16,8 @@ export interface LibrarySkill {
   mcpEnabled: boolean;
   installable: boolean;
   unavailableReason?: string;
+  mcpAvailable?: boolean;
+  mcpUnavailableReason?: string;
   mcpEndpoint?: string;
   installPath?: string;
   downloadPath?: string;

@@ -124,7 +124,7 @@ func TestPublicSkillLinkAndZIPOnlyDistributeValidatedWrapper(t *testing.T) {
 	if err != nil || meta.Name != "flowlight-skill-101" {
 		t.Fatalf("invalid public Skill: %+v %v", meta, err)
 	}
-	for _, required := range []string{"https://flowlight.example/mcp/skills/101", "get_skill_info", "run_skill", "get_skill_run", "respond_skill_run", "FLOWLIGHT_API_KEY", "clientRequestId", "expectedRevision"} {
+	for _, required := range []string{"https://flowlight.example/mcp/skills/101", "get_skill_info", "run_skill", "get_skill_run", "respond_skill_run", "FLOWLIGHT_API_KEY", "clientRequestId", "expectedRevision", "references/connection.json", "metadataUrl", "不要为验证安装而调用 run_skill"} {
 		if !strings.Contains(document, required) {
 			t.Fatalf("wrapper missing %s", required)
 		}
@@ -132,6 +132,11 @@ func TestPublicSkillLinkAndZIPOnlyDistributeValidatedWrapper(t *testing.T) {
 	for _, forbidden := range []string{"private-", "original-private-source", "private-provider-key"} {
 		if strings.Contains(document, forbidden) {
 			t.Fatalf("wrapper exposes source: %s", forbidden)
+		}
+	}
+	for _, required := range []string{"## 自动接入 MCP", "每次使用本 Skill", "codex mcp get flowlight_skill_101 --json", "codex mcp add flowlight_skill_101 --url", "mcp_servers.flowlight_skill_101", "配置存在且地址一致则复用", "显式停用", "自动修复最多一次", "需重新连接或开启新会话", "本次安装指令明确提供的新密钥 > 本技能已有的本地鉴权 > FLOWLIGHT_API_KEY", "已有有效鉴权时保留原配置"} {
+		if !strings.Contains(document, required) {
+			t.Fatalf("public Skill cannot bootstrap its MCP: missing %s", required)
 		}
 	}
 	out = libraryRequest(router, "/api/skill-library/101/download")
@@ -187,16 +192,42 @@ func TestSkillInstallationFailsClosedForDisabledOrInvalidPackages(t *testing.T) 
 	if _, err := mcpconfig.Save(context.Background(), db, settings, 1); err != nil {
 		t.Fatal(err)
 	}
-	if libraryRequest(router, "/api/skill-library/101/download").Code != 409 {
-		t.Fatal("global off ignored")
+	if libraryRequest(router, "/api/skill-library/101/download").Code != 200 {
+		t.Fatal("disabled MCP execution must not block installing an exposed Skill")
 	}
+	assertInstallableWithoutMCP(t, router, "调用暂时关闭")
 	settings.Enabled = true
 	settings.PublicURL = ""
 	if _, err := mcpconfig.Save(context.Background(), db, settings, 2); err != nil {
 		t.Fatal(err)
 	}
-	if libraryRequest(router, "/api/skill-library/101/SKILL.md").Code != 409 {
-		t.Fatal("generated localhost endpoint without a public MCP URL")
+	assertInstallableWithoutMCP(t, router, "地址尚未配置")
+	out := libraryRequest(router, "/api/skill-library/101/SKILL.md")
+	if out.Code != 200 || strings.Contains(out.Body.String(), "localhost") || strings.Contains(out.Body.String(), `url = ""`) || !strings.Contains(out.Body.String(), "metadataUrl") {
+		t.Fatalf("missing configuration generated an unusable or guessed MCP URL: %s", out.Body.String())
+	}
+	if _, err := skillformat.ParseDocument(out.Body.String()); err != nil {
+		t.Fatalf("deferred-connection Skill is not standard: %v", err)
+	}
+}
+
+func assertInstallableWithoutMCP(t *testing.T, router *gin.Engine, reason string) {
+	t.Helper()
+	out := libraryRequest(router, "/api/skill-library/101")
+	var result response.Result[librarySkillVO]
+	if err := json.Unmarshal(out.Body.Bytes(), &result); err != nil || !result.Success || !result.Data.Installable || result.Data.MCPAvailable || result.Data.InstallPath == "" || result.Data.DownloadPath == "" || !strings.Contains(result.Data.MCPUnavailableReason, reason) || result.Data.UnavailableReason != "" {
+		t.Fatalf("installation was confused with execution: %s", out.Body.String())
+	}
+}
+
+func TestMCPConfigurationReadFailureDoesNotHideSkillInstallation(t *testing.T) {
+	db, router := libraryTestServer(t)
+	if err := db.Migrator().DropTable(&model.MCPSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	assertInstallableWithoutMCP(t, router, "配置暂时无法读取")
+	if out := libraryRequest(router, "/api/skill-library/101/SKILL.md"); out.Code != 200 || strings.Contains(out.Body.String(), "private-") {
+		t.Fatalf("unavailable MCP configuration blocked safe public instructions: %s", out.Body.String())
 	}
 }
 

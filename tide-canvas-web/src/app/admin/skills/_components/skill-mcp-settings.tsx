@@ -50,7 +50,7 @@ export function SkillMCPSettings({ enabled, onChange, disabled, skillId, savedEn
       {enabled && (
         <div className="adm-skill-mcp-connection">
           {configState !== "ready" && <small role={configState === "error" ? "alert" : "status"}>
-            {configState === "loading" ? "正在读取 MCP 接入地址…" : configState === "error" ? "暂时无法读取 MCP 配置，请重新打开此窗口重试。" : <>尚未配置对外地址，请先在 <Link href="/admin/mcp">MCP 配置</Link> 中设置；配置后才能从前台获取安装包。</>}
+            {configState === "loading" ? "正在读取 MCP 接入地址…" : configState === "error" ? "暂时无法读取 MCP 配置，请重新打开此窗口重试。" : <>尚未配置对外地址，请在 <Link href="/admin/mcp">MCP 配置</Link> 中设置；用户可先安装 Skill，配置完成后连接使用。</>}
           </small>}
           {endpoint ? <>
             <input aria-label="技能 MCP 地址" readOnly value={endpoint} onFocus={(event) => event.target.select()} />
