@@ -18,10 +18,16 @@
 .eyebrow { color: var(--tech); font: 11px var(--mono); letter-spacing: .1em; }
 .address { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; border: 1px solid var(--border-strong); border-radius: 10px; padding: 20px; margin: 28px 0; background: var(--surface); }
 .address span { font: 10px var(--mono); color: var(--text-faint); }
-.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; list-style: none; padding: 0; margin: 28px 0; }
-.steps li { display: flex; align-items: flex-start; gap: 12px; }
-.steps b { font: 14px var(--mono); color: var(--text-faint); border-bottom: 1px solid var(--tech); padding-bottom: 8px; }
-.steps span { font-size: 14px; }.steps small { display: block; font-size: 12px; color: var(--text-faint); margin-top: 6px; }
+.routes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 28px 0; }
+.route { display: flex; flex-direction: column; gap: 12px; padding: 20px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); min-width: 0; }
+.route > span { font: 11px var(--mono); letter-spacing: .08em; color: var(--tech); }
+.route h3 { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.5; }
+.route dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 16px; margin: 4px 0 0; font-size: 13px; line-height: 1.7; }
+.route dt { color: var(--text-faint); }
+.route dd { margin: 0; color: var(--text-dim); min-width: 0; }
+.route dd code { color: var(--text); }
+.route > a { display: inline-flex; align-items: center; gap: 4px; margin-top: auto; padding-top: 8px; font-size: 13px; color: var(--text); text-decoration: none; }
+.route > a:hover { color: var(--tech); }
 .note { border-left: 2px solid var(--border-strong); padding-left: 16px; }
 .code { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); margin: 20px 0; overflow: hidden; }
 .code > div { display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border); color: var(--text-faint); font-size: 12px; }
@@ -39,4 +45,4 @@
 .table td, .table th { padding: 12px 16px; border-bottom: 1px solid var(--border); }.table td { color: var(--text-dim); vertical-align: top; }.table td:first-child { color: var(--text); font-family: var(--mono); white-space: nowrap; }.table tr:last-child td { border-bottom: 0; }
 .page a:focus-visible, .page button:focus-visible, .page select:focus-visible, .page summary:focus-visible { outline: 2px solid var(--tech); outline-offset: 3px; }
 @media(max-width: 1000px) { .layout { gap: 24px; grid-template-columns: 150px minmax(0,1fr); padding: 32px 24px 64px; }.top { padding: 16px 24px; }.top b { display: none; } }
-@media(max-width: 700px) { .layout { display: block; padding: 24px 16px; }.toc { position: static; flex-direction: row; overflow: auto; margin-bottom: 32px; }.toc > span, .toc small, .toc > a:last-child { display: none; }.toc a { white-space: nowrap; border-left: 0; padding: 8px; }.top { padding: 16px; }.steps { grid-template-columns: 1fr; gap: 16px; }.picker { grid-template-columns: 1fr; }.article h1 { font-size: 28px; }.code pre { padding: 16px; } }
+@media(max-width: 700px) { .layout { display: block; padding: 24px 16px; }.toc { position: static; flex-direction: row; overflow: auto; margin-bottom: 32px; }.toc > span, .toc small, .toc > a:last-child { display: none; }.toc a { white-space: nowrap; border-left: 0; padding: 8px; }.top { padding: 16px; }.routes { grid-template-columns: 1fr; }.route dl { grid-template-columns: 1fr; gap: 2px; }.route dt { margin-top: 8px; }.picker { grid-template-columns: 1fr; }.article h1 { font-size: 28px; }.code pre { padding: 16px; } }

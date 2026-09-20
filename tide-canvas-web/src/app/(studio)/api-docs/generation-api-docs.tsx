@@ -11,7 +11,7 @@ import styles from "./page.module.css";
 const noopSubscribe = () => () => {};
 const originSnapshot = () => window.location.origin;
 const serverOrigin = () => "https://你的主站域名";
-const sections = [["start", "接入概览"], ["models", "模型与参数"], ["generate", "提交生成"], ["tasks", "进度与结果"], ["files", "上传与下载"], ["mcp", "MCP 接入"], ["chat", "对话接口与 Codex"], ["billing", "计费与重试"], ["errors", "错误处理"]];
+const sections = [["start", "接入概览"], ["models", "模型与参数"], ["generate", "提交生成"], ["tasks", "进度与结果"], ["files", "上传与下载"], ["mcp", "MCP 接入"], ["chat", "对话接口与智能体接入"], ["billing", "计费与重试"], ["errors", "错误处理"]];
 const examples: Record<string, { label: string; type: string; input: Record<string, unknown> }> = {
   text_to_image: { label: "文生图", type: "image", input: { prompt: "一座漂浮在云海中的未来城市", ratio: "1:1", batchCount: 1 } },
   image_to_image: { label: "图生图", type: "image", input: { prompt: "保留构图，将天空改为日落", imageUrls: ["上传返回的 fileUrl"], batchCount: 1 } },
@@ -83,10 +83,32 @@ export default function GenerationAPIDocs() {
       <article className={styles.article}>
         <section id="start" className={styles.intro}>
           <div className={styles.eyebrow}>FLOWINGLIGHT / 开放接口</div><h1>把创作能力，接进你的应用。</h1>
-          <p>使用账号现有 API Key 调用图片、视频、音频和 3D 生成，沿用主站模型与积分规则，结果同步到创作台。文本模型通过下方的对话接口调用，按 Token 计费。</p>
-          <div className={styles.address}><span>BASE URL</span><code>{base}</code></div>
-          <ol className={styles.steps}><li><b>01</b><span>获取密钥<small>个人中心 → 默认 API Key</small></span></li><li><b>02</b><span>选择模型<small>读取实际可用的生成模型</small></span></li><li><b>03</b><span>提交与查询<small>返回任务 ID，轮询获取结果</small></span></li></ol>
-          <p className={styles.note}>这是主站的异步生成 API，只覆盖图片、视频、音频和 3D。通过 API 调用文本模型一律走下方的<a href="#chat">对话接口</a>，按 Token 计费；站内创作台的文本能力仍按次计费，两套模型列表与价格互不相干。文档不发起付费测试。</p>
+          <p>一把 API Key，两个入口。先确定要做的事，再填对应的地址：两个入口的路径不同，填错会直接得到 404。</p>
+          <div className={styles.routes}>
+            <div className={styles.route}>
+              <span>接入智能体 · 对话</span>
+              <h3>Codex、Cursor、Cherry Studio 等 OpenAI 兼容客户端</h3>
+              <dl>
+                <dt>Base URL</dt><dd><code>{chatBase}</code></dd>
+                <dt>API Key</dt><dd>个人中心的默认 API Key</dd>
+                <dt>模型</dt><dd><code>flowinglight/模型名</code>，从该入口的 <code>GET /models</code> 里选</dd>
+                <dt>协议 · 计费</dt><dd>OpenAI Responses 或 Chat Completions · 按 Token</dd>
+              </dl>
+              <a href="#chat">查看 Codex 配置与请求示例<ArrowUpRight size={13} /></a>
+            </div>
+            <div className={styles.route}>
+              <span>调用生成 API · 图片 / 视频 / 音频 / 3D</span>
+              <h3>自己的服务端代码直接提交生成任务</h3>
+              <dl>
+                <dt>Base URL</dt><dd><code>{base}</code></dd>
+                <dt>API Key</dt><dd>同一把默认 API Key</dd>
+                <dt>流程</dt><dd><code>POST /generations</code> 返回任务 ID，再轮询 <code>GET /tasks/:id</code></dd>
+                <dt>计费</dt><dd>按次，沿用主站模型价格；失败自动退款</dd>
+              </dl>
+              <a href="#generate">查看提交与轮询示例<ArrowUpRight size={13} /></a>
+            </div>
+          </div>
+          <p className={styles.note}>最常见的错误是把生成 API 的地址填进聊天客户端：请求会落到 <code>/api/open/v1/chat/completions</code>，返回 404 <code>route not found</code>。聊天客户端只认对话入口；生成接口也不受理文本模型，收到 <code>assistant_chat</code> 等文本能力会返回业务码 2003 并指回对话入口。两个入口的模型列表与价格是两套；文档不发起付费测试。</p>
           <Code label="鉴权 · Bash / macOS / Linux">{'export FLOWLIGHT_API_KEY="你的账号 API Key"\n# 每次请求携带 Authorization: Bearer $FLOWLIGHT_API_KEY'}</Code>
           <p>密钥只放在自己的服务端。停用或重置后，旧 Key 将无法提交或查询任务。只允许访问当前账号的数据；API Key 不具备管理员权限。</p>
         </section>
@@ -100,7 +122,7 @@ export default function GenerationAPIDocs() {
           {selectedHandler && <details><summary>查看当前能力的输入 Schema</summary><Code label="inputSchema">{JSON.stringify(selectedHandler.inputSchema, null, 2)}</Code></details>}
           <Endpoint method="GET" path="/tools" /><p>读取已开放工具的 handler、key、extraParams。调用工具时，将 key 放入 <code>input.toolKey</code>，并按工具要求提供参考素材。局部重绘还需原图和蒙版，普通参考图不能替代蒙版。</p>
         </section>
-        <section id="generate"><h2>提交生成</h2><Endpoint method="POST" path="/generations" /><p>异步接口：提交成功只表示任务已受理。最终状态通过任务查询获取。</p><Code key={handler + selected?.modelId}>{create}</Code>
+        <section id="generate"><h2>提交生成</h2><div className={styles.address}><span>BASE URL · 生成 API</span><code>{base}</code></div><Endpoint method="POST" path="/generations" /><p>异步接口：提交成功只表示任务已受理。最终状态通过任务查询获取。</p><Code key={handler + selected?.modelId}>{create}</Code>
           <div className={styles.table}><table><thead><tr><th>字段</th><th>要求</th><th>含义</th></tr></thead><tbody>
             <tr><td>handler</td><td>必填 · string</td><td>生成能力，例如 text_to_image</td></tr><tr><td>modelId</td><td>必填 · string</td><td>模型列表中的 modelId；避免使用展示名称</td></tr><tr><td>clientRequestId</td><td>必填，或使用请求头</td><td>1–80 位字母、数字、点、下划线、冒号或连字符，首位字母或数字。新任务换新编号，重试保持不变</td></tr><tr><td>input</td><td>必填 · object</td><td>prompt、batchCount、ratio、resolution、quality、duration、imageUrls 等，按能力与模型配置传入</td></tr>
           </tbody></table></div>
@@ -128,9 +150,10 @@ export default function GenerationAPIDocs() {
           <Code label="工具调用示例 · 图片">{JSON.stringify({ name: "generate_image", arguments: { modelId: "从 list_models 选择真实模型", clientRequestId: "image-job-001", prompt: "云海中的未来城市", parameters: { resolution: "4k", quality: "high", batchCount: 1 } } }, null, 2)}</Code>
           <p>工具先返回 task.id 和 statusText。processing 表示生成中，每 5–10 秒通过 get_generation_task 查询；succeeded 后读取结果 URL。重试沿用原编号和参数。不同客户端的配置入口不同，请选择 Streamable HTTP 和手动 Bearer Key；本服务也支持 stdio 模式。</p>
         </section>
-        <section id="chat"><h2>对话接口与 Codex</h2>
+        <section id="chat"><h2>对话接口与智能体接入</h2>
           <p>用同一把 API Key 直接调用后台「AI 聊天供应商」里开放的对话模型。接口兼容 OpenAI 协议，按实际 Token 用量从账号积分结算。通过 API 使用文本模型只有这一条路：生成接口的模型列表里 type 为 text 的就是这些模型，价格与上面的生成模型是两套。</p>
-          <div className={styles.address}><span>BASE URL</span><code>{chatBase}</code></div>
+          <div className={styles.address}><span>BASE URL · 填进智能体客户端</span><code>{chatBase}</code></div>
+          <p>任何 OpenAI 兼容客户端都按同一套填法：Base URL 填上面的地址，API Key 填默认 API Key，模型填 <code>GET /models</code> 返回的 <code>id</code>。支持选择协议的客户端优先选 Responses，否则选 Chat Completions；不要在地址后再拼 <code>/chat/completions</code>，客户端会自己补路径。</p>
           <Endpoint method="GET" path="/models" /><p>返回可调用的对话模型。<code>id</code> 形如 <code>flowinglight/模型名</code>，调用时用它或去掉前缀的模型名都可以；<code>token_pricing</code> 是每百万 Token 的积分单价。</p>
           <Code>{`curl ${shellQuote(`${chatBase}/models`)} ${auth}`}</Code>
           <Endpoint method="POST" path="/responses" /><p>OpenAI Responses 协议，Codex 用的就是它。网关把请求转成供应商的 Chat Completions 调用，再把流式结果转回 Responses 事件。<code>previous_response_id</code> 不受支持：网关不保存对话，请像 Codex 一样把完整历史放进 <code>input</code>。</p>
