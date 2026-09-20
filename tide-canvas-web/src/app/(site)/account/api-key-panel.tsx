@@ -2,12 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Copy, Eye, EyeOff, KeyRound, Loader2, RefreshCw } from "lucide-react";
+import { Copy, KeyRound, Loader2 } from "lucide-react";
 import { userApiKeyApi, type UserApiKey } from "@/lib/user-api-key";
 import { toast } from "@/components/shared/toast";
-import { confirmDialog } from "@/components/shared/confirm";
 import "./api-key-panel.css";
 
+// The account page is the one place a user reads their own key, so it is shown
+// in full as soon as it loads. Every network reply is checked against the
+// session and mount that requested it, so a late reveal from a previous login
+// can never be displayed or copied under another account.
 export function ApiKeyPanel({ accountId }: { accountId: string }) {
   const [keyInfo, setKeyInfo] = useState<UserApiKey | null>(null);
   const [secret, setSecret] = useState("");
@@ -15,96 +18,72 @@ export function ApiKeyPanel({ accountId }: { accountId: string }) {
   const [busy, setBusy] = useState(false);
   const locked = useRef(false);
   const alive = useRef(false);
-  const secretRequest = useRef(0);
   const sessionVersion = useRef(0);
 
+  const load = async (version: number) => {
+    const meta = await userApiKeyApi.get(accountId);
+    if (!alive.current || version !== sessionVersion.current) return;
+    if (!meta.success || !meta.data) { setKeyInfo(null); setError(meta.message || "密钥加载失败，请重试"); return; }
+    setKeyInfo(meta.data);
+    setError("");
+    const revealed = await userApiKeyApi.reveal(accountId, meta.data.revision);
+    if (!alive.current || version !== sessionVersion.current) return;
+    if (revealed.success && revealed.data) setSecret(revealed.data.key);
+    else { setSecret(""); setError(revealed.message || "读取密钥失败，请重试"); }
+  };
+
   useEffect(() => {
-    let cancelled = false;
     alive.current = true;
-    const requestVersion = sessionVersion.current;
-    userApiKeyApi.get(accountId).then((res) => {
-      if (cancelled) return;
-      if (requestVersion !== sessionVersion.current) return;
-      if (res.success && res.data) setKeyInfo(res.data);
-      else setError(res.message || "密钥加载失败，请重试");
-    });
-    const invalidateReveal = () => { secretRequest.current++; };
-    const hide = () => { if (document.hidden) { invalidateReveal(); setSecret(""); } };
+    void load(sessionVersion.current);
     const sessionChanged = (event: StorageEvent) => {
       if (event.key === null || event.key === "access_token" || event.key === "refresh_token") {
         sessionVersion.current++;
-        invalidateReveal();
         setSecret("");
         setKeyInfo(null);
         setError("登录状态已变化，请刷新页面");
       }
     };
-    document.addEventListener("visibilitychange", hide);
     window.addEventListener("storage", sessionChanged);
     return () => {
-      cancelled = true; alive.current = false; invalidateReveal();
-      document.removeEventListener("visibilitychange", hide);
+      alive.current = false;
       window.removeEventListener("storage", sessionChanged);
     };
+    // load reads accountId from the closure; the effect re-runs when it changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId]);
 
-  useEffect(() => {
-    if (!secret) return;
-    const timer = window.setTimeout(() => setSecret(""), 60_000);
-    return () => window.clearTimeout(timer);
-  }, [secret]);
-
-  const reload = async () => {
-    const version = sessionVersion.current;
-    const res = await userApiKeyApi.get(accountId);
-    if (!alive.current || version !== sessionVersion.current) return;
-    setSecret("");
-    setKeyInfo(res.success && res.data ? res.data : null);
-    setError(res.success ? "" : res.message || "密钥加载失败，请重试");
-  };
-
-  const act = async (action: "show" | "copy" | "rotate" | "toggle" | "reload") => {
-    if (locked.current || (!keyInfo && action !== "reload")) return;
+  const act = async (action: "copy" | "reload" | "enable") => {
+    if (locked.current) return;
     locked.current = true;
     const version = sessionVersion.current;
     setBusy(true);
     try {
-      if (action === "reload") { await reload(); return; }
-      if (!keyInfo) return;
-      if (action === "rotate") {
-        const confirmed = await confirmDialog({
-          title: "重置默认 API Key",
-          message: "重置后旧 Key 将立即失效，已接入的应用需要更新密钥。",
-          confirmText: "确认重置",
-          danger: true,
-        });
-        if (!confirmed || !alive.current || version !== sessionVersion.current) return;
-      }
-      if (action === "show" || action === "copy") {
-        const requestVersion = secretRequest.current;
-        const res = await userApiKeyApi.reveal(accountId, keyInfo.revision);
-        if (!alive.current || requestVersion !== secretRequest.current) return;
-        if (!res.success || !res.data) { setSecret(""); toast.error(res.message || "读取密钥失败"); await reload(); return; }
-        if (action === "show") {
-          // A reveal request can finish after the tab has been hidden.
-          if (!document.hidden) setSecret(res.data.key);
-        }
-        else {
-          await navigator.clipboard.writeText(res.data.key);
-          if (alive.current) toast.success("API Key 已复制");
-        }
+      if (action === "reload") { await load(version); return; }
+      if (action === "enable") {
+        // Users can no longer disable a key here, but one disabled before that
+        // control was removed must still have a way back, and administrators
+        // have no endpoint for it.
+        if (!keyInfo) return;
+        const res = await userApiKeyApi.setEnabled(accountId, keyInfo.revision, true);
+        if (!alive.current || version !== sessionVersion.current) return;
+        if (!res.success || !res.data) { toast.error(res.message || "操作失败"); await load(version); return; }
+        setKeyInfo(res.data);
+        toast.success("密钥已启用");
         return;
       }
-      setSecret("");
-      const res = action === "rotate"
-        ? await userApiKeyApi.rotate(accountId, keyInfo.revision)
-        : await userApiKeyApi.setEnabled(accountId, keyInfo.revision, !keyInfo.enabled);
-      if (!alive.current || version !== sessionVersion.current) return;
-      if (!res.success || !res.data) { toast.error(res.message || "操作失败"); await reload(); return; }
-      setKeyInfo(res.data);
-      toast.success(action === "rotate" ? "密钥已重置，旧 Key 已失效" : res.data.enabled ? "密钥已启用" : "密钥已停用");
+      let key = secret;
+      if (!key && keyInfo) {
+        const res = await userApiKeyApi.reveal(accountId, keyInfo.revision);
+        if (!alive.current || version !== sessionVersion.current) return;
+        if (!res.success || !res.data) { toast.error(res.message || "读取密钥失败"); return; }
+        key = res.data.key;
+        setSecret(key);
+      }
+      if (!key) return;
+      await navigator.clipboard.writeText(key);
+      if (alive.current && version === sessionVersion.current) toast.success("API Key 已复制");
     } catch {
-      if (alive.current) toast.error(action === "copy" ? "复制失败，请显示密钥后手动复制" : "操作失败，请稍后重试");
+      if (alive.current) toast.error(action === "copy" ? "复制失败，请手动选中密钥复制" : "操作失败，请稍后重试");
     } finally {
       locked.current = false;
       if (alive.current) setBusy(false);
@@ -126,17 +105,18 @@ export function ApiKeyPanel({ accountId }: { accountId: string }) {
       ) : (
         <>
           <div className="acc-key-value">
-            <input aria-label={secret ? "完整 API Key" : "已隐藏的 API Key"} readOnly value={secret || keyInfo.hint} autoComplete="off" spellCheck={false} onFocus={(event) => secret && event.currentTarget.select()} />
-            <button type="button" disabled={busy} aria-label={secret ? "隐藏 API Key" : "显示 API Key"} onClick={() => secret ? setSecret("") : act("show")}>{secret ? <EyeOff size={17} /> : <Eye size={17} />}</button>
-            <button type="button" disabled={busy} aria-label="复制 API Key" onClick={() => act("copy")}><Copy size={16} /><span>复制</span></button>
+            <input aria-label="API Key" readOnly value={secret || keyInfo.hint} autoComplete="off" spellCheck={false} onFocus={(event) => secret && event.currentTarget.select()} />
+            <button type="button" disabled={busy || !secret} aria-label="复制 API Key" onClick={() => act("copy")}><Copy size={16} /><span>复制</span></button>
           </div>
           <div className="acc-key-footer">
-            <span>{secret ? "完整密钥将在 60 秒后自动隐藏" : "密钥已隐藏，只有你可以查看完整内容"}</span>
+            {error
+              ? <span role="status">{error} <button type="button" className="acc-key-retry" disabled={busy} onClick={() => act("reload")}>重试</button></span>
+              : !keyInfo.enabled
+                ? <span role="status">密钥已停用，接入的应用暂时无法调用 <button type="button" className="acc-key-retry" disabled={busy} onClick={() => act("enable")}>启用</button></span>
+                : <span>{secret ? "只有你能看到这把密钥，请勿分享给他人" : "正在读取密钥…"}</span>}
             <div>
-              <Link className="pf-btn sec" href="/api-docs#chat">接入 Codex</Link>
+              <Link className="pf-btn sec" href="/api-docs#chat">接入智能体</Link>
               <Link className="pf-btn sec" href="/api-docs">API 文档</Link>
-              <button type="button" className="pf-btn sec" disabled={busy} onClick={() => act("toggle")}>{keyInfo.enabled ? "停用" : "启用"}</button>
-              <button type="button" className="pf-btn sec" disabled={busy} onClick={() => act("rotate")}><RefreshCw size={13} aria-hidden />重置密钥</button>
             </div>
           </div>
         </>

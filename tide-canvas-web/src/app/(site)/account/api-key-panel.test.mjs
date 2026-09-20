@@ -6,27 +6,26 @@ import ts from "typescript";
 
 // Execute the component's actual asynchronous logic with controlled network
 // replies and lifecycle events; no request touches a real credential.
-const source = readFileSync(new URL("./api-key-panel.tsx", import.meta.url), "utf8");
-const body = source.slice(source.indexOf("export function ApiKeyPanel"), source.indexOf("  return (\n    <section")).replace("export function", "function");
-const code = ts.transpileModule(`${body}\n globalThis.panel = { act, reload };\n}`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+const source = readFileSync(new URL("./api-key-panel.tsx", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const start = source.indexOf("export function ApiKeyPanel");
+const end = source.indexOf("  return (\n    <section");
+assert.ok(start > 0 && end > start, "component layout changed; update the test slice");
+const body = source.slice(start, end).replace("export function", "function");
+const code = ts.transpileModule(`${body}\n globalThis.panel = { act };\n}`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const info = { hint: "masked-key", revision: 1, enabled: true };
 
 function setup() {
-  const hooks = [], scheduled = [], listeners = new Map(), timers = new Map();
-  const metadata = [], reveals = [], copies = [], requests = [];
-  let cursor = 0, timerId = 0;
+  const hooks = [], scheduled = [], listeners = new Map();
+  const metadata = [], reveals = [], copies = [], requests = [], toasts = [];
+  let cursor = 0;
   const context = vm.createContext({
     userApiKeyApi: {
       get: account => { requests.push(["get", account]); return new Promise(resolve => metadata.push(resolve)); },
       reveal: (account, revision) => { requests.push(["reveal", account, revision]); return new Promise(resolve => reveals.push(resolve)); },
     },
-    toast: { success() {}, error() {} }, confirmDialog: async () => false,
+    toast: { success: message => toasts.push(["success", message]), error: message => toasts.push(["error", message]) },
     navigator: { clipboard: { writeText: async value => copies.push(value) } },
-    document: { hidden: false, addEventListener: (name, cb) => listeners.set(name, cb), removeEventListener: name => listeners.delete(name) },
-    window: {
-      addEventListener: (name, cb) => listeners.set(name, cb), removeEventListener: name => listeners.delete(name),
-      setTimeout: (cb, delay) => { timers.set(++timerId, {cb, delay}); return timerId; }, clearTimeout: id => timers.delete(id),
-    },
+    window: { addEventListener: (name, cb) => listeners.set(name, cb), removeEventListener: name => listeners.delete(name) },
     useState: initial => {
       const index = cursor++;
       hooks[index] ??= {value: initial};
@@ -42,57 +41,83 @@ function setup() {
   });
   vm.runInContext(code, context);
   const render = () => { cursor = 0; vm.runInContext("ApiKeyPanel({accountId: 'owner-a'})", context); while (scheduled.length) scheduled.shift()(); };
-  const ready = async () => { metadata.shift()({success: true, data: info}); await Promise.resolve(); render(); };
-  const visibility = hidden => { context.document.hidden = hidden; listeners.get("visibilitychange")?.(); };
+  const flush = async () => { for (let i = 0; i < 4; i++) await Promise.resolve(); };
+  const keyInfo = () => hooks[0].value, secret = () => hooks[1].value, error = () => hooks[2].value;
   render();
-  return {context, hooks, metadata, reveals, copies, requests, timers, listeners, render, ready, visibility,
+  return {context, metadata, reveals, copies, requests, toasts, listeners, render, flush, keyInfo, secret, error,
     unmount: () => { for (const hook of hooks) hook.cleanup?.(); }};
 }
 
-test("hiding during initial metadata loading does not leave the panel stuck", async () => {
+test("the full key loads by itself and copy reuses it without another reveal", async () => {
   const h = setup();
-  h.visibility(true);
-  await h.ready();
-  assert.equal(h.hooks[0].value.hint, "masked-key");
-  assert.equal(h.hooks[1].value, "");
-});
-
-test("a delayed reveal cannot reappear after hiding and returning to the tab", async () => {
-  const h = setup(); await h.ready();
-  const action = h.context.panel.act("show");
-  h.visibility(true); h.visibility(false);
-  h.reveals.shift()({success: true, data: {key: "test-secret", revision: 1}});
-  await action;
-  assert.equal(h.hooks[1].value, "");
+  assert.deepEqual(h.requests, [["get", "owner-a"]]);
+  h.metadata.shift()({success: true, data: info}); await h.flush();
   assert.deepEqual(h.requests.at(-1), ["reveal", "owner-a", 1]);
+  assert.equal(h.secret(), "");
+  h.reveals.shift()({success: true, data: {key: "tc_sk_full", revision: 1}}); await h.flush(); h.render();
+  assert.equal(h.keyInfo().hint, "masked-key");
+  assert.equal(h.secret(), "tc_sk_full");
+  await h.context.panel.act("copy");
+  assert.deepEqual(h.copies, ["tc_sk_full"]);
+  assert.equal(h.requests.length, 2, "copying an already loaded key must not ask the server again");
+  assert.deepEqual(h.toasts.at(-1), ["success", "API Key 已复制"]);
 });
 
-test("session changes discard in-flight copies and clear existing key metadata", async () => {
-  const h = setup(); await h.ready();
-  const action = h.context.panel.act("copy");
+test("a reveal failure keeps the masked hint, reports the error and can be retried", async () => {
+  const h = setup();
+  h.metadata.shift()({success: true, data: info}); await h.flush();
+  h.reveals.shift()({success: false, message: "读取失败"}); await h.flush(); h.render();
+  assert.equal(h.secret(), "");
+  assert.equal(h.error(), "读取失败");
+  assert.equal(h.keyInfo().hint, "masked-key");
+  const retry = h.context.panel.act("reload");
+  h.metadata.shift()({success: true, data: info}); await h.flush();
+  h.reveals.shift()({success: true, data: {key: "tc_sk_full", revision: 1}}); await retry; h.render();
+  assert.equal(h.secret(), "tc_sk_full");
+  assert.equal(h.error(), "");
+});
+
+test("session changes discard in-flight replies and clear the displayed key", async () => {
+  const h = setup();
+  h.metadata.shift()({success: true, data: info}); await h.flush();
   h.listeners.get("storage")({key: "access_token"});
-  h.reveals.shift()({success: true, data: {key: "old-account-secret", revision: 1}});
-  await action;
-  assert.equal(h.hooks[0].value, null);
-  assert.equal(h.hooks[1].value, "");
+  h.reveals.shift()({success: true, data: {key: "old-account-secret", revision: 1}}); await h.flush(); h.render();
+  assert.equal(h.keyInfo(), null);
+  assert.equal(h.secret(), "");
   assert.equal(h.copies.length, 0);
+  assert.match(h.error(), /登录状态已变化/);
 });
 
-test("unmounted panels discard late secrets and visible secrets auto-hide", async () => {
-  const gone = setup(); await gone.ready();
-  const pending = gone.context.panel.act("show"); gone.unmount();
-  gone.reveals.shift()({success: true, data: {key: "late-secret", revision: 1}});
-  await pending;
-  assert.equal(gone.hooks[1].value, "");
+test("unmounted panels discard late secrets", async () => {
+  const h = setup();
+  h.metadata.shift()({success: true, data: info}); await h.flush();
+  h.unmount();
+  h.reveals.shift()({success: true, data: {key: "late-secret", revision: 1}}); await h.flush();
+  assert.equal(h.secret(), "");
+});
 
-  const live = setup(); await live.ready();
-  const action = live.context.panel.act("show");
-  live.reveals.shift()({success: true, data: {key: "visible-secret", revision: 1}});
-  await action; live.render();
-  assert.equal(live.hooks[1].value, "visible-secret");
-  const timer = Array.from(live.timers.values())[0];
-  assert.equal(timer.delay, 60000); timer.cb();
-  assert.equal(live.hooks[1].value, "");
+test("re-enabling a legacy disabled key updates the badge without touching the secret", async () => {
+  const h = setup();
+  h.metadata.shift()({success: true, data: {...info, enabled: false}}); await h.flush();
+  h.reveals.shift()({success: true, data: {key: "tc_sk_full", revision: 1}}); await h.flush(); h.render();
+  assert.equal(h.keyInfo().enabled, false);
+  h.context.userApiKeyApi.setEnabled = async (account, revision, enabled) => { h.requests.push(["setEnabled", account, revision, enabled]); return {success: true, data: {...info, enabled: true}}; };
+  await h.context.panel.act("enable");
+  assert.deepEqual(h.requests.at(-1), ["setEnabled", "owner-a", 1, true]);
+  assert.equal(h.keyInfo().enabled, true);
+  assert.equal(h.secret(), "tc_sk_full");
+  assert.deepEqual(h.toasts.at(-1), ["success", "密钥已启用"]);
+});
+
+test("the panel offers no reveal toggle, disable or rotate controls", () => {
+  const markup = source.slice(end);
+  assert.doesNotMatch(markup, /EyeOff|<Eye |显示 API Key|隐藏 API Key/);
+  assert.doesNotMatch(markup, />停用<|重置密钥|act\("rotate"\)|act\("toggle"\)/);
+  // The only remaining status control re-enables a key disabled before the
+  // toggle was removed; it must never render for an enabled key.
+  assert.match(markup, /!keyInfo\.enabled\s*\?[^\n]*act\("enable"\)/);
+  assert.match(markup, /接入智能体/);
+  assert.doesNotMatch(source, /Codex/);
 });
 
 test("every key-management request retains the expected account across auth retries", async () => {

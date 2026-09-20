@@ -19,3 +19,4 @@
   .acc-page .acc-key-footer { align-items: flex-start; flex-direction: column; }
   .acc-page .acc-key-value button span { display: none; }
 }
+.acc-page .acc-key-retry { padding: 0; margin-left: 4px; color: var(--accent); background: transparent; border: 0; cursor: pointer; font-size: inherit; }
