@@ -49,7 +49,7 @@ function importInputPresets(kind: SkillKind, output: SkillOutputType) {
   if (kind === "tool" && output === "text") {
     return SKILL_INPUT_PRESETS.filter((preset) => TOOL_TEXT_INPUT_PRESETS.has(preset.key));
   }
-  return SKILL_INPUT_PRESETS;
+  return kind === "agent" ? SKILL_INPUT_PRESETS : SKILL_INPUT_PRESETS.filter((preset) => preset.key !== "text_image");
 }
 
 function fallbackImportInputPreset(kind: SkillKind, output: SkillOutputType): SkillInputPreset {
@@ -70,6 +70,7 @@ interface PreparedPackage {
   files: AdminSkillFileInput[];
   ignoredFiles?: number;
   manifestText?: string;
+  outputTypes?: SkillOutputType[];
 }
 
 const IMPORT_GUIDANCE_FIELDS = [
@@ -87,6 +88,15 @@ function failedImportValidation(title: string, message: string): AdminSkillImpor
 
 function packagePrimaryContent(pkg: PreparedPackage): string {
   return pkg.files.find((file) => file.path.toLowerCase() === pkg.primaryFilePath.toLowerCase())?.content ?? "";
+}
+
+function packageSourceForAI(pkg: PreparedPackage): string {
+  const primary = packagePrimaryContent(pkg);
+  const references = pkg.files
+    .filter((file) => file.path.toLowerCase() !== pkg.primaryFilePath.toLowerCase())
+    .map((file) => `\n\n<skill_reference path=${JSON.stringify(file.path)}>\n${file.content}\n</skill_reference>`)
+    .join("");
+  return `${primary}${references}`;
 }
 
 function importManifestSignature(
@@ -310,7 +320,7 @@ export function SkillImportModal({
   };
 
   const clearManifestDrafts = () => {
-    setPackages((current) => current.map((pkg) => ({ ...pkg, manifestText: undefined })));
+    setPackages((current) => current.map((pkg) => ({ ...pkg, manifestText: undefined, outputTypes: undefined })));
     setValidation(null);
   };
 
@@ -321,13 +331,29 @@ export function SkillImportModal({
     return packages.filter((pkg) => !pkg.manifestText?.trim()).map((pkg) => ({
       key: pkg.key,
       title: pkg.title,
-      source: packagePrimaryContent(pkg),
+      source: packageSourceForAI(pkg),
       kind,
       primaryOutputType,
-      outputTypes: defaultAdminSkillOutputTypes(kind, primaryOutputType),
+      outputTypes: pkg.outputTypes ?? defaultAdminSkillOutputTypes(kind, primaryOutputType),
       inputSchema,
       signature: importManifestSignature(pkg, kind, inputPreset, primaryOutputType),
     }));
+  };
+
+  const loadAutoConfigurationRequests = async (): Promise<SkillManifestDraftRequest[]> => {
+    if (validationPendingRef.current || reading || fileError) throw new Error("请先选择并通过 Skill 文件格式校验");
+    if (packages.length !== 1) throw new Error("AI 智能导入一次处理一个 Skill；多 Skill 包请拆分导入或使用下方手动策略");
+    const pkg = packages[0];
+    return [{
+      key: pkg.key,
+      title: pkg.title,
+      source: packageSourceForAI(pkg),
+      kind: "agent",
+      primaryOutputType: "text",
+      outputTypes: ["text"],
+      inputSchema: skillInputSchemaFor("text") as Record<string, unknown>,
+      signature: JSON.stringify({ key: pkg.key, primaryFilePath: pkg.primaryFilePath, source: packageSourceForAI(pkg) }),
+    }];
   };
 
   const buildImportPackages = (): AdminSkillImportPackage[] => {
@@ -352,7 +378,7 @@ export function SkillImportModal({
       kind,
       entryPoints: normalizedEntryPoints,
       primaryOutputType,
-      outputTypes: defaultAdminSkillOutputTypes(kind, primaryOutputType),
+      outputTypes: pkg.outputTypes ?? defaultAdminSkillOutputTypes(kind, primaryOutputType),
       inputSchema,
       manifest: manifestForImport(pkg, kind, primaryOutputType),
       defaultParams: {},
@@ -432,7 +458,7 @@ export function SkillImportModal({
       open={open}
       size="lg"
       title="导入 Skill 文件"
-      subtitle="选择输入 Schema 和主输出后，由文本模型生成可确认的 Manifest 草稿。"
+      subtitle="AI 可根据 SKILL.md 自动生成说明、Schema、执行策略和 Manifest；所有结果都可在导入前审核。"
       saveLabel="校验并导入"
       footNote="AI 不会改写 SKILL.md 或填写模型 ID；最终仍需通过服务端完整预检。"
       closeable={!manifestBusy}
@@ -561,6 +587,40 @@ export function SkillImportModal({
             </AdminAlert>
           </div>
         ) : null}
+        <SkillManifestAiControl
+          key={`auto:${packages.map((pkg) => pkg.key).join("|")}`}
+          autoConfigure
+          disabled={reading || submitting || manifestBusy || packages.length !== 1}
+          loadRequests={loadAutoConfigurationRequests}
+          onBusyChange={setManifestBusy}
+          onGenerated={(results) => {
+            const result = results[0];
+            const config = result?.autoConfiguration;
+            if (!result || !config || result.key !== packages[0]?.key) return;
+            setKind(config.kind);
+            setInputPreset(config.inputPreset);
+            setPrimaryOutputType(config.primaryOutputType);
+            setCategory(config.category);
+            setEntryPoints(defaultAdminSkillEntryPoints(config.kind));
+            setPackages((current) => current.map((pkg) => pkg.key !== result.key ? pkg : {
+              ...pkg,
+              title: config.title,
+              description: config.description,
+              usageScenario: config.usageScenario,
+              howTo: config.howTo,
+              inputDescription: config.inputDescription,
+              outputDescription: config.outputDescription,
+              inputExample: config.inputExample,
+              outputExample: config.outputExample,
+              outputTypes: config.outputTypes,
+              manifestText: JSON.stringify(result.manifest, null, 2),
+            }));
+            setValidation(null);
+          }}
+        />
+        <p className="muted" style={{ margin: "8px 0 16px", fontSize: 12, lineHeight: 1.6 }}>
+          AI 不会开启 MCP、上架 Skill、选择真实模型 ID 或执行包内脚本。原文只承诺文本时，不会擅自增加图片或视频生成步骤。
+        </p>
         <FormGrid>
           <Field label="执行形态" required span={2} hint="预设技能单次生成；智能技能在画布执行；技能工具在创作台或 API 执行。">
             <select
@@ -586,7 +646,7 @@ export function SkillImportModal({
               <option value="tool">技能工具</option>
             </select>
           </Field>
-          <Field label="输入 Schema" required span={2} hint="由管理员选择输入类型，AI 不会修改。">
+          <Field label="输入 Schema" required span={2} hint="AI 智能导入会给出建议，管理员可在导入前调整。">
             <select
               value={inputPreset}
               disabled={manifestBusy}
@@ -602,7 +662,7 @@ export function SkillImportModal({
             </small>
           </Field>
           <Field label="分类" span={2}>
-            <select value={category} onChange={(event) => {
+            <select value={category} disabled={manifestBusy} onChange={(event) => {
               setCategory(event.target.value);
               setValidation(null);
             }}>
@@ -610,12 +670,12 @@ export function SkillImportModal({
             </select>
           </Field>
           <Field label="作者署名" span={2}>
-            <input value={authorName} maxLength={64} onChange={(event) => {
+            <input value={authorName} maxLength={64} disabled={manifestBusy} onChange={(event) => {
               setAuthorName(event.target.value);
               setValidation(null);
             }} />
           </Field>
-          <Field label="主输出" required span={2} hint="由管理员确定最终产物类型，AI 只能据此编排步骤。">
+          <Field label="主输出" required span={2} hint="AI 根据原始 Skill 承诺推断，管理员拥有最终决定权。">
             <select
               value={primaryOutputType}
               disabled={manifestBusy}
@@ -642,7 +702,7 @@ export function SkillImportModal({
                   <input
                     type="checkbox"
                     checked={entryPoints.includes(entry.key)}
-                    disabled={kind === "agent" || (kind === "preset" && entry.key === "api") || (kind === "tool" && entry.key !== "studio" && entry.key !== "api")}
+                    disabled={manifestBusy || kind === "agent" || (kind === "preset" && entry.key === "api") || (kind === "tool" && entry.key !== "studio" && entry.key !== "api")}
                     onChange={() => toggleEntry(entry.key)}
                   />
                   {entry.label}
@@ -651,7 +711,7 @@ export function SkillImportModal({
             </div>
           </Field>
         </FormGrid>
-        <SkillMCPSettings enabled={mcpEnabled} disabled={submitting} onChange={(enabled) => {
+        <SkillMCPSettings enabled={mcpEnabled} disabled={submitting || manifestBusy} onChange={(enabled) => {
           setMcpEnabled(enabled);
           setValidation(null);
         }} />
@@ -663,7 +723,7 @@ export function SkillImportModal({
           ) : (
             <SkillManifestAiControl
               key={`${kind}:${inputPreset}:${primaryOutputType}:${packages.map((pkg) => pkg.key).join("|")}`}
-              disabled={reading || submitting || !packages.length || packages.every((pkg) => !!pkg.manifestText?.trim())}
+              disabled={reading || submitting || manifestBusy || !packages.length || packages.every((pkg) => !!pkg.manifestText?.trim())}
               loadRequests={loadManifestRequests}
               onBusyChange={setManifestBusy}
               onGenerated={(results) => {

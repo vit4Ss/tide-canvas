@@ -1,6 +1,6 @@
 import type { SkillInputSchema } from "@/types/skill";
 
-export type SkillInputPreset = "text" | "image" | "images" | "keyframes" | "video" | "audio" | "file" | "webpage" | "mixed";
+export type SkillInputPreset = "text" | "text_image" | "image" | "images" | "keyframes" | "video" | "audio" | "file" | "webpage" | "mixed";
 
 export const SKILL_INPUT_PRESETS: Array<{
   key: SkillInputPreset;
@@ -8,6 +8,7 @@ export const SKILL_INPUT_PRESETS: Array<{
   description: string;
 }> = [
   { key: "text", label: "仅文本", description: "用户只需输入自然语言要求。" },
+  { key: "text_image", label: "文本 + 可选单图", description: "文本为必填，可选上传一张参考图；适合既支持文生又支持参考图的规划类 Agent。" },
   { key: "image", label: "单张图片 + 文本", description: "严格要求上传一张图片，适合图生图、图生视频或单图分析。" },
   { key: "images", label: "多图参考 + 文本", description: "允许 1–9 张图片，适合多图分析和参考生成；实际数量仍受运行模型限制。" },
   { key: "keyframes", label: "首尾帧 + 文本", description: "严格要求上传两张图片，分别作为起始帧和结束帧。" },
@@ -41,6 +42,18 @@ function assetSchema(type: "image" | "video" | "audio" | "file", title: string, 
 
 export function skillInputSchemaFor(preset: SkillInputPreset): SkillInputSchema {
   switch (preset) {
+    case "text_image":
+      return {
+        type: "object",
+        "x-asset-types": ["image"],
+        required: ["prompt"],
+        properties: {
+          assets: {
+            type: "array", title: "可选参考图", minItems: 0, maxItems: 1,
+            items: { type: "object", required: ["type"], properties: { type: { type: "string", enum: ["image"] } } },
+          },
+        },
+      };
     case "image":
       return assetSchema("image", "图片素材", 1);
     case "images":
@@ -123,6 +136,7 @@ export function detectSkillInputPreset(schema: Record<string, unknown> | null): 
         if (assets && typeof assets === "object" && !Array.isArray(assets)) {
           const spec = assets as Record<string, unknown>;
           if (spec.minItems === 2 && spec.maxItems === 2) return "keyframes";
+          if (spec.minItems === 0 && spec.maxItems === 1 && Array.isArray(schema.required) && schema.required.includes("prompt") && !schema.required.includes("assets")) return "text_image";
           if (spec.minItems === 1 && spec.maxItems === 1) return "image";
           if (spec.minItems === 1 && spec.maxItems === 9) return "images";
         }
