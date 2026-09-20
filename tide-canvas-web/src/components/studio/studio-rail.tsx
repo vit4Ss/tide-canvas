@@ -105,12 +105,6 @@ const NAV_TOP: NavItem[] = [
     ),
   },
   {
-    href: "/ai-chat",
-    label: "AI聊天",
-    key: "ai_chat",
-    icon: <svg viewBox="0 0 24 24"><path d="M4 5h16v12H9l-5 4V5Z" /><path d="M8 9h8M8 13h5" /></svg>,
-  },
-  {
     href: "/projects",
     label: "画布",
     key: "canvas",

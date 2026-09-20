@@ -116,6 +116,11 @@ type AiModelVO struct {
 	SupportedHandlers []string `json:"supportedHandlers"`
 	Config            string   `json:"config"`
 	PointCost         int64    `json:"pointCost"`
+	// Endpoint and Billing are set only on models that this generation API
+	// lists but does not run: text models come from the chat gateway, are
+	// called at Endpoint and metered per token (Config carries tokenPricing).
+	Endpoint string `json:"endpoint,omitempty"`
+	Billing  string `json:"billing,omitempty"`
 }
 
 // parseHandlers parses the stored supportedHandlers text. It accepts a JSON

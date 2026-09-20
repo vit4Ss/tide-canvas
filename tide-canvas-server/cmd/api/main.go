@@ -43,12 +43,12 @@ import (
 	"tidecanvas/internal/handler/billing"
 	"tidecanvas/internal/handler/canvasconfig"
 	"tidecanvas/internal/handler/chat"
+	"tidecanvas/internal/handler/chatgateway"
 	"tidecanvas/internal/handler/community"
 	"tidecanvas/internal/handler/content"
 	"tidecanvas/internal/handler/file"
 	"tidecanvas/internal/handler/inspiration"
 	"tidecanvas/internal/handler/integration"
-	"tidecanvas/internal/handler/lobehub"
 	"tidecanvas/internal/handler/market"
 	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/handler/project"
@@ -217,7 +217,7 @@ func run() error {
 	workerCtx, stopWorkers := context.WithCancel(context.Background())
 	defer stopWorkers()
 	userKeys.StartBackfill(workerCtx)
-	lobehub.StartReconciler(workerCtx, deps)
+	chatgateway.StartReconciler(workerCtx, deps)
 	alertService.Start(workerCtx)
 	admin.StartSupplierBalanceMonitor(workerCtx, deps)
 	if err := alertService.EnsureDefaultRules(context.Background()); err != nil {
@@ -283,7 +283,7 @@ func run() error {
 	stub.Register(api, deps)
 	auth.Register(api, deps)
 	integration.Register(api, deps)
-	lobehub.Register(api, deps)
+	chatgateway.Register(api, deps)
 	project.Register(api, deps)
 	ai.Register(api, deps)
 	file.Register(api, deps)

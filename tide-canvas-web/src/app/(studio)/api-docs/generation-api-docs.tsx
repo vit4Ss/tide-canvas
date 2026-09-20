@@ -11,7 +11,7 @@ import styles from "./page.module.css";
 const noopSubscribe = () => () => {};
 const originSnapshot = () => window.location.origin;
 const serverOrigin = () => "https://你的主站域名";
-const sections = [["start", "接入概览"], ["models", "模型与参数"], ["generate", "提交生成"], ["tasks", "进度与结果"], ["files", "上传与下载"], ["mcp", "MCP 接入"], ["billing", "计费与重试"], ["errors", "错误处理"]];
+const sections = [["start", "接入概览"], ["models", "模型与参数"], ["generate", "提交生成"], ["tasks", "进度与结果"], ["files", "上传与下载"], ["mcp", "MCP 接入"], ["chat", "对话接口与 Codex"], ["billing", "计费与重试"], ["errors", "错误处理"]];
 const examples: Record<string, { label: string; type: string; input: Record<string, unknown> }> = {
   text_to_image: { label: "文生图", type: "image", input: { prompt: "一座漂浮在云海中的未来城市", ratio: "1:1", batchCount: 1 } },
   image_to_image: { label: "图生图", type: "image", input: { prompt: "保留构图，将天空改为日落", imageUrls: ["上传返回的 fileUrl"], batchCount: 1 } },
@@ -21,7 +21,6 @@ const examples: Record<string, { label: string; type: string; input: Record<stri
   reference_to_video: { label: "参考生视频", type: "video", input: { prompt: "保持主体一致，让人物挥手", imageUrls: ["参考图 fileUrl"] } },
   text_to_audio: { label: "音频生成", type: "audio", input: { prompt: "舒缓的钢琴背景音乐" } },
   generate_3d: { label: "3D 生成", type: "3d", input: { prompt: "一把科幻座椅" } },
-  assistant_chat: { label: "文本生成", type: "text", input: { prompt: "为这座未来城市写一段简短介绍" } },
 };
 
 function Code({ children, label = "cURL" }: { children: string; label?: string }) {
@@ -42,6 +41,7 @@ function Endpoint({ method, path }: { method: "GET" | "POST"; path: string }) {
 export default function GenerationAPIDocs() {
   const origin = useSyncExternalStore(noopSubscribe, originSnapshot, serverOrigin);
   const base = `${origin}/api/open/v1`;
+  const chatBase = `${origin}/api/integrations/v1`;
   const [models, setModels] = useState<AiModelVO[]>([]);
   const [handlers, setHandlers] = useState<AiHandlerVO[]>([]);
   const [loading, setLoading] = useState(true);
@@ -73,6 +73,8 @@ export default function GenerationAPIDocs() {
   // POSIX shell quoting keeps model identifiers/prompt text literal in examples.
   const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
   const create = `curl ${shellQuote(`${base}/generations`)} \\\n  ${auth} \\\n  -H "Content-Type: application/json" \\\n  --data ${shellQuote(JSON.stringify(payload, null, 2))}`;
+  const codexConfig = `model = "flowinglight/模型名"          # 从 GET /models 返回的 id 里选\nmodel_provider = "flowinglight"\n\n[model_providers.flowinglight]\nname = "流光"\nbase_url = "${chatBase}"\nenv_key = "FLOWLIGHT_API_KEY"\nwire_api = "responses"`;
+  const chatExample = `curl ${shellQuote(`${chatBase}/chat/completions`)} \\\n  ${auth} \\\n  -H "Content-Type: application/json" \\\n  --data ${shellQuote(JSON.stringify({ model: "flowinglight/模型名", messages: [{ role: "user", content: "你好" }], stream: true }, null, 2))}`;
 
   return <main className={styles.page}>
     <header className={styles.top}><span><Code2 size={18} />开发者文档 <b>GENERATION / V1</b></span><Link href="/account"><KeyRound size={15} />管理 API Key<ArrowUpRight size={14} /></Link></header>
@@ -81,14 +83,14 @@ export default function GenerationAPIDocs() {
       <article className={styles.article}>
         <section id="start" className={styles.intro}>
           <div className={styles.eyebrow}>FLOWINGLIGHT / 开放接口</div><h1>把创作能力，接进你的应用。</h1>
-          <p>使用账号现有 API Key 调用图片、视频、音频、3D 和文本生成。沿用主站模型与积分规则，结果同步到创作台。</p>
+          <p>使用账号现有 API Key 调用图片、视频、音频和 3D 生成，沿用主站模型与积分规则，结果同步到创作台。文本模型通过下方的对话接口调用，按 Token 计费。</p>
           <div className={styles.address}><span>BASE URL</span><code>{base}</code></div>
           <ol className={styles.steps}><li><b>01</b><span>获取密钥<small>个人中心 → 默认 API Key</small></span></li><li><b>02</b><span>选择模型<small>读取实际可用的生成模型</small></span></li><li><b>03</b><span>提交与查询<small>返回任务 ID，轮询获取结果</small></span></li></ol>
-          <p className={styles.note}>这是主站的异步生成 API。AI 聊天兼容接口仍使用 <code>/api/integrations/v1</code>，两套模型列表和计费配置分别生效。文档不发起付费测试。</p>
+          <p className={styles.note}>这是主站的异步生成 API，只覆盖图片、视频、音频和 3D。通过 API 调用文本模型一律走下方的<a href="#chat">对话接口</a>，按 Token 计费；站内创作台的文本能力仍按次计费，两套模型列表与价格互不相干。文档不发起付费测试。</p>
           <Code label="鉴权 · Bash / macOS / Linux">{'export FLOWLIGHT_API_KEY="你的账号 API Key"\n# 每次请求携带 Authorization: Bearer $FLOWLIGHT_API_KEY'}</Code>
           <p>密钥只放在自己的服务端。停用或重置后，旧 Key 将无法提交或查询任务。只允许访问当前账号的数据；API Key 不具备管理员权限。</p>
         </section>
-        <section id="models"><h2>模型与参数</h2><Endpoint method="GET" path="/models" /><p>返回后台已启用的生成模型。创建任务使用 <code>data[].modelId</code>；<code>supportedHandlers</code> 表示支持的生成能力，<code>config</code> 是包含规格与定价等配置的 JSON 字符串。</p>
+        <section id="models"><h2>模型与参数</h2><Endpoint method="GET" path="/models" /><p>返回当前可用的模型。图片、视频、音频、3D 模型用于本节的生成任务；<code>type</code> 为 <code>text</code> 的模型来自对话接口的供应商，带 <code>endpoint</code> 与 <code>billing: token</code>，只能通过下方的对话接口调用，不能提交生成任务。创建任务使用 <code>data[].modelId</code>；<code>supportedHandlers</code> 表示支持的生成能力，<code>config</code> 是包含规格与定价等配置的 JSON 字符串。</p>
           <Code>{`curl ${shellQuote(`${base}/models`)} ${auth}`}</Code>
           <div className={styles.picker}><label>生成能力<select value={handler} onChange={(e) => { setHandler(e.target.value); setModelID(""); }}>{Object.entries(examples).map(([id, item]) => <option key={id} value={id}>{item.label}</option>)}</select></label><label>当前模型<select value={selected?.modelId ?? ""} onChange={(e) => setModelID(e.target.value)} disabled={!choices.length}><option value="" disabled>{loading ? "载入模型…" : "暂无可用模型"}</option>{choices.map((m) => <option key={m.id} value={m.modelId}>{m.name}</option>)}</select></label></div>
           {loadError && <p role="alert">模型列表加载失败。<button type="button" onClick={() => { setLoading(true); setRevision((r) => r + 1); }}>重试</button></p>}
@@ -125,6 +127,18 @@ export default function GenerationAPIDocs() {
           <p>先查询模型，再生成。生成工具需要 modelId 和唯一 clientRequestId；prompt 描述需求，parameters 携带分辨率、质量、时长等模型参数。参考素材先上传到主站，再把 URL 传给工具。</p>
           <Code label="工具调用示例 · 图片">{JSON.stringify({ name: "generate_image", arguments: { modelId: "从 list_models 选择真实模型", clientRequestId: "image-job-001", prompt: "云海中的未来城市", parameters: { resolution: "4k", quality: "high", batchCount: 1 } } }, null, 2)}</Code>
           <p>工具先返回 task.id 和 statusText。processing 表示生成中，每 5–10 秒通过 get_generation_task 查询；succeeded 后读取结果 URL。重试沿用原编号和参数。不同客户端的配置入口不同，请选择 Streamable HTTP 和手动 Bearer Key；本服务也支持 stdio 模式。</p>
+        </section>
+        <section id="chat"><h2>对话接口与 Codex</h2>
+          <p>用同一把 API Key 直接调用后台「AI 聊天供应商」里开放的对话模型。接口兼容 OpenAI 协议，按实际 Token 用量从账号积分结算。通过 API 使用文本模型只有这一条路：生成接口的模型列表里 type 为 text 的就是这些模型，价格与上面的生成模型是两套。</p>
+          <div className={styles.address}><span>BASE URL</span><code>{chatBase}</code></div>
+          <Endpoint method="GET" path="/models" /><p>返回可调用的对话模型。<code>id</code> 形如 <code>flowinglight/模型名</code>，调用时用它或去掉前缀的模型名都可以；<code>token_pricing</code> 是每百万 Token 的积分单价。</p>
+          <Code>{`curl ${shellQuote(`${chatBase}/models`)} ${auth}`}</Code>
+          <Endpoint method="POST" path="/responses" /><p>OpenAI Responses 协议，Codex 用的就是它。网关把请求转成供应商的 Chat Completions 调用，再把流式结果转回 Responses 事件。<code>previous_response_id</code> 不受支持：网关不保存对话，请像 Codex 一样把完整历史放进 <code>input</code>。</p>
+          <Code label="Codex · ~/.codex/config.toml">{codexConfig}</Code>
+          <p>把 API Key 放进环境变量 <code>FLOWLIGHT_API_KEY</code> 后启动 Codex 即可。<code>wire_api</code> 只能是 <code>responses</code>，Codex 已移除 chat 协议；<code>model_providers</code> 必须写在用户级配置里，项目内的 .codex/config.toml 不接受它。</p>
+          <Endpoint method="POST" path="/chat/completions" /><p>OpenAI Chat Completions 协议，供 SDK 与其他客户端使用。请求原样转给供应商，只替换模型名、补上输出上限和用量统计；供应商的拒绝原文会直接返回。</p>
+          <Code>{chatExample}</Code>
+          <p>响应头 <code>X-Point-Reserved</code> 是本次预留的积分上限；非流式响应的 <code>X-Point-Cost</code> 头和 <code>billing</code> 字段、流式响应末尾的 <code>billing</code> 对象是按用量结算的实际积分，未用完的预留在结算时释放。每账号同时进行中的调用数受限；积分不足时返回 429 <code>insufficient_quota</code>，不会调用供应商。账单在个人中心与后台「Token 调用账单」中核对。</p>
         </section>
         <section id="billing"><h2>积分、幂等与记录</h2><p>生成接口和网页共享账号积分、并发限制、后台模型维护状态与计费规则。受理时扣积分，余额不足会在调用模型前拒绝；模型执行失败会进入原有退款流程，可在积分流水核对。</p><p>同一账号、同一请求编号、相同参数只生成一次。相同编号改参数会被拒绝；已经失败的任务也会返回原记录，确需再次生成请使用新编号。HTTP 超时不等于任务失败，先用原编号和原参数重试以找回任务。</p>
           <Endpoint method="POST" path="/upscale-quote" /><p>视频超分预估：<code>{'{"modelId":"…","videoUrl":"…","targetResolution":"4k"}'}</code>。</p><Endpoint method="POST" path="/reference-video-quote" /><p>参考视频附加费用预估：<code>{'{"modelId":"…","resolution":"1080p","videoUrls":["…"]}'}</code>。预估不扣费，正式生成会重新验证归属、时长和价格。</p>

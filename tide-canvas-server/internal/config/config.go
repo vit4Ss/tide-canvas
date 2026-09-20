@@ -40,7 +40,7 @@ type Config struct {
 	Email           EmailConfig           `mapstructure:"email"`
 	LLM             LLMConfig             `mapstructure:"llm"`
 	Relay           RelayConfig           `mapstructure:"relay"`
-	LobeHub         LobeHubConfig         `mapstructure:"lobehub"`
+	ChatGateway     ChatGatewayConfig     `mapstructure:"chatGateway"`
 	MCP             MCPConfig             `mapstructure:"mcp"`
 	VideoDownloader VideoDownloaderConfig `mapstructure:"videoDownloader"`
 	WorldLabs       WorldLabsConfig       `mapstructure:"worldLabs"`
@@ -56,18 +56,16 @@ type MCPConfig struct {
 	InternalURL string `mapstructure:"internalUrl"`
 }
 
-// LobeHubConfig keeps first-party SSO credentials server-side. PublicURL is the
-// browser origin; InternalURL may point at the local container for session RPC.
-type LobeHubConfig struct {
-	Enabled        bool   `mapstructure:"enabled"`
-	PublicURL      string `mapstructure:"publicUrl"`
-	IssuerURL      string `mapstructure:"issuerUrl"`
-	InternalURL    string `mapstructure:"internalUrl"`
-	ClientID       string `mapstructure:"clientId"`
-	ClientSecret   string `mapstructure:"clientSecret"`
-	SigningKeyFile string `mapstructure:"signingKeyFile"`
-	MaxConcurrent  int    `mapstructure:"maxConcurrent"`
-	DailyLimit     int    `mapstructure:"dailyLimit"`
+// ChatGatewayConfig bounds the OpenAI-compatible chat gateway behind
+// /api/integrations/v1. Providers, models and prices live in the database
+// and are edited in the admin; only the per-account limits are deployment
+// configuration.
+type ChatGatewayConfig struct {
+	// MaxConcurrent is how many calls one account may have in flight; 0 means
+	// the default of 2. Accounts flagged ConcurrencyUnlimited bypass it.
+	MaxConcurrent int `mapstructure:"maxConcurrent"`
+	// DailyLimit caps one account's calls per day (Asia/Shanghai); 0 disables it.
+	DailyLimit int `mapstructure:"dailyLimit"`
 }
 
 // VideoDownloaderConfig controls the local public-video download engine.
@@ -481,16 +479,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.historyLimit", 3)
 	v.SetDefault("llm.contextTokenLimit", 32000)
 	v.SetDefault("llm.systemPrompt", defaultLLMSystemPrompt)
-	v.SetDefault("lobehub.enabled", false)
-	v.SetDefault("lobehub.publicUrl", "")
-	v.SetDefault("lobehub.issuerUrl", "")
-	v.SetDefault("lobehub.internalUrl", "")
-	v.SetDefault("lobehub.clientId", "flowinglight-lobehub")
-	v.SetDefault("lobehub.clientSecret", "")
-	v.SetDefault("lobehub.signingKeyFile", "")
-	v.SetDefault("lobehub.maxConcurrent", 2)
-	v.SetDefault("lobehub.dailyLimit", 0)
-	v.SetDefault("lobehub.requireTokenPricing", true)
+	v.SetDefault("chatGateway.maxConcurrent", 2)
+	v.SetDefault("chatGateway.dailyLimit", 0)
 
 	// Missing/empty TIDECANVAS_ENV resolves to test, so the safe default must
 	// never send local development traffic to the production relay.

@@ -193,3 +193,10 @@ email:
   maxAttempts: 5
   sendCodeIPLimit: 10
   sendCodeIPWindowSeconds: 600
+
+# OpenAI 兼容对话网关（/api/integrations/v1）：Codex 等客户端用账号 API Key 直接调用，
+# 按实际 Token 用量从该账号积分结算。供应商、接入地址、模型与单价在后台「AI 聊天供应商」
+# 配置，这里只放按账号的限额。
+chatGateway:
+  maxConcurrent: 2 # 单账号同时进行中的调用数；开启“不限并发”的账号不受此限
+  dailyLimit: 0 # 单账号每日调用次数上限（Asia/Shanghai 日界），0 为不限

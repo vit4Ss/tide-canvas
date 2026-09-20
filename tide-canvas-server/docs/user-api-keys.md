@@ -27,6 +27,4 @@
 
 API Key 鉴权只挂在明确的集成路由上，不代替主站 JWT，也不继承管理员角色。原有后台“邮件配置”中的无用户归属 Key 不在此鉴权范围。
 
-身份校验本身不扣积分。已实现的 LobeHub 集成使用 OIDC 登录和服务端账号绑定，将该用户默认 Key 同步到个人 provider；模型请求走 `GET /api/integrations/v1/models` 与 `POST /api/integrations/v1/chat/completions`，由主站按真实用户执行额度、并发和积分结算。无需创建 apirouter 用户，也不会向 LobeHub 复制主站共享上游 Key。
-
-部署配置、实际计费规则和验收步骤见 [LobeHub 主站集成](../../deploy/lobehub-integration/README.md)。集成默认关闭，需要按该文档发布主站及 apirouter 的兼容改动并配置现有 LobeHub。
+身份校验本身不扣积分。模型调用走 `/api/integrations/v1` 下的 OpenAI 兼容接口（`GET /models`、`POST /responses`、`POST /chat/completions`），由主站按真实用户执行额度、并发和积分结算；Codex 等客户端用这把 Key 直接接入。通过 API Key 调用文本模型只能走该网关；`/api/open/v1` 生成接口只受理图片、视频、音频和 3D，其模型列表中的文本模型来自该网关并标注调用入口。接口、计费规则、Codex 配置和部署要求见 [对话网关](chat-gateway.md)。

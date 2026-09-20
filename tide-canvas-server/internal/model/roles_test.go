@@ -8,29 +8,24 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestFrontMenuKeysKeepChatAndAIChatIndependent(t *testing.T) {
-	found := map[string]int{}
-	for index, key := range FrontMenuKeys {
-		found[key] = index
+func TestFrontMenuKeysNoLongerCarryTheRemovedAIChatEntry(t *testing.T) {
+	found := map[string]bool{}
+	for _, key := range FrontMenuKeys {
+		found[key] = true
 	}
-	if _, ok := found["chat"]; !ok {
+	if !found["chat"] {
 		t.Fatal("generation chat menu key is missing")
 	}
-	if _, ok := found["ai_chat"]; !ok {
-		t.Fatal("AI chat menu key is missing")
+	// The embedded AI chat page is gone. Its key must not come back: the
+	// sidebar would filter for an item that no longer exists, and the roles
+	// admin would offer a permission that grants nothing.
+	if found["ai_chat"] {
+		t.Fatal("removed AI chat menu key is still offered")
 	}
-	if found["chat"] == found["ai_chat"] || found["ai_chat"] != found["chat"]+1 {
-		t.Fatalf("chat menu order is not independent and adjacent: %#v", FrontMenuKeys)
-	}
-	backfilled := false
 	for _, key := range frontMenuBackfillKeys {
 		if key == "ai_chat" {
-			backfilled = true
-			break
+			t.Fatal("existing roles would be backfilled with a removed menu key")
 		}
-	}
-	if !backfilled {
-		t.Fatal("existing roles would not receive the new AI chat menu key")
 	}
 }
 

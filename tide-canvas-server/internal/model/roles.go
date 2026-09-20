@@ -63,14 +63,13 @@ var FrontMenuKeys = []string{
 	"three_d",  // 3D模型 /three-d
 	"tools",    // 工具 /tools(智能工具中心)
 	"chat",     // 生成 /chat
-	"ai_chat",  // AI聊天 /ai-chat
 	"canvas",   // 画布 /projects
 	"explore",  // 作品广场 /explore
 	"inspire",  // 灵感 /inspire
 	"assets",   // 资产 /assets
 }
 
-var frontMenuBackfillKeys = []string{"three_d", "tools", "analysis", "ai_chat"}
+var frontMenuBackfillKeys = []string{"three_d", "tools", "analysis"}
 
 // ensureBaselineRoles inserts the 用户/管理员 roles when missing (never
 // overwriting admin edits) and backfills User.RoleID for existing rows:

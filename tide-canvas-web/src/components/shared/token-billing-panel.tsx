@@ -30,7 +30,7 @@ export default function TokenBillingPanel({ admin = false }: { admin?: boolean }
   const [counts, setCounts] = useState({inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 0});
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
-  const endpoint = admin ? "/api/admin/lobehub-billing" : "/api/lobehub/billing";
+  const endpoint = admin ? "/api/admin/chat-gateway-billing" : "/api/chat-gateway/billing";
   // A slow page/filter response must never overwrite a newer one: every load
   // claims a request id and only the current claim may touch the list.
   const requestRef = useRef(0);
@@ -73,7 +73,7 @@ export default function TokenBillingPanel({ admin = false }: { admin?: boolean }
     finally { setSaving(false); }
   };
   return <section className="token-billing-panel">
-    <header><div><h2>Token 调用账单</h2><p>{admin ? "AI 聊天按实际 Token 用量计算，费用非零时向上取整为整数积分；上游未返回可信用量时保留预留额度，核对后再结算或释放。" : "按实际 Token 用量计算，费用非零时向上取整为整数积分，扣费同步记入积分明细。"}</p></div><button type="button" onClick={() => void load()} disabled={loading}>刷新</button></header>
+    <header><div><h2>Token 调用账单</h2><p>{admin ? "对话接口按实际 Token 用量计算，费用非零时向上取整为整数积分；上游未返回可信用量时保留预留额度，核对后再结算或释放。" : "按实际 Token 用量计算，费用非零时向上取整为整数积分，扣费同步记入积分明细。"}</p></div><button type="button" onClick={() => void load()} disabled={loading}>刷新</button></header>
     <div className="token-billing-filters"><label>账单状态 <select value={status} onChange={e => {setStatus(e.target.value);setPage(1);}}><option value="">全部</option>{Object.entries(statuses).map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select></label>{admin && <form role="search" onSubmit={event => {event.preventDefault();const value = userId.trim();if (value && !/^\d+$/.test(value)) {setError("用户 ID 是纯数字（用户管理里可复制）");return;}setError("");setUserFilter(value);setPage(1);}}><label>用户 ID <input inputMode="numeric" value={userId} onChange={e => setUserId(e.target.value)} placeholder="全部用户" /></label><button type="submit" disabled={loading}>筛选</button></form>}<span>共 {total} 条</span></div>
     {error && <p role="alert" className="token-billing-error">{error}</p>}
     <div className="token-billing-table"><table><thead><tr><th>时间 / 模型</th>{admin && <th>用户</th>}<th>输入 / 输出 Token</th><th>积分</th><th>状态</th></tr></thead><tbody>

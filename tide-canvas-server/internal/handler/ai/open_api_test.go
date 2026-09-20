@@ -319,3 +319,104 @@ func TestOpenAPIAuthenticationBillingRetryAndOwnerHistory(t *testing.T) {
 		t.Fatalf("history provenance lost: %v", err)
 	}
 }
+
+// Text is metered per token through the chat gateway when it is called with an
+// API key. The generation API therefore shows the gateway's text models (with
+// the endpoint they are called at) instead of the site's per-call ones, lists
+// no text handler, and refuses a text generation: a caller who tries is told
+// where to go, and nothing is charged.
+func TestOpenAPIListsGatewayTextModelsAndRefusesTextGenerations(t *testing.T) {
+	db := concurrencyTestDB(t)
+	pool, _ := db.DB()
+	pool.SetMaxOpenConns(1)
+	if err := db.AutoMigrate(&model.UserAPIKey{}, &model.MarketModel{}, &model.AiHandler{}, &model.AiProvider{}, &model.AiGenerationLog{}, &model.PointRecord{}, &model.PointRefundReceipt{}, &model.ChatProvider{}, &model.ChatEndpoint{}, &model.ChatModel{}); err != nil {
+		t.Fatal(err)
+	}
+	chatProvider := model.ChatProvider{Name: "Chat Provider", Enabled: true}
+	if err := db.Create(&chatProvider).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []model.ChatModel{
+		{ProviderID: chatProvider.ID, ModelKey: "chat-test", Name: "Chat Test", Enabled: true, Pricing: `{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"100","outputPointsPerMillion":"300","maxInputTokens":1000,"maxOutputTokens":1000}}`},
+		{ProviderID: chatProvider.ID, ModelKey: "chat-unpriced", Name: "Unpriced", Enabled: true},
+	} {
+		if err := db.Create(&m).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	keys, err := userkey.New(db, "open-api-test-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := openTestKey(t, db, keys, 44, 10)
+	for _, m := range []model.MarketModel{
+		{Name: "Test Image", ModelKey: "image-test", Type: "image", Status: 1, Price: decimal.NewFromInt(1)},
+		{Name: "Test Text", ModelKey: "text-test", Type: "text", Status: 1, Price: decimal.NewFromInt(1)},
+	} {
+		if err := db.Create(&m).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"text_to_image", assistantChatHandler} {
+		if err := db.Create(&model.AiHandler{ID: idgen.Next(), HandlerName: name, Name: name, Enabled: true}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := &service{repo: newRepo(db), registry: newHandlerRegistry(), provider: &openTestProvider{release: make(chan struct{})}, sem: make(chan struct{}, 1)}
+	h := &handler{svc: svc}
+	engine := gin.New()
+	h.registerOpenAPI(engine.Group("/api"), &app.Deps{DB: db, UserKeys: keys})
+	request := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "/api/open/v1"+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+key)
+		req.Header.Set("Content-Type", "application/json")
+		res := httptest.NewRecorder()
+		engine.ServeHTTP(res, req)
+		return res
+	}
+	models := request("GET", "/models", "")
+	if models.Code != 200 || !strings.Contains(models.Body.String(), "image-test") || strings.Contains(models.Body.String(), "text-test") {
+		t.Fatalf("the generation catalogue still offers the site's per-call text model: %s", models.Body.String())
+	}
+	var catalogue struct {
+		Data []AiModelVO `json:"data"`
+	}
+	if err := json.Unmarshal(models.Body.Bytes(), &catalogue); err != nil {
+		t.Fatal(err)
+	}
+	var chat *AiModelVO
+	for i := range catalogue.Data {
+		if catalogue.Data[i].ModelID == "flowinglight/chat-test" {
+			chat = &catalogue.Data[i]
+		}
+		if catalogue.Data[i].ModelID == "flowinglight/chat-unpriced" {
+			t.Fatal("a gateway model without a price was listed; the gateway would refuse it")
+		}
+	}
+	if chat == nil {
+		t.Fatalf("the gateway text model is missing from the API catalogue: %s", models.Body.String())
+	}
+	if chat.Type != "text" || chat.Endpoint != "/api/integrations/v1/responses" || chat.Billing != "token" || !strings.Contains(chat.Config, `"inputPointsPerMillion":"100"`) {
+		t.Fatalf("gateway text model is not described as such: %+v", chat)
+	}
+	handlers := request("GET", "/handlers", "")
+	if handlers.Code != 200 || !strings.Contains(handlers.Body.String(), "text_to_image") || strings.Contains(handlers.Body.String(), assistantChatHandler) {
+		t.Fatalf("the handler list still offers text: %s", handlers.Body.String())
+	}
+	res := request("POST", "/generations", `{"handler":"assistant_chat","modelId":"text-test","clientRequestId":"text-1","input":{"prompt":"hello"}}`)
+	var out struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Code != response.CodeHandlerNotFound || !strings.Contains(out.Message, "/api/integrations/v1") {
+		t.Fatalf("text generation was not redirected to the gateway: %s", res.Body.String())
+	}
+	var records int64
+	db.Model(&model.PointRecord{}).Count(&records)
+	if records != 0 {
+		t.Fatalf("a refused text call moved points: %d records", records)
+	}
+}

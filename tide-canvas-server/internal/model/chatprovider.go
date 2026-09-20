@@ -55,8 +55,8 @@ type ChatEndpoint struct {
 
 func (ChatEndpoint) TableName() string { return "chat_endpoint" }
 
-// ChatModel is one model offered to AI chat. ModelKey is what the upstream
-// expects and what LobeHub sends back. Pricing carries the same tokenPricing
+// ChatModel is one model offered through the chat gateway. ModelKey is what
+// the upstream expects; clients may send it bare or namespaced. Pricing carries the same tokenPricing
 // object the billing code already understands; a model without it is not
 // offered, because there would be no way to charge for it.
 type ChatModel struct {
@@ -78,8 +78,8 @@ type ChatModel struct {
 	// Pricing is the JSON object {"tokenPricing":{…}} — same dialect the market
 	// models used, so tokenbilling.Parse reads both without a second parser.
 	Pricing string `gorm:"column:pricing;type:text" json:"pricing"`
-	// Vision lets the operator declare that this model accepts images, which is
-	// what LobeHub needs to allow attachments.
+	// Vision lets the operator declare that this model accepts images, so a
+	// client can decide whether to attach them.
 	Vision bool `gorm:"column:vision" json:"vision"`
 
 	DiscoveredAt *time.Time `gorm:"column:discovered_at" json:"discoveredAt"`

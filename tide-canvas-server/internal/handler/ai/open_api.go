@@ -11,18 +11,22 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/handler/chatgateway"
 	"tidecanvas/internal/middleware"
+	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/response"
 )
 
-// This namespace is independent of the LobeHub chat gateway. API keys do not
-// grant access to JWT-only routes or administrator roles.
+// This namespace is independent of the OpenAI-compatible chat gateway
+// (/api/integrations/v1). API keys do not grant access to JWT-only routes or
+// administrator roles.
 func (h *handler) registerOpenAPI(api *gin.RouterGroup, d *app.Deps) {
 	g := api.Group("/open/v1", middleware.UserAPIKeyAuth(d.UserKeys))
-	g.GET("/models", middleware.RateLimit(d, 120, time.Minute), h.listModels)
-	g.GET("/handlers", middleware.RateLimit(d, 120, time.Minute), h.listHandlers)
+	g.GET("/models", middleware.RateLimit(d, 120, time.Minute), h.openListModels(d))
+	g.GET("/handlers", middleware.RateLimit(d, 120, time.Minute), h.openListHandlers)
 	g.GET("/tools", middleware.RateLimit(d, 120, time.Minute), h.listSiteTools)
 	g.POST("/generations", middleware.RateLimit(d, 30, time.Minute), h.openGenerate)
 	g.GET("/tasks", middleware.RateLimit(d, 120, time.Minute), h.openListTasks)
@@ -32,6 +36,67 @@ func (h *handler) registerOpenAPI(api *gin.RouterGroup, d *app.Deps) {
 }
 
 var openRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$`)
+
+// The generation API runs image, video, audio and 3D. Text is metered
+// differently depending on the door: on the site itself (创作台, skills) a text
+// model keeps its per-call price from 「模型管理」, while a caller holding an API
+// key pays per token through the chat gateway and its 「AI 聊天供应商」 models.
+// So the model list an API caller sees carries the gateway's text models — with
+// the endpoint they are called at — in place of the site's, the handler list
+// has no text handler, and a text generation is refused with a pointer to the
+// gateway. Nothing is reserved or charged for a refused call.
+const openTextViaGateway = "文本模型不通过生成接口调用：请用同一把 API Key 调用对话接口 POST /api/integrations/v1/responses（Codex）或 /chat/completions，按 Token 计费；模型列表中 type 为 text 的模型即为对话接口的模型"
+
+func (h *handler) openIsTextHandler(name string) bool {
+	gh, ok := h.svc.registry.get(name)
+	return ok && skillOutputTypeOf(gh) == "text"
+}
+
+func (h *handler) openListModels(d *app.Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		rows, err := h.svc.listModels(c.Request.Context())
+		if err != nil {
+			response.Fail(c, response.CodeServerError, "failed to load models")
+			return
+		}
+		out := make([]AiModelVO, 0, len(rows))
+		for _, row := range rows {
+			if row.Type != "text" {
+				out = append(out, row)
+			}
+		}
+		// The gateway catalogue is a second store. If it cannot be read, the
+		// generation models are still served rather than the whole list going
+		// dark; the gateway's own GET /models reports the fault.
+		texts, err := chatgateway.ListCatalogue(c.Request.Context(), d.DB)
+		if err != nil {
+			logger.L().Warn("open api: chat gateway catalogue unavailable", zap.Error(err))
+		}
+		for _, text := range texts {
+			// Config speaks the same tokenPricing dialect the site's models
+			// use, so a client reads one price shape for every type.
+			pricing, _ := json.Marshal(map[string]any{"tokenPricing": text.Pricing, "vision": text.Vision})
+			out = append(out, AiModelVO{ID: text.ID, Name: text.Name, ModelID: text.AdvertisedID(), Type: "text",
+				Config: string(pricing), Endpoint: chatgateway.ResponsesPath, Billing: "token"})
+		}
+		response.OK(c, out)
+	}
+}
+
+func (h *handler) openListHandlers(c *gin.Context) {
+	rows, err := h.svc.listHandlers(c.Request.Context())
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to load handlers")
+		return
+	}
+	out := make([]AiHandlerVO, 0, len(rows))
+	for _, row := range rows {
+		if !h.openIsTextHandler(row.HandlerName) {
+			out = append(out, row)
+		}
+	}
+	response.OK(c, out)
+}
 
 // The public DTO deliberately cannot set user/project ids, internal skill-run
 // metadata, billing, status or provenance. Input stays handler-specific.
@@ -137,6 +202,10 @@ func (h *handler) openGenerate(c *gin.Context) {
 	dto, err := decodeOpenGeneration(c.Request.Body, c.GetHeader("Idempotency-Key"))
 	if err != nil {
 		response.Fail(c, response.CodeBadRequest, err.Error())
+		return
+	}
+	if h.openIsTextHandler(dto.Handler) {
+		response.Fail(c, response.CodeHandlerNotFound, openTextViaGateway)
 		return
 	}
 	h.startGeneration(c, dto)

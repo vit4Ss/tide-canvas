@@ -271,8 +271,8 @@ export default function AdminPointsPage() {
     <div className="adm-page">
       <StatCardGrid items={kpis} />
 
-      <AdminAlert tone="info" title="AI 聊天按 Token 计费">
-        LobeHub 按实际 Token 用量计算，费用非零时向上取整为整数积分；结算结果会进入下方积分流水，Token 用量与计价快照在独立账单中核对。
+      <AdminAlert tone="info" title="对话接口按 Token 计费">
+        Codex 等客户端通过对话接口调用模型时按实际 Token 用量计算，费用非零时向上取整为整数积分；结算结果会进入下方积分流水，Token 用量与计价快照在独立账单中核对。
         <Link href="/admin/points/token-billing"> 查看 Token 调用账单 →</Link>
       </AdminAlert>
 

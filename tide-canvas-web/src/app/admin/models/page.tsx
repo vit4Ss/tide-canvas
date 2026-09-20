@@ -1197,10 +1197,10 @@ function ModelModal({
             </Field>
           ) : (
             <Field
-              label={isVideo ? "兜底积分" : isText ? "原聊天入口按次积分" : "消耗积分"}
+              label={isVideo ? "兜底积分" : isText ? "站内文本按次积分" : "消耗积分"}
               hint={isVideo
                 ? "仅按时长模式中未命中价格矩阵时使用；按次模式始终以清晰度价格表为准"
-                : isText ? "主站聊天入口的按次价格。AI 聊天不读这里，它的模型与单价在「AI 聊天供应商」配置" : "按次扣费的积分（支持小数）；保存后即为计费与前台展示的权威价"}
+                : isText ? "站内文本能力（创作台、技能）的按次价格。通过 API Key 调用文本走「AI 聊天供应商」按 Token 计费，不读这里" : "按次扣费的积分（支持小数）；保存后即为计费与前台展示的权威价"}
             >
               <input value={pointCost} onChange={(e) => setPointCost(e.target.value)} placeholder="0.0" inputMode="decimal" />
             </Field>

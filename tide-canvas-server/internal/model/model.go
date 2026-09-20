@@ -22,8 +22,6 @@ func Models() []any {
 		&User{},
 		&UserAPIKey{},
 		&MCPSettings{},
-		&LobeHubGrant{},
-		&LobeHubLink{},
 		&ModelGatewayRequest{},
 		&Project{},
 		&AiProvider{},
