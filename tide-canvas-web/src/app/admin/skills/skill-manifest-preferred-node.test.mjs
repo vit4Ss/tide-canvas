@@ -11,7 +11,7 @@ const extractFunction = (name) => {
   assert.ok(fn, `${name} function missing`);
   return fn.getText(source).replace(/^export /, "");
 };
-const code = ts.transpileModule(`${extractFunction("normalizeGeneratedPreferredNodeType")}\n${extractFunction("reconcileGeneratedInputPreset")}\n${extractFunction("normalizeGeneratedStepType")}\nglobalThis.normalize = normalizeGeneratedPreferredNodeType;\nglobalThis.reconcile = reconcileGeneratedInputPreset;\nglobalThis.normalizeStepType = normalizeGeneratedStepType;`, {
+const code = ts.transpileModule(`${extractFunction("normalizeGeneratedPreferredNodeType")}\n${extractFunction("reconcileGeneratedInputPreset")}\n${extractFunction("normalizeGeneratedStepType")}\n${extractFunction("normalizeGeneratedStepHandler")}\n${extractFunction("inferGeneratedAnalysisHandler")}\n${extractFunction("normalizeGeneratedStepOutputType")}\n${extractFunction("normalizeGeneratedOutputRole")}\nglobalThis.normalize = normalizeGeneratedPreferredNodeType;\nglobalThis.reconcile = reconcileGeneratedInputPreset;\nglobalThis.normalizeStepType = normalizeGeneratedStepType;\nglobalThis.normalizeHandler = normalizeGeneratedStepHandler;\nglobalThis.inferAnalysisHandler = inferGeneratedAnalysisHandler;\nglobalThis.normalizeOutputType = normalizeGeneratedStepOutputType;\nglobalThis.normalizeOutputRole = normalizeGeneratedOutputRole;`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const context = {};
@@ -43,4 +43,23 @@ test("AI import derives runtime step types from registered handlers and safe ali
   assert.equal(context.normalizeStepType("confirmation", ""), "approval");
   assert.equal(context.normalizeStepType("user-input", ""), "input");
   assert.equal(context.normalizeStepType("unknown", ""), undefined);
+  assert.equal(context.normalizeHandler(undefined, "analyze_video"), "analyze_video");
+  assert.equal(context.normalizeHandler(undefined, "video-analysis"), "analyze_video");
+  assert.equal(context.normalizeHandler("videoAnalysis", "analysis"), "analyze_video");
+  assert.equal(context.normalizeHandler(undefined, "unknown"), "");
+  assert.equal(context.inferAnalysisHandler({ "x-asset-types": ["video"] }, "text"), "analyze_video");
+  assert.equal(context.inferAnalysisHandler({ "x-asset-types": ["image"] }, "text"), "analyze_image");
+  assert.equal(context.inferAnalysisHandler({ "x-asset-types": ["video", "audio"] }, "text"), "");
+  assert.equal(context.inferAnalysisHandler({ required: ["url"], properties: { url: { type: "string" } } }, "text"), "analyze_webpage");
+});
+
+test("AI import derives required output types and normalizes result roles", () => {
+  assert.equal(context.normalizeOutputType(undefined, "tool", "analyze_video"), "text");
+  assert.equal(context.normalizeOutputType("report", "tool", "analyze_image"), "text");
+  assert.equal(context.normalizeOutputType(undefined, "generate", "text_to_video"), "video");
+  assert.equal(context.normalizeOutputType(undefined, "tool", "render_docx"), "file");
+  assert.equal(context.normalizeOutputType(undefined, "text", ""), "text");
+  assert.equal(context.normalizeOutputRole("result"), "final");
+  assert.equal(context.normalizeOutputRole("working"), "intermediate");
+  assert.equal(context.normalizeOutputRole("unexpected"), undefined);
 });

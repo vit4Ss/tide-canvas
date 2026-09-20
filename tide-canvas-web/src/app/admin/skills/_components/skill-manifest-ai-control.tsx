@@ -134,6 +134,113 @@ export function normalizeGeneratedStepType(value: unknown, handler: unknown): st
   return undefined;
 }
 
+export function normalizeGeneratedStepHandler(value: unknown, stepType: unknown): string {
+  const token = (candidate: unknown): string => typeof candidate === "string"
+    ? candidate.trim().replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase().replaceAll("-", "_").replaceAll(" ", "_")
+    : "";
+  const aliases: Record<string, string> = {
+    video_analysis: "analyze_video",
+    image_analysis: "analyze_image",
+    audio_analysis: "analyze_audio",
+    webpage_analysis: "analyze_webpage",
+    web_analysis: "analyze_webpage",
+    text_completion: "skill_text_completion",
+    llm: "skill_text_completion",
+  };
+  const known = new Set([
+    "skill_text_completion", "assistant_chat",
+    "text_to_image", "image_to_image", "text_to_video", "image_to_video",
+    "start_end_to_video", "reference_to_video", "text_to_audio",
+    "render_pptx", "render_xlsx", "render_docx", "render_markdown",
+    "analyze_image", "analyze_video", "analyze_audio", "analyze_webpage",
+  ]);
+  const explicit = token(value);
+  if (known.has(explicit)) return explicit;
+  if (aliases[explicit]) return aliases[explicit];
+  // Some models put the registered handler in `type` and omit `handler`.
+  // Recover only known/aliased values; arbitrary type labels never become
+  // executable handlers.
+  if (!explicit) {
+    const misplaced = token(stepType);
+    if (known.has(misplaced)) return misplaced;
+    if (aliases[misplaced]) return aliases[misplaced];
+  }
+  return explicit;
+}
+
+export function inferGeneratedAnalysisHandler(
+  inputSchema: Record<string, unknown>,
+  primaryOutputType: unknown,
+): string {
+  if (primaryOutputType !== "text") return "";
+  const rawAssetTypes = inputSchema["x-asset-types"];
+  const assetTypes = Array.isArray(rawAssetTypes)
+    ? [...new Set(rawAssetTypes.filter((item): item is string => typeof item === "string"))]
+    : [];
+  if (assetTypes.length === 1 && ["image", "video", "audio"].includes(assetTypes[0])) {
+    return `analyze_${assetTypes[0]}`;
+  }
+  const properties = inputSchema.properties;
+  const required = inputSchema.required;
+  const urlDefinition = properties && typeof properties === "object" && !Array.isArray(properties)
+    ? (properties as Record<string, unknown>).url
+    : undefined;
+  if (
+    urlDefinition && typeof urlDefinition === "object" && !Array.isArray(urlDefinition) &&
+    (urlDefinition as Record<string, unknown>).type === "string" &&
+    Array.isArray(required) && required.includes("url")
+  ) return "analyze_webpage";
+  return "";
+}
+
+export function normalizeGeneratedStepOutputType(
+  value: unknown,
+  stepType: string,
+  handler: unknown,
+): SkillOutputType | "" | undefined {
+  if (stepType === "approval" || stepType === "input") return "";
+  const normalizedHandler = typeof handler === "string" ? handler.trim() : "";
+  if (["analyze_image", "analyze_video", "analyze_audio", "analyze_webpage"].includes(normalizedHandler)) return "text";
+  if (["render_pptx", "render_xlsx", "render_docx", "render_markdown"].includes(normalizedHandler)) return "file";
+  const generatedOutput = new Map<string, SkillOutputType>([
+    ["text_to_image", "image"], ["image_to_image", "image"],
+    ["text_to_video", "video"], ["image_to_video", "video"],
+    ["start_end_to_video", "video"], ["reference_to_video", "video"],
+    ["text_to_audio", "audio"],
+  ]).get(normalizedHandler);
+  if (generatedOutput) return generatedOutput;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["text", "image", "video", "audio", "file"].includes(normalized)) return normalized as SkillOutputType;
+    if (["report", "markdown", "json", "analysis", "response"].includes(normalized)) return "text";
+  }
+  return stepType === "text" ? "text" : undefined;
+}
+
+export function normalizeGeneratedOutputRole(value: unknown): "" | "final" | "intermediate" | "draft" | undefined {
+  if (value === undefined || value === null || value === "") return "";
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
+  if (["final", "result", "primary", "output"].includes(normalized)) return "final";
+  if (["intermediate", "context", "working", "work"].includes(normalized)) return "intermediate";
+  if (normalized === "draft") return "draft";
+  return undefined;
+}
+
+function inferredGeneratedOutputTypes(manifest: Record<string, unknown>): SkillOutputType[] {
+  const outputTypes = new Set<SkillOutputType>();
+  const steps = Array.isArray(manifest.steps) ? manifest.steps : [];
+  for (const rawStep of steps) {
+    if (!rawStep || typeof rawStep !== "object" || Array.isArray(rawStep)) continue;
+    const step = rawStep as Record<string, unknown>;
+    const type = normalizeGeneratedStepType(step.type, step.handler);
+    if (!type) continue;
+    const outputType = normalizeGeneratedStepOutputType(step.outputType, type, step.handler);
+    if (outputType && AUTO_OUTPUT_TYPES.has(outputType)) outputTypes.add(outputType);
+  }
+  return [...outputTypes];
+}
+
 function limitedText(value: unknown, limit: number): string {
   return typeof value === "string" ? Array.from(value.trim()).slice(0, limit).join("") : "";
 }
@@ -335,11 +442,37 @@ function sanitizeManifest(raw: string, request: SkillManifestDraftRequest): Reco
         throw new Error(`“${request.title}”的第 ${index + 1} 步不是对象`);
       }
       const step = rawStep as Record<string, unknown>;
-      const normalizedStepType = normalizeGeneratedStepType(step.type, step.handler);
+      let normalizedHandler = normalizeGeneratedStepHandler(step.handler, step.type);
+      if (normalizedHandler) step.handler = normalizedHandler;
+      let normalizedStepType = normalizeGeneratedStepType(step.type, normalizedHandler);
+      if (!normalizedHandler && normalizedStepType === "tool") {
+        normalizedHandler = inferGeneratedAnalysisHandler(request.inputSchema, request.primaryOutputType);
+        if (normalizedHandler) step.handler = normalizedHandler;
+        normalizedStepType = normalizeGeneratedStepType(step.type, normalizedHandler);
+      }
       if (!normalizedStepType) {
         throw new Error(`“${request.title}”的第 ${index + 1} 步类型不受支持`);
       }
       step.type = normalizedStepType;
+      const normalizedStepOutputType = normalizeGeneratedStepOutputType(step.outputType, normalizedStepType, step.handler);
+      const normalizedOutputRole = normalizeGeneratedOutputRole(step.outputRole);
+      if (step.outputRole !== undefined && normalizedOutputRole === undefined) {
+        throw new Error(`“${request.title}”的第 ${index + 1} 步 outputRole 无效`);
+      }
+      if (normalizedStepType === "approval" || normalizedStepType === "input") {
+        // Control steps never produce artifacts. AI models often copy output
+        // fields from neighboring execution steps; discard those harmless
+        // fields instead of rejecting the whole workflow.
+        delete step.outputType;
+        delete step.outputRole;
+      } else {
+        if (!normalizedStepOutputType) {
+          throw new Error(`“${request.title}”的第 ${index + 1} 个执行步骤缺少 outputType`);
+        }
+        step.outputType = normalizedStepOutputType;
+        if (normalizedOutputRole) step.outputRole = normalizedOutputRole;
+        else delete step.outputRole;
+      }
       if (step.preferredNodeType !== undefined) {
         const preferredNodeType = normalizeGeneratedPreferredNodeType(step.preferredNodeType);
         if (preferredNodeType === undefined) delete step.preferredNodeType;
@@ -419,12 +552,7 @@ function sanitizeManifest(raw: string, request: SkillManifestDraftRequest): Reco
       if (step.schema !== undefined && (!step.schema || typeof step.schema !== "object" || Array.isArray(step.schema))) {
         throw new Error(`“${request.title}”的第 ${index + 1} 步 schema 必须是 JSON 对象`);
       }
-      const outputType = controlStep ? "" : (
-        typeof step.outputType === "string" && step.outputType ? step.outputType : step.type === "text" ? "text" : ""
-      );
-      if (!controlStep && !outputType) {
-        throw new Error(`“${request.title}”的第 ${index + 1} 个执行步骤缺少 outputType`);
-      }
+      const outputType = controlStep ? "" : normalizedStepOutputType || "";
       if (step.type === "text" && outputType !== "text" && outputType !== "file") {
         throw new Error(`“${request.title}”的第 ${index + 1} 个文本步骤只能输出 text 或 file`);
       }
@@ -444,10 +572,7 @@ function sanitizeManifest(raw: string, request: SkillManifestDraftRequest): Reco
       if (handlerOutput && handlerOutput !== outputType) {
         throw new Error(`“${request.title}”的第 ${index + 1} 步处理器与输出类型不匹配`);
       }
-      const outputRole = typeof step.outputRole === "string" ? step.outputRole : "";
-      if (outputRole && !["final", "intermediate", "draft"].includes(outputRole)) {
-        throw new Error(`“${request.title}”的第 ${index + 1} 步 outputRole 无效`);
-      }
+      const outputRole = normalizedOutputRole || "";
       validateHandlerInput(handler, request, index);
       normalizedSteps.push({
         type: normalizedStepType,
@@ -593,10 +718,13 @@ function sanitizeAutoConfiguration(raw: string, request: SkillManifestDraftReque
     : {};
   const reconciledInputPreset = reconcileGeneratedInputPreset(inputPreset as SkillInputPreset, manifest);
   const rawOutputTypes = Array.isArray(parsed.outputTypes) ? parsed.outputTypes : [];
-  const outputTypes = [...new Set(rawOutputTypes.filter((item): item is SkillOutputType => typeof item === "string" && AUTO_OUTPUT_TYPES.has(item as SkillOutputType)))];
-  if (!outputTypes.includes(primaryOutputType as SkillOutputType) || outputTypes.length !== rawOutputTypes.length) {
-    throw new Error(`“${request.title}”返回的允许输出不完整或包含无效类型`);
-  }
+  const outputTypes = kind === "preset"
+    ? [primaryOutputType as SkillOutputType]
+    : [...new Set<SkillOutputType>([
+        primaryOutputType as SkillOutputType,
+        ...rawOutputTypes.filter((item): item is SkillOutputType => typeof item === "string" && AUTO_OUTPUT_TYPES.has(item as SkillOutputType)),
+        ...inferredGeneratedOutputTypes(manifest),
+      ])];
   if (kind === "tool" && primaryOutputType !== "text" && primaryOutputType !== "file") {
     throw new Error(`“${request.title}”的技能工具只能输出文本或文件`);
   }
