@@ -114,6 +114,26 @@ export function reconcileGeneratedInputPreset(
   return requiredPreset;
 }
 
+/** Normalize model-authored labels to the runtime step vocabulary. */
+export function normalizeGeneratedStepType(value: unknown, handler: unknown): string | undefined {
+  const normalizedHandler = typeof handler === "string" ? handler.trim() : "";
+  if (["analyze_image", "analyze_video", "analyze_audio", "analyze_webpage", "render_pptx", "render_xlsx", "render_docx", "render_markdown"].includes(normalizedHandler)) {
+    return "tool";
+  }
+  if (["text_to_image", "image_to_image", "text_to_video", "image_to_video", "start_end_to_video", "reference_to_video", "text_to_audio"].includes(normalizedHandler)) {
+    return "generate";
+  }
+  if (normalizedHandler === "skill_text_completion" || normalizedHandler === "assistant_chat") return "text";
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
+  if (["text", "llm", "chat", "assistant"].includes(normalized)) return "text";
+  if (["generate", "generation", "media_generation"].includes(normalized)) return "generate";
+  if (["tool", "analysis", "analyze", "renderer"].includes(normalized)) return "tool";
+  if (["approval", "confirm", "confirmation"].includes(normalized)) return "approval";
+  if (["input", "user_input", "collect_input"].includes(normalized)) return "input";
+  return undefined;
+}
+
 function limitedText(value: unknown, limit: number): string {
   return typeof value === "string" ? Array.from(value.trim()).slice(0, limit).join("") : "";
 }
@@ -315,6 +335,11 @@ function sanitizeManifest(raw: string, request: SkillManifestDraftRequest): Reco
         throw new Error(`“${request.title}”的第 ${index + 1} 步不是对象`);
       }
       const step = rawStep as Record<string, unknown>;
+      const normalizedStepType = normalizeGeneratedStepType(step.type, step.handler);
+      if (!normalizedStepType) {
+        throw new Error(`“${request.title}”的第 ${index + 1} 步类型不受支持`);
+      }
+      step.type = normalizedStepType;
       if (step.preferredNodeType !== undefined) {
         const preferredNodeType = normalizeGeneratedPreferredNodeType(step.preferredNodeType);
         if (preferredNodeType === undefined) delete step.preferredNodeType;
@@ -329,9 +354,7 @@ function sanitizeManifest(raw: string, request: SkillManifestDraftRequest): Reco
           throw new Error(`“${request.title}”的第 ${index + 1} 步字段 ${field} 必须是文本`);
         }
       }
-      if (typeof step.type !== "string" || !STEP_TYPES.has(step.type)) {
-        throw new Error(`“${request.title}”的第 ${index + 1} 步类型不受支持`);
-      }
+      if (!STEP_TYPES.has(normalizedStepType)) throw new Error(`“${request.title}”的第 ${index + 1} 步类型不受支持`);
       const rawKey = typeof step.key === "string" ? step.key : "";
       const key = rawKey.trim() || `step_${index + 1}`;
       if (rawKey !== rawKey.trim() || seenKeys.has(key)) {
@@ -427,7 +450,7 @@ function sanitizeManifest(raw: string, request: SkillManifestDraftRequest): Reco
       }
       validateHandlerInput(handler, request, index);
       normalizedSteps.push({
-        type: step.type,
+        type: normalizedStepType,
         handler,
         outputType,
         outputRole,
@@ -542,7 +565,7 @@ ${excerpt(request.source, sourceLimit)}
 1. 忠实于 Skill 原文承诺。只写提示词、剧本、方案、分析或建议的 Skill，主输出必须是 text；不得擅自增加收费的图片/视频生成。
 2. 只有原文明确承诺实际调用生成模型并交付媒体时，才选择 image/video/audio 输出。
 3. 明确要求服务端分析单个图片、视频、音频或网页时可使用 tool；普通知识/规划/对话 Skill 使用 agent；单次直接媒体生成才使用 preset。
-4. outputTypes 必须包含主输出，也只声明流程实际产生的 text/image/video/audio/file。Manifest 顶层只允许 kind、primaryOutputType、outputTypes、preferredNodeType、steps；不得写 modelId。preferredNodeType 不是输出类型，只能在图片应物化为角色/场景节点时使用 character/scene，其余情况省略。步骤与 handler 只能使用 FlowingLight 白名单：${[...HANDLERS].filter(Boolean).join("、")}。
+4. outputTypes 必须包含主输出，也只声明流程实际产生的 text/image/video/audio/file。Manifest 顶层只允许 kind、primaryOutputType、outputTypes、preferredNodeType、steps；不得写 modelId。preferredNodeType 不是输出类型，只能在图片应物化为角色/场景节点时使用 character/scene，其余情况省略。步骤 type 是执行类别，只能写 text、generate、tool、approval、input，不能写 video、image、analysis 或 llm；所有 analyze_* 与 render_* 处理器的 type 必须是 tool。handler 只能使用 FlowingLight 白名单：${[...HANDLERS].filter(Boolean).join("、")}。
 5. 输入预设表示用户提交内容的语义类型，不表示上传控件或文件扩展名。视频文件必须选 video，图片选 image/images，音频选 audio，普通文档才选 file。输入预设必须和步骤真实消费方式一致；视频审片必须使用 video + analyze_video，图片分析必须使用 image/images + analyze_image，音频分析必须使用 audio + analyze_audio，网页分析必须使用 webpage + analyze_webpage。
 6. 优先最简单可运行流程。若无步骤 Agent 已能完成文本任务，manifest 不写 steps。只有原 Skill 明确要求先生成剧本、提示词或方案，再据此生成媒体时，才增加 text 中间步骤；后续 generate 步骤的 prompt 使用 {{previous}} 接收该文本。文本中间结果与付费媒体生成之间默认加入 approval 步骤（不要 promotePrevious），除非原文明确要求全自动执行。
 7. description、usageScenario、howTo、输入输出说明和示例必须与最终 kind、inputPreset 和 Manifest 的真实可运行能力一致。包内脚本不会执行，不得把脚本能力写成已经接入的功能。

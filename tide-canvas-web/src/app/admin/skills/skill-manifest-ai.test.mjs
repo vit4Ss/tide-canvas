@@ -67,6 +67,8 @@ test("AI writes only a constrained Manifest draft without model IDs", () => {
   assert.match(control, /delete manifest\.preferredNodeType/);
   assert.match(control, /普通图片、视频、文本和文件必须省略/);
   assert.match(control, /reconcileGeneratedInputPreset/);
+  assert.match(control, /normalizeGeneratedStepType/);
+  assert.match(control, /步骤 type 是执行类别/);
   assert.match(control, /输入预设表示用户提交内容的语义类型/);
   assert.match(control, /以 SKILL\.md 的专业指令、知识和工作流为核心/);
   assert.match(control, /analyze_video 和 analyze_audio 每次只处理 1 个对应素材/);
