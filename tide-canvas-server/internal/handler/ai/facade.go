@@ -8,6 +8,8 @@ import (
 	"gorm.io/gorm"
 
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/handler/points"
+	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
 )
 
@@ -106,6 +108,48 @@ func (f *GenerationFacade) Get(ctx context.Context, userID, taskID idgen.ID) (*T
 
 func (f *GenerationFacade) Cancel(ctx context.Context, userID, taskID idgen.ID) error {
 	return f.svc.cancelTask(ctx, userID, taskID)
+}
+
+// RefundFailedSkillRun compensates successful child calls when the parent
+// workflow fails before delivering a final result. Each task ID is its own
+// durable refund key, so retries and multiple workers cannot credit twice.
+func (f *GenerationFacade) RefundFailedSkillRun(ctx context.Context, runID idgen.ID) error {
+	if f == nil || f.svc == nil || f.svc.repo == nil || f.svc.repo.db == nil || runID == 0 {
+		return errors.New("generation facade is unavailable")
+	}
+	db := f.svc.repo.db.WithContext(ctx)
+	var run model.SkillRun
+	if err := db.Select("id", "user_id", "status").First(&run, "id = ?", runID).Error; err != nil {
+		return err
+	}
+	if run.Status != model.SkillRunFailed {
+		return nil
+	}
+	var tasks []model.AiTask
+	if err := db.Unscoped().Select("id", "user_id", "status", "point_cost", "refunded").
+		Where("skill_run_id = ? AND user_id = ? AND status = ? AND point_cost > 0", runID, run.UserID, statusSuccess).
+		Find(&tasks).Error; err != nil {
+		return err
+	}
+	refundErrors := make([]error, 0)
+	for i := range tasks {
+		if tasks[i].Refunded {
+			continue
+		}
+		if err := points.Refund(db, run.UserID, int(tasks[i].PointCost), "技能执行失败退款", tasks[i].ID); err != nil {
+			refundErrors = append(refundErrors, err)
+		}
+	}
+	var remaining int64
+	if err := db.Unscoped().Model(&model.AiTask{}).
+		Where("skill_run_id = ? AND user_id = ? AND status = ? AND point_cost > 0 AND refunded = ?", runID, run.UserID, statusSuccess, false).
+		Select("COALESCE(SUM(point_cost), 0)").Scan(&remaining).Error; err != nil {
+		refundErrors = append(refundErrors, err)
+	} else if err := db.Model(&model.SkillRun{}).Where("id = ? AND status = ?", runID, model.SkillRunFailed).
+		Update("point_cost", remaining).Error; err != nil {
+		refundErrors = append(refundErrors, err)
+	}
+	return errors.Join(refundErrors...)
 }
 
 // PromoteTask finalizes a successful draft task after explicit workflow

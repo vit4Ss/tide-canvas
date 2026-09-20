@@ -241,6 +241,55 @@ function inferredGeneratedOutputTypes(manifest: Record<string, unknown>): SkillO
   return [...outputTypes];
 }
 
+export function canonicalizeGeneratedMediaAnalysisManifest(
+  manifest: Record<string, unknown>,
+  kind: SkillKind,
+  inputPreset: SkillInputPreset,
+  primaryOutputType: SkillOutputType,
+): Record<string, unknown> {
+  if ((kind !== "agent" && kind !== "tool") || primaryOutputType !== "text") return manifest;
+  const expectedHandler = ({
+    image: "analyze_image",
+    images: "analyze_image",
+    video: "analyze_video",
+    audio: "analyze_audio",
+    webpage: "analyze_webpage",
+  } as Partial<Record<SkillInputPreset, string>>)[inputPreset];
+  if (!expectedHandler || !Array.isArray(manifest.steps)) return manifest;
+  let analysisStep: Record<string, unknown> | null = null;
+  for (const rawStep of manifest.steps) {
+    if (!rawStep || typeof rawStep !== "object" || Array.isArray(rawStep)) return manifest;
+    const step = rawStep as Record<string, unknown>;
+    const handler = normalizeGeneratedStepHandler(step.handler, step.type);
+    const stepType = normalizeGeneratedStepType(step.type, handler);
+    if (handler === expectedHandler && !analysisStep) analysisStep = step;
+    if (
+      stepType !== "approval" && stepType !== "input" &&
+      handler !== "" && handler !== expectedHandler &&
+      handler !== "skill_text_completion" && handler !== "assistant_chat"
+    ) return manifest;
+  }
+  if (!analysisStep) return manifest;
+  const canonical = { ...manifest };
+  // A single-media Agent already routes through the matching analyzer and
+  // applies the complete private SKILL.md as its system instructions. Keeping
+  // AI-authored "analysis + polish" steps would pay twice for the same work.
+  if (kind === "agent" && inputPreset !== "webpage") {
+    delete canonical.steps;
+    return canonical;
+  }
+  canonical.steps = [{
+    key: typeof analysisStep.key === "string" && analysisStep.key.trim() ? analysisStep.key.trim() : "analyze",
+    title: typeof analysisStep.title === "string" && analysisStep.title.trim() ? analysisStep.title.trim() : "分析素材",
+    type: "tool",
+    handler: expectedHandler,
+    outputType: "text",
+    outputRole: "final",
+    prompt: typeof analysisStep.prompt === "string" && analysisStep.prompt.trim() ? analysisStep.prompt : "{{prompt}}",
+  }];
+  return canonical;
+}
+
 function limitedText(value: unknown, limit: number): string {
   return typeof value === "string" ? Array.from(value.trim()).slice(0, limit).join("") : "";
 }
@@ -713,10 +762,16 @@ function sanitizeAutoConfiguration(raw: string, request: SkillManifestDraftReque
   if (typeof inputPreset !== "string" || !AUTO_INPUT_PRESETS.has(inputPreset as SkillInputPreset)) throw new Error(`“${request.title}”返回了无效输入 Schema`);
   if (typeof primaryOutputType !== "string" || !AUTO_OUTPUT_TYPES.has(primaryOutputType as SkillOutputType)) throw new Error(`“${request.title}”返回了无效主输出`);
   if (!SKILL_CATEGORIES.some((item) => item === category)) throw new Error(`“${request.title}”返回了无效分类`);
-  const manifest = parsed.manifest && typeof parsed.manifest === "object" && !Array.isArray(parsed.manifest)
+  let manifest = parsed.manifest && typeof parsed.manifest === "object" && !Array.isArray(parsed.manifest)
     ? parsed.manifest as Record<string, unknown>
     : {};
   const reconciledInputPreset = reconcileGeneratedInputPreset(inputPreset as SkillInputPreset, manifest);
+  manifest = canonicalizeGeneratedMediaAnalysisManifest(
+    manifest,
+    kind,
+    reconciledInputPreset,
+    primaryOutputType as SkillOutputType,
+  );
   const rawOutputTypes = Array.isArray(parsed.outputTypes) ? parsed.outputTypes : [];
   const outputTypes = kind === "preset"
     ? [primaryOutputType as SkillOutputType]

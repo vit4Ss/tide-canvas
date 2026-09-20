@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -91,7 +92,12 @@ func (s *service) recoveryLoop() {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	lastAssetSweep := time.Time{}
+	lastRefundSweep := time.Time{}
 	for now := range ticker.C {
+		if s.ai != nil && (lastRefundSweep.IsZero() || now.Sub(lastRefundSweep) >= time.Minute) {
+			s.refundFailedRunCharges()
+			lastRefundSweep = now
+		}
 		if s.deps != nil && (lastAssetSweep.IsZero() || now.Sub(lastAssetSweep) >= time.Minute) {
 			var pendingAssets []model.SkillRun
 			if s.db.Select("id").Where("status = ? AND entry_point = ? AND EXISTS (SELECT 1 FROM skill_run_artifact a WHERE a.run_id = skill_run.id AND a.deleted IS NULL AND a.is_final = ? AND a.file_id = 0 AND (a.url <> '' OR (a.type = 'file' AND a.text_content <> '')))",
@@ -111,6 +117,23 @@ func (s *service) recoveryLoop() {
 		}
 		for i := range rows {
 			s.enqueue(rows[i].ID)
+		}
+	}
+}
+
+func (s *service) refundFailedRunCharges() {
+	if s == nil || s.db == nil || s.ai == nil {
+		return
+	}
+	var runIDs []idgen.ID
+	if err := s.db.Model(&model.SkillRun{}).Where("status = ? AND point_cost > 0", model.SkillRunFailed).
+		Order("update_time ASC").Limit(100).Pluck("id", &runIDs).Error; err != nil {
+		logger.L().Warn("skill run refund recovery query failed", zap.Error(err))
+		return
+	}
+	for _, runID := range runIDs {
+		if err := s.ai.RefundFailedSkillRun(context.Background(), runID); err != nil {
+			logger.L().Warn("skill run refund recovery failed", zap.String("runId", runID.String()), zap.Error(err))
 		}
 	}
 }
@@ -1046,6 +1069,11 @@ func (s *service) failStep(run *model.SkillRun, stepID idgen.ID, message string)
 
 func (s *service) failRun(runID idgen.ID, revision int64, message string) {
 	defer func() {
+		if s.ai != nil {
+			if err := s.ai.RefundFailedSkillRun(context.Background(), runID); err != nil {
+				logger.L().Error("skill run child refund failed", zap.String("runId", runID.String()), zap.Error(err))
+			}
+		}
 		if err := points.RefundFailedSocialRun(s.db, runID); err != nil {
 			logger.L().Error("social report refund failed", zap.Error(err))
 		}
@@ -1623,4 +1651,39 @@ func publicRunError(err error) string {
 		return userError.message
 	}
 	return "\u6280\u80fd\u6267\u884c\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5"
+}
+
+// SkillRun stores only publicRunError output, but MCP responses still need to
+// avoid leaking unexpected internal English errors from legacy terminal rows.
+// Preserve actionable Chinese messages and map known internal states to safe,
+// specific guidance instead of replacing everything with a misleading balance
+// warning.
+func publicMCPRunError(message string) string {
+	message = strings.TrimSpace(message)
+	switch message {
+	case "skill version is unavailable":
+		return "技能版本暂不可用，请联系管理员"
+	case "invalid run input":
+		return "技能输入格式无效，请重新提交"
+	case "asset archive failed":
+		return "技能结果整理失败，本次未完成，请重试"
+	case "skill run finalization failed":
+		return "技能结果保存失败，本次未完成，请重试"
+	}
+	message = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, message)
+	runes := []rune(strings.TrimSpace(message))
+	if len(runes) > 500 {
+		runes = runes[:500]
+	}
+	for _, r := range runes {
+		if unicode.Is(unicode.Han, r) {
+			return string(runes)
+		}
+	}
+	return "技能执行失败，请稍后重试"
 }

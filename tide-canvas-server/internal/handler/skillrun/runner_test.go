@@ -36,6 +36,21 @@ func (s attachmentTestStorage) OwnsURL(value string) (string, bool) {
 }
 func (s attachmentTestStorage) PublicRewrites() [][2]string { return nil }
 
+func TestPublicMCPRunErrorPreservesSafeActionableFailures(t *testing.T) {
+	if got := publicMCPRunError("当前文本模型未开启文件上传，请切换模型后重试"); got != "当前文本模型未开启文件上传，请切换模型后重试" {
+		t.Fatalf("actionable error was hidden: %q", got)
+	}
+	if got := publicMCPRunError("invalid run input"); got != "技能输入格式无效，请重新提交" {
+		t.Fatalf("known internal error was not mapped: %q", got)
+	}
+	if got := publicMCPRunError("database password=secret"); got != "技能执行失败，请稍后重试" {
+		t.Fatalf("unexpected internal error leaked: %q", got)
+	}
+	if got := publicMCPRunError("  视频关键帧提取失败，请确认文件格式有效\n"); got != "视频关键帧提取失败，请确认文件格式有效" {
+		t.Fatalf("public error was not normalized: %q", got)
+	}
+}
+
 func TestRenderStepPromptSupportsInputAndContext(t *testing.T) {
 	input := RunInput{Prompt: "main description", Parameters: map[string]any{"tone": "warm", "count": float64(3)}}
 	contextJSON := `{"feedback":"less contrast","userInput":{"audience":"family"}}`

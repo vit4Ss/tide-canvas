@@ -1250,7 +1250,7 @@ func (s *service) toVO(run *model.SkillRun) (RunVO, error) {
 			}
 		}
 		if vo.ErrorMessage != "" {
-			vo.ErrorMessage = "技能执行失败，请检查输入、模型可用状态和积分余额后重试"
+			vo.ErrorMessage = publicMCPRunError(vo.ErrorMessage)
 			vo.ErrorMsg = vo.ErrorMessage
 		}
 		var pending mcpPendingVO

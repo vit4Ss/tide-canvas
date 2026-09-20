@@ -11,7 +11,7 @@ const extractFunction = (name) => {
   assert.ok(fn, `${name} function missing`);
   return fn.getText(source).replace(/^export /, "");
 };
-const code = ts.transpileModule(`${extractFunction("normalizeGeneratedPreferredNodeType")}\n${extractFunction("reconcileGeneratedInputPreset")}\n${extractFunction("normalizeGeneratedStepType")}\n${extractFunction("normalizeGeneratedStepHandler")}\n${extractFunction("inferGeneratedAnalysisHandler")}\n${extractFunction("normalizeGeneratedStepOutputType")}\n${extractFunction("normalizeGeneratedOutputRole")}\nglobalThis.normalize = normalizeGeneratedPreferredNodeType;\nglobalThis.reconcile = reconcileGeneratedInputPreset;\nglobalThis.normalizeStepType = normalizeGeneratedStepType;\nglobalThis.normalizeHandler = normalizeGeneratedStepHandler;\nglobalThis.inferAnalysisHandler = inferGeneratedAnalysisHandler;\nglobalThis.normalizeOutputType = normalizeGeneratedStepOutputType;\nglobalThis.normalizeOutputRole = normalizeGeneratedOutputRole;`, {
+const code = ts.transpileModule(`${extractFunction("normalizeGeneratedPreferredNodeType")}\n${extractFunction("reconcileGeneratedInputPreset")}\n${extractFunction("normalizeGeneratedStepType")}\n${extractFunction("normalizeGeneratedStepHandler")}\n${extractFunction("inferGeneratedAnalysisHandler")}\n${extractFunction("normalizeGeneratedStepOutputType")}\n${extractFunction("normalizeGeneratedOutputRole")}\n${extractFunction("canonicalizeGeneratedMediaAnalysisManifest")}\nglobalThis.normalize = normalizeGeneratedPreferredNodeType;\nglobalThis.reconcile = reconcileGeneratedInputPreset;\nglobalThis.normalizeStepType = normalizeGeneratedStepType;\nglobalThis.normalizeHandler = normalizeGeneratedStepHandler;\nglobalThis.inferAnalysisHandler = inferGeneratedAnalysisHandler;\nglobalThis.normalizeOutputType = normalizeGeneratedStepOutputType;\nglobalThis.normalizeOutputRole = normalizeGeneratedOutputRole;\nglobalThis.canonicalizeAnalysis = canonicalizeGeneratedMediaAnalysisManifest;`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const context = {};
@@ -62,4 +62,21 @@ test("AI import derives required output types and normalizes result roles", () =
   assert.equal(context.normalizeOutputRole("result"), "final");
   assert.equal(context.normalizeOutputRole("working"), "intermediate");
   assert.equal(context.normalizeOutputRole("unexpected"), undefined);
+});
+
+test("single-media review skills use one analysis call instead of a paid polish chain", () => {
+  const generated = { steps: [
+    { key: "review", type: "analysis", handler: "analyze_video", prompt: "{{prompt}}" },
+    { key: "polish", type: "llm", handler: "skill_text_completion", prompt: "{{previous}}" },
+  ] };
+  const agent = context.canonicalizeAnalysis(generated, "agent", "video", "text");
+  assert.equal(agent.steps, undefined);
+  const tool = context.canonicalizeAnalysis(generated, "tool", "video", "text");
+  assert.equal(tool.steps.length, 1);
+  assert.equal(tool.steps[0].handler, "analyze_video");
+  assert.equal(tool.steps[0].outputRole, "final");
+  const webpage = context.canonicalizeAnalysis({ steps: [{ type: "tool", handler: "analyze_webpage" }] }, "agent", "webpage", "text");
+  assert.equal(webpage.steps.length, 1);
+  const generator = { steps: [{ type: "tool", handler: "analyze_video" }, { type: "generate", handler: "text_to_video" }] };
+  assert.equal(context.canonicalizeAnalysis(generator, "agent", "video", "text"), generator);
 });

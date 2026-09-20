@@ -345,7 +345,7 @@ func (h *handler) writeMCPRun(c *gin.Context, run *model.SkillRun) {
 		}
 	}
 	if run.Status == model.SkillRunFailed {
-		vo.ErrorMessage = "技能执行失败，请检查输入、模型可用状态和积分余额后重试"
+		vo.ErrorMessage = publicMCPRunError(run.ErrorMessage)
 	}
 	c.Header("Cache-Control", "no-store")
 	response.OK(c, vo)
