@@ -80,6 +80,12 @@ export interface SkillManifestDraftResult {
 const AUTO_INPUT_PRESETS = new Set<SkillInputPreset>(["text", "text_image", "image", "images", "keyframes", "video", "audio", "file", "webpage", "mixed"]);
 const AUTO_OUTPUT_TYPES = new Set<SkillOutputType>(["text", "image", "video", "audio", "file"]);
 
+export function normalizeGeneratedPreferredNodeType(value: unknown): "" | "character" | "scene" | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  return normalized === "" || normalized === "character" || normalized === "scene" ? normalized : undefined;
+}
+
 function limitedText(value: unknown, limit: number): string {
   return typeof value === "string" ? Array.from(value.trim()).slice(0, limit).join("") : "";
 }
@@ -249,11 +255,17 @@ function sanitizeManifest(raw: string, request: SkillManifestDraftRequest): Reco
   for (const field of Object.keys(manifest)) {
     if (!TOP_LEVEL_FIELDS.has(field)) throw new Error(`“${request.title}”的 Manifest 包含未知字段 ${field}`);
   }
-  if (
-    manifest.preferredNodeType !== undefined &&
-    (typeof manifest.preferredNodeType !== "string" || !["", "character", "scene"].includes(manifest.preferredNodeType))
-  ) {
-    throw new Error(`“${request.title}”的 preferredNodeType 只能是 character 或 scene`);
+  if (manifest.preferredNodeType !== undefined) {
+    const preferredNodeType = normalizeGeneratedPreferredNodeType(manifest.preferredNodeType);
+    if (preferredNodeType === undefined) {
+      // This is only a canvas materialization hint, not an execution decision.
+      // Models often confuse it with outputType and return image/video/text;
+      // dropping that optional hint is safer than rejecting an otherwise valid
+      // workflow. The server still strictly rejects invalid manually-authored JSON.
+      delete manifest.preferredNodeType;
+    } else {
+      manifest.preferredNodeType = preferredNodeType;
+    }
   }
   const allowedOutputs = new Set(request.outputTypes);
   const normalizedSteps: Array<{
@@ -275,6 +287,11 @@ function sanitizeManifest(raw: string, request: SkillManifestDraftRequest): Reco
         throw new Error(`“${request.title}”的第 ${index + 1} 步不是对象`);
       }
       const step = rawStep as Record<string, unknown>;
+      if (step.preferredNodeType !== undefined) {
+        const preferredNodeType = normalizeGeneratedPreferredNodeType(step.preferredNodeType);
+        if (preferredNodeType === undefined) delete step.preferredNodeType;
+        else step.preferredNodeType = preferredNodeType;
+      }
       for (const field of Object.keys(step)) {
         if (field === "modelId") throw new Error(`“${request.title}”的第 ${index + 1} 步不允许由 AI 填写模型 ID`);
         if (!STEP_FIELDS.has(field)) throw new Error(`“${request.title}”的第 ${index + 1} 步包含未知字段 ${field}`);
@@ -350,12 +367,6 @@ function sanitizeManifest(raw: string, request: SkillManifestDraftRequest): Reco
       }
       if (step.schema !== undefined && (!step.schema || typeof step.schema !== "object" || Array.isArray(step.schema))) {
         throw new Error(`“${request.title}”的第 ${index + 1} 步 schema 必须是 JSON 对象`);
-      }
-      if (
-        step.preferredNodeType !== undefined &&
-        !["", "character", "scene"].includes(step.preferredNodeType as string)
-      ) {
-        throw new Error(`“${request.title}”的第 ${index + 1} 步 preferredNodeType 无效`);
       }
       const outputType = controlStep ? "" : (
         typeof step.outputType === "string" && step.outputType ? step.outputType : step.type === "text" ? "text" : ""
@@ -449,7 +460,7 @@ function generationPrompt(request: SkillManifestDraftRequest, model: AiModelVO):
 ${excerpt(request.source, sourceLimit)}
 </skill_definition>
 
-只返回严格 JSON 对象。顶层只允许 kind、primaryOutputType、outputTypes、preferredNodeType、steps。
+只返回严格 JSON 对象。顶层只允许 kind、primaryOutputType、outputTypes、preferredNodeType、steps。preferredNodeType 仅在图片结果应直接成为角色节点或场景节点时填写 character 或 scene；普通图片、视频、文本和文件必须省略。
 步骤 type 只能是 text、generate、tool、approval、input；handler 只能从以下白名单选择：
 ${[...HANDLERS].filter(Boolean).join("、")}。
 
@@ -496,7 +507,7 @@ ${excerpt(request.source, sourceLimit)}
 1. 忠实于 Skill 原文承诺。只写提示词、剧本、方案、分析或建议的 Skill，主输出必须是 text；不得擅自增加收费的图片/视频生成。
 2. 只有原文明确承诺实际调用生成模型并交付媒体时，才选择 image/video/audio 输出。
 3. 明确要求服务端分析单个图片、视频、音频或网页时可使用 tool；普通知识/规划/对话 Skill 使用 agent；单次直接媒体生成才使用 preset。
-4. outputTypes 必须包含主输出，也只声明流程实际产生的 text/image/video/audio/file。Manifest 顶层只允许 kind、primaryOutputType、outputTypes、preferredNodeType、steps；不得写 modelId。步骤与 handler 只能使用 FlowingLight 白名单：${[...HANDLERS].filter(Boolean).join("、")}。
+4. outputTypes 必须包含主输出，也只声明流程实际产生的 text/image/video/audio/file。Manifest 顶层只允许 kind、primaryOutputType、outputTypes、preferredNodeType、steps；不得写 modelId。preferredNodeType 不是输出类型，只能在图片应物化为角色/场景节点时使用 character/scene，其余情况省略。步骤与 handler 只能使用 FlowingLight 白名单：${[...HANDLERS].filter(Boolean).join("、")}。
 5. 输入预设必须和步骤真实消费方式一致；视频审片必须 analyze_video，图片分析必须 analyze_image，音频分析必须 analyze_audio。
 6. 优先最简单可运行流程。若无步骤 Agent 已能完成文本任务，manifest 不写 steps。只有原 Skill 明确要求先生成剧本、提示词或方案，再据此生成媒体时，才增加 text 中间步骤；后续 generate 步骤的 prompt 使用 {{previous}} 接收该文本。文本中间结果与付费媒体生成之间默认加入 approval 步骤（不要 promotePrevious），除非原文明确要求全自动执行。
 7. 不开启 MCP、不决定作者、不选择真实模型 ID；这些由管理员和系统处理。`;
@@ -565,12 +576,14 @@ export function SkillManifestAiControl({
   onGenerated,
   onBusyChange,
   autoConfigure = false,
+  autoStartToken = 0,
 }: {
   disabled?: boolean;
   loadRequests: () => Promise<SkillManifestDraftRequest[]>;
   onGenerated: (results: SkillManifestDraftResult[]) => void;
   onBusyChange?: (busy: boolean) => void;
   autoConfigure?: boolean;
+  autoStartToken?: number;
 }) {
   const [busy, setBusy] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -582,6 +595,8 @@ export function SkillManifestAiControl({
   const ownerRef = useRef("");
   const scopeRef = useRef("");
   const mountedRef = useRef(true);
+  const lastAutoStartRef = useRef(0);
+  const generateRef = useRef<() => Promise<void>>(async () => undefined);
 
   const setGenerationBusy = (next: boolean) => {
     if (!mountedRef.current) return;
@@ -598,16 +613,21 @@ export function SkillManifestAiControl({
     await commitAcceptedAiGeneration(scope, taskId, owner).catch(() => undefined);
   };
 
-  useEffect(() => () => {
-    mountedRef.current = false;
-    runRef.current += 1;
-    const taskId = taskIdRef.current;
-    const owner = ownerRef.current;
-    const scope = scopeRef.current;
-    taskIdRef.current = "";
-    if (taskId) {
-      void aiApi.cancelTask(taskId).finally(() => commitAcceptedAiGeneration(scope, taskId, owner)).catch(() => undefined);
-    }
+  useEffect(() => {
+    // React Strict Mode replays effects in development. Restore the mounted
+    // flag during every setup so the second (real) lifecycle remains active.
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      runRef.current += 1;
+      const taskId = taskIdRef.current;
+      const owner = ownerRef.current;
+      const scope = scopeRef.current;
+      taskIdRef.current = "";
+      if (taskId) {
+        void aiApi.cancelTask(taskId).finally(() => commitAcceptedAiGeneration(scope, taskId, owner)).catch(() => undefined);
+      }
+    };
   }, []);
 
   const stop = async () => {
@@ -781,6 +801,21 @@ export function SkillManifestAiControl({
       if (active()) setGenerationBusy(false);
     }
   };
+
+  useEffect(() => {
+    generateRef.current = generate;
+  });
+
+  useEffect(() => {
+    if (disabled || !autoConfigure || autoStartToken <= 0 || autoStartToken === lastAutoStartRef.current) return;
+    // Defer one task so Strict Mode can dispose its first effect pass without
+    // consuming the token or starting a paid request twice.
+    const timer = window.setTimeout(() => {
+      lastAutoStartRef.current = autoStartToken;
+      void generateRef.current();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [autoConfigure, autoStartToken, disabled]);
 
   return (
     <div className="adm-skill-manifest-ai">

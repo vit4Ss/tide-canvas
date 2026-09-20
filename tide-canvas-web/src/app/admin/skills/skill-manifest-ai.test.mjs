@@ -14,7 +14,21 @@ test("smart import may recommend Schema and output while administrator retains f
   assert.match(importer, /AI 智能导入会给出建议，管理员可在导入前调整/);
   assert.match(importer, /AI 根据原始 Skill 承诺推断，管理员拥有最终决定权/);
   assert.match(importer, /autoConfigure/);
-  assert.match(importer, /AI 不会开启 MCP、上架 Skill、选择真实模型 ID/);
+  assert.match(importer, /AI 智能导入会调用可用文本模型并按模型规则计费/);
+  assert.match(importer, /不会开启 MCP、上架 Skill、选择真实模型 ID/);
+  assert.doesNotMatch(importer, /使用指南与样例（选填）/);
+  assert.match(importer, /AI 配置尚未完成/);
+  assert.match(importer, /AI 正在生成导入配置/);
+  assert.match(importer, /AI 生成的使用说明/);
+  assert.match(importer, /adm-skill-guidance-review/);
+  assert.match(importer, /adm-skill-import-summary/);
+  assert.match(importer, /AI 识别结果/);
+  assert.ok(importer.indexOf("autoConfigure") < importer.indexOf("AI 生成的使用说明"));
+  assert.match(importer, /高级设置（一般无需修改）/);
+  assert.match(importer, /autoStartToken/);
+  assert.match(importer, /智能导入一次处理一个 Skill/);
+  assert.match(importer, /setKind\("agent"\)/);
+  assert.match(importer, /showCancel=\{!manifestBusy\}/);
   assert.match(importer, /setPrimaryOutputType/);
   assert.match(importer, /importInputPresets/);
   assert.match(importer, /fallbackImportInputPreset/);
@@ -50,6 +64,11 @@ test("AI writes only a constrained Manifest draft without model IDs", () => {
   assert.match(control, /"outputTypes":\["主输出以及流程实际产生的中间输出类型"\]/);
   assert.match(control, /prompt 使用 \{\{previous\}\} 接收该文本/);
   assert.match(control, /付费媒体生成之间默认加入 approval/);
+  assert.match(control, /delete manifest\.preferredNodeType/);
+  assert.match(control, /普通图片、视频、文本和文件必须省略/);
+  assert.match(control, /mountedRef\.current = true/);
+  assert.match(control, /window\.setTimeout/);
+  assert.match(control, /window\.clearTimeout/);
 });
 
 test("generated Manifests require confirmation and still use final import validation", () => {

@@ -51,6 +51,8 @@ export interface AdminModalProps {
   cancelLabel?: string;
   /** Save button label (default: "保存"). */
   saveLabel?: string;
+  /** Disable the primary action while the parent is preparing required data. */
+  saveDisabled?: boolean;
   /** Dialog width preset. Defaults to md. */
   size?: "sm" | "md" | "lg" | "xl";
   /** Whether the dialog can be dismissed via close button, backdrop, or Escape. */
@@ -71,6 +73,7 @@ export function AdminModal({
   footNote = "变更将在保存后生效",
   cancelLabel = "取消",
   saveLabel = "保存",
+  saveDisabled = false,
   size = "md",
   closeable = true,
   showCancel = true,
@@ -157,7 +160,7 @@ export function AdminModal({
               {cancelLabel}
             </button>
           ) : null}
-          <button type="button" className="adm-btn" disabled={saving} onClick={save}>
+          <button type="button" className="adm-btn" disabled={saving || saveDisabled} onClick={save}>
             {saving ? <><LoaderCircle className="adm-spin" aria-hidden size={14} />保存中…</> : saveLabel}
           </button>
         </div>

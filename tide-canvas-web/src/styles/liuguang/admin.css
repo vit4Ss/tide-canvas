@@ -3846,6 +3846,22 @@ tr:hover .rowacts,
   line-height: 1.45;
 }
 .adm-skill-manifest-ai > .adm-btn { flex: none; }
+.adm-skill-import-advanced { margin-top:16px; padding-top:16px; border-top:1px solid var(--border); }
+.adm-skill-import-advanced > summary { min-height:44px; box-sizing:border-box; padding:12px 0; cursor:pointer; color:var(--text-dim); font-size:12px; font-weight:600; }
+.adm-skill-import-advanced[open] > summary { color:var(--text); }
+.adm-skill-import-advanced > p { margin:8px 0 16px; font-size:12px; line-height:1.6; }
+.adm-skill-import-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  margin: 0 0 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.adm-skill-import-summary > div { flex: 1 1 120px; min-width: 0; }
+.adm-skill-import-summary dt { margin: 0 0 3px; color: var(--text-faint); font-size: 11px; }
+.adm-skill-import-summary dd { margin: 0; color: var(--text); font-size: 12px; font-weight: 600; }
 .adm-skill-manifest-drafts {
   display: grid;
   gap: 8px;
@@ -3875,6 +3891,24 @@ tr:hover .rowacts,
   border-radius: var(--r-sm);
   font: 12px/1.55 var(--mono);
   resize: vertical;
+}
+.adm-skill-manifest-drafts details.adm-skill-guidance-review > p {
+  margin: 8px 12px 12px;
+}
+.adm-skill-manifest-drafts details.adm-skill-guidance-review > summary {
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 12px 11px;
+}
+.adm-skill-manifest-drafts details.adm-skill-guidance-review > .fgrid {
+  padding: 0 12px 12px;
+}
+.adm-skill-manifest-drafts details.adm-skill-guidance-review textarea {
+  width: 100%;
+  min-height: 72px;
+  margin: 0;
+  box-sizing: border-box;
+  font: inherit;
 }
 .adm-skill-cover-ai {
   position: relative;

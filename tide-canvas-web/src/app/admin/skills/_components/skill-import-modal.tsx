@@ -13,6 +13,7 @@ import type {
 } from "@/types/admin-skill";
 import {
   SKILL_CATEGORIES,
+  SKILL_KIND_LABEL,
   SKILL_OUTPUT_LABEL,
   type SkillEntryPoint,
   type SkillKind,
@@ -246,6 +247,7 @@ export function SkillImportModal({
   const [fileError, setFileError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [manifestBusy, setManifestBusy] = useState(false);
+  const [autoStartToken, setAutoStartToken] = useState(0);
   const [validation, setValidation] = useState<AdminSkillImportValidationVO | null>(null);
   const [kind, setKind] = useState<SkillKind>("agent");
   const [inputPreset, setInputPreset] = useState<SkillInputPreset>("text");
@@ -289,11 +291,22 @@ export function SkillImportModal({
     setFileError("");
     setPackages([]);
     setValidation(null);
+    // A newly selected package must never inherit the execution shape of the
+    // previously inspected Skill. This also keeps the primary action locked
+    // until the new package has received its own AI/manual configuration.
+    setKind("agent");
+    setInputPreset("text");
+    setPrimaryOutputType("text");
+    setCategory(SKILL_CATEGORIES[0]);
+    setAuthorName("官方");
+    setMcpEnabled(false);
+    setEntryPoints(defaultAdminSkillEntryPoints("agent"));
     try {
       const prepared = await prepareFiles(selected);
       if (readSeq === readSeqRef.current) {
         setPackages(prepared);
         setValidation(null);
+        if (prepared.length === 1) setAutoStartToken((current) => current + 1);
       }
     } catch (error) {
       if (readSeq === readSeqRef.current) {
@@ -457,17 +470,19 @@ export function SkillImportModal({
     <AdminModal
       open={open}
       size="lg"
-      title="导入 Skill 文件"
-      subtitle="AI 可根据 SKILL.md 自动生成说明、Schema、执行策略和 Manifest；所有结果都可在导入前审核。"
-      saveLabel="校验并导入"
-      footNote="AI 不会改写 SKILL.md 或填写模型 ID；最终仍需通过服务端完整预检。"
+      title="导入 Skill"
+      subtitle="选择文件后，AI 会自动识别用途并完成配置。确认无误后直接导入。"
+      saveLabel={manifestBusy ? "AI 配置中…" : "导入 Skill"}
+      saveDisabled={reading || manifestBusy || submitting || !packages.length || (kind !== "preset" && packages.some((pkg) => !pkg.manifestText?.trim()))}
+      footNote={manifestBusy ? "正在读取 Skill 并生成安全配置，请保持窗口打开。" : "导入后默认下架，可在技能管理中确认后再开放。"}
       closeable={!manifestBusy}
+      showCancel={!manifestBusy}
       onClose={onClose}
       onSave={save}
     >
       <fieldset
         disabled={reading || submitting}
-        aria-busy={reading || submitting}
+        aria-busy={reading || submitting || manifestBusy}
         style={{ border: 0, margin: 0, minWidth: 0, padding: 0 }}
       >
         <FormCard title="文件">
@@ -548,23 +563,6 @@ export function SkillImportModal({
                   {pkg.files.length} 个文本文件
                 </span>
               </div>
-              <details style={{ margin: "12px 0", padding: 12, border: "1px solid var(--border)", borderRadius: 8 }}>
-                <summary style={{ cursor: "pointer", fontSize: 12 }}>使用指南与样例（选填）</summary>
-                <p className="muted" style={{ fontSize: 12 }}>前台按「怎么用 → 输入什么 → 输出什么」展示，导入后也可在编辑资料中补充。</p>
-                <FormGrid>
-                  {IMPORT_GUIDANCE_FIELDS.map((field) => (
-                    <Field key={field.key} label={field.label} span={field.max > 2000 ? 4 : 2}>
-                      <textarea rows={field.rows} maxLength={field.max} value={pkg[field.key] || ""}
-                        aria-label={`第 ${index + 1} 个 Skill ${field.label}`} disabled={manifestBusy}
-                        onChange={(event) => {
-                          const value = event.target.value;
-                          setPackages((current) => current.map((item) => item.key === pkg.key ? { ...item, [field.key]: value } : item));
-                          setValidation(null);
-                        }} />
-                    </Field>
-                  ))}
-                </FormGrid>
-              </details>
               </div>
             ))}
           </div>
@@ -590,6 +588,7 @@ export function SkillImportModal({
         <SkillManifestAiControl
           key={`auto:${packages.map((pkg) => pkg.key).join("|")}`}
           autoConfigure
+          autoStartToken={autoStartToken}
           disabled={reading || submitting || manifestBusy || packages.length !== 1}
           loadRequests={loadAutoConfigurationRequests}
           onBusyChange={setManifestBusy}
@@ -619,8 +618,57 @@ export function SkillImportModal({
           }}
         />
         <p className="muted" style={{ margin: "8px 0 16px", fontSize: 12, lineHeight: 1.6 }}>
-          AI 不会开启 MCP、上架 Skill、选择真实模型 ID 或执行包内脚本。原文只承诺文本时，不会擅自增加图片或视频生成步骤。
+          AI 智能导入会调用可用文本模型并按模型规则计费；不会开启 MCP、上架 Skill、选择真实模型 ID 或执行包内脚本。
+          原文只承诺文本时，不会擅自增加图片或视频生成步骤。
         </p>
+        {packages.length === 1 && !packages[0].howTo?.trim() ? (
+          <AdminAlert tone="info" title={manifestBusy ? "AI 正在生成导入配置" : "AI 配置尚未完成"}>
+            {manifestBusy
+              ? "正在自动生成使用说明、输入输出规则和运行流程，完成后即可审核并导入。"
+              : "无需手动填写配置；请点击上方「自动生成全部配置」重试，成功后再审核并导入。"}
+          </AdminAlert>
+        ) : null}
+        {packages.length > 1 ? (
+          <AdminAlert tone="warning" title="智能导入一次处理一个 Skill">
+            当前文件包含 {packages.length} 个 Skill。请拆分后逐个导入，以便 AI 为每个 Skill 正确判断输入、输出和运行流程；高级用户也可在下方手动配置后批量导入。
+          </AdminAlert>
+        ) : null}
+        {packages.length === 1 && packages[0].howTo?.trim() ? (
+          <dl className="adm-skill-import-summary" aria-label="AI 识别结果">
+            <div><dt>运行方式</dt><dd>{SKILL_KIND_LABEL[kind]}</dd></div>
+            <div><dt>用户输入</dt><dd>{SKILL_INPUT_PRESETS.find((preset) => preset.key === inputPreset)?.label || inputPreset}</dd></div>
+            <div><dt>最终输出</dt><dd>{SKILL_OUTPUT_LABEL[primaryOutputType]}</dd></div>
+            <div><dt>分类</dt><dd>{category}</dd></div>
+          </dl>
+        ) : null}
+        {packages.some((pkg) => !!pkg.howTo?.trim()) ? (
+          <div className="adm-skill-manifest-drafts" style={{ marginBottom: 16 }}>
+            {packages.filter((pkg) => !!pkg.howTo?.trim()).map((pkg, index) => (
+              <details key={`guidance:${pkg.key}`} className="adm-skill-guidance-review">
+                <summary>{pkg.title} · AI 生成的使用说明</summary>
+                <p className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  前台按「怎么用 → 输入什么 → 输出什么」展示。内容已由 AI 生成，只需核对事实；必要时可在这里修正。
+                </p>
+                <FormGrid>
+                  {IMPORT_GUIDANCE_FIELDS.map((field) => (
+                    <Field key={field.key} label={field.label} span={field.max > 2000 ? 4 : 2}>
+                      <textarea rows={field.rows} maxLength={field.max} value={pkg[field.key] || ""}
+                        aria-label={`第 ${index + 1} 个 Skill ${field.label}`} disabled={manifestBusy}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setPackages((current) => current.map((item) => item.key === pkg.key ? { ...item, [field.key]: value } : item));
+                          setValidation(null);
+                        }} />
+                    </Field>
+                  ))}
+                </FormGrid>
+              </details>
+            ))}
+          </div>
+        ) : null}
+        <details className="adm-skill-import-advanced">
+          <summary>高级设置（一般无需修改）</summary>
+          <p className="muted">AI 已自动选择输入、输出和运行方式。仅在你清楚 Skill 执行结构时修改。</p>
         <FormGrid>
           <Field label="执行形态" required span={2} hint="预设技能单次生成；智能技能在画布执行；技能工具在创作台或 API 执行。">
             <select
@@ -758,6 +806,7 @@ export function SkillImportModal({
             ))}
           </div>
         ) : null}
+        </details>
         </FormCard>
       </fieldset>
     </AdminModal>
