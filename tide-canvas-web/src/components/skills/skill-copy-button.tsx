@@ -7,8 +7,8 @@ import { copySkillSetup, type SkillCopyFormat } from "@/lib/skill-install-copy";
 import type { LibrarySkill } from "@/types/skill-library";
 import styles from "./skill-library.module.css";
 
-export function SkillCopyButton({ skill, origin, format = "install", className, label = "复制安装指令" }: {
-  skill: LibrarySkill; origin?: string; format?: SkillCopyFormat; className?: string; label?: string;
+export function SkillCopyButton({ skill, format = "install", className, label = "复制安装指令" }: {
+  skill: LibrarySkill; format?: SkillCopyFormat; className?: string; label?: string;
 }) {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -23,7 +23,7 @@ export function SkillCopyButton({ skill, origin, format = "install", className, 
     setCopied(false);
     setBusy(true);
     try {
-      const result = await copySkillSetup(skill, origin || window.location.origin, format, controller.signal);
+      const result = await copySkillSetup(skill, window.location.origin, format, controller.signal);
       if (active.current !== controller) return;
       setCopied(true);
       toast.success(result.includesKey ? (result.keyEnabled ? "已复制，已包含当前账号的 API Key" : "已复制，随附 API Key 当前已停用") : "已复制通用安装内容，登录后可自动附带 API Key");

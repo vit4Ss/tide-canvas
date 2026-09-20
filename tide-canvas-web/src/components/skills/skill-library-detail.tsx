@@ -84,7 +84,7 @@ function InstallPanel({ skill, origin }: { skill: LibrarySkill; origin: string }
           <li><span className={styles.flowIcon}><MessageSquare size={18} aria-hidden /></span><span>粘贴给 AI</span></li>
           <li><span className={styles.flowIcon}><Sparkles size={18} aria-hidden /></span><span>开始使用</span></li>
         </ol>
-        <SkillCopyButton skill={skill} origin={origin} className={styles.primaryButton} />
+        <SkillCopyButton skill={skill} className={styles.primaryButton} />
         <p className={styles.configHint}>{accountId ? "复制时自动附带当前账号的 API Key。" : "登录后，可自动带上你的 API Key。"}</p>
         <CopyAction value={url} label="只复制链接" />
       </div>
