@@ -693,8 +693,14 @@ func TestValidateSkillManifestInputContractMatchesSelectedSchema(t *testing.T) {
 	if err := validateSkillManifestInputContract(referenceManifest, mediaAndFileSchema, model.SkillKindAgent, "video"); err == nil {
 		t.Fatal("reference video handler accepted a schema that permits unsupported files")
 	}
-	if err := validateSkillManifestInputContract(json.RawMessage(`{"kind":"agent"}`), videoSchema, model.SkillKindAgent, "video"); err != nil {
-		t.Fatalf("generic agent was rejected by the schema contract: %v", err)
+	if err := validateSkillManifestInputContract(json.RawMessage(`{"kind":"agent"}`), videoSchema, model.SkillKindAgent, "video"); err == nil {
+		t.Fatal("generic agent accepted video input even though its default runner ignores video assets")
+	}
+	if err := validateSkillManifestInputContract(json.RawMessage(`{"kind":"agent","steps":[{"type":"text","handler":"skill_text_completion","outputType":"text","outputRole":"final"}]}`), videoSchema, model.SkillKindAgent, "text"); err == nil || !strings.Contains(err.Error(), "analyze_video") {
+		t.Fatalf("video review without analyze_video was accepted: %v", err)
+	}
+	if err := validateSkillManifestInputContract(json.RawMessage(`{"kind":"agent"}`), videoSchema, model.SkillKindAgent, "text"); err != nil {
+		t.Fatalf("step-less standard text agent should use runtime video analysis fallback: %v", err)
 	}
 	presetManifest := json.RawMessage(`{"kind":"preset","primaryOutputType":"video","outputTypes":["video"]}`)
 	singleImageSchema := json.RawMessage(`{"type":"object","x-asset-types":["image"],"required":["assets"],"properties":{"assets":{"type":"array","minItems":1,"maxItems":1}}}`)

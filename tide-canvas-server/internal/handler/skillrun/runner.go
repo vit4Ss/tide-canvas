@@ -208,12 +208,24 @@ func (s *service) runAgent(ctx context.Context, run *model.SkillRun, version *mo
 	if err != nil {
 		return err
 	}
+	if outputType == "text" {
+		if analysisHandler, err := implicitAnalysisHandler(input.Assets); err != nil {
+			return err
+		} else if analysisHandler != "" {
+			_, err = s.executeToolStep(ctx, run, version, agentStep{
+				Key: "analyze_media", Title: "Analyze media", Type: "tool", Handler: analysisHandler,
+				OutputType: "text", OutputRole: "final",
+			}, 0, 1, input, input.Prompt, "", true)
+			return err
+		}
+	}
 	if outputType == "text" || outputType == "file" {
 		modelID, err := s.resolveTextModelForAssets(version.ModelID, requestedModel(input.Parameters), input.Assets)
 		if err != nil {
 			return err
 		}
 		commandInput := buildGenerationInput(version.DefaultParams, input, input.Prompt)
+		s.addSkillTextAttachments(ctx, commandInput, input.Assets)
 		commandInput["systemPrompt"] = systemPrompt
 		_, err = s.executeGenerationStep(ctx, run, version, agentStep{
 			Key: "respond", Title: "Respond", Type: "text", Handler: "skill_text_completion",
@@ -259,6 +271,9 @@ func (s *service) runAgentSteps(ctx context.Context, run *model.SkillRun, versio
 	var manifest agentManifest
 	if err := json.Unmarshal([]byte(version.ManifestJSON), &manifest); err != nil || len(manifest.Steps) == 0 {
 		return errors.New("agent manifest has no executable steps")
+	}
+	if err := validateRuntimeMediaConsumption(manifest, input.Assets, normalizedOutput(version.PrimaryOutputType)); err != nil {
+		return err
 	}
 	previous := ""
 	for index := range manifest.Steps {
@@ -411,6 +426,55 @@ func (s *service) runAgentSteps(ctx context.Context, run *model.SkillRun, versio
 		} else if len(result.Artifacts) > 0 {
 			previous = result.Artifacts[len(result.Artifacts)-1].URL
 		}
+	}
+	return nil
+}
+
+func inputMediaKinds(assets []AssetInput) map[string]bool {
+	kinds := map[string]bool{}
+	for _, asset := range assets {
+		kind := strings.ToLower(strings.TrimSpace(asset.Type))
+		if strings.TrimSpace(asset.URL) != "" && (kind == "image" || kind == "video" || kind == "audio") {
+			kinds[kind] = true
+		}
+	}
+	return kinds
+}
+
+func implicitAnalysisHandler(assets []AssetInput) (string, error) {
+	kinds := inputMediaKinds(assets)
+	if len(kinds) == 0 {
+		return "", nil
+	}
+	if len(kinds) > 1 {
+		return "", runUserError{message: "该标准 Skill 同时收到多种媒体，但没有 Manifest 指定处理顺序；请管理员生成并发布明确的媒体分析流程"}
+	}
+	for kind := range kinds {
+		return "analyze_" + kind, nil
+	}
+	return "", nil
+}
+
+func validateRuntimeMediaConsumption(manifest agentManifest, assets []AssetInput, primaryOutput string) error {
+	kinds := inputMediaKinds(assets)
+	if len(kinds) == 0 {
+		return nil
+	}
+	handlers := map[string]bool{}
+	for _, step := range manifest.Steps {
+		handlers[strings.ToLower(strings.TrimSpace(step.Handler))] = true
+	}
+	if primaryOutput == "text" || primaryOutput == "file" {
+		for kind := range kinds {
+			required := "analyze_" + kind
+			if !handlers[required] {
+				return runUserError{message: "技能声明接收" + kind + "素材，但当前发布版本没有 " + required + " 步骤；为避免忽略素材，本次未调用模型，请管理员修正并重新发布"}
+			}
+		}
+		return nil
+	}
+	if primaryOutput == "video" && (kinds["video"] || kinds["audio"]) && !handlers["reference_to_video"] {
+		return runUserError{message: "技能收到视频/音频参考素材，但当前发布版本没有 reference_to_video 步骤；本次未调用模型"}
 	}
 	return nil
 }

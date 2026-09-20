@@ -66,7 +66,7 @@ func TestManagedPolicyAppliesToHTTPAndLocalTransports(t *testing.T) {
 			t.Fatal("disabled video tool is still listed")
 		}
 	}
-	if len(list.Tools) != 6 {
+	if len(list.Tools) != 8 {
 		t.Fatalf("tool count=%d", len(list.Tools))
 	}
 	args := map[string]any{"modelId": "m", "prompt": "test", "clientRequestId": "policy-job"}

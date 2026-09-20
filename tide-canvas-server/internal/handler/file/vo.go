@@ -63,6 +63,16 @@ type FilePresignVO struct {
 	ExistingFile *FileVO `json:"existingFile,omitempty"`
 }
 
+type FileUploadTicketVO struct {
+	UploadPath    string `json:"uploadPath"`
+	Authorization string `json:"authorization"`
+	ExpiresAt     string `json:"expiresAt"`
+	ExpectedSize  int64  `json:"expectedSize"`
+	OriginalName  string `json:"originalName"`
+	ContentType   string `json:"contentType"`
+	FileType      string `json:"fileType"`
+}
+
 func toPresignVO(p storage.PresignResult) FilePresignVO {
 	return FilePresignVO{
 		Direct:      p.Direct,

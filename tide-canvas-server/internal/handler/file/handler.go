@@ -1,9 +1,15 @@
 package file
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"errors"
+	"io"
 	"mime/multipart"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -13,12 +19,14 @@ import (
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/response"
+	"tidecanvas/internal/pkg/token"
 )
 
 const (
 	maxMultipartOverhead = 1 << 20
 	maxBatchFiles        = 20
 	maxBatchTotalSize    = maxFileSize
+	uploadTicketTTL      = 5 * time.Minute
 )
 
 // handler is the file domain's HTTP layer.
@@ -184,6 +192,111 @@ func (h *handler) saveFromURL(c *gin.Context) {
 		default:
 			writeUploadErr(c, err)
 		}
+		return
+	}
+	response.OK(c, vo)
+}
+
+// issueUploadTicket lets an API-key-authenticated MCP client authorize one
+// exact local-file upload without exposing its long-lived key to a shell.
+func (h *handler) issueUploadTicket(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
+	var dto uploadTicketDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		response.Fail(c, response.CodeBadRequest, "invalid upload ticket request")
+		return
+	}
+	dto.Filename = strings.TrimSpace(dto.Filename)
+	dto.SHA256 = strings.ToLower(strings.TrimSpace(dto.SHA256))
+	if dto.Size <= 0 || dto.Size > maxFileSize {
+		writeUploadErr(c, errFileTooLarge)
+		return
+	}
+	if dto.Filename == "" || len([]byte(dto.Filename)) > 512 {
+		response.Fail(c, response.CodeBadRequest, "filename is required and must not exceed 512 bytes")
+		return
+	}
+	decodedHash, err := hex.DecodeString(dto.SHA256)
+	if err != nil || len(decodedHash) != sha256.Size {
+		response.Fail(c, response.CodeBadRequest, "sha256 must be 64 lowercase or uppercase hexadecimal characters")
+		return
+	}
+	contentType := normalizeContentType(dto.ContentType, dto.Filename)
+	if len(contentType) > 128 || activeContentRejected(contentType, dto.Filename) {
+		writeUploadErr(c, errFileTypeRejected)
+		return
+	}
+	fileType := classify(dto.FileType, contentType, dto.Filename)
+	if !typeAllowed(fileType) {
+		writeUploadErr(c, errFileTypeRejected)
+		return
+	}
+	category, err := assetCategoryForFile(dto.Category, fileType)
+	if err != nil {
+		writeUploadErr(c, err)
+		return
+	}
+	expires := time.Now().Add(uploadTicketTTL)
+	ticket, err := token.IssueUploadTicket(middleware.CurrentUserID(c), dto.Filename, contentType, fileType, category, dto.Size, dto.SHA256, uploadTicketTTL)
+	if err != nil {
+		writeUploadErr(c, err)
+		return
+	}
+	response.OK(c, FileUploadTicketVO{
+		UploadPath: "/api/open/v1/files/upload-with-ticket", Authorization: "Upload " + ticket,
+		ExpiresAt: expires.Format(time.RFC3339), ExpectedSize: dto.Size, OriginalName: dto.Filename,
+		ContentType: contentType, FileType: fileType,
+	})
+}
+
+// uploadWithTicket consumes bytes authorized by an upload ticket. The ticket
+// is hash-bound and short-lived; replaying the exact file is harmless because
+// the ordinary owner/hash deduplication path returns the same File row.
+func (h *handler) uploadWithTicket(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	c.Header("Referrer-Policy", "no-referrer")
+	parts := strings.Fields(c.GetHeader("Authorization"))
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Upload") {
+		response.Fail(c, response.CodeUnauthorized, "需要有效的一次性上传凭证")
+		return
+	}
+	claims, err := token.ParseUploadTicket(parts[1])
+	if err != nil {
+		response.Fail(c, response.CodeUnauthorized, "上传凭证无效或已过期，请重新申请")
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, claims.Size+maxMultipartOverhead)
+	defer removeMultipartTempFiles(c)
+	fh, err := c.FormFile("file")
+	if err != nil || fh.Size != claims.Size {
+		writeUploadErr(c, errUploadMismatch)
+		return
+	}
+	src, err := fh.Open()
+	if err != nil {
+		writeUploadErr(c, errEmptyFile)
+		return
+	}
+	hasher := sha256.New()
+	written, copyErr := io.Copy(hasher, io.LimitReader(src, claims.Size+1))
+	_ = src.Close()
+	want, _ := hex.DecodeString(claims.SHA256)
+	if copyErr != nil || written != claims.Size || subtle.ConstantTimeCompare(hasher.Sum(nil), want) != 1 {
+		writeUploadErr(c, errUploadMismatch)
+		return
+	}
+	src, err = fh.Open()
+	if err != nil {
+		writeUploadErr(c, errEmptyFile)
+		return
+	}
+	defer src.Close()
+	vo, err := h.svc.upload(c.Request.Context(), claims.UserID, uploadInput{
+		OriginalName: claims.Name, ContentType: claims.ContentType, FileTypeHint: claims.FileType,
+		CategoryHint: claims.Category, Size: claims.Size, Reader: src,
+	})
+	if err != nil {
+		writeUploadErr(c, err)
 		return
 	}
 	response.OK(c, vo)

@@ -8,6 +8,8 @@
 
 | 工具 | 用途 | 是否扣积分 |
 |---|---|---|
+| `prepare_asset_upload` | 为客户端本地文件签发一次性上传地址 | 否 |
+| `import_asset_url` | 将公网文件直链导入当前账号素材库 | 否 |
 | `list_models` | 查询图片、视频、音频模型及规格、定价 | 否 |
 | `generate_image` | 文生图、图生图 | 按主站模型计费 |
 | `generate_video` | 文生、图生、首尾帧、全能参考视频 | 按主站模型计费 |
@@ -108,12 +110,13 @@ MCP 1.2.0 起，在主站后台「技能广场」列表开启「对外开放」�
 https://你的主站域名/mcp/skills/<技能ID>
 ```
 
-一个 Skill 一个地址，所有地址由同一个 MCP 容器提供。原 `/mcp` 的 7 个生成/查询工具保持原样。每个技能地址只提供 `get_skill_info`、`run_skill`、`get_skill_run`、`respond_skill_run` 和 `get_balance`，不会混入其他技能。
+一个 Skill 一个地址，所有地址由同一个 MCP 容器提供。原 `/mcp` 现在提供 9 个上传、生成和查询工具。每个技能地址只提供 `get_skill_info`、`prepare_asset_upload`、`import_asset_url`、`run_skill`、`get_skill_run`、`respond_skill_run` 和 `get_balance`，不会混入其他技能。
 
 - 导入后的技能默认下架；需要上架且主站 MCP 总开关开启才可远程启动。
 - 普通导入与 MCP 使用同一套 Agent Skills 格式校验；必须有有效的 `SKILL.md`、YAML `name`/`description` 及正文。已有技能开放 MCP 时会复核已发布版本；不合规的历史内容需修正并重新发布，不能通过勾选 MCP 绕过校验。
 - 编辑页可复制地址和接入 JSON，用户填写自己的主站 API Key。
 - `get_skill_info` 返回公开说明和输入 Schema；`run_skill` 接受 `clientRequestId` 和 `input`（prompt/assets/parameters），返回异步任务 id。
+- 本地文件先调用 `prepare_asset_upload`，由本地客户端按返回的一次性地址上传；公网媒体直链可调用 `import_asset_url`，也可直接作为 asset URL 交给 `run_skill` 自动导入。两者都返回当前账号拥有的素材 ID/URL，不扣生成积分但占用存储配额。
 - 等待确认或输入时，将 `pendingAction` 和草稿给用户看；`respond_skill_run` 提交用户决定，带上最新 revision 及独立的操作编号。
 - 按现有模型调用规则扣积分，没有额外的 Skill 固定费用。长流程可能调用多个模型步骤；已成功步骤的费用不会因后续步骤失败一概退回，失败生成按原规则处理。
 - 同一次提交/操作重试沿用原编号和参数。新任务固定使用启动时的已发布版本；发布新版本只影响之后的新任务。

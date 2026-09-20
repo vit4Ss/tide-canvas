@@ -672,6 +672,38 @@ func (s *service) saveFromURL(ctx context.Context, ownerID idgen.ID, dto saveFro
 	})
 }
 
+// ImportRemoteAsset exposes the same hardened remote-fetch and owner-scoped
+// storage path to other server domains (notably MCP SkillRun admission).
+func ImportRemoteAsset(ctx context.Context, d *app.Deps, ownerID idgen.ID, rawURL, fileType, originalName string) (*FileVO, error) {
+	if d == nil || d.DB == nil || d.Storage == nil || ownerID == 0 {
+		return nil, errors.New("asset import is unavailable")
+	}
+	return newService(d).saveFromURL(ctx, ownerID, saveFromURLDTO{
+		URL: rawURL, FileType: fileType, Category: assetCategoryGeneral, OriginalName: originalName,
+	})
+}
+
+// RemoteImportErrorMessage converts private storage/fetch errors into stable,
+// actionable SkillRun messages without leaking network or storage internals.
+func RemoteImportErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, errBadURL):
+		return "素材 URL 不是安全的 HTTP/HTTPS 直链"
+	case errors.Is(err, errFetchFailed):
+		return "无法下载远程素材；请确认链接可直接访问且尚未过期"
+	case errors.Is(err, errFileTooLarge):
+		return "远程素材超过 100MB 限制"
+	case errors.Is(err, errFileTypeRejected):
+		return "远程链接不是支持的图片、视频、音频或文件"
+	case errors.Is(err, errStorageInsufficient):
+		return "账号存储空间不足"
+	case errors.Is(err, errEmptyFile):
+		return "远程素材内容为空"
+	default:
+		return "远程素材导入失败，请稍后重试"
+	}
+}
+
 // ownsDownloadURL prevents the authenticated CORS/download proxy from becoming
 // a general-purpose public fetcher. Besides the caller's own media,后台用户可读
 // 已登记媒体，普通用户可读已发布到社区/博客的视频。DisplayURL may have

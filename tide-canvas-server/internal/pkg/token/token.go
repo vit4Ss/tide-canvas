@@ -37,6 +37,7 @@ const (
 	typeAccess   = "access"
 	typeRefresh  = "refresh"
 	typeDownload = "download"
+	typeUpload   = "upload"
 )
 
 // Claims is the JWT payload for both access and refresh tokens.
@@ -56,6 +57,22 @@ type DownloadClaims struct {
 	Role   int      `json:"role"`
 	Digest string   `json:"dig"`
 	Typ    string   `json:"typ"`
+	jwt.RegisteredClaims
+}
+
+// UploadClaims authorizes one exact local file upload without exposing the
+// user's long-lived API key to a shell command. The short-lived capability is
+// bound to the file's name, MIME type, media kind, byte size and SHA-256 hash;
+// replaying it with different bytes is rejected by the upload handler.
+type UploadClaims struct {
+	UserID      idgen.ID `json:"uid"`
+	Name        string   `json:"name"`
+	ContentType string   `json:"ct"`
+	FileType    string   `json:"ft"`
+	Category    string   `json:"cat"`
+	Size        int64    `json:"size"`
+	SHA256      string   `json:"sha256"`
+	Typ         string   `json:"typ"`
 	jwt.RegisteredClaims
 }
 
@@ -199,6 +216,59 @@ func ParseDownloadTicket(ticket, rawURL, name string) (*DownloadClaims, error) {
 	}
 	got, err := hex.DecodeString(claims.Digest)
 	if err != nil || subtle.ConstantTimeCompare(got, want) != 1 {
+		return nil, ErrInvalidToken
+	}
+	return claims, nil
+}
+
+// IssueUploadTicket creates a short-lived capability for one exact multipart
+// upload. Callers must validate and normalize all metadata before issuing it.
+func IssueUploadTicket(uid idgen.ID, name, contentType, fileType, category string, size int64, sha256Hex string, ttl time.Duration) (string, error) {
+	if len(secret) == 0 {
+		return "", ErrNotInitialized
+	}
+	if uid == 0 || strings.TrimSpace(name) == "" || size <= 0 || len(sha256Hex) != 64 {
+		return "", ErrInvalidToken
+	}
+	if ttl <= 0 || ttl > 10*time.Minute {
+		ttl = 5 * time.Minute
+	}
+	now := time.Now()
+	claims := UploadClaims{
+		UserID: uid, Name: name, ContentType: contentType, FileType: fileType,
+		Category: category, Size: size, SHA256: strings.ToLower(sha256Hex), Typ: typeUpload,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer: issuer, Subject: uid.String(), ID: idgen.Next().String(),
+			IssuedAt: jwt.NewNumericDate(now), NotBefore: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+		},
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return tok.SignedString(secret)
+}
+
+// ParseUploadTicket validates a local-file upload capability. Exact byte/hash
+// matching is performed by the file handler after parsing the multipart body.
+func ParseUploadTicket(ticket string) (*UploadClaims, error) {
+	if len(secret) == 0 {
+		return nil, ErrNotInitialized
+	}
+	claims := &UploadClaims{}
+	tok, err := jwt.ParseWithClaims(ticket, claims, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, ErrInvalidToken
+		}
+		return secret, nil
+	}, jwt.WithValidMethods([]string{"HS256"}))
+	if err != nil {
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			return nil, ErrExpiredToken
+		}
+		return nil, ErrInvalidToken
+	}
+	if !tok.Valid || claims.Typ != typeUpload || claims.Issuer != issuer || claims.UserID == 0 || claims.Size <= 0 || len(claims.SHA256) != 64 {
+		return nil, ErrInvalidToken
+	}
+	if _, err := hex.DecodeString(claims.SHA256); err != nil {
 		return nil, ErrInvalidToken
 	}
 	return claims, nil

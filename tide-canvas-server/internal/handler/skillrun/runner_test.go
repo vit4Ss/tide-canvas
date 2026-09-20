@@ -253,6 +253,30 @@ func TestHandlerForUsesOwnedImageReferenceMode(t *testing.T) {
 	}
 }
 
+func TestStandardTextAgentRoutesSingleMediaThroughAnalysisTool(t *testing.T) {
+	for kind, want := range map[string]string{"image": "analyze_image", "video": "analyze_video", "audio": "analyze_audio"} {
+		got, err := implicitAnalysisHandler([]AssetInput{{Type: kind, URL: "https://cdn.test/input"}})
+		if err != nil || got != want {
+			t.Fatalf("%s handler = %q, %v; want %q", kind, got, err, want)
+		}
+	}
+	if _, err := implicitAnalysisHandler([]AssetInput{{Type: "video", URL: "https://cdn.test/video"}, {Type: "image", URL: "https://cdn.test/image"}}); err == nil {
+		t.Fatal("ambiguous mixed media was silently routed")
+	}
+}
+
+func TestCustomAgentCannotSilentlyIgnoreVideoAsset(t *testing.T) {
+	assets := []AssetInput{{Type: "video", URL: "https://cdn.test/review.mp4"}}
+	bad := agentManifest{Steps: []agentStep{{Type: "text", Handler: "skill_text_completion", OutputType: "text"}}}
+	if err := validateRuntimeMediaConsumption(bad, assets, "text"); err == nil || !strings.Contains(err.Error(), "analyze_video") {
+		t.Fatalf("video was ignored without actionable failure: %v", err)
+	}
+	good := agentManifest{Steps: []agentStep{{Type: "tool", Handler: "analyze_video", OutputType: "text"}}}
+	if err := validateRuntimeMediaConsumption(good, assets, "text"); err != nil {
+		t.Fatalf("video analysis manifest rejected: %v", err)
+	}
+}
+
 func TestAgentTextStepFallsBackToPrimarySkillFile(t *testing.T) {
 	if got := agentStepSystemPrompt("", "# Skill instructions"); got != "# Skill instructions" {
 		t.Fatalf("fallback system prompt = %q", got)

@@ -50,6 +50,10 @@ func (f *fixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "code": code, "message": msg})
 	}
 	switch {
+	case r.URL.Path == "/api/open/v1/files/import":
+		ok(map[string]any{"id": "7001", "fileUrl": "https://flowlight.example/uploads/7001.mp4", "originalName": "clip.mp4", "fileType": "video", "mimeType": "video/mp4", "fileSize": 123})
+	case r.URL.Path == "/api/open/v1/files/upload-ticket":
+		ok(map[string]any{"uploadPath": "/api/open/v1/files/upload-with-ticket", "authorization": "Upload root-ticket", "expiresAt": "2030-01-01T00:00:00Z", "expectedSize": 123, "originalName": "clip.mp4", "contentType": "video/mp4", "fileType": "video"})
 	case r.URL.Path == "/api/open/v1/models":
 		ok([]Model{{ModelID: "img", Name: "Image", Type: "image", Config: `{"resolutions":["4k"]}`}, {ModelID: "vid", Type: "video"}, {ModelID: "audio", Type: "audio"}, {ModelID: "text", Type: "text"}})
 	case r.URL.Path == "/api/open/v1/generations":
@@ -98,7 +102,7 @@ func (f *fixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 type bearerTransport struct{ key string }
 
 func writeDefaultTestPolicy(w http.ResponseWriter) {
-	_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": Policy{Enabled: true, ImageEnabled: true, VideoEnabled: true, AudioEnabled: true, SchemaVersion: 1, AllowedOrigins: []string{}, PollIntervalSeconds: 5}})
+	_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": Policy{Enabled: true, ImageEnabled: true, VideoEnabled: true, AudioEnabled: true, PublicURL: "https://flowlight.example/mcp", SchemaVersion: 1, AllowedOrigins: []string{}, PollIntervalSeconds: 5}})
 }
 
 func (b bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -172,13 +176,21 @@ func TestMCPProtocolsGenerationAndOwnerIsolation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(listed.Tools) != 7 {
+			if len(listed.Tools) != 9 {
 				t.Fatalf("tools=%d", len(listed.Tools))
 			}
 			for _, tool := range listed.Tools {
 				if strings.HasPrefix(tool.Name, "generate_") && (tool.Annotations.ReadOnlyHint || !tool.Annotations.IdempotentHint) {
 					t.Fatal("generation annotations are incorrect")
 				}
+			}
+			asset := decodeOutput[SkillAssetRecord](t, call(t, a, "import_asset_url", ImportSkillAssetInput{URL: "https://cdn.test/clip.mp4", Type: "video"}))
+			if asset.ID != "7001" || asset.URL == "" {
+				t.Fatalf("root MCP import=%+v", asset)
+			}
+			upload := decodeOutput[SkillAssetUploadPlan](t, call(t, a, "prepare_asset_upload", PrepareSkillAssetUploadInput{Filename: "clip.mp4", ContentType: "video/mp4", Type: "video", Size: 123, SHA256: strings.Repeat("a", 64)}))
+			if upload.UploadURL != "https://flowlight.example/api/open/v1/files/upload-with-ticket" || upload.Authorization != "Upload root-ticket" {
+				t.Fatalf("root MCP upload=%+v", upload)
 			}
 			models := decodeOutput[struct {
 				Models []Model `json:"models"`

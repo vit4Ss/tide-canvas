@@ -22,6 +22,7 @@ import (
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/handler/ai"
+	filehandler "tidecanvas/internal/handler/file"
 	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
@@ -489,6 +490,13 @@ func (s *service) createRun(ctx context.Context, userID idgen.ID, dto CreateDTO)
 			return nil, false, invalid("conversation not found")
 		}
 	}
+	if dto.MCP {
+		assets, err := s.importMCPAssets(ctx, userID, dto.Input.Assets)
+		if err != nil {
+			return nil, false, err
+		}
+		dto.Input.Assets = assets
+	}
 	if err := s.validateAssets(userID, dto.Input.Assets); err != nil {
 		return nil, false, err
 	}
@@ -555,6 +563,52 @@ func (s *service) createRun(ctx context.Context, userID idgen.ID, dto CreateDTO)
 		return nil, false, err
 	}
 	return run, false, nil
+}
+
+func (s *service) importMCPAssets(ctx context.Context, userID idgen.ID, assets []AssetInput) ([]AssetInput, error) {
+	prepared := append([]AssetInput(nil), assets...)
+	for index := range prepared {
+		asset := &prepared[index]
+		if strings.TrimSpace(asset.ID) != "" || strings.TrimSpace(asset.URL) == "" || strings.TrimSpace(asset.Content) != "" {
+			continue
+		}
+		// Reuse existing FlowLight files, generated results and Skill artifacts
+		// without downloading them again. Only a genuine non-owned URL falls
+		// through to the SSRF-hardened remote importer.
+		one := []AssetInput{*asset}
+		if err := s.validateAssets(userID, one); err == nil {
+			*asset = one[0]
+			continue
+		} else {
+			var validation validationError
+			if !errors.As(err, &validation) || !strings.Contains(validation.Error(), "not owned by the current user") {
+				return nil, err
+			}
+		}
+		declaredType := strings.ToLower(strings.TrimSpace(asset.Type))
+		fileType := declaredType
+		if fileType == "audio" || fileType == "file" {
+			fileType = "other"
+		}
+		stored, err := filehandler.ImportRemoteAsset(ctx, s.deps, userID, asset.URL, fileType, asset.Name)
+		if err != nil {
+			return nil, invalidf("input.assets[%d] 无法导入：%s", index, filehandler.RemoteImportErrorMessage(err))
+		}
+		actualType := strings.ToLower(strings.TrimSpace(stored.FileType))
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(stored.MimeType)), "audio/") {
+			actualType = "audio"
+		} else if actualType == "other" {
+			actualType = "file"
+		}
+		if declaredType != "file" && declaredType != actualType {
+			return nil, invalidf("input.assets[%d] 声明为 %s，但远程文件实际为 %s", index, declaredType, actualType)
+		}
+		asset.ID, asset.URL = stored.ID.String(), stored.FileURL
+		if strings.TrimSpace(asset.Name) == "" {
+			asset.Name = stored.OriginalName
+		}
+	}
+	return prepared, nil
 }
 
 func analysisActivityRecordID(seedKey string, parameters map[string]any) (idgen.ID, error) {

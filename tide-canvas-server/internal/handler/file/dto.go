@@ -35,6 +35,18 @@ type saveFromURLDTO struct {
 	OriginalName string `json:"originalName"`
 }
 
+// uploadTicketDTO describes a local file before an MCP client uploads it.
+// SHA256 is required so the short-lived unauthenticated transfer capability
+// cannot be replayed with different bytes.
+type uploadTicketDTO struct {
+	Filename    string `json:"filename"`
+	ContentType string `json:"contentType"`
+	FileType    string `json:"fileType"`
+	Category    string `json:"category"`
+	Size        int64  `json:"size"`
+	SHA256      string `json:"sha256"`
+}
+
 // fileQuery is the query string of GET /api/files (FileQuery).
 type fileQuery struct {
 	PageNum        int    `form:"pageNum"`

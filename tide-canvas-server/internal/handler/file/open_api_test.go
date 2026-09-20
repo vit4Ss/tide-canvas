@@ -3,6 +3,8 @@ package file
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
@@ -13,10 +15,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/config"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/response"
+	"tidecanvas/internal/pkg/token"
 	"tidecanvas/internal/pkg/userkey"
 )
 
@@ -112,5 +116,70 @@ func TestOpenAPIFileRoundTripAndAdminKeyIsolation(t *testing.T) {
 	}
 	if res := download(ownerKey); res.Code != 401 {
 		t.Fatal("disabled key could download")
+	}
+}
+
+func TestOpenAPIUploadTicketAcceptsOnlyExactLocalFile(t *testing.T) {
+	_, db, store, owner, _ := newDedupTestService(t)
+	if err := db.AutoMigrate(&model.UserAPIKey{}, &model.AiTask{}, &model.SkillRun{}, &model.SkillRunArtifact{}, &model.CommunityPost{}, &model.BlogPost{}, &model.SysRole{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.User{}).Where("id = ?", owner.ID).Update("status", 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	keys, err := userkey.New(db, "upload-ticket-api-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyInfo, err := keys.Ensure(context.Background(), owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiKey, err := keys.Reveal(context.Background(), owner.ID, keyInfo.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token.Init(config.JWTConfig{Secret: "upload-ticket-jwt-secret", Issuer: "upload-ticket-api-test"}, nil)
+	engine := gin.New()
+	Register(engine.Group("/api"), &app.Deps{DB: db, Storage: store, UserKeys: keys})
+
+	content := []byte("not-a-real-mp4-but-an-exact-ticket-bound-payload")
+	sum := sha256.Sum256(content)
+	issueBody, _ := json.Marshal(map[string]any{"filename": "review.mp4", "contentType": "video/mp4", "fileType": "video", "size": len(content), "sha256": hex.EncodeToString(sum[:])})
+	issueReq := httptest.NewRequest(http.MethodPost, "/api/open/v1/files/upload-ticket", bytes.NewReader(issueBody))
+	issueReq.Header.Set("Content-Type", "application/json")
+	issueReq.Header.Set("Authorization", "Bearer "+apiKey)
+	issueRes := httptest.NewRecorder()
+	engine.ServeHTTP(issueRes, issueReq)
+	var issued response.Result[FileUploadTicketVO]
+	if err := json.Unmarshal(issueRes.Body.Bytes(), &issued); err != nil || !issued.Success || !strings.HasPrefix(issued.Data.Authorization, "Upload ") {
+		t.Fatalf("issue=%d %s err=%v", issueRes.Code, issueRes.Body.String(), err)
+	}
+
+	upload := func(data []byte) *httptest.ResponseRecorder {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		part, createErr := writer.CreateFormFile("file", "anything.mp4")
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		_, _ = part.Write(data)
+		_ = writer.Close()
+		req := httptest.NewRequest(http.MethodPost, issued.Data.UploadPath, bytes.NewReader(body.Bytes()))
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		req.Header.Set("Authorization", issued.Data.Authorization)
+		res := httptest.NewRecorder()
+		engine.ServeHTTP(res, req)
+		return res
+	}
+	good := upload(content)
+	var saved response.Result[FileVO]
+	if err := json.Unmarshal(good.Body.Bytes(), &saved); err != nil || !saved.Success || saved.Data.OwnerID != owner.ID || saved.Data.FileType != "video" || saved.Data.OriginalName != "review.mp4" {
+		t.Fatalf("upload=%d %s err=%v", good.Code, good.Body.String(), err)
+	}
+	badBytes := append([]byte(nil), content...)
+	badBytes[0] ^= 0xff
+	if bad := upload(badBytes); bad.Code != 400 {
+		t.Fatalf("hash mismatch accepted: %d %s", bad.Code, bad.Body.String())
 	}
 }

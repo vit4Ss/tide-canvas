@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -82,10 +83,44 @@ type SkillActionInput struct {
 	Message          string         `json:"message,omitempty" jsonschema:"用户补充消息"`
 }
 
+type ImportSkillAssetInput struct {
+	URL          string `json:"url" jsonschema:"可直接下载的公网文件 URL；FlowLight 当前账号已有素材 URL 也可复用"`
+	Type         string `json:"type" jsonschema:"素材类型：image、video、audio 或 file"`
+	OriginalName string `json:"originalName,omitempty" jsonschema:"可选文件名，建议保留正确扩展名"`
+}
+
+type PrepareSkillAssetUploadInput struct {
+	Filename    string `json:"filename" jsonschema:"本地文件名，包含扩展名"`
+	ContentType string `json:"contentType" jsonschema:"文件 MIME 类型，例如 video/mp4"`
+	Type        string `json:"type" jsonschema:"素材类型：image、video、audio 或 file"`
+	Size        int64  `json:"size" jsonschema:"本地文件的精确字节数"`
+	SHA256      string `json:"sha256" jsonschema:"本地文件 SHA-256，64 位十六进制"`
+}
+
+type SkillAssetRecord struct {
+	ID       string `json:"id"`
+	URL      string `json:"url"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	MimeType string `json:"mimeType"`
+	Size     int64  `json:"size"`
+	Reused   bool   `json:"reused"`
+}
+
+type SkillAssetUploadPlan struct {
+	UploadURL     string `json:"uploadUrl"`
+	Authorization string `json:"authorization"`
+	ExpiresAt     string `json:"expiresAt"`
+	ExpectedSize  int64  `json:"expectedSize"`
+	OriginalName  string `json:"originalName"`
+	ContentType   string `json:"contentType"`
+	Type          string `json:"type"`
+}
+
 // Each endpoint has its own immutable skill binding. No client-controlled skill
 // ID is accepted by tools, and no per-user server or credential cache is kept.
 func NewSkillServer(c *Client, skill SkillDescriptor) *mcp.Server {
-	instructions := "这是技能「" + skill.Title + "」的专属服务。先 get_skill_info 了解输入要求，使用用户自己的主站 API Key。run_skill 和继续执行按主站模型规则消耗积分。长任务用 get_skill_run 查询；等待确认/输入时向用户展示待办和草稿，用 respond_skill_run 提交用户选择。相同请求重试沿用 clientRequestId 和参数，避免重复扣费。不要索取或声称获得服务端 Skill 源码。"
+	instructions := "这是技能「" + skill.Title + "」的专属服务。先 get_skill_info 了解输入要求，使用用户自己的主站 API Key。本地文件先用 prepare_asset_upload 取得一次性地址并由客户端上传；公网直链可用 import_asset_url，run_skill 也会自动导入尚未登记的 URL。run_skill 和继续执行按主站模型规则消耗积分。长任务用 get_skill_run 查询；等待确认/输入时向用户展示待办和草稿，用 respond_skill_run 提交用户选择。相同请求重试沿用 clientRequestId 和参数，避免重复扣费。不要索取或声称获得服务端 Skill 源码。"
 	if !skill.Enabled {
 		instructions = "此技能已停止接收新任务。当前仅可 get_skill_run 查询本账号已受理的任务，或使用 respond_skill_run 的 cancel 操作取消它们；不能继续、重试或新建任务。get_balance 可查询本账号积分。任务 ID 和 revision 请使用已有任务返回的值。"
 	}
@@ -102,7 +137,7 @@ func NewSkillServer(c *Client, skill SkillDescriptor) *mcp.Server {
 					if listed, ok := result.(*mcp.ListToolsResult); ok && listed != nil {
 						visible := make([]*mcp.Tool, 0, len(listed.Tools))
 						for _, tool := range listed.Tools {
-							if tool.Name != "run_skill" {
+							if tool.Name != "run_skill" && tool.Name != "import_asset_url" && tool.Name != "prepare_asset_upload" {
 								visible = append(visible, tool)
 							}
 						}
@@ -116,9 +151,22 @@ func NewSkillServer(c *Client, skill SkillDescriptor) *mcp.Server {
 	no, yes := false, true
 	read := &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: &no, IdempotentHint: true, OpenWorldHint: &yes}
 	paid := &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &yes, IdempotentHint: true, OpenWorldHint: &yes}
+	write := &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &no, IdempotentHint: true, OpenWorldHint: &yes}
 	base := "/api/open/v1/mcp/skills/" + skill.ID
 	mcp.AddTool(server, &mcp.Tool{Name: "get_skill_info", Description: "查看当前技能的公开说明、输入要求和输出类型。" + skill.Description, Annotations: read}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, SkillDescriptor, error) {
 		return nil, skill, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "import_asset_url", Description: "把可直接下载的公网图片、视频、音频或文件 URL 安全导入当前 FlowLight 账号，返回 run_skill 可用的素材 ID/URL；不扣积分。普通网页或平台分享页不是媒体直链。", Annotations: write}, func(ctx context.Context, _ *mcp.CallToolRequest, input ImportSkillAssetInput) (*mcp.CallToolResult, SkillAssetRecord, error) {
+		if !skill.Enabled {
+			return nil, SkillAssetRecord{}, errors.New("此技能已停止接收新任务，不能继续导入素材")
+		}
+		return importSkillAsset(ctx, c, input)
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "prepare_asset_upload", Description: "为客户端本地文件签发 5 分钟、绑定文件名/大小/SHA-256 的一次性上传地址；不扣积分。随后由客户端用 multipart 字段 file 上传，成功响应即为 run_skill 素材。", Annotations: write}, func(ctx context.Context, _ *mcp.CallToolRequest, input PrepareSkillAssetUploadInput) (*mcp.CallToolResult, SkillAssetUploadPlan, error) {
+		if !skill.Enabled {
+			return nil, SkillAssetUploadPlan{}, errors.New("此技能已停止接收新任务，不能继续上传素材")
+		}
+		return prepareSkillAssetUpload(ctx, c, input)
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "run_skill", Description: "运行「" + skill.Title + "」。服务端执行已发布 Skill，按主站模型计费；返回异步任务。先 get_skill_info 检查输入。", Annotations: paid}, func(ctx context.Context, _ *mcp.CallToolRequest, input RunSkillInput) (*mcp.CallToolResult, SkillRunOutput, error) {
 		if !skill.Enabled {
@@ -150,6 +198,89 @@ func NewSkillServer(c *Client, skill SkillDescriptor) *mcp.Server {
 		return nil, identity, err
 	})
 	return server
+}
+
+func normalizeSkillAssetType(value, mimeType, fileType string) string {
+	requested := strings.ToLower(strings.TrimSpace(value))
+	physical := strings.ToLower(strings.TrimSpace(fileType))
+	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
+	actual := physical
+	if strings.HasPrefix(mimeType, "audio/") {
+		actual = "audio"
+	} else if actual == "other" {
+		actual = "file"
+	}
+	if requested == "" {
+		return actual
+	}
+	if requested == "file" || requested == actual {
+		return requested
+	}
+	return ""
+}
+
+func importSkillAsset(ctx context.Context, c *Client, input ImportSkillAssetInput) (*mcp.CallToolResult, SkillAssetRecord, error) {
+	input.URL = strings.TrimSpace(input.URL)
+	input.Type = strings.ToLower(strings.TrimSpace(input.Type))
+	if input.URL == "" || (input.Type != "image" && input.Type != "video" && input.Type != "audio" && input.Type != "file") {
+		return nil, SkillAssetRecord{}, errors.New("url 与合法素材 type（image/video/audio/file）均为必填")
+	}
+	var raw struct {
+		ID           string `json:"id"`
+		FileURL      string `json:"fileUrl"`
+		OriginalName string `json:"originalName"`
+		FileType     string `json:"fileType"`
+		MimeType     string `json:"mimeType"`
+		FileSize     int64  `json:"fileSize"`
+		Reused       bool   `json:"reused"`
+	}
+	body := map[string]any{"url": input.URL, "fileType": map[string]string{"audio": "other", "file": "other"}[input.Type], "originalName": strings.TrimSpace(input.OriginalName)}
+	if input.Type == "image" || input.Type == "video" {
+		body["fileType"] = input.Type
+	}
+	if err := c.request(ctx, "POST", "/api/open/v1/files/import", body, true, &raw); err != nil {
+		return nil, SkillAssetRecord{}, err
+	}
+	resolvedType := normalizeSkillAssetType(input.Type, raw.MimeType, raw.FileType)
+	if raw.ID == "" || raw.FileURL == "" || resolvedType == "" {
+		return nil, SkillAssetRecord{}, errors.New("远程文件类型与声明的素材类型不一致")
+	}
+	return nil, SkillAssetRecord{ID: raw.ID, URL: raw.FileURL, Name: raw.OriginalName, Type: resolvedType, MimeType: raw.MimeType, Size: raw.FileSize, Reused: raw.Reused}, nil
+}
+
+func prepareSkillAssetUpload(ctx context.Context, c *Client, input PrepareSkillAssetUploadInput) (*mcp.CallToolResult, SkillAssetUploadPlan, error) {
+	input.Type = strings.ToLower(strings.TrimSpace(input.Type))
+	if input.Type != "image" && input.Type != "video" && input.Type != "audio" && input.Type != "file" {
+		return nil, SkillAssetUploadPlan{}, errors.New("type 只能是 image、video、audio 或 file")
+	}
+	fileType := input.Type
+	if fileType == "audio" || fileType == "file" {
+		fileType = "other"
+	}
+	var raw struct {
+		UploadPath    string `json:"uploadPath"`
+		Authorization string `json:"authorization"`
+		ExpiresAt     string `json:"expiresAt"`
+		ExpectedSize  int64  `json:"expectedSize"`
+		OriginalName  string `json:"originalName"`
+		ContentType   string `json:"contentType"`
+		FileType      string `json:"fileType"`
+	}
+	body := map[string]any{"filename": input.Filename, "contentType": input.ContentType, "fileType": fileType, "size": input.Size, "sha256": input.SHA256}
+	if err := c.request(ctx, "POST", "/api/open/v1/files/upload-ticket", body, true, &raw); err != nil {
+		return nil, SkillAssetUploadPlan{}, err
+	}
+	policy, err := c.Policy(ctx)
+	if err != nil {
+		return nil, SkillAssetUploadPlan{}, err
+	}
+	public, err := url.Parse(strings.TrimSpace(policy.PublicURL))
+	if err != nil || public.Hostname() == "" || (public.Scheme != "http" && public.Scheme != "https") || raw.UploadPath != "/api/open/v1/files/upload-with-ticket" {
+		return nil, SkillAssetUploadPlan{}, errors.New("主站未配置可用的公开上传地址")
+	}
+	uploadURL := public.Scheme + "://" + public.Host + raw.UploadPath
+	return nil, SkillAssetUploadPlan{UploadURL: uploadURL, Authorization: raw.Authorization, ExpiresAt: raw.ExpiresAt,
+		ExpectedSize: raw.ExpectedSize, OriginalName: raw.OriginalName, ContentType: raw.ContentType, Type: input.Type}, nil
 }
 
 func skillRequest(ctx context.Context, c *Client, method, path, skillID, runID string, input any) (*mcp.CallToolResult, SkillRunOutput, error) {

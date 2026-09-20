@@ -60,9 +60,15 @@ func downloadTicketOrJWT(d *app.Deps) gin.HandlerFunc {
 //	DELETE /api/files/detail/:id     -> void                                  (auth)
 func Register(api *gin.RouterGroup, d *app.Deps) {
 	h := newHandler(d)
+	// The bytes endpoint uses a short-lived hash-bound capability issued by the
+	// authenticated route below. It deliberately sits outside UserAPIKeyAuth so
+	// local agents never need to expose their long-lived key to curl/process args.
+	api.POST("/open/v1/files/upload-with-ticket", middleware.RateLimit(d, 30, time.Minute), h.uploadWithTicket)
 	// Generation clients use the same owner-scoped storage/quota pipeline.
 	open := api.Group("/open/v1/files", middleware.UserAPIKeyAuth(d.UserKeys))
 	open.POST("", middleware.RateLimit(d, 30, time.Minute), h.upload)
+	open.POST("/upload-ticket", middleware.RateLimit(d, 30, time.Minute), h.issueUploadTicket)
+	open.POST("/import", middleware.RateLimit(d, 20, time.Minute), h.saveFromURL)
 	open.GET("/download", middleware.RateLimit(d, 60, time.Minute), h.download)
 	// Native browser downloads cannot attach Authorization headers. This leaf
 	// accepts either the normal JWT or a two-minute, exact-file ticket issued by

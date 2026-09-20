@@ -34,6 +34,27 @@ func TestSkillHTTPEndpointsBindToolsAndUserCredentials(t *testing.T) {
 			return
 		}
 		ok := func(v any) { _ = json.NewEncoder(w).Encode(map[string]any{"success": true, "code": 200, "data": v}) }
+		if r.URL.Path == "/api/open/v1/files/import" {
+			var input struct {
+				URL          string `json:"url"`
+				FileType     string `json:"fileType"`
+				OriginalName string `json:"originalName"`
+			}
+			if json.NewDecoder(r.Body).Decode(&input) != nil || input.URL == "" {
+				w.WriteHeader(400)
+				return
+			}
+			fileType, mimeType := input.FileType, input.FileType+"/test"
+			if input.FileType == "other" {
+				mimeType = "application/octet-stream"
+			}
+			ok(map[string]any{"id": "7001", "fileUrl": "https://flowlight.example/uploads/7001", "originalName": "asset.bin", "fileType": fileType, "mimeType": mimeType, "fileSize": 99})
+			return
+		}
+		if r.URL.Path == "/api/open/v1/files/upload-ticket" {
+			ok(map[string]any{"uploadPath": "/api/open/v1/files/upload-with-ticket", "authorization": "Upload short-ticket", "expiresAt": "2030-01-01T00:00:00Z", "expectedSize": 99, "originalName": "clip.mp4", "contentType": "video/mp4", "fileType": "video"})
+			return
+		}
 		prefix := "/api/open/v1/mcp/skills/"
 		rest := strings.TrimPrefix(r.URL.Path, prefix)
 		if !strings.Contains(rest, "/") && (rest == "101" || rest == "102") {
@@ -103,7 +124,7 @@ func TestSkillHTTPEndpointsBindToolsAndUserCredentials(t *testing.T) {
 	}
 	a, b := connectSkill("101", "key-a"), connectSkill("102", "key-b")
 	listed, err := a.ListTools(context.Background(), nil)
-	if err != nil || len(listed.Tools) != 5 {
+	if err != nil || len(listed.Tools) != 7 {
 		t.Fatalf("tools=%+v err=%v", listed, err)
 	}
 	encoded, _ := json.Marshal(listed)
@@ -114,6 +135,14 @@ func TestSkillHTTPEndpointsBindToolsAndUserCredentials(t *testing.T) {
 	encoded, _ = json.Marshal(info)
 	if info.IsError || strings.Contains(string(encoded), "private-source") || !strings.Contains(string(encoded), "101") {
 		t.Fatalf("unsafe skill info: %s", encoded)
+	}
+	imported := decodeOutput[SkillAssetRecord](t, call(t, a, "import_asset_url", ImportSkillAssetInput{URL: "https://cdn.test/clip.mp4", Type: "video"}))
+	if imported.ID != "7001" || imported.Type != "video" {
+		t.Fatalf("imported asset=%+v", imported)
+	}
+	upload := decodeOutput[SkillAssetUploadPlan](t, call(t, a, "prepare_asset_upload", PrepareSkillAssetUploadInput{Filename: "clip.mp4", ContentType: "video/mp4", Type: "video", Size: 99, SHA256: strings.Repeat("a", 64)}))
+	if upload.UploadURL != "https://flowlight.example/api/open/v1/files/upload-with-ticket" || upload.Authorization != "Upload short-ticket" {
+		t.Fatalf("upload plan=%+v", upload)
 	}
 	args := RunSkillInput{ClientRequestID: "one", Input: SkillRunInput{Prompt: "make report"}}
 	if call(t, a, "run_skill", args).IsError || call(t, b, "run_skill", args).IsError {
@@ -149,8 +178,8 @@ func TestSkillHTTPEndpointsBindToolsAndUserCredentials(t *testing.T) {
 		t.Fatalf("closed Skill management tools unavailable: %+v %v", listed, err)
 	}
 	for _, tool := range listed.Tools {
-		if tool.Name == "run_skill" {
-			t.Fatal("disabled submission tool remains listed")
+		if tool.Name == "run_skill" || tool.Name == "import_asset_url" || tool.Name == "prepare_asset_upload" {
+			t.Fatal("disabled write tool remains listed: " + tool.Name)
 		}
 	}
 	if call(t, a, "get_skill_run", SkillRunQuery{RunID: "9001"}).IsError {

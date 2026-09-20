@@ -222,7 +222,7 @@ func (c *Client) audio(ctx context.Context, _ *mcp.CallToolRequest, input AudioI
 
 func NewServer(c *Client) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "flowlight-generation", Version: serverVersion}, &mcp.ServerOptions{
-		Instructions: "使用用户自己的主站 API Key。先 list_models 获取真实 modelId 和规格。生成会扣用户积分，按用户明确的创作需求调用。每个新任务用唯一 clientRequestId；超时重试沿用原编号和参数，禁止自动改编号重生成。返回 processing 表示已受理，每 5–10 秒 get_generation_task 查询；成功用 resultUrl/resultMeta 展示结果，失败显示 errorMsg。不得把生成中说成已成功。参考素材先经主站上传。",
+		Instructions: "使用用户自己的主站 API Key。先 list_models 获取真实 modelId 和规格。生成会扣用户积分，按用户明确的创作需求调用。本地参考文件先用 prepare_asset_upload 取得一次性地址并由客户端上传；公网文件直链用 import_asset_url 导入，随后把返回 URL 传给生成工具。每个新任务用唯一 clientRequestId；超时重试沿用原编号和参数，禁止自动改编号重生成。返回 processing 表示已受理，每 5–10 秒 get_generation_task 查询；成功用 resultUrl/resultMeta 展示结果，失败显示 errorMsg。不得把生成中说成已成功。",
 		SetCacheable: func(_ context.Context, _ mcp.Request, cache *mcp.Cacheable) { cache.CacheScope = "private" },
 	})
 	no, yes := false, true
@@ -231,6 +231,13 @@ func NewServer(c *Client) *mcp.Server {
 	// these paid tools for read-only or purely additive operations.
 	paid := &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &yes, IdempotentHint: true, OpenWorldHint: &yes}
 	read := &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: &no, IdempotentHint: true, OpenWorldHint: &yes}
+	write := &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &no, IdempotentHint: true, OpenWorldHint: &yes}
+	mcp.AddTool(server, &mcp.Tool{Name: "import_asset_url", Description: "把可直接下载的公网图片、视频、音频或文件 URL 导入当前账号，返回生成工具和 Skill 可复用的素材 ID/URL；不扣积分但占用存储空间。", Annotations: write}, func(ctx context.Context, _ *mcp.CallToolRequest, input ImportSkillAssetInput) (*mcp.CallToolResult, SkillAssetRecord, error) {
+		return importSkillAsset(ctx, c, input)
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "prepare_asset_upload", Description: "为本地文件签发 5 分钟一次性上传地址。客户端按返回信息上传后，响应中的 ID/URL 可用于生成工具和 Skill；不扣积分。", Annotations: write}, func(ctx context.Context, _ *mcp.CallToolRequest, input PrepareSkillAssetUploadInput) (*mcp.CallToolResult, SkillAssetUploadPlan, error) {
+		return prepareSkillAssetUpload(ctx, c, input)
+	})
 	mcp.AddTool(server, &mcp.Tool{Name: "generate_image", Description: "生成图片或基于参考图修改图片。按主站定价扣积分；返回任务 ID，使用 get_generation_task 获取最终结果。重试必须保持 clientRequestId 和全部参数不变。", Annotations: paid}, c.image)
 	mcp.AddTool(server, &mcp.Tool{Name: "generate_video", Description: "生成视频，支持文生、图生、首尾帧和全能参考。使用用户积分，立即返回任务 ID；不要在未查到 succeeded 时声称视频完成。", Annotations: paid}, c.video)
 	mcp.AddTool(server, &mcp.Tool{Name: "generate_audio", Description: "生成音乐、音效或语音，具体能力由所选主站音频模型决定。按主站定价扣积分；参数中可传 lyrics、tags、title、makeInstrumental、extras。", Annotations: paid}, c.audio)

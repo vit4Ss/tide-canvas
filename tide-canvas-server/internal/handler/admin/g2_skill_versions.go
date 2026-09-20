@@ -2363,8 +2363,12 @@ func validateSkillManifestInputContract(manifestRaw, inputSchemaRaw json.RawMess
 		"analyze_image": "image", "analyze_video": "video", "analyze_audio": "audio",
 		"image_to_image": "image", "image_to_video": "image", "start_end_to_video": "image",
 	}
+	usedHandlers := map[string]bool{}
 	for index, step := range manifest.Steps {
 		handler := strings.ToLower(strings.TrimSpace(step.Handler))
+		if handler != "" {
+			usedHandlers[handler] = true
+		}
 		if (handler == "text_to_image" || handler == "text_to_video" || handler == "text_to_audio" || handler == "analyze_webpage" || handler == "analyze_account") && (len(assetTypes) > 0 || assetSpec != nil || requiredFields["assets"]) {
 			return fmt.Errorf("manifest.steps[%d].handler %s does not consume asset input", index, handler)
 		}
@@ -2418,6 +2422,30 @@ func validateSkillManifestInputContract(manifestRaw, inputSchemaRaw json.RawMess
 			if !requiredFields["url"] {
 				return fmt.Errorf("manifest.steps[%d].handler analyze_webpage requires url in inputSchema.required", index)
 			}
+		}
+	}
+	// Declaring a media type in the Schema is a product promise. Do not publish
+	// an Agent that accepts a video/audio/image and then silently runs a generic
+	// text step which never consumes it. This is especially important for MCP,
+	// where the caller cannot see the canvas-side preprocessing UI.
+	primary := strings.ToLower(strings.TrimSpace(primaryOutputType))
+	if primary == "text" || primary == "file" {
+		for assetType, handler := range map[string]string{"image": "analyze_image", "video": "analyze_video", "audio": "analyze_audio"} {
+			// A step-less text Agent uses the runner's standard media-analysis
+			// fallback. Once an author supplies steps, every accepted media type
+			// must be consumed explicitly so custom ordering remains unambiguous.
+			implicitTextAnalysis := primary == "text" && len(manifest.Steps) == 0
+			if assetTypes[assetType] && !usedHandlers[handler] && !implicitTextAnalysis {
+				return fmt.Errorf("inputSchema accepts %s assets but manifest has no %s step; the uploaded media would be ignored", assetType, handler)
+			}
+		}
+	}
+	if primary == "video" {
+		if (assetTypes["video"] || assetTypes["audio"]) && !usedHandlers["reference_to_video"] {
+			return errors.New("video/audio reference input requires a reference_to_video step; otherwise the uploaded media would be ignored")
+		}
+		if assetTypes["image"] && !usedHandlers["image_to_video"] && !usedHandlers["start_end_to_video"] && !usedHandlers["reference_to_video"] && len(manifest.Steps) > 0 {
+			return errors.New("image input requires image_to_video, start_end_to_video or reference_to_video")
 		}
 	}
 	return nil

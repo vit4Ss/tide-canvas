@@ -75,7 +75,7 @@ test('personalized installation and MCP copies use the supplied user key only in
 test('missing MCP is installed automatically while existing connections and user disablement are respected', () => {
   for (const key of [undefined, 'tc_sk_' + 'A'.repeat(43)]) {
     const prompt = skillInstallPrompt('https://flowlight.example/api/skill-library/101/SKILL.md', key);
-    for (const expected of ['先确认当前客户端', '当前客户端的 MCP/扩展/连接器管理工具', '只有明确确认连接不存在时才新增', '连接已存在且地址一致时复用', 'flowlight_skill_101', '保留其他 MCP 配置', '显式停用', '每次使用 Skill 时', '自动修复一次', '需重新连接或开启新会话', '不要把写入配置当成已连通']) assert.ok(prompt.includes(expected), expected);
+    for (const expected of ['先确认当前客户端', '当前客户端的 MCP/扩展/连接器管理工具', '只有明确确认连接不存在时才新增', '连接已存在且地址一致时复用', 'flowlight_skill_101', '保留其他 MCP 配置', '显式停用', '每次使用 Skill 时', '自动修复一次', '需重新连接或开启新会话', '不要把写入配置当成已连通', 'prepare_asset_upload', '不要求用户先到 FlowLight 手工取得 ID', '公网媒体直链使用 import_asset_url']) assert.ok(prompt.includes(expected), expected);
     for (const forbidden of ['codex mcp', 'config.toml', '~/.codex', '~/.agents', 'mcp_servers.', '--bearer-token-env-var']) assert.ok(!prompt.includes(forbidden), forbidden);
     assert.ok(prompt.indexOf('先确认当前客户端') < prompt.indexOf('下载上述链接'));
     assert.ok(prompt.includes('当前客户端不支持本地 Skill'));

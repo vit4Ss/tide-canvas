@@ -37,7 +37,7 @@ ${JSON.stringify({ sourceUrl: source.href, metadataUrl }, null, 2)}
 5. 仅在当前客户端支持本服务的远程 MCP 时执行接入。读取 ${metadataUrl}，确认响应成功且 data.id 为字符串 "${id}"，从 data.mcpEndpoint 取得有效 HTTP/HTTPS 地址。元数据读取失败、data.mcpAvailable 不为 true 或地址缺失时停止接入，说明具体原因并保留已有文件与配置，不猜测端点或保存无效连接。需要接入的统一参数是：连接标识 ${server}、传输协议 MCP Streamable HTTP、该远程地址、Authorization: Bearer 请求头。优先使用当前客户端的 MCP/扩展/连接器管理工具；没有管理工具时，先检查当前客户端自身的帮助或配置格式，再备份并只合并这一条连接。保留其他 MCP 配置。连接已存在且地址一致时复用；只有明确确认连接不存在时才新增；读取失败不能当成未安装。用户显式停用的连接保持停用。不要因本机存在某个 CLI 就为另一个客户端安装，安装远程连接不需要部署本地 FlowLight 服务端。
 6. 仅为已确认的当前客户端 MCP 连接设置鉴权；没有可配置的连接时不要保存密钥。${credentials}
 7. 使用当前客户端的刷新或重新连接能力加载工具；具备已启用密钥且 data.mcpAvailable 为 true 时，只调用 get_skill_info 检查连接，并确认工具属于连接 ${server}，返回 id 为 ${id}、enabled 为 true 后才能报告“连接验证通过”。其他 Skill 的同名工具、只列出工具或仅写入配置都不算验证通过。不要运行 run_skill 或发起付费任务。无法热加载时明确提示需重新连接或开启新会话，不要把写入配置当成已连通。若本地 Skill 确已安装但 MCP 地址或密钥缺失，报告“Skill 已安装，MCP 待连接”；只支持 MCP 的客户端报告“MCP 待连接”，验证通过后才报告“已接入 MCP，当前客户端不支持本地 Skill”。未写入技能时不能报告已安装。
-8. 每次使用 Skill 时，若专属 MCP 不存在，按 SKILL.md 的自动接入步骤在当前客户端补齐；连接失败最多自动修复一次。最终报告当前客户端名称、实际安装路径或接入入口、连接标识和验证状态，并给出该客户端实际支持的调用方式；不统一套用某个客户端的命令。`;
+8. 每次使用 Skill 时，若专属 MCP 不存在，按 SKILL.md 的自动接入步骤在当前客户端补齐；连接失败最多自动修复一次。需要本地素材时由客户端读取文件并按 Skill 中的 prepare_asset_upload 流程上传，不要求用户先到 FlowLight 手工取得 ID，也不要把文件路径或 base64 直接交给远程 MCP；公网媒体直链使用 import_asset_url 或由 run_skill 自动导入。最终报告当前客户端名称、实际安装路径或接入入口、连接标识和验证状态，并给出该客户端实际支持的调用方式；不统一套用某个客户端的命令。`;
 }
 
 export function skillCodexConfig(skill: Pick<LibrarySkill, "id" | "mcpEndpoint">, apiKey?: string): string {

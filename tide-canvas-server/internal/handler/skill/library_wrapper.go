@@ -77,12 +77,14 @@ metadata:
 ## 执行步骤
 
 1. 调用此 MCP 的 get_skill_info，读取当前公开说明、inputSchema 和输出类型；只使用这个服务器下的工具。
-2. 按要求收集用户需求和参数。需要素材时，使用用户在主站上传且拥有访问权限的文件 ID 与 URL；远程 MCP 不能读取本机文件路径，不要把本地路径或 base64 当作素材 URL。
-3. 调用 get_balance 查询用户主站积分。执行和继续生成按主站模型规则计费，多步骤技能可能调用多次模型；应基于用户明确的任务意图调用，不能承诺固定费用或失败后全流程免费。
-4. 调用 run_skill，传入 clientRequestId 和 input。input 包含 prompt、assets、parameters；字段和值遵守 get_skill_info 返回的要求。为新任务生成唯一 clientRequestId；超时、网络错误或结果不确定时，使用同一个编号和原参数重试，不要擅自换编号重复生成。
-5. 保存返回的 id，以字符串原样作为 runId 调用 get_skill_run。queued/running 表示还未完成，间隔 5–10 秒查询，不要高频轮询或提前声称完成。
-6. waiting_confirmation/waiting_input 时，向用户展示 pendingAction 和可见草稿。获得用户决定后调用 respond_skill_run，提供 runId、action、最新 expectedRevision、独立 clientRequestId，以及所需 input/feedback/message。action 可为 confirm、revise、submit_input、retry、cancel；重试同一操作保持原编号和参数。
-7. succeeded 时展示最终 artifacts 的文本或文件链接。failed/cancelled 时停止轮询并如实说明；重试或改方案须遵循用户要求。只查询该用户在这个技能下的任务。
+2. 按要求收集用户需求和参数。用户给出可直接下载的公网素材 URL 时，可以直接把它作为对应类型的 asset URL 交给 run_skill；专属 MCP 会先安全导入当前账号。平台分享页或普通网页不是媒体直链，先用客户端已有的解析能力取得真实文件 URL，不能伪装成视频素材。
+3. 用户给出本地文件时，不要把本地路径或 base64 塞进 run_skill。先在本机计算精确字节数、MIME 类型和 SHA-256，调用 prepare_asset_upload；再按返回的 uploadUrl 与 authorization，通过当前客户端的本地执行能力发送 multipart POST（字段名 file）。成功响应 data 中的 id/fileUrl 是 run_skill 的 asset id/url。远程 MCP 本身不能读取客户端磁盘；客户端没有本地文件或 HTTP 上传能力时，应明确说明限制，不声称已上传。
+4. 已有当前账号的 FlowLight 素材 ID/URL 可以直接传入。也可先调用 import_asset_url 显式导入并检查类型；上传和导入不扣生成积分，但占用账号存储配额。不要使用其他用户的 ID/URL。
+5. 调用 get_balance 查询用户主站积分。执行和继续生成按主站模型规则计费，多步骤技能可能调用多次模型；应基于用户明确的任务意图调用，不能承诺固定费用或失败后全流程免费。
+6. 调用 run_skill，传入 clientRequestId 和 input。input 包含 prompt、assets、parameters；字段和值遵守 get_skill_info 返回的要求。为新任务生成唯一 clientRequestId；超时、网络错误或结果不确定时，使用同一个编号和原参数重试，不要擅自换编号重复生成。
+7. 保存返回的 id，以字符串原样作为 runId 调用 get_skill_run。queued/running 表示还未完成，间隔 5–10 秒查询，不要高频轮询或提前声称完成。
+8. waiting_confirmation/waiting_input 时，向用户展示 pendingAction 和可见草稿。获得用户决定后调用 respond_skill_run，提供 runId、action、最新 expectedRevision、独立 clientRequestId，以及所需 input/feedback/message。action 可为 confirm、revise、submit_input、retry、cancel；重试同一操作保持原编号和参数。
+9. succeeded 时展示最终 artifacts 的文本或文件链接。failed/cancelled 时停止轮询并如实说明；重试或改方案须遵循用户要求。只查询该用户在这个技能下的任务。
 
 ## 调用边界
 

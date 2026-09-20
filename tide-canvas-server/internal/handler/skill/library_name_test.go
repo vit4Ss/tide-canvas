@@ -88,3 +88,13 @@ func TestLibraryWrapperProtectsExistingLocalSkillsDuringNameMigration(t *testing
 		}
 	}
 }
+
+func TestLibraryWrapperExplainsLocalUploadAndRemoteURLImport(t *testing.T) {
+	_, router := libraryTestServer(t)
+	doc := libraryRequest(router, "/api/skill-library/101/SKILL.md").Body.String()
+	for _, required := range []string{"prepare_asset_upload", "multipart POST", "import_asset_url", "公网素材 URL", "不扣生成积分", "远程 MCP 本身不能读取客户端磁盘"} {
+		if !strings.Contains(doc, required) {
+			t.Fatalf("asset intake guidance missing %q", required)
+		}
+	}
+}
