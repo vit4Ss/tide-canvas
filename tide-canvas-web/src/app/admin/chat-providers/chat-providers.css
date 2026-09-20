@@ -45,16 +45,31 @@
 
 .cp-meta {
   display: flex;
-  gap: 20px;
-  color: var(--text-faint);
-  font-size: 13px;
+  gap: 8px;
   white-space: nowrap;
+}
+
+/* Quiet count chips: the numbers matter, the words are labels. */
+.cp-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--text-faint);
+  font-size: 12px;
 }
 
 .cp-meta strong {
   color: var(--text);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+.cp-meta > span.is-live strong {
+  color: var(--accent-strong);
 }
 
 .cp-acts {
@@ -166,6 +181,44 @@
   color: var(--text-faint);
 }
 
+/* ---------------------------------------------------------------- pricing rules */
+
+.cp-rules {
+  display: grid;
+  grid-template-columns: repeat(3, 160px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.cp-rules-note {
+  margin: 0;
+  padding-top: 18px;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.cp-rules-note b {
+  color: var(--text);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-price-hint {
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-price-hint b {
+  color: var(--text);
+  font-weight: 500;
+  font-family: var(--mono);
+}
+
 /* ---------------------------------------------------------------- endpoints */
 
 .cp-endpoints {
@@ -248,24 +301,22 @@
   color: var(--text);
 }
 
-.cp-addr-sub {
+.cp-addr {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .cp-label {
-  flex: 0 1 160px;
   font-size: 12px;
   color: var(--text-faint);
 }
 
 .cp-warn {
-  display: inline-block;
+  display: block;
   color: var(--danger);
   font-size: 12px;
-  white-space: nowrap;
+  line-height: 1.5;
 }
 
 .cp-keycell {
@@ -311,12 +362,142 @@
 
 /* ---------------------------------------------------------------- models */
 
+.cp-model-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.cp-model-tools .adm-search {
+  margin-left: 0;
+  width: 240px;
+  height: var(--control-sm);
+}
+
+.cp-model-tools .adm-chip small,
+.cp-model-bulk .adm-btn small {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-model-bulk {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* Price at rest: reads as two numbers, becomes an editor on click. */
+.cp-price-view {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  padding: 6px 8px;
+  margin: -6px -8px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+
+.cp-price-view:hover:not(:disabled),
+.cp-price-view:focus-visible {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.cp-price-view:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.cp-price-view.is-empty {
+  cursor: default;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.cp-price-view.is-empty > small {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.cp-price-fill {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.cp-price-main {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-price-main b {
+  font-weight: 600;
+}
+
+.cp-price-main i {
+  font-style: normal;
+  color: var(--text-faint);
+}
+
+.cp-price-main small {
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-left: 2px;
+}
+
+.cp-price-pen {
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.cp-price-view:hover .cp-price-pen,
+.cp-price-view:focus-visible .cp-price-pen {
+  opacity: 1;
+}
+
+.cp-price-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-price-sub em {
+  font-style: normal;
+  font-family: var(--mono);
+  color: var(--text-dim);
+}
+
 .cp-models .cp-th-hint {
   display: block;
   margin-top: 2px;
   font-weight: 400;
   font-size: 11px;
   color: var(--text-faint);
+}
+
+.cp-models td {
+  vertical-align: middle;
 }
 
 .cp-model {
@@ -339,19 +520,28 @@
 }
 
 .cp-price {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cp-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  min-width: 0;
 }
 
-.cp-price-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.cp-field > span {
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
-.cp-price-row input {
-  width: 84px;
+.cp-field input {
+  width: 100%;
+  min-width: 0;
   height: var(--control-sm);
   padding: 0 8px;
   text-align: right;
@@ -360,44 +550,26 @@
   font-variant-numeric: tabular-nums;
 }
 
-.cp-price-limits input {
-  width: 84px;
+.cp-field-limit input {
   color: var(--text-dim);
 }
 
 /* Spin buttons make numbers wobble under the pointer; the value is what matters. */
-.cp-price-row input[type="number"] {
+.cp-field input[type="number"] {
   appearance: textfield;
   -moz-appearance: textfield;
 }
 
-.cp-price-row input[type="number"]::-webkit-inner-spin-button,
-.cp-price-row input[type="number"]::-webkit-outer-spin-button {
+.cp-field input[type="number"]::-webkit-inner-spin-button,
+.cp-field input[type="number"]::-webkit-outer-spin-button {
   appearance: none;
   margin: 0;
 }
 
-.cp-sep,
-.cp-unit {
-  color: var(--text-faint);
-  font-size: 12px;
-}
-
-.cp-unit {
-  width: 28px;
-}
-
 .cp-open {
-  display: flex;
-  flex-direction: column;
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
-}
-
-.cp-open small {
-  color: var(--text-faint);
-  font-size: 11px;
-  white-space: nowrap;
+  justify-content: center;
 }
 
 /* ---------------------------------------------------------------- narrow */
@@ -418,6 +590,31 @@
   .cp-endpoint > .cp-health,
   .cp-endpoint-cols > :nth-child(4) {
     display: none;
+  }
+
+  .cp-price {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cp-rules {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .cp-model-tools {
+    flex-wrap: wrap;
+  }
+
+  .cp-model-tools .adm-search {
+    width: 100%;
+  }
+
+  .cp-model-bulk {
+    margin-left: 0;
+  }
+
+  .cp-rules-note {
+    grid-column: 1 / -1;
+    padding-top: 0;
   }
 }
 
