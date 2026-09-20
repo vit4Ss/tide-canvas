@@ -86,6 +86,34 @@ export function normalizeGeneratedPreferredNodeType(value: unknown): "" | "chara
   return normalized === "" || normalized === "character" || normalized === "scene" ? normalized : undefined;
 }
 
+/**
+ * Keep the AI's content-based decision, but reconcile a common semantic slip:
+ * media uploaded through a file picker is still image/video/audio input, not
+ * the generic document "file" preset. The registered analysis handler is the
+ * strongest machine-checkable signal because it is also what runtime executes.
+ */
+export function reconcileGeneratedInputPreset(
+  value: SkillInputPreset,
+  manifest: Record<string, unknown>,
+): SkillInputPreset {
+  const steps = Array.isArray(manifest.steps) ? manifest.steps : [];
+  const requiredPresets = new Set<SkillInputPreset>();
+  for (const rawStep of steps) {
+    if (!rawStep || typeof rawStep !== "object" || Array.isArray(rawStep)) continue;
+    const handler = (rawStep as Record<string, unknown>).handler;
+    if (handler === "analyze_image") requiredPresets.add("image");
+    if (handler === "analyze_video") requiredPresets.add("video");
+    if (handler === "analyze_audio") requiredPresets.add("audio");
+    if (handler === "analyze_webpage") requiredPresets.add("webpage");
+  }
+  if (requiredPresets.size !== 1) return value;
+  const [requiredPreset] = requiredPresets;
+  // analyze_image supports one or multiple images, so retain either valid
+  // image choice made from the Skill definition.
+  if (requiredPreset === "image" && (value === "image" || value === "images")) return value;
+  return requiredPreset;
+}
+
 function limitedText(value: unknown, limit: number): string {
   return typeof value === "string" ? Array.from(value.trim()).slice(0, limit).join("") : "";
 }
@@ -481,6 +509,13 @@ function autoConfigurationPrompt(request: SkillManifestDraftRequest, model: AiMo
 可选执行形态：agent、tool、preset
 可选主输出：text、image、video、audio、file
 
+执行形态语义：
+- agent：以 SKILL.md 的专业指令、知识和工作流为核心，在画布和 MCP 中由智能体执行。文本输出且只接收一种媒体时可以不写 steps；运行时会自动调用对应分析能力并同时应用 Skill 原文。
+- tool：以一个已注册的服务端分析或文件渲染处理器为核心，主要用于创作台/API。只有原 Skill 本质上就是固定工具，而不是需要智能体理解整套专业方法时才选择。
+- preset：只做一次直接图片、视频或音频生成，不包含多步骤推理。
+
+当前运行边界：analyze_video 和 analyze_audio 每次只处理 1 个对应素材；analyze_image 每次处理 1–9 张图片；analyze_webpage 每次处理 1 个 URL。mixed 不能代替明确的单媒体分析流程。Skill 同时声明批量视频、参考图等扩展能力但当前运行时不能完整承载时，选择最核心且实际可运行的输入，不得在说明和示例中继续承诺未接入的能力。
+
 <skill_definition>
 ${excerpt(request.source, sourceLimit)}
 </skill_definition>
@@ -508,9 +543,11 @@ ${excerpt(request.source, sourceLimit)}
 2. 只有原文明确承诺实际调用生成模型并交付媒体时，才选择 image/video/audio 输出。
 3. 明确要求服务端分析单个图片、视频、音频或网页时可使用 tool；普通知识/规划/对话 Skill 使用 agent；单次直接媒体生成才使用 preset。
 4. outputTypes 必须包含主输出，也只声明流程实际产生的 text/image/video/audio/file。Manifest 顶层只允许 kind、primaryOutputType、outputTypes、preferredNodeType、steps；不得写 modelId。preferredNodeType 不是输出类型，只能在图片应物化为角色/场景节点时使用 character/scene，其余情况省略。步骤与 handler 只能使用 FlowingLight 白名单：${[...HANDLERS].filter(Boolean).join("、")}。
-5. 输入预设必须和步骤真实消费方式一致；视频审片必须 analyze_video，图片分析必须 analyze_image，音频分析必须 analyze_audio。
+5. 输入预设表示用户提交内容的语义类型，不表示上传控件或文件扩展名。视频文件必须选 video，图片选 image/images，音频选 audio，普通文档才选 file。输入预设必须和步骤真实消费方式一致；视频审片必须使用 video + analyze_video，图片分析必须使用 image/images + analyze_image，音频分析必须使用 audio + analyze_audio，网页分析必须使用 webpage + analyze_webpage。
 6. 优先最简单可运行流程。若无步骤 Agent 已能完成文本任务，manifest 不写 steps。只有原 Skill 明确要求先生成剧本、提示词或方案，再据此生成媒体时，才增加 text 中间步骤；后续 generate 步骤的 prompt 使用 {{previous}} 接收该文本。文本中间结果与付费媒体生成之间默认加入 approval 步骤（不要 promotePrevious），除非原文明确要求全自动执行。
-7. 不开启 MCP、不决定作者、不选择真实模型 ID；这些由管理员和系统处理。`;
+7. description、usageScenario、howTo、输入输出说明和示例必须与最终 kind、inputPreset 和 Manifest 的真实可运行能力一致。包内脚本不会执行，不得把脚本能力写成已经接入的功能。
+8. 返回前自行检查 kind、inputPreset、primaryOutputType、outputTypes 和每个 handler 是否相互一致，只输出修正后的最终 JSON。
+9. 不开启 MCP、不决定作者、不选择真实模型 ID；这些由管理员和系统处理。`;
 }
 
 function sanitizeAutoConfiguration(raw: string, request: SkillManifestDraftRequest): SkillManifestDraftResult {
@@ -528,6 +565,10 @@ function sanitizeAutoConfiguration(raw: string, request: SkillManifestDraftReque
   if (typeof inputPreset !== "string" || !AUTO_INPUT_PRESETS.has(inputPreset as SkillInputPreset)) throw new Error(`“${request.title}”返回了无效输入 Schema`);
   if (typeof primaryOutputType !== "string" || !AUTO_OUTPUT_TYPES.has(primaryOutputType as SkillOutputType)) throw new Error(`“${request.title}”返回了无效主输出`);
   if (!SKILL_CATEGORIES.some((item) => item === category)) throw new Error(`“${request.title}”返回了无效分类`);
+  const manifest = parsed.manifest && typeof parsed.manifest === "object" && !Array.isArray(parsed.manifest)
+    ? parsed.manifest as Record<string, unknown>
+    : {};
+  const reconciledInputPreset = reconcileGeneratedInputPreset(inputPreset as SkillInputPreset, manifest);
   const rawOutputTypes = Array.isArray(parsed.outputTypes) ? parsed.outputTypes : [];
   const outputTypes = [...new Set(rawOutputTypes.filter((item): item is SkillOutputType => typeof item === "string" && AUTO_OUTPUT_TYPES.has(item as SkillOutputType)))];
   if (!outputTypes.includes(primaryOutputType as SkillOutputType) || outputTypes.length !== rawOutputTypes.length) {
@@ -542,14 +583,14 @@ function sanitizeAutoConfiguration(raw: string, request: SkillManifestDraftReque
       : primaryOutputType === "video"
         ? new Set<SkillInputPreset>(["text", "image"])
         : new Set<SkillInputPreset>(["text"]);
-    if (!allowed.has(inputPreset as SkillInputPreset)) throw new Error(`“${request.title}”的预设技能输入与主输出不兼容`);
+    if (!allowed.has(reconciledInputPreset)) throw new Error(`“${request.title}”的预设技能输入与主输出不兼容`);
   }
   const configuration: SkillAutoConfiguration = {
     title: limitedText(parsed.title, 64), description: limitedText(parsed.description, 255),
     usageScenario: limitedText(parsed.usageScenario, 2000), howTo: limitedText(parsed.howTo, 2000),
     inputDescription: limitedText(parsed.inputDescription, 2000), outputDescription: limitedText(parsed.outputDescription, 2000),
     inputExample: limitedText(parsed.inputExample, 4000), outputExample: limitedText(parsed.outputExample, 6000),
-    category, kind, inputPreset: inputPreset as SkillInputPreset, primaryOutputType: primaryOutputType as SkillOutputType, outputTypes,
+    category, kind, inputPreset: reconciledInputPreset, primaryOutputType: primaryOutputType as SkillOutputType, outputTypes,
   };
   if (!configuration.title || !configuration.description || !configuration.usageScenario || !configuration.howTo || !configuration.inputDescription || !configuration.outputDescription || !configuration.inputExample || !configuration.outputExample) {
     throw new Error(`“${request.title}”返回的智能导入说明不完整`);
@@ -560,9 +601,7 @@ function sanitizeAutoConfiguration(raw: string, request: SkillManifestDraftReque
   };
   const issue = manifestRequestIssue(derived);
   if (issue) throw new Error(issue);
-  const rawManifest = parsed.manifest && typeof parsed.manifest === "object" && !Array.isArray(parsed.manifest)
-    ? JSON.stringify(parsed.manifest)
-    : "{}";
+  const rawManifest = JSON.stringify(manifest);
   return { key: request.key, signature: request.signature, manifest: sanitizeManifest(rawManifest, derived), autoConfiguration: configuration };
 }
 

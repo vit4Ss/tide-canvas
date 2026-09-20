@@ -6,9 +6,12 @@ import ts from "typescript";
 
 const raw = readFileSync(new URL("./_components/skill-manifest-ai-control.tsx", import.meta.url), "utf8");
 const source = ts.createSourceFile("control.tsx", raw, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-const fn = source.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "normalizeGeneratedPreferredNodeType");
-assert.ok(fn, "normalizer function missing");
-const code = ts.transpileModule(`${fn.getText(source).replace(/^export /, "")}\nglobalThis.normalize = normalizeGeneratedPreferredNodeType;`, {
+const extractFunction = (name) => {
+  const fn = source.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === name);
+  assert.ok(fn, `${name} function missing`);
+  return fn.getText(source).replace(/^export /, "");
+};
+const code = ts.transpileModule(`${extractFunction("normalizeGeneratedPreferredNodeType")}\n${extractFunction("reconcileGeneratedInputPreset")}\nglobalThis.normalize = normalizeGeneratedPreferredNodeType;\nglobalThis.reconcile = reconcileGeneratedInputPreset;`, {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const context = {};
@@ -20,4 +23,14 @@ test("AI preferredNodeType keeps only canvas concept-node hints", () => {
   assert.equal(context.normalize(" scene "), "scene");
   assert.equal(context.normalize(" character\n"), "character");
   for (const value of ["image", "video", "text", "file", "audio", null, 1, {}, []]) assert.equal(context.normalize(value), undefined);
+});
+
+test("AI import reconciles semantic media inputs from its chosen analysis handler", () => {
+  assert.equal(context.reconcile("file", { steps: [{ type: "tool", handler: "analyze_video" }] }), "video");
+  assert.equal(context.reconcile("text", { steps: [{ type: "tool", handler: "analyze_audio" }] }), "audio");
+  assert.equal(context.reconcile("file", { steps: [{ type: "tool", handler: "analyze_webpage" }] }), "webpage");
+  assert.equal(context.reconcile("file", { steps: [{ type: "tool", handler: "analyze_image" }] }), "image");
+  assert.equal(context.reconcile("images", { steps: [{ type: "tool", handler: "analyze_image" }] }), "images");
+  assert.equal(context.reconcile("mixed", { steps: [{ handler: "analyze_image" }, { handler: "analyze_video" }] }), "mixed");
+  assert.equal(context.reconcile("file", { steps: [{ type: "tool", handler: "render_docx" }] }), "file");
 });

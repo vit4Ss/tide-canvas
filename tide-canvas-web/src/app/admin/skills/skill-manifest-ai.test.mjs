@@ -66,6 +66,11 @@ test("AI writes only a constrained Manifest draft without model IDs", () => {
   assert.match(control, /付费媒体生成之间默认加入 approval/);
   assert.match(control, /delete manifest\.preferredNodeType/);
   assert.match(control, /普通图片、视频、文本和文件必须省略/);
+  assert.match(control, /reconcileGeneratedInputPreset/);
+  assert.match(control, /输入预设表示用户提交内容的语义类型/);
+  assert.match(control, /以 SKILL\.md 的专业指令、知识和工作流为核心/);
+  assert.match(control, /analyze_video 和 analyze_audio 每次只处理 1 个对应素材/);
+  assert.match(control, /说明和示例中继续承诺未接入的能力/);
   assert.match(control, /mountedRef\.current = true/);
   assert.match(control, /window\.setTimeout/);
   assert.match(control, /window\.clearTimeout/);
