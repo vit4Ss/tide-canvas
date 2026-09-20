@@ -378,6 +378,10 @@ func (s *service) runAgentSteps(ctx context.Context, run *model.SkillRun, versio
 		if step.Type == "text" {
 			expectedModelType = "text"
 		}
+		stepInput := input
+		if step.Type == "text" {
+			stepInput.Assets = remainingTextStepAssets(manifest.Steps, index, input.Assets)
+		}
 		configuredModel := strings.TrimSpace(step.ModelID)
 		versionModelType := normalizedOutput(version.PrimaryOutputType)
 		if versionModelType == "file" {
@@ -392,7 +396,7 @@ func (s *service) runAgentSteps(ctx context.Context, run *model.SkillRun, versio
 		requested := requestedAgentStepModel(input.Parameters, step.Type, versionModelType)
 		var modelID string
 		if step.Type == "text" {
-			modelID, err = s.resolveTextModelForAssets(configuredModel, requested, input.Assets)
+			modelID, err = s.resolveTextModelForAssets(configuredModel, requested, stepInput.Assets)
 		} else {
 			modelID, err = s.resolveModel(configuredModel, requested, expectedModelType)
 		}
@@ -426,9 +430,9 @@ func (s *service) runAgentSteps(ctx context.Context, run *model.SkillRun, versio
 		if willPromote {
 			step.OutputRole = "intermediate"
 		}
-		commandInput := buildGenerationInput(version.DefaultParams, input, prompt)
+		commandInput := buildGenerationInput(version.DefaultParams, stepInput, prompt)
 		if step.Type == "text" {
-			s.addSkillTextAttachments(ctx, commandInput, input.Assets)
+			s.addSkillTextAttachments(ctx, commandInput, stepInput.Assets)
 			systemPrompt, err := s.expandSkillTemplate(version, agentStepSystemPrompt(step.SystemPrompt, s.primarySkillText(version)))
 			if err != nil {
 				return err
@@ -462,6 +466,41 @@ func inputMediaKinds(assets []AssetInput) map[string]bool {
 		}
 	}
 	return kinds
+}
+
+func remainingTextStepAssets(steps []agentStep, currentIndex int, assets []AssetInput) []AssetInput {
+	if currentIndex <= 0 || len(assets) == 0 {
+		return assets
+	}
+	consumed := map[string]bool{}
+	limit := currentIndex
+	if limit > len(steps) {
+		limit = len(steps)
+	}
+	for i := 0; i < limit; i++ {
+		if strings.ToLower(strings.TrimSpace(steps[i].Type)) != "tool" {
+			continue
+		}
+		handler := strings.ToLower(strings.TrimSpace(steps[i].Handler))
+		switch handler {
+		case "analyze_image":
+			consumed["image"] = true
+		case "analyze_video":
+			consumed["video"] = true
+		case "analyze_audio":
+			consumed["audio"] = true
+		}
+	}
+	if len(consumed) == 0 {
+		return assets
+	}
+	remaining := make([]AssetInput, 0, len(assets))
+	for _, asset := range assets {
+		if !consumed[strings.ToLower(strings.TrimSpace(asset.Type))] {
+			remaining = append(remaining, asset)
+		}
+	}
+	return remaining
 }
 
 func implicitAnalysisHandler(assets []AssetInput) (string, error) {

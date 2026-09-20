@@ -74,6 +74,7 @@ test("AI writes only a constrained Manifest draft without model IDs", () => {
   assert.match(control, /inferredGeneratedOutputTypes/);
   assert.match(control, /canonicalizeGeneratedMediaAnalysisManifest/);
   assert.match(control, /would pay twice for the same work/);
+  assert.match(control, /不得再增加“润色、整理、总结报告”等第二个付费 text 步骤/);
   assert.match(control, /步骤 type 是执行类别/);
   assert.match(control, /输入预设表示用户提交内容的语义类型/);
   assert.match(control, /以 SKILL\.md 的专业指令、知识和工作流为核心/);

@@ -51,6 +51,30 @@ func TestPublicMCPRunErrorPreservesSafeActionableFailures(t *testing.T) {
 	}
 }
 
+func TestRemainingTextStepAssetsDoesNotResendAnalyzedMedia(t *testing.T) {
+	assets := []AssetInput{
+		{Type: "video", URL: "https://assets.test/review.mp4"},
+		{Type: "image", URL: "https://assets.test/reference.png"},
+		{Type: "file", URL: "https://assets.test/brief.pdf"},
+	}
+	steps := []agentStep{
+		{Type: "tool", Handler: "analyze_video"},
+		{Type: "text", Handler: "skill_text_completion"},
+	}
+	remaining := remainingTextStepAssets(steps, 1, assets)
+	if len(remaining) != 2 || remaining[0].Type != "image" || remaining[1].Type != "file" {
+		t.Fatalf("unexpected remaining assets: %#v", remaining)
+	}
+	if untouched := remainingTextStepAssets(steps, 0, assets); len(untouched) != len(assets) {
+		t.Fatalf("first step lost assets: %#v", untouched)
+	}
+	allAnalyzed := []agentStep{{Type: "tool", Handler: "analyze_video"}, {Type: "tool", Handler: "analyze_image"}, {Type: "text"}}
+	remaining = remainingTextStepAssets(allAnalyzed, 2, assets)
+	if len(remaining) != 1 || remaining[0].Type != "file" {
+		t.Fatalf("analyzed media was attached again: %#v", remaining)
+	}
+}
+
 func TestRenderStepPromptSupportsInputAndContext(t *testing.T) {
 	input := RunInput{Prompt: "main description", Parameters: map[string]any{"tone": "warm", "count": float64(3)}}
 	contextJSON := `{"feedback":"less contrast","userInput":{"audience":"family"}}`
