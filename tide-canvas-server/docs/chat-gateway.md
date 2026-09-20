@@ -6,6 +6,14 @@
 
 ## 与站内文本能力的分界
 
+## 定价：原价、默认单价与倍率
+
+- 每个模型行上的单价是运营填的**原价**（积分 / 1M Token，输入、输出分开）。
+- 供应商可设**默认单价**：新拉取的模型自动带上它；保存默认单价时也会填给该供应商尚未定价的模型，已填过的不动。
+- 供应商可设**倍率**（十进制字符串，如 `0.7`；留空即 1）：实收价 = 原价 × 倍率，四舍五入到六位小数。目录（`GET /models`）、预留和结算用的都是实收价；模型行仍显示原价，后台另列实收价。
+- 倍率或原价任一无法解析时，该模型从目录撤下、调用被拒绝，不会退回按原价出售（`chatgateway.effectivePricing`）。
+
+
 - **站内**（创作台的文本生成、技能、MCP 的 `run_skill`）继续使用「模型管理」里的文本模型，按次计费，不经过本网关。
 - **API Key 调用文本**一律走本网关，按 Token 计费。为此 `/api/open/v1/models` 里的文本模型改为本网关的目录（`type: text`，`modelId` 为 `flowinglight/<model_key>`，`config` 为 tokenPricing，`endpoint` 指向 `/responses`，`billing: token`），不再出现「模型管理」里的按次文本模型；`/api/open/v1/handlers` 不列文本能力；`/api/open/v1/generations` 收到文本能力（`assistant_chat`、`skill_text_completion`）时返回业务码 2003 并指向本网关，不预留也不扣费。MCP 没有文本生成工具，其 `list_models` 读的是同一个生成模型列表，因此也不再出现文本模型。
 
@@ -13,7 +21,7 @@
 
 | 接口 | 协议 | 说明 |
 |---|---|---|
-| `GET /api/integrations/v1/models` | OpenAI 模型列表 | 返回已开放的模型。`id` 形如 `flowinglight/<model_key>`，`token_pricing` 是每百万 Token 的积分单价 |
+| `GET /api/integrations/v1/models` | OpenAI 模型列表 | 返回已开放的模型。`id` 形如 `flowinglight/<model_key>`，`token_pricing` 是每百万 Token 的积分单价，已按供应商倍率折算为实收价 |
 | `POST /api/integrations/v1/responses` | OpenAI Responses | **Codex 用的端点。** 网关把请求转成供应商的 Chat Completions 调用，再把流式结果转回 Responses 事件 |
 | `POST /api/integrations/v1/chat/completions` | OpenAI Chat Completions | 供 SDK 与其他客户端使用。请求原样转给供应商，只替换模型名、补上输出上限和用量统计 |
 

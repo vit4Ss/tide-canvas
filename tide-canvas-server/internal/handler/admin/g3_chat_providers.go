@@ -1,6 +1,8 @@
 package admin
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -90,6 +92,10 @@ type chatModelVO struct {
 	Vision     bool                  `json:"vision"`
 	Pricing    *tokenbilling.Pricing `json:"pricing"`
 	PriceError string                `json:"priceError"`
+	// EffectivePricing is Pricing scaled by the provider's multiplier — the
+	// rates the gateway actually sells at. Equal to Pricing when the provider
+	// has no multiplier; null whenever Pricing is.
+	EffectivePricing *tokenbilling.Pricing `json:"effectivePricing"`
 	// Priority is this row's rank among the providers offering the same key.
 	// Preferred says whether routing would pick this row for the key; Rivals is
 	// how many other rows for the key could serve it (enabled, priced, under an
@@ -108,6 +114,10 @@ type chatProviderVO struct {
 	Remark    string           `json:"remark"`
 	Endpoints []chatEndpointVO `json:"endpoints"`
 	Models    []chatModelVO    `json:"models"`
+	// DefaultPricing is what newly discovered models start with; null when the
+	// provider has none. PriceMultiplier is the raw decimal string ("" = 1).
+	DefaultPricing  *tokenbilling.Pricing `json:"defaultPricing"`
+	PriceMultiplier string                `json:"priceMultiplier"`
 }
 
 func (h *chatProvidersHandler) list(c *gin.Context) {
@@ -129,13 +139,19 @@ func (h *chatProvidersHandler) list(c *gin.Context) {
 	}
 
 	byProvider := map[idgen.ID]*chatProviderVO{}
+	providerRows := map[idgen.ID]model.ChatProvider{}
 	out := make([]*chatProviderVO, 0, len(providers))
 	for _, p := range providers {
 		vo := &chatProviderVO{
 			ID: p.ID, Name: p.Name, Enabled: p.Enabled, SortOrder: p.SortOrder, Remark: p.Remark,
 			Endpoints: []chatEndpointVO{}, Models: []chatModelVO{},
+			PriceMultiplier: strings.TrimSpace(p.PriceMultiplier),
+		}
+		if defaults, err := tokenbilling.Parse(p.DefaultPricing); err == nil {
+			vo.DefaultPricing = defaults
 		}
 		byProvider[p.ID] = vo
+		providerRows[p.ID] = p
 		out = append(out, vo)
 	}
 	for _, e := range endpoints {
@@ -172,6 +188,13 @@ func (h *chatProvidersHandler) list(c *gin.Context) {
 		}
 		item := toChatModelVO(m)
 		item.Priority = m.Priority
+		if item.Pricing != nil {
+			// The same scaling the gateway applies; a bad multiplier shows as
+			// no effective price, which is also how the gateway treats it.
+			if multiplier, err := tokenbilling.ParseMultiplier(providerRows[m.ProviderID].PriceMultiplier); err == nil {
+				item.EffectivePricing, _ = item.Pricing.Scaled(multiplier)
+			}
+		}
 		if rows := eligible[m.ModelKey]; len(rows) > 0 {
 			item.Preferred = rows[0] == m.ID
 			item.Rivals = len(rows)
@@ -194,6 +217,44 @@ type chatProviderDTO struct {
 	Enabled   *bool   `json:"enabled"`
 	SortOrder *int    `json:"sortOrder"`
 	Remark    *string `json:"remark" binding:"omitempty,max=512"`
+	// DefaultPricing is the {"tokenPricing":{…}} object, or null to clear.
+	DefaultPricing json.RawMessage `json:"defaultPricing"`
+	// PriceMultiplier is a decimal string; "" or "1" means sell at list.
+	PriceMultiplier *string `json:"priceMultiplier" binding:"omitempty,max=16"`
+}
+
+const defaultPricingMessage = "默认单价需要有效的每百万输入/输出 Token 积分（最多六位小数）和 Token 上限"
+const multiplierMessage = "倍率需要是大于 0、不超过 100 的数字，最多四位小数；留空表示按原价"
+
+// normalizeDefaultPricing validates a default-pricing payload and returns the
+// text to store: "" clears it. A payload with token billing switched off is
+// treated as clearing too, since discovery could not use it.
+func normalizeDefaultPricing(raw json.RawMessage) (string, bool) {
+	text := strings.TrimSpace(string(raw))
+	if text == "" || text == "null" {
+		return "", true
+	}
+	if _, err := tokenbilling.Parse(text); err != nil {
+		if errors.Is(err, tokenbilling.ErrNotConfigured) {
+			return "", true
+		}
+		return "", false
+	}
+	return text, true
+}
+
+// fillUnpricedModels copies the provider's default pricing into its models that
+// have none. It runs when defaults are saved, so an operator who has already
+// pulled a catalogue does not have to fill the same numbers into every row.
+// Models the operator has priced are left alone.
+func (h *chatProvidersHandler) fillUnpricedModels(ctx context.Context, providerID idgen.ID, pricing string) (int64, error) {
+	if pricing == "" {
+		return 0, nil
+	}
+	res := h.db.WithContext(ctx).Model(&model.ChatModel{}).
+		Where("provider_id = ? AND (pricing IS NULL OR TRIM(pricing) = '')", providerID).
+		Update("pricing", pricing)
+	return res.RowsAffected, res.Error
 }
 
 func (h *chatProvidersHandler) createProvider(c *gin.Context) {
@@ -211,6 +272,21 @@ func (h *chatProvidersHandler) createProvider(c *gin.Context) {
 	}
 	if dto.Remark != nil {
 		row.Remark = strings.TrimSpace(*dto.Remark)
+	}
+	if len(dto.DefaultPricing) > 0 {
+		pricing, ok := normalizeDefaultPricing(dto.DefaultPricing)
+		if !ok {
+			response.Fail(c, response.CodeBadRequest, defaultPricingMessage)
+			return
+		}
+		row.DefaultPricing = pricing
+	}
+	if dto.PriceMultiplier != nil {
+		if _, err := tokenbilling.ParseMultiplier(*dto.PriceMultiplier); err != nil {
+			response.Fail(c, response.CodeBadRequest, multiplierMessage)
+			return
+		}
+		row.PriceMultiplier = strings.TrimSpace(*dto.PriceMultiplier)
 	}
 	if err := h.db.WithContext(c.Request.Context()).Create(&row).Error; err != nil {
 		response.Fail(c, response.CodeServerError, "创建供应商失败")
@@ -247,16 +323,38 @@ func (h *chatProvidersHandler) updateProvider(c *gin.Context) {
 	if dto.Remark != nil {
 		fields["remark"] = strings.TrimSpace(*dto.Remark)
 	}
+	defaultPricing := ""
+	if len(dto.DefaultPricing) > 0 {
+		pricing, ok := normalizeDefaultPricing(dto.DefaultPricing)
+		if !ok {
+			response.Fail(c, response.CodeBadRequest, defaultPricingMessage)
+			return
+		}
+		defaultPricing = pricing
+		fields["default_pricing"] = pricing
+	}
+	if dto.PriceMultiplier != nil {
+		if _, err := tokenbilling.ParseMultiplier(*dto.PriceMultiplier); err != nil {
+			response.Fail(c, response.CodeBadRequest, multiplierMessage)
+			return
+		}
+		fields["price_multiplier"] = strings.TrimSpace(*dto.PriceMultiplier)
+	}
 	if len(fields) == 0 {
-		response.OK(c, gin.H{"ok": true})
+		response.OK(c, gin.H{"ok": true, "filled": 0})
 		return
 	}
 	if err := h.db.WithContext(c.Request.Context()).Model(&model.ChatProvider{}).Where("id = ?", id).Updates(fields).Error; err != nil {
 		response.Fail(c, response.CodeServerError, "保存失败")
 		return
 	}
+	filled, err := h.fillUnpricedModels(c.Request.Context(), id, defaultPricing)
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "默认单价已保存，但填入未定价模型时失败")
+		return
+	}
 	h.audit(c, id, "chat_provider_update", "修改聊天供应商")
-	response.OK(c, gin.H{"ok": true})
+	response.OK(c, gin.H{"ok": true, "filled": filled})
 }
 
 // deleteProvider removes the provider together with its addresses and models.

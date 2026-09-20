@@ -39,12 +39,22 @@ func toChatModelVO(m model.ChatModel) chatModelVO {
 }
 
 // fetchModels asks the provider's addresses, in order, for their catalogue and
-// records what comes back. Newly discovered models arrive disabled and unpriced:
-// nothing can be sold before the operator has said what it costs.
+// records what comes back. Newly discovered models arrive disabled; they carry
+// the provider's default pricing when it has one and are unpriced otherwise.
+// Either way nothing is sold until the operator opens the model.
 func (h *chatProvidersHandler) fetchModels(c *gin.Context) {
 	providerID, ok := g4ParseID(c)
 	if !ok {
 		return
+	}
+	var provider model.ChatProvider
+	if err := h.db.WithContext(c.Request.Context()).First(&provider, "id = ?", providerID).Error; err != nil {
+		response.Fail(c, response.CodeNotFound, "供应商不存在")
+		return
+	}
+	defaultPricing := ""
+	if _, err := tokenbilling.Parse(provider.DefaultPricing); err == nil {
+		defaultPricing = provider.DefaultPricing
 	}
 	var endpoints []model.ChatEndpoint
 	if err := h.db.WithContext(c.Request.Context()).Where("provider_id = ? AND enabled = ?", providerID, true).
@@ -100,7 +110,7 @@ func (h *chatProvidersHandler) fetchModels(c *gin.Context) {
 		if known[key] {
 			continue
 		}
-		row := model.ChatModel{ProviderID: providerID, ModelKey: key, Name: key, Enabled: false, DiscoveredAt: &now}
+		row := model.ChatModel{ProviderID: providerID, ModelKey: key, Name: key, Enabled: false, Pricing: defaultPricing, DiscoveredAt: &now}
 		if err := h.db.WithContext(c.Request.Context()).Create(&row).Error; err != nil {
 			response.Fail(c, response.CodeServerError, "保存模型失败")
 			return
@@ -157,11 +167,11 @@ func (h *chatProvidersHandler) remoteModels(ctx context.Context, baseURL, apiKey
 }
 
 type chatModelDTO struct {
-	Name      *string          `json:"name" binding:"omitempty,max=128"`
-	Enabled   *bool            `json:"enabled"`
-	SortOrder *int             `json:"sortOrder"`
-	Vision    *bool            `json:"vision"`
-	Pricing   *json.RawMessage `json:"pricing"`
+	Name      *string         `json:"name" binding:"omitempty,max=128"`
+	Enabled   *bool           `json:"enabled"`
+	SortOrder *int            `json:"sortOrder"`
+	Vision    *bool           `json:"vision"`
+	Pricing   json.RawMessage `json:"pricing"` // absent = keep; null = clear
 }
 
 func (h *chatProvidersHandler) updateModel(c *gin.Context) {
@@ -182,8 +192,8 @@ func (h *chatProvidersHandler) updateModel(c *gin.Context) {
 
 	fields := map[string]any{}
 	pricing := row.Pricing
-	if dto.Pricing != nil {
-		pricing = strings.TrimSpace(string(*dto.Pricing))
+	if len(dto.Pricing) > 0 {
+		pricing = strings.TrimSpace(string(dto.Pricing))
 		if pricing == "null" {
 			pricing = ""
 		}

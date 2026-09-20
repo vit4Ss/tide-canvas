@@ -37,8 +37,10 @@ export interface ChatModelVO {
   enabled: boolean;
   sortOrder: number;
   vision: boolean;
-  /** 解析成功的单价；未配置为 null。 */
+  /** 解析成功的单价；未配置为 null。这是运营填的原价。 */
   pricing: ChatTokenPricing | null;
+  /** 原价 × 供应商倍率，即网关实际按此结算的单价；倍率为 1 时与 pricing 相同。 */
+  effectivePricing: ChatTokenPricing | null;
   /** 配置了但无法解析时的说明。 */
   priceError: string;
   /** 同一 modelKey 在多家供应商间的顺序，越小越先被调用；「设为首选」会重排为 0,1,2…。 */
@@ -57,6 +59,10 @@ export interface ChatProviderVO {
   remark: string;
   endpoints: ChatEndpointVO[];
   models: ChatModelVO[];
+  /** 新拉取的模型和尚未定价的模型自动使用的单价；未设置为 null。 */
+  defaultPricing: ChatTokenPricing | null;
+  /** 十进制字符串，如 "0.7"；空串表示按原价（1）。 */
+  priceMultiplier: string;
 }
 
 export interface ChatProviderDTO {
@@ -64,6 +70,10 @@ export interface ChatProviderDTO {
   enabled?: boolean;
   sortOrder?: number;
   remark?: string;
+  /** null 清除默认单价。 */
+  defaultPricing?: { tokenPricing: ChatTokenPricing } | null;
+  /** 空串恢复为按原价。 */
+  priceMultiplier?: string;
 }
 
 export interface ChatEndpointDTO {

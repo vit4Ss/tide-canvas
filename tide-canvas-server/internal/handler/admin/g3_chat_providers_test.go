@@ -40,6 +40,7 @@ func newChatFixture(t *testing.T) *chatFixture {
 	h := &chatProvidersHandler{db: db, vault: chatupstream.New("test-secret"), client: discoveryClient()}
 	r := gin.New()
 	r.GET("/chat-providers", h.list)
+	r.POST("/chat-providers", h.createProvider)
 	r.PUT("/chat-providers/:id", h.updateProvider)
 	r.POST("/chat-providers/:id/endpoints", h.createEndpoint)
 	r.PUT("/chat-endpoints/:id", h.updateEndpoint)

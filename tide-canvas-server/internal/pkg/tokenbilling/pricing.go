@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/shopspring/decimal"
 )
@@ -17,6 +18,7 @@ var ErrNotConfigured = errors.New("model bills per call")
 var ErrPricing = errors.New("token pricing is configured but unusable")
 var ErrUsage = errors.New("authoritative token usage is missing or invalid")
 var ErrLimit = errors.New("token usage exceeds the reserved model limits")
+var ErrMultiplier = errors.New("price multiplier must be a positive number up to 100 with at most four decimals")
 
 const Scale int64 = 1_000_000
 
@@ -185,6 +187,52 @@ func ReservationCovers(reserved, cost int64) bool {
 	}
 	ceiling := (whole + 1) * Scale
 	return cost <= ceiling
+}
+
+// ParseMultiplier reads a provider-level price multiplier. Empty means 1: the
+// listed rates are the selling rates. Otherwise it is a positive decimal up to
+// 100 with at most four decimals, so "0.7" sells every model of that provider
+// at seven tenths of its listed rates. It is kept as a decimal string, never a
+// float, so 0.7 stays 0.7.
+func ParseMultiplier(raw string) (decimal.Decimal, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return decimal.NewFromInt(1), nil
+	}
+	m, err := decimal.NewFromString(raw)
+	if err != nil || !m.IsPositive() || m.GreaterThan(decimal.NewFromInt(100)) || !m.Equal(m.Truncate(4)) {
+		return decimal.Zero, ErrMultiplier
+	}
+	return m, nil
+}
+
+// Scaled returns the pricing with every rate multiplied by m and rounded to
+// the six decimals a rate may carry; the token limits are unchanged. A
+// multiplier of exactly 1 returns p itself. The result is re-validated, so a
+// rate the multiplier pushes past the ceiling fails here rather than at the
+// first call.
+func (p *Pricing) Scaled(m decimal.Decimal) (*Pricing, error) {
+	if m.Equal(decimal.NewFromInt(1)) {
+		return p, nil
+	}
+	if !m.IsPositive() {
+		return nil, ErrMultiplier
+	}
+	out := *p
+	for _, rate := range []*string{&out.Input, &out.Output, &out.CachedInput} {
+		if *rate == "" {
+			continue
+		}
+		value, err := decimal.NewFromString(*rate)
+		if err != nil {
+			return nil, ErrPricing
+		}
+		*rate = value.Mul(m).Round(6).String()
+		if _, err := rateMicros(*rate); err != nil {
+			return nil, err
+		}
+	}
+	return &out, nil
 }
 
 func (p *Pricing) Label(name string) string {

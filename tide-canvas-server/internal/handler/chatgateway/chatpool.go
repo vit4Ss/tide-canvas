@@ -42,6 +42,22 @@ func upstreamKey(advertised string) string {
 
 var errNoEndpoint = errors.New("chatgateway: provider has no usable endpoint")
 
+// effectivePricing is what a model is sold at: its listed rates scaled by the
+// provider's multiplier. Either piece being unusable disqualifies the model
+// the same way an unusable price does — the gateway never falls back to
+// selling at the listed rates when the operator asked for something else.
+func effectivePricing(m model.ChatModel, provider model.ChatProvider) (*tokenbilling.Pricing, error) {
+	pricing, err := tokenbilling.Parse(m.Pricing)
+	if err != nil {
+		return nil, err
+	}
+	multiplier, err := tokenbilling.ParseMultiplier(provider.PriceMultiplier)
+	if err != nil {
+		return nil, err
+	}
+	return pricing.Scaled(multiplier)
+}
+
 // chatRoute is one model plus the ordered addresses that may serve it.
 //
 // When several providers offer the same model key, model/provider/pricing are
@@ -98,7 +114,7 @@ func offeredRoutes(ctx context.Context, db *gorm.DB) ([]chatRoute, error) {
 		if !ok || seen[m.ModelKey] {
 			continue
 		}
-		pricing, err := tokenbilling.Parse(m.Pricing)
+		pricing, err := effectivePricing(m, provider)
 		if err != nil {
 			continue
 		}
@@ -134,7 +150,7 @@ func (s *service) routeFor(ctx context.Context, modelKey string) (*chatRoute, er
 		if err != nil {
 			return nil, err
 		}
-		pricing, err := tokenbilling.Parse(m.Pricing)
+		pricing, err := effectivePricing(m, provider)
 		if err != nil {
 			continue
 		}

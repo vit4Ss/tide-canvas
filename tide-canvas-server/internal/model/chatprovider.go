@@ -28,6 +28,18 @@ type ChatProvider struct {
 	Enabled   bool   `gorm:"column:enabled" json:"enabled"`
 	SortOrder int    `gorm:"column:sort_order;default:0" json:"sortOrder"`
 	Remark    string `gorm:"column:remark;type:varchar(512)" json:"remark"`
+
+	// DefaultPricing is the {"tokenPricing":{…}} object a newly discovered
+	// model starts with, and what saving it copies into this provider's models
+	// that still have none. Empty means discovery leaves models unpriced and
+	// the operator prices them one by one.
+	DefaultPricing string `gorm:"column:default_pricing;type:text" json:"defaultPricing"`
+	// PriceMultiplier scales every model's listed rates at sale time: "0.7"
+	// sells each of this provider's models at seven tenths of its rates, "1.2"
+	// at a fifth over. Empty means 1. A decimal string, so 0.7 stays 0.7.
+	// The catalogue, the reservation and the settlement all use the scaled
+	// rates; the model row keeps the listed ones.
+	PriceMultiplier string `gorm:"column:price_multiplier;type:varchar(16)" json:"priceMultiplier"`
 }
 
 func (ChatProvider) TableName() string { return "chat_provider" }
