@@ -32,10 +32,17 @@ test("API processing transitions to multiple results once, preserving UI history
   assert.ok(merged.filter((h) => h.isApiCall).every((h) => h.prompt === "my prompt" && h.params.count === 2));
 });
 
-test("API text, failed, cancelled and 3D tasks remain visible without fake image results", () => {
+test("API failed, cancelled and 3D tasks remain visible without fake image results; text never enters Studio", () => {
+  // Studio is a media feed. Text from the generation surfaces never had a URL
+  // and stayed out; API/MCP text (the promoted final step of an MCP Skill run)
+  // is withheld by the server and must not be rendered even if a stale client
+  // receives one, whatever its status.
   for (const handler of ["assistant_chat", "skill_text_completion"]) {
-    const [row] = convert([{ ...base, handler, status: 1, resultMeta: { text: "A real reply" } }]);
-    assert.equal(row.isText, true); assert.equal(row.resultText, "A real reply"); assert.equal(row.status, "success");
+    for (const isApiCall of [true, false]) {
+      for (const status of [0, 1, 2, 3]) {
+        assert.equal(convert([{ ...base, handler, isApiCall, status, resultMeta: { text: "A real reply" } }]).length, 0, `${handler} api=${isApiCall} status=${status}`);
+      }
+    }
   }
   const [failed] = convert([{ ...base, status: 2, errorMsg: "渠道维护中" }]);
   assert.equal(failed.errorMsg, "渠道维护中"); assert.equal(failed.status, "failed");
@@ -43,7 +50,6 @@ test("API text, failed, cancelled and 3D tasks remain visible without fake image
   assert.equal(cancelled.status, "cancelled"); assert.equal(cancelled.url, undefined);
   const [threeD] = convert([{ ...base, status: 1, handler: "generate_3d", resultMeta: { assets: [{ type: "glb", url: "https://cdn.test/a.glb" }] } }]);
   assert.equal(threeD.type, "3d"); assert.equal(threeD.isApiCall, true); assert.equal(threeD.assets.length, 1);
-  assert.equal(convert([{ ...base, isApiCall: false, handler: "assistant_chat", status: 1, resultMeta: { text: "legacy" } }]).length, 0);
 });
 
 test("API reference aliases are retained for previews and missing media is reported", () => {
@@ -67,7 +73,6 @@ test("late processing snapshots cannot erase completed output or regress progres
     { ...base, status: 1, resultMeta: { urls: ["https://cdn.test/a.png", "https://cdn.test/b.png"] } },
     { ...base, status: 2, errorMsg: "失败" },
     { ...base, status: 3 },
-    { ...base, handler: "assistant_chat", status: 1, resultMeta: { text: "done" } },
   ]) {
     const current = convert([finished]);
     assert.deepEqual(JSON.parse(JSON.stringify(mergeInitialStudioHistory(current, pending))), current);

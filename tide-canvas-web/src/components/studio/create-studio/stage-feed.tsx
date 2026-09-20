@@ -517,7 +517,7 @@ export function StageFeed({
                 <div className="ws-run-head">
                   <span className="ws-run-kind">
                     {SLOT_ICON[r.type]}
-                    {r.isText ? "AI 文本" : r.type === "video" ? "AI 视频" : r.type === "audio" ? "AI 音乐" : r.type === "3d" ? "AI 3D" : "AI 图片"}
+                    {r.type === "video" ? "AI 视频" : r.type === "audio" ? "AI 音乐" : r.type === "3d" ? "AI 3D" : "AI 图片"}
                   </span>
                   <span className="ws-run-div" />
                   {r.model && <span className="ws-run-chip">{r.model}</span>}
@@ -563,7 +563,6 @@ export function StageFeed({
                     </div>
                   </div>
                 ) : (
-                r.isText ? <div style={{ padding: "16px 24px", whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 480, overflow: "auto" }}>{r.resultText || "任务已完成，未返回文本内容"}</div> :
                 <div className={`ws-run-imgs${r.type === "audio" ? " audio-stage" : ""}`}>
                   {/* 音频：Suno/Udio 式歌曲行列表（封面+歌名+波形+时间），
                       两首纵向成列——不走通用的并排卡片。 */}
@@ -681,7 +680,6 @@ export function StageFeed({
                     重新生成
                   </button>
                   </>}
-                  {r.isText && r.status === "success" && r.resultText && <button type="button" onClick={() => copyPrompt(r.resultText || "")}>复制结果</button>}
                   {r.status !== "failed" && r.status !== "processing" && r.status !== "cancelled" && downloadableCount > 0 && (
                     <button
                       type="button"

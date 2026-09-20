@@ -271,7 +271,7 @@ func NewServer(c *Client) *mcp.Server {
 		}
 		return nil, taskOutput(ctx, task), nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "list_generation_tasks", Description: "分页查看自己的接口调用历史，包括 MCP 和 REST 提交的生成任务。", Annotations: read}, func(ctx context.Context, _ *mcp.CallToolRequest, input HistoryInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "list_generation_tasks", Description: "分页查看自己的接口调用历史，包括 MCP 和 REST 提交的图片、视频、音频、3D 生成任务；技能运行产生的文本步骤属于技能内部过程，不在此列表中。", Annotations: read}, func(ctx context.Context, _ *mcp.CallToolRequest, input HistoryInput) (*mcp.CallToolResult, map[string]any, error) {
 		if input.PageNum == 0 {
 			input.PageNum = 1
 		}

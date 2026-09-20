@@ -469,16 +469,18 @@ export function histItemsFromTasks(records: AiTaskVO[]): HistItem[] {
       ? params.prompt.slice(0, 14) + (params.prompt.length > 14 ? "…" : "")
       : t.modelName || "我的创作";
     const failed = t.status === AiTaskStatus.FAILED;
-    const isText = t.handler === "assistant_chat" || t.handler === "skill_text_completion";
-    if (t.isApiCall && (isText || t.status === AiTaskStatus.PROCESSING || t.status === AiTaskStatus.CANCELLED)) {
-      const text = (meta as { text?: unknown })?.text;
+    // Studio shows media only. Text records reach the feed neither from the
+    // generation surfaces (they have no URL and fall through below) nor from
+    // API/MCP submissions: the server already withholds those, and an MCP Skill
+    // run's promoted text step is an implementation detail of that flow.
+    if (t.handler === "assistant_chat" || t.handler === "skill_text_completion") continue;
+    if (t.isApiCall && (t.status === AiTaskStatus.PROCESSING || t.status === AiTaskStatus.CANCELLED)) {
       items.push({
         id: `task-${t.id}-api`, run: `task-${t.id}`, ts: t.createTime,
         hues: huesFromId(t.id), type, title, prompt: params.prompt,
-        model: t.modelName || "", isApiCall: true, isText,
-        resultText: typeof text === "string" ? text : "",
+        model: t.modelName || "", isApiCall: true,
         progress: t.progress,
-        status: failed ? "failed" : t.status === AiTaskStatus.PROCESSING ? "processing" : t.status === AiTaskStatus.CANCELLED ? "cancelled" : "success",
+        status: failed ? "failed" : t.status === AiTaskStatus.PROCESSING ? "processing" : "cancelled",
         errorMsg: t.errorMsg, params,
       });
       continue;

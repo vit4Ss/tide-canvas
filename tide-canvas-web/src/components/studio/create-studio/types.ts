@@ -84,8 +84,6 @@ export interface ResultCell {
 
 export interface HistItem {
   isApiCall?: boolean;
-  isText?: boolean;
-  resultText?: string;
   progress?: number;
   id: string;
   /** run/task group key — every image of one generation shares it (feed grouping). */
@@ -123,8 +121,6 @@ export interface HistItem {
 /** One generation run = a feed block (header + a row of its result images). */
 export interface HistRun {
   isApiCall?: boolean;
-  isText?: boolean;
-  resultText?: string;
   progress?: number;
   run: string;
   ts?: string;

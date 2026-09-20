@@ -567,8 +567,6 @@ function StudioSession() {
         g = {
           run: h.run,
           isApiCall: h.isApiCall,
-          isText: h.isText,
-          resultText: h.resultText,
           progress: h.progress,
           ts: h.ts,
           ratio: h.ratio,

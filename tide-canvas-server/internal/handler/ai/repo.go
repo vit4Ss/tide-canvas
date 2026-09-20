@@ -326,12 +326,23 @@ func taskListOrder(q taskQuery) string {
 	return "create_time DESC"
 }
 
+// userVisibleTextHandlers are the text-producing handlers. Text records are
+// only part of a user's own history when the user produced them from a
+// generation surface (studio / chat / canvas). Text produced by API or MCP
+// submissions — including the promoted final step of an MCP Skill run — is
+// an implementation detail of that programmatic flow: the caller already
+// received the text through the API response, and the studio feed and
+// "我的生成记录" must not surface it. Administrators keep seeing every record
+// through the audit views, which never use these scopes.
+var userVisibleTextHandlers = []string{assistantChatHandler, skillTextCompletionHandler}
+
 func visibleTaskHistoryScope(tx *gorm.DB) *gorm.DB {
 	// Orchestration planning/draft tasks are internal implementation details.
 	// Successful SkillRun output appears after promotion. A failed final step
 	// cannot be promoted because it produced no work, but it is still the user's
 	// terminal generation attempt and must survive a history refresh.
-	return tx.Where("(origin IS NULL OR origin = '' OR origin = 'direct') OR (origin = 'skill_run' AND output_role = ? AND (register_work = ? OR status = ?))", "final", true, statusFailed)
+	tx = tx.Where("(origin IS NULL OR origin = '' OR origin = 'direct') OR (origin = 'skill_run' AND output_role = ? AND (register_work = ? OR status = ?))", "final", true, statusFailed)
+	return tx.Where("NOT (is_api_call = ? AND handler IN ?)", true, userVisibleTextHandlers)
 }
 
 // applyDateRange 追加 create_time 范围筛选:startDate 当天 00:00 起;endDate
@@ -581,7 +592,10 @@ func applyLogListFilters(tx *gorm.DB, userID idgen.ID, adminScope bool, q logQue
 func visibleUserLogScope(tx *gorm.DB) *gorm.DB {
 	const taskExists = "EXISTS (SELECT 1 FROM ai_tasks t WHERE t.id = ai_generation_logs.task_id)"
 	const visibleTask = "EXISTS (SELECT 1 FROM ai_tasks t WHERE t.id = ai_generation_logs.task_id AND ((t.origin IS NULL OR t.origin = '' OR t.origin = 'direct') OR (t.origin = 'skill_run' AND t.output_role = ? AND (t.register_work = ? OR t.status = ?))))"
-	return tx.Where("NOT "+taskExists+" OR "+visibleTask, "final", true, statusFailed)
+	tx = tx.Where("NOT "+taskExists+" OR "+visibleTask, "final", true, statusFailed)
+	// The log carries its own copy of the flag and handler, so API text stays
+	// hidden even after the originating task row has been deleted.
+	return tx.Where("NOT (ai_generation_logs.is_api_call = ? AND ai_generation_logs.handler_name IN ?)", true, userVisibleTextHandlers)
 }
 
 // ---- association helpers (log VO enrichment) ----------------------------

@@ -29,7 +29,7 @@ export function mergeInitialStudioHistory(
     // Initial load, pagination and external-task polling may overlap. A late
     // processing snapshot must never replace a terminal result or newer progress.
     if (previous.status && previous.status !== "processing") return false;
-    if (previous.url || previous.resultText) return false;
+    if (previous.url) return false;
     return (item.progress ?? 0) >= (previous.progress ?? 0);
   });
   const fetchedRuns = new Set(accepted.map((item) => item.run));

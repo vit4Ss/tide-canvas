@@ -13,6 +13,11 @@ import (
 	"tidecanvas/internal/model"
 )
 
+// apiTextExclusionSQL is the rendered form of the API-text exclusion shared by
+// every user-facing task list. Tool-attribution guards below strip it before
+// asserting that no *tool* is ever recognised by bare handler name.
+const apiTextExclusionSQL = "NOT (is_api_call = true AND handler IN ('assistant_chat','skill_text_completion'))"
+
 func TestVisibleTaskHistoryScopeKeepsFailedFinalSkillRunTasks(t *testing.T) {
 	db, err := gorm.Open(mysql.New(mysql.Config{DSN: "gorm:gorm@tcp(localhost:9911)/gorm?charset=utf8mb4&parseTime=True&loc=Local", SkipInitializeWithVersion: true}),
 		&gorm.Config{DryRun: true, DisableAutomaticPing: true})
@@ -26,6 +31,7 @@ func TestVisibleTaskHistoryScopeKeepsFailedFinalSkillRunTasks(t *testing.T) {
 		"origin = 'direct'",
 		"origin = 'skill_run'",
 		"output_role = 'final' AND (register_work = true OR status = 2)",
+		apiTextExclusionSQL,
 	} {
 		if !strings.Contains(sql, fragment) {
 			t.Fatalf("history scope SQL is missing %q: %s", fragment, sql)
@@ -43,7 +49,9 @@ func TestVisibleTaskHistoryScopeTruthTable(t *testing.T) {
 		origin TEXT,
 		output_role TEXT NOT NULL,
 		register_work INTEGER NOT NULL,
-		status INTEGER NOT NULL
+		status INTEGER NOT NULL,
+		is_api_call INTEGER NOT NULL DEFAULT 0,
+		handler TEXT NOT NULL DEFAULT 'text_to_image'
 	)`).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -53,18 +61,30 @@ func TestVisibleTaskHistoryScopeTruthTable(t *testing.T) {
 		outputRole   string
 		registerWork bool
 		status       int
+		isAPICall    bool
+		handler      string
 	}{
-		{1, "direct", "final", false, statusFailed},
-		{2, "skill_run", "final", false, statusFailed},
-		{3, "skill_run", "final", true, statusSuccess},
-		{4, "skill_run", "final", false, statusSuccess},
-		{5, "skill_run", "intermediate", false, statusFailed},
-		{6, "skill_run", "final", false, statusCancelled},
+		{1, "direct", "final", false, statusFailed, false, "text_to_image"},
+		{2, "skill_run", "final", false, statusFailed, false, "text_to_image"},
+		{3, "skill_run", "final", true, statusSuccess, false, "text_to_image"},
+		{4, "skill_run", "final", false, statusSuccess, false, "text_to_image"},
+		{5, "skill_run", "intermediate", false, statusFailed, false, "text_to_image"},
+		{6, "skill_run", "final", false, statusCancelled, false, "text_to_image"},
+		// Text produced from a generation surface stays in the user's history.
+		{7, "direct", "final", false, statusSuccess, false, assistantChatHandler},
+		{8, "skill_run", "final", true, statusSuccess, false, skillTextCompletionHandler},
+		// API media stays visible; API text (open API or the promoted final step
+		// of an MCP Skill run) is hidden from every user-facing list, whatever
+		// its status.
+		{9, "direct", "final", false, statusSuccess, true, "text_to_image"},
+		{10, "direct", "final", false, statusSuccess, true, assistantChatHandler},
+		{11, "skill_run", "final", true, statusSuccess, true, skillTextCompletionHandler},
+		{12, "skill_run", "final", false, statusFailed, true, skillTextCompletionHandler},
 	}
 	for _, row := range rows {
 		if err := db.Exec(
-			"INSERT INTO ai_tasks (id, origin, output_role, register_work, status) VALUES (?, ?, ?, ?, ?)",
-			row.id, row.origin, row.outputRole, row.registerWork, row.status,
+			"INSERT INTO ai_tasks (id, origin, output_role, register_work, status, is_api_call, handler) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			row.id, row.origin, row.outputRole, row.registerWork, row.status, row.isAPICall, row.handler,
 		).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -73,7 +93,7 @@ func TestVisibleTaskHistoryScopeTruthTable(t *testing.T) {
 	if err := visibleTaskHistoryScope(db.Table("ai_tasks")).Order("id").Pluck("id", &ids).Error; err != nil {
 		t.Fatal(err)
 	}
-	if want := []int{1, 2, 3}; !reflect.DeepEqual(ids, want) {
+	if want := []int{1, 2, 3, 7, 8, 9}; !reflect.DeepEqual(ids, want) {
 		t.Fatalf("visible task ids = %v, want %v", ids, want)
 	}
 }
@@ -91,7 +111,7 @@ func TestVisibleUserLogScopeMatchesTaskHistoryTruthTable(t *testing.T) {
 			register_work INTEGER NOT NULL,
 			status INTEGER NOT NULL
 		)`,
-		"CREATE TABLE ai_generation_logs (id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL)",
+		"CREATE TABLE ai_generation_logs (id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL, is_api_call INTEGER NOT NULL DEFAULT 0, handler_name TEXT NOT NULL DEFAULT 'text_to_image')",
 	} {
 		if err := db.Exec(statement).Error; err != nil {
 			t.Fatal(err)
@@ -125,11 +145,29 @@ func TestVisibleUserLogScopeMatchesTaskHistoryTruthTable(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Text rows carry the flag on the log itself, so the rule holds after the
+	// task is deleted (ids 7/8 reference no task) as well as for a visible task
+	// (ids 9/10 reference the promoted skill_run task 6).
+	for _, row := range []struct {
+		id        int
+		taskID    int
+		isAPICall bool
+		handler   string
+	}{
+		{7, 70, false, assistantChatHandler},
+		{8, 80, true, assistantChatHandler},
+		{9, 6, false, skillTextCompletionHandler},
+		{10, 6, true, skillTextCompletionHandler},
+	} {
+		if err := db.Exec("INSERT INTO ai_generation_logs (id, task_id, is_api_call, handler_name) VALUES (?, ?, ?, ?)", row.id, row.taskID, row.isAPICall, row.handler).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
 	var ids []int
 	if err := visibleUserLogScope(db.Table("ai_generation_logs")).Order("id").Pluck("id", &ids).Error; err != nil {
 		t.Fatal(err)
 	}
-	if want := []int{1, 2, 3, 6}; !reflect.DeepEqual(ids, want) {
+	if want := []int{1, 2, 3, 6, 7, 9}; !reflect.DeepEqual(ids, want) {
 		t.Fatalf("visible log ids = %v, want %v", ids, want)
 	}
 }
@@ -174,7 +212,10 @@ func TestStudioHistoryExcludesToolTasksBeforePagination(t *testing.T) {
 			t.Fatalf("studio history SQL is missing %q: %s", fragment, sql)
 		}
 	}
-	if strings.Contains(sql, "handler IN") {
+	if !strings.Contains(sql, apiTextExclusionSQL) {
+		t.Fatalf("studio history SQL is missing the API text exclusion: %s", sql)
+	}
+	if strings.Contains(strings.ReplaceAll(sql, apiTextExclusionSQL, ""), "handler IN") {
 		t.Fatalf("studio history must not classify untagged legacy rows by handler: %s", sql)
 	}
 }
@@ -194,7 +235,7 @@ func TestToolHistoryIncludesOnlyTaggedCanonicalTasksWithResults(t *testing.T) {
 			t.Fatalf("tool history SQL is missing %q: %s", fragment, sql)
 		}
 	}
-	if strings.Contains(sql, "handler IN") {
+	if strings.Contains(strings.ReplaceAll(sql, apiTextExclusionSQL, ""), "handler IN") {
 		t.Fatalf("tool history must not include untagged tasks by handler: %s", sql)
 	}
 }
