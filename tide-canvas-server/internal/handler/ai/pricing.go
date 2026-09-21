@@ -63,6 +63,20 @@ func resolveCost(m *model.AiModel, rawInput json.RawMessage) int {
 	if m.Config != "" {
 		_ = json.Unmarshal([]byte(m.Config), &cfg)
 	}
+	// Generation/Skill text is one flat-priced execution. Image parameters
+	// retained in a workflow input (batchCount/quality/resolution) and legacy
+	// tokenPricing must never change this fee. Chat-provider Token billing is
+	// a separate gateway and is intentionally not read here.
+	if m.Type == "text" {
+		base := numField(cfg, "creditCost")
+		if base <= 0 {
+			base = float64(m.PointCost)
+		}
+		if base <= 0 {
+			return 0
+		}
+		return int(math.Ceil(base))
+	}
 
 	// Suno 上传参考音频(extras.task == "upload"):本地音频延长/翻唱前的登记
 	// 任务,单曲、非完整生成,上游按次计费——允许后台按模型单独定价

@@ -7,6 +7,25 @@ import (
 	"tidecanvas/internal/model"
 )
 
+func TestTextGenerationBillsOneCallRegardlessOfTokenOrImageParameters(t *testing.T) {
+	for _, cfg := range []string{
+		`{}`,
+		`{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"999999","outputPointsPerMillion":"999999"}}`,
+		`{"priceMatrix":{"high":{"4K":200}},"resolutions":["4K"]}`,
+	} {
+		m := &model.AiModel{Type: "text", PointCost: 7, Config: cfg}
+		for _, input := range []string{`{"prompt":"hello"}`, `{"prompt":"hello","batchCount":8}`, `{"n":8,"quality":"high","resolution":"4K","prompt_tokens":1000000}`} {
+			if got := resolveCost(m, json.RawMessage(input)); got != 7 {
+				t.Fatalf("text call charged %d instead of 7, config=%s input=%s", got, cfg, input)
+			}
+		}
+	}
+	m := &model.AiModel{Type: "text", PointCost: 7, Config: `{"creditCost":9}`}
+	if got := resolveCost(m, json.RawMessage(`{"batchCount":4}`)); got != 9 {
+		t.Fatalf("configured flat override should charge 9 once, got %d", got)
+	}
+}
+
 // 锁定容错查表行为：后台矩阵键常为 "4s"/"720p"，客户端参数是数字时长 + "720P"
 // 大写——大小写、s 后缀、行列轴序都必须命中，miss 才落模型固定价。
 // 回归背景：曾因 duration 数字被 strField 丢弃 + 键格式不匹配，视频计费

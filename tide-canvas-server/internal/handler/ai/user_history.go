@@ -36,33 +36,37 @@ type UserHistoryParameterVO struct {
 // ID is an opaque record key used only to request the corresponding safe
 // detail view.
 type UserGenerationHistoryVO struct {
-	IsAPICall  bool     `json:"isApiCall"`
-	ID         idgen.ID `json:"id"`
-	MediaType  string   `json:"mediaType"`
-	Model      string   `json:"model"`
-	Prompt     string   `json:"prompt"`
-	Success    int      `json:"success"`
-	ResultURL  string   `json:"resultUrl,omitempty"`
-	DurationMs int64    `json:"durationMs"`
-	CreateTime string   `json:"createTime"`
-	PointCost  *int64   `json:"pointCost,omitempty"`
+	WorkflowStage  string   `json:"workflowStage,omitempty"`
+	RefundedPoints int64    `json:"refundedPoints"`
+	IsAPICall      bool     `json:"isApiCall"`
+	ID             idgen.ID `json:"id"`
+	MediaType      string   `json:"mediaType"`
+	Model          string   `json:"model"`
+	Prompt         string   `json:"prompt"`
+	Success        int      `json:"success"`
+	ResultURL      string   `json:"resultUrl,omitempty"`
+	DurationMs     int64    `json:"durationMs"`
+	CreateTime     string   `json:"createTime"`
+	PointCost      *int64   `json:"pointCost,omitempty"`
 }
 
 type UserGenerationHistoryDetailVO struct {
-	IsAPICall     bool                     `json:"isApiCall"`
-	MediaType     string                   `json:"mediaType"`
-	Model         string                   `json:"model"`
-	Prompt        string                   `json:"prompt"`
-	Success       int                      `json:"success"`
-	DurationMs    int64                    `json:"durationMs"`
-	CreateTime    string                   `json:"createTime"`
-	CompleteTime  string                   `json:"completeTime,omitempty"`
-	PointCost     *int64                   `json:"pointCost,omitempty"`
-	FailureReason string                   `json:"failureReason,omitempty"`
-	ResultAssets  []UserHistoryAssetVO     `json:"resultAssets"`
-	ResultText    string                   `json:"resultText,omitempty"`
-	InputAssets   []UserHistoryAssetVO     `json:"inputAssets"`
-	Parameters    []UserHistoryParameterVO `json:"parameters"`
+	WorkflowStage  string                   `json:"workflowStage,omitempty"`
+	RefundedPoints int64                    `json:"refundedPoints"`
+	IsAPICall      bool                     `json:"isApiCall"`
+	MediaType      string                   `json:"mediaType"`
+	Model          string                   `json:"model"`
+	Prompt         string                   `json:"prompt"`
+	Success        int                      `json:"success"`
+	DurationMs     int64                    `json:"durationMs"`
+	CreateTime     string                   `json:"createTime"`
+	CompleteTime   string                   `json:"completeTime,omitempty"`
+	PointCost      *int64                   `json:"pointCost,omitempty"`
+	FailureReason  string                   `json:"failureReason,omitempty"`
+	ResultAssets   []UserHistoryAssetVO     `json:"resultAssets"`
+	ResultText     string                   `json:"resultText,omitempty"`
+	InputAssets    []UserHistoryAssetVO     `json:"inputAssets"`
+	Parameters     []UserHistoryParameterVO `json:"parameters"`
 }
 
 func userHistoryMediaType(handler, operation string) string {
@@ -84,6 +88,7 @@ func userHistoryMediaType(handler, operation string) string {
 
 func toUserHistoryVO(log *model.AiGenerationLog, state *taskLogState) UserGenerationHistoryVO {
 	vo := UserGenerationHistoryVO{
+		WorkflowStage: historyStage(log.Origin, log.OutputRole), PointCost: log.PointCost,
 		IsAPICall:  log.IsAPICall,
 		ID:         log.ID,
 		MediaType:  userHistoryMediaType(log.HandlerName, log.OperationType),
@@ -109,7 +114,8 @@ func toUserHistoryVO(log *model.AiGenerationLog, state *taskLogState) UserGenera
 
 func (s *service) listUserHistory(ctx context.Context, userID idgen.ID, q userHistoryQuery, offset, limit int) ([]UserGenerationHistoryVO, int64, error) {
 	rows, total, err := s.repo.listLogs(ctx, userID, false, logQuery{
-		PageNum: q.PageNum, PageSize: q.PageSize, ProjectID: q.ProjectID,
+		IncludeSkillSteps: true,
+		PageNum:           q.PageNum, PageSize: q.PageSize, ProjectID: q.ProjectID,
 		MediaType: q.MediaType, Keyword: q.Keyword, Success: q.Success,
 		StartDate: q.StartDate, EndDate: q.EndDate,
 	}, offset, limit)
@@ -117,20 +123,19 @@ func (s *service) listUserHistory(ctx context.Context, userID idgen.ID, q userHi
 		return nil, 0, err
 	}
 
-	taskIDs := make([]idgen.ID, 0, len(rows))
-	for i := range rows {
-		if rows[i].TaskID != 0 {
-			taskIDs = append(taskIDs, rows[i].TaskID)
-		}
+	tasks, refunds, err := s.historyContext(ctx, userID, rows, false)
+	if err != nil {
+		return nil, 0, err
 	}
-	states, _ := s.repo.taskLogStates(ctx, taskIDs)
 	out := make([]UserGenerationHistoryVO, 0, len(rows))
 	for i := range rows {
 		var state *taskLogState
-		if current, ok := states[rows[i].TaskID]; ok {
-			state = &current
+		if task, ok := tasks[rows[i].TaskID]; ok {
+			state = &taskLogState{IsAPICall: task.IsAPICall, Status: task.Status, PointCost: task.PointCost}
 		}
-		out = append(out, toUserHistoryVO(&rows[i], state))
+		vo := toUserHistoryVO(&rows[i], state)
+		vo.RefundedPoints = refunds[rows[i].TaskID]
+		out = append(out, vo)
 	}
 	return out, total, nil
 }
@@ -144,17 +149,17 @@ func (s *service) getUserHistory(ctx context.Context, userID, recordID idgen.ID)
 		return nil, errTaskNotFound
 	}
 
-	var task *model.AiTask
-	if log.TaskID != 0 {
-		candidate, taskErr := s.repo.getTask(ctx, log.TaskID)
-		if taskErr != nil {
-			return nil, taskErr
-		}
-		if candidate != nil && candidate.UserID == userID {
-			task = candidate
-		}
+	rows := []model.AiGenerationLog{*log}
+	tasks, refunds, err := s.historyContext(ctx, userID, rows, true)
+	if err != nil {
+		return nil, err
 	}
-	detail := toUserHistoryDetail(log, task)
+	var task *model.AiTask
+	if current, ok := tasks[log.TaskID]; ok {
+		task = &current
+	}
+	detail := toUserHistoryDetail(&rows[0], task)
+	detail.RefundedPoints = refunds[log.TaskID]
 	return &detail, nil
 }
 
@@ -163,6 +168,7 @@ func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGen
 	hints := cachedErrorHintSnapshot()
 	logFailureReason := publicGenerationFailureReasonScoped(hints, log.ErrorMsg, log.Model)
 	detail := UserGenerationHistoryDetailVO{
+		WorkflowStage: historyStage(log.Origin, log.OutputRole), PointCost: log.PointCost,
 		IsAPICall:    log.IsAPICall,
 		MediaType:    mediaType,
 		Model:        log.Model,
@@ -179,14 +185,26 @@ func toUserHistoryDetail(log *model.AiGenerationLog, task *model.AiTask) UserGen
 	}
 
 	if task == nil {
-		if url := strings.TrimSpace(log.ResultUrl); url != "" {
+		var saved historyResultSnapshot
+		if json.Unmarshal([]byte(log.PublicResult), &saved) == nil {
+			for _, asset := range saved.Assets {
+				if isPublicHistoryURL(asset.URL) {
+					detail.ResultAssets = append(detail.ResultAssets, asset)
+				}
+			}
+			detail.ResultText = saved.Text
+		}
+		if url := strings.TrimSpace(log.ResultUrl); url != "" && len(detail.ResultAssets) == 0 && isPublicHistoryURL(url) {
 			detail.ResultAssets = append(detail.ResultAssets, UserHistoryAssetVO{URL: url, Kind: assetKindForURL(url, mediaType)})
 		}
+		detail.InputAssets = publicInputAssets(log.InputParams)
+		detail.Parameters = publicInputParameters(log.InputParams)
 		return detail
 	}
 
 	detail.Model = firstNonEmpty(task.ModelName, detail.Model)
 	detail.IsAPICall = task.IsAPICall
+	detail.WorkflowStage = historyStage(task.Origin, task.OutputRole)
 	detail.Prompt = firstNonEmpty(generationPromptExcerpt(task.Input, 4000), detail.Prompt)
 	detail.CompleteTime = fmtTimePtr(task.CompleteTime)
 	cost := task.PointCost

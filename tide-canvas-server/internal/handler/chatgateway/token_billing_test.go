@@ -1,6 +1,7 @@
 package chatgateway
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,43 @@ import (
 
 	"tidecanvas/internal/model"
 )
+
+func TestUnsettledCandidateCostIsNeverReportedAsAnActualDebit(t *testing.T) {
+	f := setup(t, "")
+	_, row := pendingBill(t, f, 1_000_000)
+	// Simulate an inconsistent historical reservation whose usage is valid but
+	// cannot be settled within the amount held. Keep it for review, don't bill.
+	price := `{"enabled":true,"inputPointsPerMillion":"50000","outputPointsPerMillion":"50000","maxInputTokens":1000,"maxOutputTokens":1000}`
+	if err := f.s.d.DB.Model(row).Updates(map[string]any{"status": "pending", "pricing_snapshot": price}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.settleTokens(context.Background(), row, okWithUsage, ""); err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != "billing_pending" || row.CostMicros != 0 || billingInfo(row)["points"] != "0" {
+		t.Fatalf("unsettled estimate shown as spent points: status=%s cost=%d payload=%v", row.Status, row.CostMicros, billingInfo(row))
+	}
+	var user model.User
+	if err := f.s.d.DB.First(&user, "id = ?", f.user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if user.Points != 20 || user.PointHeldMicros != 1_000_000 {
+		t.Fatalf("pending review moved wallet: %d/%d", user.Points, user.PointHeldMicros)
+	}
+	// Old data may already contain a candidate cost. Lists and idempotent
+	// replays must still report zero debit until an actual settlement commits.
+	if err := f.s.d.DB.Model(row).Update("cost_micros", 10_000_000).Error; err != nil {
+		t.Fatal(err)
+	}
+	w := f.request("GET", "/api/chat-gateway/billing", "", f.jwt, nil)
+	if w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	data := jsonMap(t, w)["data"].(map[string]any)
+	if data["records"].([]any)[0].(map[string]any)["points"] != "0" {
+		t.Fatal("legacy ledger exposed an uncharged cost")
+	}
+}
 
 const tokenTestPricing = `{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"100","outputPointsPerMillion":"300","cachedInputPointsPerMillion":"20","maxInputTokens":1000,"maxOutputTokens":1000}}`
 
@@ -156,5 +194,19 @@ func TestTokenCostLabelUsesIntegersForNewChargesAndKeepsLegacyPrecision(t *testi
 	}
 	if got := tokenCostLabel(68_400); got != "0.068400" {
 		t.Fatalf("legacy fractional label = %q", got)
+	}
+}
+
+func TestTokenAuditUsesSettledCostRatherThanLegacyPerCallPrice(t *testing.T) {
+	for _, state := range []string{"success", "partial"} {
+		row := &model.ModelGatewayRequest{BillingMode: "token", Status: state, Cost: 0, CostMicros: 10_000_000}
+		if got := gatewayAuditPointCost(row); got != 10 {
+			t.Fatalf("%s audit cost=%d, want 10", state, got)
+		}
+	}
+	for _, state := range []string{"pending", "billing_pending", "released", "failed"} {
+		if got := gatewayAuditPointCost(&model.ModelGatewayRequest{BillingMode: "token", Status: state, CostMicros: 10_000_000}); got != 0 {
+			t.Fatalf("unsettled %s was audited as charged: %d", state, got)
+		}
 	}
 }

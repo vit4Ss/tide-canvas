@@ -116,6 +116,7 @@ export function ApiKeyPanel({ accountId }: { accountId: string }) {
                 : <span>{secret ? "只有你能看到这把密钥，请勿分享给他人" : "正在读取密钥…"}</span>}
             <div>
               <Link className="pf-btn sec" href="/api-docs#chat">接入智能体</Link>
+              <Link className="pf-btn sec" href="/api-usage">API 调用记录</Link>
               <Link className="pf-btn sec" href="/api-docs">API 文档</Link>
             </div>
           </div>

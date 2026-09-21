@@ -87,6 +87,9 @@ func TestAPreferredProviderIsTriedFirstAndPricesTheCall(t *testing.T) {
 	if !strings.Contains(row.PricingSnapshot, `"inputPointsPerMillion":"7"`) {
 		t.Fatalf("the call was priced at the fallback's rate, not the quoted one: %s", row.PricingSnapshot)
 	}
+	if row.ProviderName != "Test Provider" || row.BillingProviderName != "首选中转" || row.ProviderID == row.BillingProviderID {
+		t.Fatalf("failover usage was attributed to the billed rather than serving provider: provider=%s billed=%s", row.ProviderName, row.BillingProviderName)
+	}
 	var user model.User
 	f.s.d.DB.First(&user, "id = ?", f.user.ID)
 	if user.PointHeldMicros != 0 || user.PointBalance() >= 20 {

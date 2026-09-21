@@ -1,9 +1,12 @@
 package chatgateway
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	"gorm.io/gorm"
 	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
@@ -56,6 +59,9 @@ func TestResolvingABillReleasesTheHoldAndChargesOnlyVerifiedTokens(t *testing.T)
 	if settled.CostMicros != 1_000_000 || settled.Status == "billing_pending" || settled.ErrorCode != "" {
 		t.Fatalf("unexpected settlement: cost=%d status=%s code=%s", settled.CostMicros, settled.Status, settled.ErrorCode)
 	}
+	if !settled.UsageKnown {
+		t.Fatal("verified usage was not marked as reliable")
+	}
 	if settled.BillingResolution != "上游日志确认用量" || settled.BillingResolvedBy == 0 || settled.BillingResolvedAt == nil {
 		t.Fatalf("the audit trail is incomplete: %+v", settled)
 	}
@@ -95,6 +101,25 @@ func TestReleasingABillRefundsTheWholeReservation(t *testing.T) {
 	}
 }
 
+func TestReleasingABillCannotOverwriteUsageWithUnvalidatedFormValues(t *testing.T) {
+	f := setup(t, "")
+	access, row := pendingBill(t, f, 400_000)
+	if err := f.s.d.DB.Model(row).Updates(map[string]any{"input_tokens": 120, "output_tokens": 30, "cached_input_tokens": 20, "reasoning_tokens": 10}).Error; err != nil {
+		t.Fatal(err)
+	}
+	w := f.request("POST", "/api/admin/chat-gateway-billing/"+row.ID.String()+"/resolve", `{"action":"release","inputTokens":-100,"outputTokens":999999999,"reason":"释放并保留历史用量"}`, access, nil)
+	if w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	var settled model.ModelGatewayRequest
+	if err := f.s.d.DB.First(&settled, "id = ?", row.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if settled.Status != "released" || settled.CostMicros != 0 || settled.InputTokens != 120 || settled.OutputTokens != 30 || settled.CachedInputTokens != 20 || settled.ReasoningTokens != 10 || settled.UsageKnown {
+		t.Fatalf("release forged token usage: %+v", settled)
+	}
+}
+
 func TestResolveRejectsTokenCountsBeyondTheReservedPrice(t *testing.T) {
 	f := setup(t, "")
 	access, row := pendingBill(t, f, 400_000)
@@ -126,5 +151,167 @@ func TestResolveReportsAMissingBillAsNotFound(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "record not found") {
 		t.Fatalf("raw ORM error surfaced to the operator: %s", w.Body.String())
+	}
+}
+
+func TestManualSettlementRequiresExplicitInputAndOutputUsage(t *testing.T) {
+	for _, fields := range []string{``, `,"inputTokens":0`, `,"outputTokens":0`, `,"inputTokens":null,"outputTokens":0`} {
+		t.Run(fields, func(t *testing.T) {
+			f := setup(t, "")
+			access, row := pendingBill(t, f, 400_000)
+			body := `{"action":"settle","reason":"核对上游用量"` + fields + `}`
+			w := f.request("POST", "/api/admin/chat-gateway-billing/"+row.ID.String()+"/resolve", body, access, nil)
+			if w.Code != 400 {
+				t.Fatalf("missing usage accepted: %d %s", w.Code, w.Body.String())
+			}
+			var bill model.ModelGatewayRequest
+			var user model.User
+			if err := f.s.d.DB.First(&bill, "id = ?", row.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := f.s.d.DB.First(&user, "id = ?", f.user.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if bill.Status != "billing_pending" || bill.UsageKnown || user.PointHeldMicros != 400_000 || user.PointBalance() != 19.6 {
+				t.Fatalf("invalid settlement changed money/state: %s held=%d balance=%v", bill.Status, user.PointHeldMicros, user.PointBalance())
+			}
+		})
+	}
+}
+
+func TestDemotedAdministratorCannotSettleOrReleaseWithOldToken(t *testing.T) {
+	for _, action := range []string{"settle", "release"} {
+		t.Run(action, func(t *testing.T) {
+			f := setup(t, "")
+			if err := f.s.d.DB.AutoMigrate(&model.SysRole{}); err != nil {
+				t.Fatal(err)
+			}
+			access, row := pendingBill(t, f, 400_000)
+			if err := f.s.d.DB.Model(&model.User{}).Where("username = ?", "root").Update("role", 0).Error; err != nil {
+				t.Fatal(err)
+			}
+			body := `{"action":"` + action + `","inputTokens":100,"outputTokens":200,"reason":"旧令牌不应有财务权限"}`
+			w := f.request("POST", "/api/admin/chat-gateway-billing/"+row.ID.String()+"/resolve", body, access, nil)
+			if w.Code != 403 {
+				t.Fatalf("stale admin token changed ledger: %d %s", w.Code, w.Body.String())
+			}
+			if w := f.request("GET", "/api/admin/chat-gateway-billing", "", access, nil); w.Code != 403 {
+				t.Fatal("demoted administrator could still read other accounts' bills")
+			}
+			var bill model.ModelGatewayRequest
+			if err := f.s.d.DB.First(&bill, "id = ?", row.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if bill.Status != "billing_pending" {
+				t.Fatal("denied request changed bill")
+			}
+		})
+	}
+}
+
+func TestManualSettlementAllowsExplicitVerifiedZeroUsage(t *testing.T) {
+	f := setup(t, "")
+	access, row := pendingBill(t, f, 400_000)
+	w := f.request("POST", "/api/admin/chat-gateway-billing/"+row.ID.String()+"/resolve", `{"action":"settle","inputTokens":0,"outputTokens":0,"reason":"上游确认没有产生用量"}`, access, nil)
+	if w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	var bill model.ModelGatewayRequest
+	var user model.User
+	if err := f.s.d.DB.First(&bill, "id = ?", row.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.d.DB.First(&user, "id = ?", f.user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !bill.UsageKnown || bill.CostMicros != 0 || user.PointHeldMicros != 0 || user.PointBalance() != 20 {
+		t.Fatalf("explicit zero settlement: known=%v cost=%d held=%d balance=%v", bill.UsageKnown, bill.CostMicros, user.PointHeldMicros, user.PointBalance())
+	}
+}
+
+// Both paths must roll back all three writes: wallet, ledger, bill. A retry
+// after storage recovers then settles once using the original price snapshot.
+func TestTokenSettlementWriteFailuresRollbackAndRetryExactlyOnce(t *testing.T) {
+	for _, manual := range []bool{false, true} {
+		for _, failAt := range []string{"ledger", "bill"} {
+			name := failAt
+			if manual {
+				name += "-manual"
+			} else {
+				name += "-automatic"
+			}
+			t.Run(name, func(t *testing.T) {
+				f := setup(t, "")
+				access, row := pendingBill(t, f, 1_000_000)
+				initialStatus := "billing_pending"
+				if !manual {
+					initialStatus = "pending"
+					if err := f.s.d.DB.Model(row).Update("status", initialStatus).Error; err != nil {
+						t.Fatal(err)
+					}
+				}
+				callback := "simulate-settlement-storage-failure"
+				if failAt == "ledger" {
+					if err := f.s.d.DB.Callback().Create().Before("gorm:create").Register(callback, func(tx *gorm.DB) {
+						if tx.Statement.Table == "point_record" {
+							tx.AddError(errors.New("ledger unavailable"))
+						}
+					}); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					if err := f.s.d.DB.Callback().Update().Before("gorm:update").Register(callback, func(tx *gorm.DB) {
+						if tx.Statement.Table == "model_gateway_request" {
+							tx.AddError(errors.New("bill update unavailable"))
+						}
+					}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				resolve := func() bool {
+					if manual {
+						w := f.request("POST", "/api/admin/chat-gateway-billing/"+row.ID.String()+"/resolve", `{"action":"settle","inputTokens":100,"outputTokens":100,"reason":"依据真实上游用量结算"}`, access, nil)
+						return w.Code == 200
+					}
+					return f.s.settleTokens(context.Background(), row, okWithUsage, "") == nil
+				}
+				if resolve() {
+					t.Fatal("failed write reported successful settlement")
+				}
+				var user model.User
+				var bill model.ModelGatewayRequest
+				var entries int64
+				if err := f.s.d.DB.First(&user, "id = ?", f.user.ID).Error; err != nil {
+					t.Fatal(err)
+				}
+				if err := f.s.d.DB.First(&bill, "id = ?", row.ID).Error; err != nil {
+					t.Fatal(err)
+				}
+				if err := f.s.d.DB.Model(&model.PointRecord{}).Count(&entries).Error; err != nil {
+					t.Fatal(err)
+				}
+				if user.Points != 20 || user.PointHeldMicros != 1_000_000 || bill.Status != initialStatus || entries != 0 {
+					t.Fatalf("not atomic: points=%d held=%d bill=%s entries=%d", user.Points, user.PointHeldMicros, bill.Status, entries)
+				}
+				if failAt == "ledger" {
+					_ = f.s.d.DB.Callback().Create().Remove(callback)
+				} else {
+					_ = f.s.d.DB.Callback().Update().Remove(callback)
+				}
+				if !resolve() {
+					t.Fatal("retry after database recovery failed")
+				}
+				_ = resolve()
+				if err := f.s.d.DB.First(&user, "id = ?", f.user.ID).Error; err != nil {
+					t.Fatal(err)
+				}
+				if err := f.s.d.DB.Model(&model.PointRecord{}).Count(&entries).Error; err != nil {
+					t.Fatal(err)
+				}
+				if user.Points != 19 || user.PointHeldMicros != 0 || entries != 1 {
+					t.Fatalf("retry was not exactly once: points=%d held=%d entries=%d", user.Points, user.PointHeldMicros, entries)
+				}
+			})
+		}
 	}
 }

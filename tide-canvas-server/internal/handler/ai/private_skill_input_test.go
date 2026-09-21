@@ -24,12 +24,19 @@ func TestPrivateSkillGenerationPersistsOnlyPublicInput(t *testing.T) {
 	if !strings.Contains(string(dto.Input), "private-SKILL") {
 		t.Fatal("provider execution input was overwritten")
 	}
-	for _, change := range []func(*generateDTO){func(d *generateDTO) { d.IsAPICall = false }, func(d *generateDTO) { d.SkillRunID = 0 }} {
-		copy := dto
-		change(&copy)
-		if string(persistedGenerationInput(copy)) != string(dto.Input) {
-			t.Fatal("unrelated generation inputs changed")
-		}
+	copy := dto
+	copy.IsAPICall = false
+	if string(persistedGenerationInput(copy)) != got {
+		t.Fatal("site skill leaked execution prompt")
+	}
+	copy.SkillRunID = 0
+	if string(persistedGenerationInput(copy)) != string(dto.Input) {
+		t.Fatal("ordinary generation input changed")
+	}
+	copy = dto
+	copy.PublicInput = nil
+	if string(persistedGenerationInput(copy)) != `{}` {
+		t.Fatal("missing public input fell back to private instructions")
 	}
 }
 

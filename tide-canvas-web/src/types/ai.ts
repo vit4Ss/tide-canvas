@@ -164,6 +164,8 @@ export interface UserHistoryParameterVO {
  * 失败详情只返回服务端归类后的安全文案。
  */
 export interface UserGenerationHistoryVO {
+	workflowStage?: "final" | "intermediate";
+	refundedPoints?: number;
   isApiCall?: boolean;
   id: string;
   mediaType: "image" | "video" | "audio" | "3d" | "text";
@@ -177,6 +179,8 @@ export interface UserGenerationHistoryVO {
 }
 
 export interface UserGenerationHistoryDetailVO {
+	workflowStage?: "final" | "intermediate";
+	refundedPoints?: number;
   isApiCall?: boolean;
   mediaType: UserGenerationHistoryVO["mediaType"];
   model: string;

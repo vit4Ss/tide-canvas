@@ -35,6 +35,7 @@ import type {
   UserHistoryAssetVO,
 } from "@/types/ai";
 import { shouldShowGenerationResult } from "@/lib/generation-result-visibility";
+import { generationNetPoints, generationRefundNote } from "@/lib/generation-history-billing";
 
 type MediaFilter = "" | "image" | "video" | "audio" | "3d" | "text";
 
@@ -230,7 +231,7 @@ function ResultBlock({ detail, row }: { detail: UserGenerationHistoryDetailVO | 
           <span>失败原因</span>
           <strong>{failureReason}</strong>
         </div>
-        <div className="user-history-error-refund">生成未完成，本次消耗的积分已退回。</div>
+        <div className="user-history-error-refund">{generationRefundNote(detail ?? row)}</div>
       </div>
     );
   }
@@ -355,6 +356,9 @@ function DetailDrawer({ row, onClose }: { row: UserGenerationHistoryVO; onClose:
   const params = detail?.parameters || [];
   const success = (detail?.success ?? row.success) === 1;
   const pointCost = detail?.pointCost ?? row.pointCost;
+  const refundedPoints = detail?.refundedPoints ?? row.refundedPoints ?? 0;
+  const netPoints = generationNetPoints({ pointCost, refundedPoints });
+  const stage = detail?.workflowStage ?? row.workflowStage;
 
   return (
     <AdminDrawer
@@ -381,6 +385,7 @@ function DetailDrawer({ row, onClose }: { row: UserGenerationHistoryVO; onClose:
                 {sceneLabel(row)}
               </span>
               <SourceBadge isApiCall={detail?.isApiCall ?? row.isApiCall} />
+              {stage && <span className="user-history-source">Skill · {stage === "final" ? "最终结果" : "流程步骤"}</span>}
               <span className="strong" style={{ fontSize: 15, wordBreak: "break-all" }}>{detail?.model || row.model || "—"}</span>
             </div>
             <div className="muted" style={{ fontSize: 12.5, marginTop: 6 }}>{fmtTime(row.createTime)}</div>
@@ -396,6 +401,7 @@ function DetailDrawer({ row, onClose }: { row: UserGenerationHistoryVO; onClose:
           <section>
             <SectionTitle>生成参数</SectionTitle>
             <div className="genr-grid">
+              {(detail?.mediaType ?? row.mediaType) === "text" && <div className="genr-cell"><div className="k">计费方式</div><div className="v">按次 · 使用站内文本模型定价</div></div>}
               {params.map((param) => (
                 <div className="genr-cell" key={param.key}>
                   <div className="k">{PARAM_LABEL[param.key] || param.key}</div>
@@ -403,8 +409,12 @@ function DetailDrawer({ row, onClose }: { row: UserGenerationHistoryVO; onClose:
                 </div>
               ))}
               <div className="genr-cell">
-                <div className="k">平台积分消耗</div>
-                <div className="v">{pointCost == null ? "—" : success ? pointCost : `${pointCost}（已退款）`}</div>
+                <div className="k">实际消耗积分</div>
+                <div className="v">{netPoints ?? "—"}</div>
+              </div>
+              <div className="genr-cell">
+                <div className="k">本次扣费 / 已退款</div>
+                <div className="v">{pointCost ?? "—"} / {refundedPoints}</div>
               </div>
               <div className="genr-cell">
                 <div className="k">耗时</div>
@@ -643,7 +653,7 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
                     {sceneLabel(row)}
                   </span>
                   <span className="user-history-summary">
-                    <strong title={row.model || undefined}>{row.model || "未知模型"}</strong>
+                    <strong title={row.model || undefined}>{row.model || "未知模型"}{row.workflowStage && <small> · Skill {row.workflowStage === "final" ? "最终结果" : "流程步骤"}</small>}</strong>
                     <span title={row.prompt || undefined}>{row.prompt || "无 Prompt"}</span>
                   </span>
                   <SourceBadge isApiCall={row.isApiCall} />
@@ -652,8 +662,8 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
                     {row.success === 1 ? "成功" : "失败"}
                   </span>
                   <span className="user-history-meta">
-                    <span className="user-history-points" data-label="积分">
-                      {row.success === 1 && row.pointCost != null ? row.pointCost : "—"}
+                    <span className="user-history-points" data-label="实扣积分" title={generationRefundNote(row)}>
+                      {generationNetPoints(row) ?? "—"}{(row.refundedPoints ?? 0) > 0 && <small>（已退 {row.refundedPoints}）</small>}
                     </span>
                     <span className="user-history-duration" data-label="耗时">{duration(row.durationMs)}</span>
                     <time className="user-history-created" dateTime={row.createTime}>{fmtTime(row.createTime)}</time>
@@ -696,7 +706,7 @@ export function GenerationHistory({ mode = "page", onDetailOpenChange }: Generat
       <main className="user-history-main">
         <div className="user-history-heading">
           <h1>我的生成记录</h1>
-          <p>仅展示当前账号发起的生成任务，包括生成结果、任务状态、耗时和积分。</p>
+          <p>查看当前账号的生成结果与积分消耗，包含 MCP 和 Skill 流程中的文本、图片、视频及音频调用。</p>
         </div>
 
         {records}

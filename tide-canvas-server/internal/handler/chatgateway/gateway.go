@@ -199,14 +199,26 @@ func (s *service) reserve(ctx context.Context, uid idgen.ID, requestKey, bodyHas
 			Status: "pending", ExpiresAt: time.Now().Add(65 * time.Minute),
 			BillingMode: "token", ReservedMicros: reserved,
 			PricingSnapshot: pricingSnapshot(pricing), MaxOutputTokens: outputCap,
+			ModelName: route.displayNameOnly(), BillingProviderID: route.provider.ID,
+			BillingProviderName: route.provider.Name, PriceMultiplier: route.provider.PriceMultiplier,
+		}
+		if meta, ok := ctx.Value(gatewayRequestMetadataKey{}).(gatewayRequestMetadata); ok {
+			row.Source = gatewayAPISource
+			row.RequestPath, row.ClientIP, row.Stream = meta.Path, meta.IP, meta.Stream
 		}
 		var key model.UserAPIKey
 		if err := tx.First(&key, "user_id = ?", uid).Error; err != nil {
 			return err
 		}
 		row.KeyRevision = key.Revision
+		row.KeyHint = key.Hint
 		if revision, ok := ctx.Value(gatewayKeyRevision).(uint64); ok {
 			row.KeyRevision = revision
+			if revision != key.Revision {
+				// The key was rotated after authentication. Keep the authenticated
+				// version, never label this call with the replacement key's hint.
+				row.KeyHint = ""
+			}
 		}
 		row.ID = idgen.Next()
 		if err := tx.Create(&row).Error; err != nil {
@@ -260,6 +272,9 @@ type upstreamFrame struct {
 	// the status it returned and what it said, with credentials redacted.
 	status  int
 	message string
+	// Route metadata is sent on the same channel as frames, so retries and
+	// the stream consumer never share mutable accounting state.
+	routed *chatEndpoint
 }
 type completion struct {
 	text      strings.Builder
@@ -420,6 +435,9 @@ func (s *service) readUpstream(ctx context.Context, endpoints []chatEndpoint, pa
 	var resp *http.Response
 	var last upstreamFrame
 	for i, endpoint := range endpoints {
+		if !send(upstreamFrame{routed: &endpoint}) {
+			return
+		}
 		req, err := http.NewRequestWithContext(ctx, "POST", chatupstream.Endpoint(endpoint.baseURL, "chat/completions"), bytes.NewReader(payload))
 		if err != nil {
 			send(upstreamFrame{err: err})
@@ -456,6 +474,10 @@ func (s *service) readUpstream(ctx context.Context, endpoints []chatEndpoint, pa
 		}
 		s.noteEndpoint(endpoint.id, "")
 		resp = attempt
+		if !send(upstreamFrame{status: attempt.StatusCode}) {
+			attempt.Body.Close()
+			return
+		}
 		break
 	}
 	if resp == nil {
@@ -694,6 +716,11 @@ func (s *service) prepare(c *gin.Context, body map[string]any, stream bool) *cal
 		requestKey = idgen.Next().String()
 	}
 	requestContext := c.Request.Context()
+	if middleware.IsUserAPIKeyRequest(requestContext) {
+		requestContext = context.WithValue(requestContext, gatewayRequestMetadataKey{}, gatewayRequestMetadata{
+			Path: c.FullPath(), IP: c.ClientIP(), Stream: stream,
+		})
+	}
 	if revision, ok := c.Get("integration.keyRevision"); ok {
 		requestContext = context.WithValue(requestContext, gatewayKeyRevision, revision)
 	}
@@ -720,7 +747,7 @@ func (s *service) prepare(c *gin.Context, body map[string]any, stream bool) *cal
 		c.Header("X-Billing-Mode", "token")
 		c.Header("X-Point-Reserved", tokenCostLabel(row.ReservedMicros))
 		if !fresh {
-			c.Header("X-Point-Cost", tokenCostLabel(row.CostMicros))
+			c.Header("X-Point-Cost", tokenCostLabel(settledTokenMicros(row)))
 			c.Set(billingKey, billingInfo(row))
 		}
 	} else {
@@ -812,11 +839,22 @@ func (s *service) run(c *gin.Context, call *call, live func(wire string), heartb
 				ended = true
 				break
 			}
+			if frame.routed != nil {
+				row.ProviderID, row.ProviderName = frame.routed.providerID, frame.routed.providerName
+				row.EndpointID = frame.routed.id
+				continue
+			}
+			if frame.status != 0 {
+				row.UpstreamStatus = frame.status
+			}
 			if frame.err != nil {
 				r.code = "upstream_error"
 				r.upstreamStatus, r.upstreamMessage = frame.status, frame.message
 				ended = true
 				break
+			}
+			if frame.data == "" {
+				continue
 			}
 			if frames.Len()+len(frame.data) > maxGatewayResponse {
 				r.code = "response_too_large"
@@ -825,6 +863,10 @@ func (s *service) run(c *gin.Context, call *call, live func(wire string), heartb
 				break
 			}
 			isTerminal := out.inspect(frame.data)
+			if row.FirstTokenMs == nil && (out.produced || out.reasoning.Len() > 0) {
+				elapsed := time.Since(call.started).Milliseconds()
+				row.FirstTokenMs = &elapsed
+			}
 			if out.failed {
 				// An explicit error is terminal even if the upstream keeps its
 				// socket open. Release reservations instead of waiting an hour.
@@ -852,6 +894,11 @@ func (s *service) run(c *gin.Context, call *call, live func(wire string), heartb
 	if r.code == "" {
 		frames.WriteString("data: [DONE]\n\n")
 	}
+	elapsed := time.Since(call.started).Milliseconds()
+	row.DurationMs = &elapsed
+	if err := s.checkpointTokenOutcome(row, frames.String(), r.code); err != nil {
+		logger.L().Error("gateway usage checkpoint failed", zap.String("request", row.ID.String()), zap.Error(err))
+	}
 	if err := s.settle(row, frames.String(), r.code); err != nil {
 		logger.L().Error("gateway settlement failed", zap.String("request", row.ID.String()), zap.Error(err))
 		r.code = "settlement_pending"
@@ -859,7 +906,7 @@ func (s *service) run(c *gin.Context, call *call, live func(wire string), heartb
 	if row.BillingMode == "token" {
 		c.Set(billingKey, billingInfo(row))
 		if !call.stream {
-			c.Header("X-Point-Cost", tokenCostLabel(row.CostMicros))
+			c.Header("X-Point-Cost", tokenCostLabel(settledTokenMicros(row)))
 		}
 		if row.Status == "billing_pending" && r.code != "settlement_pending" {
 			r.code = "token_usage_unavailable"
@@ -869,8 +916,8 @@ func (s *service) run(c *gin.Context, call *call, live func(wire string), heartb
 	if r.code != "" {
 		callErr = errors.New(r.code)
 	}
-	cost := int64(row.Cost)
-	if r.code != "" && r.code != "settlement_pending" && !out.hasOutput() {
+	cost := gatewayAuditPointCost(row)
+	if row.BillingMode != "token" && r.code != "" && r.code != "settlement_pending" && !out.hasOutput() {
 		cost = 0
 	}
 	auditResponse := out.text.String()

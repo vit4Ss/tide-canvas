@@ -53,8 +53,12 @@ type TaskSnapshot struct {
 // Provider execution continues to use dto.Input. Only the explicitly supplied
 // user input is persisted into user-visible tasks/history for private Skills.
 func persistedGenerationInput(dto generateDTO) json.RawMessage {
-	if dto.SkillRunID != 0 && dto.IsAPICall && len(dto.PublicInput) > 0 {
-		return normalizeInput(dto.PublicInput)
+	if dto.SkillRunID != 0 {
+		if len(dto.PublicInput) > 0 {
+			return normalizeInput(dto.PublicInput)
+		}
+		// Never fall back to a private workflow prompt for public history.
+		return json.RawMessage(`{}`)
 	}
 	return normalizeInput(dto.Input)
 }

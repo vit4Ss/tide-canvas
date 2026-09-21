@@ -76,10 +76,12 @@ type chatRoute struct {
 }
 
 type chatEndpoint struct {
-	id      idgen.ID
-	label   string
-	baseURL string
-	apiKey  string
+	id           idgen.ID
+	providerID   idgen.ID
+	providerName string
+	label        string
+	baseURL      string
+	apiKey       string
 }
 
 // offeredModels lists what the gateway serves: an enabled model, under an
@@ -165,6 +167,10 @@ func (s *service) routeFor(ctx context.Context, modelKey string) (*chatRoute, er
 		}
 		if err != nil {
 			return nil, err
+		}
+		for i := range endpoints {
+			endpoints[i].providerID = provider.ID
+			endpoints[i].providerName = provider.Name
 		}
 		route.endpoints = append(route.endpoints, endpoints...)
 		route.providers++

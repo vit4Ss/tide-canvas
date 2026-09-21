@@ -64,13 +64,53 @@ Responses 请求的转译规则：
 2. 网关始终以流式向供应商请求并要求 `stream_options.include_usage`。结束后按供应商返回的 `usage` 结算实际费用，费用非零时向上取整为整数积分，未用完的预留释放；结算结果进入积分流水（`AI 聊天 Token 计费：<model_key>`）。
 3. 非流式响应用 `X-Point-Cost` 头和 `billing` 字段报告实际积分；流式响应在 `[DONE]` 之前多一帧 `{"choices":[],"billing":{…}}`（Chat Completions）或在 `response.completed` 的 `response.billing` 里（Responses）。
 4. 供应商没有返回可信用量时，行状态变为 `billing_pending`，预留不释放，管理员在后台「积分管理 → Token 调用账单」核对后结算或释放。生成失败且没有任何输出时预留全额退回。
+   待核对期间实扣金额为 0，不把候选费用当作扣款。人工结算要求明确填写输入、输出 Token（0 合法，缺失或 null 拒绝）；处理时重新检查管理员当前的积分权限。
 5. 崩溃遗留的 `pending` 行由启动时的 reconciler 每分钟扫描，超过 65 分钟未结算的按 `worker_interrupted` 结算。
+   已完整读取的上游结果与用量会在积分事务之前单独持久化。若随后结算写库失败，恢复时使用这份用量和原价格快照，不能把它当作无输出释放预留；缺少可靠用量但已有输出的仍进入人工核对。
 
 账单接口：用户 `GET /api/chat-gateway/billing`（JWT），管理员 `GET /api/admin/chat-gateway-billing` 与 `POST /api/admin/chat-gateway-billing/:id/resolve`（需要 `admin.points`）。
 
 `Idempotency-Key` 请求头（或请求 ID）相同且请求体相同时，重放不重复扣费，直接回放已存的结果；请求体不同返回 409 `idempotency_conflict`；原请求仍在生成时返回 409 `request_in_progress`。
 
 ## 限额与错误
+
+### API 调用记录
+
+个人中心的 API Key 区域和 API 文档可进入 `/api-usage`；后台入口为
+`/admin/chat-usage`，沿用 `admin.models` 权限。用户只看本人，管理员可按用户 ID 筛选。
+
+- 用户查询：`GET /api/chat-gateway/usage`（登录 JWT）；后台查询：`GET /api/admin/chat-gateway-usage`。
+- 仅包括 API Key 在 `/api/integrations/v1/chat/completions` 或 `/responses` 被受理并预留成功的调用。
+  身份校验、余额或参数校验未通过的请求不创建计费行；同一请求重放不增加记录。
+- 来源以 `source=api_key_chat_provider` 固定保存，不按模型名称关联。旧记录来源无法确证，
+  仍在原 Token 账单中查询，不混入新列表；「模型管理」调用的原记录逻辑不变。
+- 显示输入/输出/缓存/推理 Token、结算积分、预留、客户端协议和响应方式、时间。
+  未取得可靠用量显示 `—`；缓存属于输入、推理属于输出，不额外相加。
+- 首字是从发起上游到第一个正文/推理/工具输出的耗时，总耗时包含备用切换和上游读取，
+  不包含向客户端重放/传输及数据库结算时间。进程被中断时未采集的耗时留空。
+- 后台另外显示请求 IP、实际供应商、接入地址 ID、上游 HTTP 状态及计价供应商。
+  名称和价格按调用时快照保存，供应商修改/删除不改变历史。无请求正文、密钥或上游地址输出。
+- 筛选支持 `model`（字面子串）、`status`、`protocol=chat|responses`、`stream=true|false`、
+  `startDate/endDate=YYYY-MM-DD`（北京时间含结束日）、`pageNum/pageSize`（最大 100）。
+  列表及统计应用同一筛选，实扣积分不包含冻结额度，并减去同一用户/调用的真实退款流水；原始结算金额仍保留。
+
+### 与「我的生成记录」的边界
+
+两套价格独立：`chat_model` 按输入/输出/缓存 Token 单价和供应商倍率计费；
+`market_model` 的文本生成（包括 MCP/Agent Skill 中间步骤）继续按每次模型调用固定积分收费，
+不读取 `chat_model` 的 Token 单价。相同 model key 也不会合并路由或价格。
+每次非零 Token 费用沿用现有向上取整为整数积分规则；按次文本忽略图片的 batchCount、清晰度等残留参数。
+一套 Skill 若实际执行三次文本模型调用，分别记录三笔按次费用，而不是按工作流入口再扣一笔 Token 费用。
+它们共用用户余额和积分流水；Token 已预留部分不能被同时进行的按次生成花掉。
+
+- 本节的 API 调用记录只查询 `model_gateway_request` 中明确标记的聊天供应商调用。
+- MCP 生成工具和 Agent Skill 工作流仍使用 `ai_tasks` / `ai_generation_logs`。
+  用户「我的生成记录」(`/api/ai/history`) 包含自己各模型步骤的文本、图片、视频、音频结果，
+  包括中间步骤和最终结果。不会另外创建账单或再次扣费，也不复制进 API 聊天调用记录。
+- 每步显示原扣费、实际退款和净消耗；退款以正向积分流水为准，不根据任务成功/失败猜测。
+- Skill 历史只返回用户输入、产物和安全字段，不返回私有提示词、Manifest 和供应商报文。
+  新记录保存安全输入/结果及费用快照，旧步骤从所属用户的任务/SkillRun 安全补齐。
+- 创作台和资产库继续按最终素材筛选，不因此显示内部文本卡或在模型选择器加入文本模型。
 
 | 情形 | HTTP | `error.code` |
 |---|---|---|

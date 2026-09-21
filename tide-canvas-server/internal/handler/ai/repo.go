@@ -328,12 +328,9 @@ func taskListOrder(q taskQuery) string {
 
 // userVisibleTextHandlers are the text-producing handlers. Text records are
 // only part of a user's own history when the user produced them from a
-// generation surface (studio / chat / canvas). Text produced by API or MCP
-// submissions — including the promoted final step of an MCP Skill run — is
-// an implementation detail of that programmatic flow: the caller already
-// received the text through the API response, and the studio feed and
-// "我的生成记录" must not surface it. Administrators keep seeing every record
-// through the audit views, which never use these scopes.
+// generation surface (studio / chat / canvas) in asset/task lists. The separate
+// safe "我的生成记录" endpoint includes MCP/API text and workflow steps for
+// billing visibility via logQuery.IncludeSkillSteps; it is not an asset feed.
 var userVisibleTextHandlers = []string{assistantChatHandler, skillTextCompletionHandler}
 
 func visibleTaskHistoryScope(tx *gorm.DB) *gorm.DB {
@@ -528,6 +525,11 @@ func (r *repo) listLogs(ctx context.Context, userID idgen.ID, adminScope bool, q
 		return nil, 0, err
 	}
 	var rows []model.AiGenerationLog
+	if q.IncludeSkillSteps && !adminScope {
+		// The result list needs summaries only, not every provider payload and
+		// full text result for every workflow step in the page.
+		tx = tx.Omit("request_body", "response_body", "public_result", "request_url", "upstream_task_id")
+	}
 	if err := tx.Order("create_time DESC").Offset(offset).Limit(limit).Find(&rows).Error; err != nil {
 		return nil, 0, err
 	}
@@ -538,8 +540,9 @@ func (r *repo) listLogs(ctx context.Context, userID idgen.ID, adminScope bool, q
 // audit fields directly to the HTTP layer.
 func (r *repo) getUserLog(ctx context.Context, userID, recordID idgen.ID) (*model.AiGenerationLog, error) {
 	var row model.AiGenerationLog
-	tx := visibleUserLogScope(r.db.WithContext(ctx).Model(&model.AiGenerationLog{}).
-		Where("user_id = ? AND id = ?", userID, recordID)).First(&row)
+	tx := r.db.WithContext(ctx).Model(&model.AiGenerationLog{}).
+		Omit("request_body", "response_body", "request_url", "upstream_task_id").
+		Where("user_id = ? AND id = ?", userID, recordID).First(&row)
 	if errors.Is(tx.Error, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -551,7 +554,10 @@ func (r *repo) getUserLog(ctx context.Context, userID, recordID idgen.ID) (*mode
 
 func applyLogListFilters(tx *gorm.DB, userID idgen.ID, adminScope bool, q logQuery) *gorm.DB {
 	if !adminScope {
-		tx = visibleUserLogScope(tx.Where("user_id = ?", userID))
+		tx = tx.Where("user_id = ?", userID)
+		if !q.IncludeSkillSteps {
+			tx = visibleUserLogScope(tx)
+		}
 	} else if q.UserID != 0 {
 		tx = tx.Where("user_id = ?", q.UserID)
 	}
@@ -577,7 +583,14 @@ func applyLogListFilters(tx *gorm.DB, userID idgen.ID, adminScope bool, q logQue
 	}
 	if keyword := strings.TrimSpace(q.Keyword); keyword != "" {
 		like := "%" + keyword + "%"
-		tx = tx.Where("model LIKE ? OR input_params LIKE ?", like, like)
+		if q.IncludeSkillSteps && !adminScope {
+			// A yes/no search match must not become an oracle over old private
+			// workflow prompts. Only sanitized inputs (or direct calls) can match.
+			const oldSkill = "EXISTS (SELECT 1 FROM ai_tasks t WHERE t.id = ai_generation_logs.task_id AND (t.origin = 'skill_run' OR t.skill_run_id <> 0))"
+			tx = tx.Where("model LIKE ? OR (input_params LIKE ? AND (input_sanitized = ? OR (COALESCE(origin, '') <> ? AND NOT "+oldSkill+")))", like, like, true, "skill_run")
+		} else {
+			tx = tx.Where("model LIKE ? OR input_params LIKE ?", like, like)
+		}
 	}
 	if q.Success != nil {
 		tx = tx.Where("success = ?", *q.Success)

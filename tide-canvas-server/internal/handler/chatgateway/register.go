@@ -29,6 +29,9 @@ func RegisterService(api *gin.RouterGroup, s *service) {
 	// The token ledger, for the signed-in user and for the points admin.
 	user := api.Group("/chat-gateway", middleware.JWTAuth(s.d), middleware.RateLimit(s.d, 30, time.Minute))
 	user.GET("/billing", s.billingList(false))
+	user.GET("/usage", s.usageRecords(false))
+	usage := api.Group("/admin/chat-gateway-usage", middleware.JWTAuth(s.d), middleware.AdminAccess(s.d), middleware.AdminPerm("admin.models"))
+	usage.GET("", s.usageRecords(true))
 	admin := api.Group("/admin/chat-gateway-billing", middleware.JWTAuth(s.d), middleware.AdminAccess(s.d), middleware.AdminPerm("admin.points"))
 	admin.GET("", s.billingList(true))
 	admin.POST("/:id/resolve", s.resolveBilling)

@@ -2,7 +2,9 @@ package chatgateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"gorm.io/gorm"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -98,5 +100,119 @@ func TestMalformedUpstreamFrameDoesNotLeakToClientOrBecomeSuccess(t *testing.T) 
 	}
 	if !strings.Contains(w.Body.String(), `"error"`) || !strings.Contains(w.Body.String(), "visible") {
 		t.Error("corrupt stream treated as success or valid content lost")
+	}
+}
+
+func TestRecoveryRetainsProviderUsageWhenWalletWriteTemporarilyFails(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, okWithUsage) }))
+	defer up.Close()
+	f := setup(t, up.URL)
+	const callback = "usage-settlement-ledger-unavailable"
+	if err := f.s.d.DB.Callback().Create().Before("gorm:create").Register(callback, func(tx *gorm.DB) {
+		if tx.Statement.Table == "point_record" {
+			tx.AddError(errors.New("temporary ledger failure"))
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	headers := map[string]string{"Idempotency-Key": "recover-actual-usage"}
+	w := f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, headers)
+	if w.Code != 502 || !strings.Contains(w.Body.String(), "settlement_pending") {
+		t.Fatal(w.Body.String())
+	}
+	var row model.ModelGatewayRequest
+	if err := f.s.d.DB.First(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != "pending" || !strings.Contains(row.ResponseBody, "prompt_tokens") {
+		t.Fatalf("provider usage lost on failed settlement: status=%s body=%s", row.Status, row.ResponseBody)
+	}
+	if err := f.s.d.DB.Callback().Create().Remove(callback); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.d.DB.Model(&row).Update("expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := f.s.reconcilePage(context.Background(), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var user model.User
+	if err := f.s.d.DB.First(&user, "id = ?", f.user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.d.DB.First(&row, "id = ?", row.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != "success" || row.CostMicros != 1_000_000 || !row.UsageKnown || user.Points != 19 || user.PointHeldMicros != 0 {
+		t.Fatalf("recovery did not settle actual usage: status=%s cost=%d points=%d held=%d", row.Status, row.CostMicros, user.Points, user.PointHeldMicros)
+	}
+	if w := f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, headers); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	var count int64
+	if err := f.s.d.DB.Model(&model.PointRecord{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("recovery/replay wrote %d debits", count)
+	}
+}
+
+func TestRecoveryOfCheckpointedResultsDoesNotGuessMissingUsage(t *testing.T) {
+	for _, tc := range []struct {
+		name, frames, code, status string
+		points, held               int64
+	}{
+		{"partial charged", strings.ReplaceAll(okWithUsage, `"stop"`, `"length"`), "incomplete_response", "partial", 19, 0},
+		{"visible without usage", "data: {\"choices\":[{\"delta\":{\"content\":\"visible\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", "", "billing_pending", 20, 1_000_000},
+		{"error without output", "data: {\"error\":{\"message\":\"unavailable\"}}\n\n", "upstream_error", "failed", 20, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t, "")
+			route, err := f.s.routeFor(context.Background(), "test-model")
+			if err != nil {
+				t.Fatal(err)
+			}
+			row, _, err := f.s.reserve(context.Background(), f.user.ID, "checkpoint", "body", route)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.s.checkpointTokenOutcome(row, tc.frames, tc.code); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.s.d.DB.Model(row).Update("expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 2; i++ {
+				if _, err := f.s.reconcilePage(context.Background(), 0); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var bill model.ModelGatewayRequest
+			var user model.User
+			if err := f.s.d.DB.First(&bill, "id = ?", row.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := f.s.d.DB.First(&user, "id = ?", f.user.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if bill.Status != tc.status || user.Points != tc.points || user.PointHeldMicros != tc.held {
+				t.Fatalf("state=%s points=%d held=%d", bill.Status, user.Points, user.PointHeldMicros)
+			}
+			// An old worker must not replace the finalized result or clear a
+			// manually pending-review bill with another checkpoint.
+			if err := f.s.checkpointTokenOutcome(row, "data: unexpected\n\n", "worker_interrupted"); err != nil {
+				t.Fatal(err)
+			}
+			var unchanged model.ModelGatewayRequest
+			if err := f.s.d.DB.First(&unchanged, "id = ?", row.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if bill.ResponseBody != unchanged.ResponseBody || bill.ErrorCode != unchanged.ErrorCode || bill.CostMicros != unchanged.CostMicros {
+				t.Fatal("stale checkpoint overwrote terminal result")
+			}
+		})
 	}
 }

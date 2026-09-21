@@ -1424,6 +1424,9 @@ func (s *service) writeLog(ctx context.Context, task *model.AiTask, gh GenHandle
 		errMsg = errMessage(genErr)
 	}
 	l := &model.AiGenerationLog{
+		Origin: task.Origin, OutputRole: task.OutputRole, PointCost: &task.PointCost,
+		PublicResult:   publicGenerationSnapshot(task, res, gh.Name(), gh.OperationType()),
+		InputSanitized: true,
 		IsAPICall:      task.IsAPICall,
 		ID:             idgen.Next(),
 		TaskID:         task.ID,

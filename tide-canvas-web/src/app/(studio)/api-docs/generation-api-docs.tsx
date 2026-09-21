@@ -77,7 +77,7 @@ export default function GenerationAPIDocs() {
   const chatExample = `curl ${shellQuote(`${chatBase}/chat/completions`)} \\\n  ${auth} \\\n  -H "Content-Type: application/json" \\\n  --data ${shellQuote(JSON.stringify({ model: "flowinglight/模型名", messages: [{ role: "user", content: "你好" }], stream: true }, null, 2))}`;
 
   return <main className={styles.page}>
-    <header className={styles.top}><span><Code2 size={18} />开发者文档 <b>GENERATION / V1</b></span><Link href="/account"><KeyRound size={15} />管理 API Key<ArrowUpRight size={14} /></Link></header>
+    <header className={styles.top}><span><Code2 size={18} />开发者文档 <b>GENERATION / V1</b></span><Link href="/api-usage">API 调用记录<ArrowUpRight size={14} /></Link><Link href="/account"><KeyRound size={15} />管理 API Key<ArrowUpRight size={14} /></Link></header>
     <div className={styles.layout}>
       <nav className={styles.toc} aria-label="文档目录"><span>生成 API</span>{sections.map(([id, title], i) => <a key={id} href={`#${id}`}><small>{String(i + 1).padStart(2, "0")}</small>{title}</a>)}<Link href="/studio">查看创作台记录 ↗</Link></nav>
       <article className={styles.article}>

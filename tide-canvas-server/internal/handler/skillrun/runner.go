@@ -550,10 +550,7 @@ func (s *service) executeGenerationStep(ctx context.Context, run *model.SkillRun
 		return s.completedStepResult(step)
 	}
 	if step.AiTaskID == 0 {
-		var publicInput json.RawMessage
-		if run.EntryPoint == "mcp" {
-			publicInput = mcpPublicGenerationInput(run.Input)
-		}
+		publicInput := mcpPublicGenerationInput(run.Input)
 		taskID, err := s.ai.Submit(ctx, run.UserID, ai.GenerationCommand{
 			IsAPICall: run.EntryPoint == "mcp", PublicInput: publicInput,
 			ProjectID: run.ProjectID, Handler: spec.Handler, ModelID: spec.ModelID, Input: input,

@@ -115,18 +115,21 @@ type taskQuery struct {
 
 // logQuery is the query string of GET /api/ai/logs (AiGenerationLogQuery).
 type logQuery struct {
-	PageNum       int      `form:"pageNum"`
-	PageSize      int      `form:"pageSize"`
-	TaskID        idgen.ID `form:"taskId"`
-	UserID        idgen.ID `form:"userId"`
-	ProjectID     idgen.ID `form:"projectId"`
-	HandlerName   string   `form:"handlerName"`
-	OperationType string   `form:"operationType"`
-	MediaType     string   `form:"mediaType"`
-	Keyword       string   `form:"keyword"`
-	Success       *int     `form:"success"`
-	StartDate     string   `form:"startDate"`
-	EndDate       string   `form:"endDate"`
+	// Only the safe /history DTO may expose paid workflow steps. Raw log and
+	// asset-list callers must keep their existing final-output policy.
+	IncludeSkillSteps bool     `form:"-"`
+	PageNum           int      `form:"pageNum"`
+	PageSize          int      `form:"pageSize"`
+	TaskID            idgen.ID `form:"taskId"`
+	UserID            idgen.ID `form:"userId"`
+	ProjectID         idgen.ID `form:"projectId"`
+	HandlerName       string   `form:"handlerName"`
+	OperationType     string   `form:"operationType"`
+	MediaType         string   `form:"mediaType"`
+	Keyword           string   `form:"keyword"`
+	Success           *int     `form:"success"`
+	StartDate         string   `form:"startDate"`
+	EndDate           string   `form:"endDate"`
 }
 
 // userHistoryQuery is intentionally narrower than logQuery. Public history

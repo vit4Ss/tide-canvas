@@ -1,0 +1,35 @@
+.panel { min-width: 0; color: var(--text); --usage-accent: var(--tech, var(--accent)); }
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 28px; }
+.eyebrow { display: flex; gap: 8px; align-items: center; color: var(--usage-accent); font: 11px var(--mono); letter-spacing: .08em; }
+.heading h1 { margin: 10px 0; font-size: 28px; letter-spacing: -.035em; font-weight: 650; }
+.heading p { margin: 0; font-size: 13px; color: var(--text-dim); line-height: 1.7; }
+.actions { display: flex; gap: 12px; align-items: center; flex-shrink: 0; }
+.panel button, .panel select, .panel input, .actions a, .empty a { border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text); padding: 8px 12px; font: inherit; font-size: 12px; min-height: 36px; }
+.panel button, .actions a { display: inline-flex; gap: 6px; align-items: center; justify-content: center; cursor: pointer; text-decoration: none; }
+.panel button:hover, .actions a:hover { border-color: var(--usage-accent); }
+.panel button:disabled { opacity: .45; cursor: default; }
+.panel :is(button, input, select, a):focus-visible { outline: 2px solid var(--usage-accent); outline-offset: 3px; }
+.metrics { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); background: var(--surface); border: 1px solid var(--border); border-top: 2px solid var(--usage-accent); border-radius: 8px; margin-bottom: 24px; padding: 20px 0; }
+.metrics > div { padding: 0 24px; border-right: 1px solid var(--border); min-width: 0; }.metrics > div:last-child { border: 0; }
+.metrics span { color: var(--text-dim); font-size: 12px; }.metrics strong { display: block; margin-top: 10px; font: 500 clamp(18px,1.8vw,26px) var(--mono); overflow-wrap: anywhere; }
+.metrics small { font: 12px var(--mono); color: var(--text-dim); margin-left: 8px; }
+.cost { color: var(--usage-accent); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.filters { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; padding: 0 0 20px; }
+.filters label { display: grid; gap: 7px; min-width: 100px; font-size: 11px; color: var(--text-dim); }.filters input { max-width: 170px; min-width: 0; }.filters select { max-width: 170px; }
+.filters .modelFilter { flex: 1; min-width: 190px; }.modelFilter > div { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border-strong); background: var(--surface); border-radius: 6px; padding-left: 10px; }.modelFilter input { border: 0; width: 100%; max-width: none; }
+.panel .primary { background: var(--text); color: var(--bg); border-color: var(--text); }
+.tableCaption { display: flex; justify-content: space-between; gap: 16px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-bottom: 0; border-radius: 8px 8px 0 0; font-size: 13px; }.tableCaption b { margin-left: 8px; font: 12px var(--mono); color: var(--usage-accent); }.tableCaption small { color: var(--text-dim); font-size: 11px; }
+.tableWrap { position: relative; overflow: auto; border: 1px solid var(--border); border-radius: 0 0 8px 8px; background: var(--surface); }
+.table { width: 100%; border-collapse: collapse; min-width: 1080px; text-align: left; font-size: 12px; line-height: 1.6; }
+.table th { background: var(--surface-2); color: var(--text-dim); font-weight: 500; padding: 12px 16px; white-space: nowrap; }
+.table td { border-top: 1px solid var(--border); padding: 16px; vertical-align: middle; }.table tbody tr:hover { background: var(--surface-2); }
+.table small { display: block; margin-top: 4px; font-size: 10px; color: var(--text-dim); }.table .key { display: flex; align-items: center; gap: 5px; color: var(--text-faint, var(--text-dim)); font-family: var(--mono); }
+.model { display: block; font-size: 13px; max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }.timestamp { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.badge { display: inline-block; white-space: nowrap; padding: 2px 7px; border-radius: 4px; font-size: 10px; border: 1px solid color-mix(in srgb,currentColor 24%, transparent); background: color-mix(in srgb,currentColor 8%, transparent); }
+.success { color: var(--success, var(--usage-accent)); }.active { color: var(--usage-accent); }.warning { color: var(--warning, var(--text)); }.error { color: var(--danger, var(--text)); }.muted { color: var(--text-dim); }
+.tokens { display: flex; gap: 12px; font: 12px var(--mono); }.tokens span { display: flex; align-items: center; gap: 4px; white-space: nowrap; }.tokens svg { color: var(--usage-accent); }.tokens span:last-child svg { color: var(--text-dim); }.table .cache { display: flex; align-items: center; gap: 5px; color: var(--usage-accent); font-family: var(--mono); }
+.protocol { font-size: 11px; }.panel .expand { padding: 6px; border-color: transparent; background: transparent; min-width: 32px; }
+.detail dl { display: grid; grid-template-columns: max-content minmax(0,1fr) max-content minmax(0,1fr); gap: 10px 20px; margin: 0; font-size: 12px; }.detail dt { color: var(--text-dim); }.detail dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }.detail p { color: var(--text-dim); font-size: 11px; margin: 14px 0 0; }
+.empty { padding: 48px 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--text-dim); text-align: center; font-size: 13px; }.empty strong { color: var(--text); font-weight: 500; }.empty svg { color: var(--usage-accent); }.empty button { cursor: pointer; }
+.pager { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 0; font-size: 11px; color: var(--text-dim); }.pager > div { display: flex; align-items: center; gap: 12px; }.pager button { padding: 6px; min-width: 34px; }
+@media(max-width: 800px) { .heading { align-items: flex-start; flex-direction: column; gap: 16px; }.metrics { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px 0; }.metrics > div:nth-child(2) { border: 0; }.metrics > div { padding: 0 16px; }.metrics strong { font-size: 19px; }.filters label { flex: 1; }.filters input, .filters select { width: 100%; max-width: none; }.tableCaption { align-items: flex-start; flex-direction: column; gap: 6px; }.pager { align-items: flex-start; flex-direction: column; }.pager > div { align-self: flex-end; } }

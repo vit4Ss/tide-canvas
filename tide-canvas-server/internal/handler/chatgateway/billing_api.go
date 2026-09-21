@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"tidecanvas/internal/app"
 	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
@@ -25,6 +26,11 @@ var errBillNotPending = errors.New("chatgateway: bill is not awaiting review")
 
 func (s *service) billingList(admin bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		c.Header("Cache-Control", "private, no-store")
+		if admin && !liveChatGatewayAdmin(c, s.d) {
+			response.Fail(c, response.CodeForbidden, "没有查看 Token 账单的权限")
+			return
+		}
 		page, _ := strconv.Atoi(c.DefaultQuery("pageNum", "1"))
 		size, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
 		if page < 1 {
@@ -62,7 +68,7 @@ func (s *service) billingList(admin bool) gin.HandlerFunc {
 			r := &rows[i]
 			var pricing any
 			_ = json.Unmarshal([]byte(r.PricingSnapshot), &pricing)
-			items = append(items, gin.H{"id": r.ID, "userId": r.UserID, "keyRevision": r.KeyRevision, "model": r.ModelKey, "status": r.Status, "points": tokenCostLabel(r.CostMicros), "reservedPoints": tokenCostLabel(r.ReservedMicros), "inputTokens": r.InputTokens, "outputTokens": r.OutputTokens, "cachedInputTokens": r.CachedInputTokens, "reasoningTokens": r.ReasoningTokens, "pricing": pricing, "errorCode": r.ErrorCode, "createTime": r.CreateTime, "resolution": r.BillingResolution})
+			items = append(items, gin.H{"id": r.ID, "userId": r.UserID, "keyRevision": r.KeyRevision, "model": r.ModelKey, "status": r.Status, "points": tokenCostLabel(settledTokenMicros(r)), "reservedPoints": tokenCostLabel(r.ReservedMicros), "inputTokens": r.InputTokens, "outputTokens": r.OutputTokens, "cachedInputTokens": r.CachedInputTokens, "reasoningTokens": r.ReasoningTokens, "pricing": pricing, "errorCode": r.ErrorCode, "createTime": r.CreateTime, "resolution": r.BillingResolution})
 		}
 		response.Page(c, items, count, page, size)
 	}
@@ -70,14 +76,38 @@ func (s *service) billingList(admin bool) gin.HandlerFunc {
 
 type billingResolve struct {
 	Action    string `json:"action" binding:"required,oneof=release settle"`
-	Input     int64  `json:"inputTokens"`
-	Output    int64  `json:"outputTokens"`
-	Cached    int64  `json:"cachedInputTokens"`
-	Reasoning int64  `json:"reasoningTokens"`
+	Input     *int64 `json:"inputTokens"`
+	Output    *int64 `json:"outputTokens"`
+	Cached    *int64 `json:"cachedInputTokens"`
+	Reasoning *int64 `json:"reasoningTokens"`
 	Reason    string `json:"reason" binding:"required,min=4,max=500"`
 }
 
+func liveChatGatewayAdmin(c *gin.Context, d *app.Deps) bool {
+	uid := middleware.CurrentUserID(c)
+	if uid == 0 {
+		return false
+	}
+	var user model.User
+	if err := d.DB.WithContext(c.Request.Context()).Select("id", "role", "role_id", "status").First(&user, "id = ?", uid).Error; err != nil || user.Status != 1 {
+		return false
+	}
+	if user.Role == middleware.AdminRole {
+		return true
+	}
+	for _, perm := range model.AdminPermsForUser(d.DB.WithContext(c.Request.Context()), &user) {
+		if perm == "admin.points" {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *service) resolveBilling(c *gin.Context) {
+	if !liveChatGatewayAdmin(c, s.d) {
+		response.Fail(c, response.CodeForbidden, "没有处理 Token 账单的权限")
+		return
+	}
 	id, err := idgen.Parse(c.Param("id"))
 	if err != nil {
 		response.Fail(c, 400, "账单 ID 无效")
@@ -99,11 +129,22 @@ func (s *service) resolveBilling(c *gin.Context) {
 		cost := int64(0)
 		status := "released"
 		if input.Action == "settle" {
+			if input.Input == nil || input.Output == nil {
+				return tokenbilling.ErrUsage
+			}
+			// OpenAI treats absent cache/reasoning counts as zero. Input and
+			// output, however, must be supplied explicitly (zero is valid).
+			if input.Cached == nil {
+				input.Cached = new(int64)
+			}
+			if input.Reasoning == nil {
+				input.Reasoning = new(int64)
+			}
 			pricing, err := tokenbilling.Parse(`{"tokenPricing":` + row.PricingSnapshot + `}`)
 			if err != nil {
 				return err
 			}
-			usage, err := tokenbilling.ParseUsage(map[string]any{"prompt_tokens": input.Input, "completion_tokens": input.Output, "prompt_tokens_details": map[string]any{"cached_tokens": input.Cached}, "completion_tokens_details": map[string]any{"reasoning_tokens": input.Reasoning}})
+			usage, err := tokenbilling.ParseUsage(map[string]any{"prompt_tokens": *input.Input, "completion_tokens": *input.Output, "prompt_tokens_details": map[string]any{"cached_tokens": *input.Cached}, "completion_tokens_details": map[string]any{"reasoning_tokens": *input.Reasoning}})
 			if err != nil {
 				return err
 			}
@@ -122,7 +163,15 @@ func (s *service) resolveBilling(c *gin.Context) {
 		if err := points.ChangeMicros(tx, row.UserID, -cost, points.ChangeConsume, "Token 用量核对结算："+row.ModelKey, row.ID); err != nil {
 			return err
 		}
-		return tx.Model(&row).Updates(map[string]any{"status": status, "cost_micros": cost, "input_tokens": input.Input, "output_tokens": input.Output, "cached_input_tokens": input.Cached, "reasoning_tokens": input.Reasoning, "error_code": "", "billing_resolution": strings.TrimSpace(input.Reason), "billing_resolved_by": middleware.CurrentUserID(c), "billing_resolved_at": time.Now()}).Error
+		updates := map[string]any{"status": status, "cost_micros": cost, "error_code": "", "billing_resolution": strings.TrimSpace(input.Reason), "billing_resolved_by": middleware.CurrentUserID(c), "billing_resolved_at": time.Now()}
+		// Releasing a hold does not verify/replace token usage. Ignore the form's
+		// stale count inputs, which are only validated for an actual settlement.
+		if input.Action == "settle" {
+			updates["usage_known"] = true
+			updates["input_tokens"], updates["output_tokens"] = *input.Input, *input.Output
+			updates["cached_input_tokens"], updates["reasoning_tokens"] = *input.Cached, *input.Reasoning
+		}
+		return tx.Model(&row).Updates(updates).Error
 	})
 	if err != nil {
 		// Only the operator-facing reasons are echoed. Pricing/usage/ORM errors

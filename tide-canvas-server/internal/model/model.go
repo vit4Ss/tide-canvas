@@ -739,6 +739,13 @@ func (AiTask) TableName() string { return "ai_tasks" }
 
 // AiGenerationLog records an upstream generation request/response for auditing.
 type AiGenerationLog struct {
+	// Safe history snapshots survive task deletion without exposing provider
+	// bodies or depending on a Skill's current editable configuration.
+	Origin         string    `gorm:"size:16" json:"-"`
+	OutputRole     string    `gorm:"size:32" json:"-"`
+	PointCost      *int64    `json:"-"`
+	PublicResult   string    `gorm:"type:longtext" json:"-"`
+	InputSanitized bool      `gorm:"not null;default:false" json:"-"`
 	IsAPICall      bool      `gorm:"not null;default:false" json:"isApiCall"`
 	ID             idgen.ID  `gorm:"primaryKey;autoIncrement:false" json:"id"`
 	TaskID         idgen.ID  `gorm:"index" json:"taskId"`
