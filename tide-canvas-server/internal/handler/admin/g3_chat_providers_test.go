@@ -265,8 +265,10 @@ func TestChatModelDiscoveryOnlyAdds(t *testing.T) {
 	if err := f.h.db.First(&fresh, "model_key = ?", "fresh").Error; err != nil {
 		t.Fatalf("the new model was not recorded: %v", err)
 	}
-	if fresh.Enabled || fresh.Pricing != "" || fresh.DiscoveredAt == nil {
-		t.Fatalf("a newly discovered model arrived on sale: %+v", fresh)
+	// No default price on this provider, so the model cannot be sold yet and
+	// stays closed; images are on by default regardless.
+	if fresh.Enabled || !fresh.Vision || fresh.Pricing != "" || fresh.DiscoveredAt == nil {
+		t.Fatalf("an unpriced discovered model arrived on sale: %+v", fresh)
 	}
 }
 

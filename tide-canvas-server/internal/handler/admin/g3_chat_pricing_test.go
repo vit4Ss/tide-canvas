@@ -70,8 +70,10 @@ func TestDefaultPricingFillsUnpricedModelsAndFeedsDiscovery(t *testing.T) {
 	if err := f.h.db.First(&fresh, "model_key = ?", "fresh").Error; err != nil {
 		t.Fatal(err)
 	}
-	if fresh.Pricing != defaultPricingBody || fresh.Enabled {
-		t.Fatalf("a discovered model did not inherit the default, or arrived on sale: %+v", fresh)
+	// With a default price to bill at, a discovered model goes straight on sale,
+	// and it accepts images until the operator says otherwise.
+	if fresh.Pricing != defaultPricingBody || !fresh.Enabled || !fresh.Vision {
+		t.Fatalf("a discovered model did not inherit the default and open: %+v", fresh)
 	}
 
 	// The list shows the operator both numbers: what they listed and what the

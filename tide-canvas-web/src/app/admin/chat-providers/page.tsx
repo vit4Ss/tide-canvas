@@ -861,7 +861,7 @@ function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy:
     : "没有匹配的模型，换个关键词或筛选试试。";
 
   const desc = provider.models.length === 0
-    ? "拉取后默认未开放；填好单价才能开放给用户"
+    ? "拉到的模型默认接受图片；有默认单价时自动开放，否则先填单价"
     : counts.unpriced > 0
       ? `${counts.unpriced} 个尚未定价，未定价的模型不能开放`
       : counts.open > 0
@@ -1246,7 +1246,7 @@ function CreateProviderModal({
         } else {
           const fetched = await adminChatProvidersApi.fetchModels(created.data.id);
           if (fetched.success && fetched.data) {
-            toast.success(input ? `已新增供应商，拉到 ${fetched.data.total} 个模型，已按默认单价定价；打开「开放」即可` : `已新增供应商，拉到 ${fetched.data.total} 个模型；填好单价后即可开放`);
+            toast.success(input ? `已新增供应商，拉到 ${fetched.data.total} 个模型，已按默认单价定价并开放` : `已新增供应商，拉到 ${fetched.data.total} 个模型；填好单价后即可开放`);
           } else {
             toast.info(`已新增供应商和接入地址；拉取模型失败：${fetched.message || "请稍后重试"}`);
           }

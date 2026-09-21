@@ -104,13 +104,17 @@ func (h *chatProvidersHandler) fetchModels(c *gin.Context) {
 	// Discovery only adds. An operator's name, price and enabled state are their
 	// decisions, and a re-fetch must not quietly undo them or drop a model the
 	// upstream stopped advertising but users are still on.
+	//
+	// A new model starts open wherever the rules allow it: images on, and
+	// enabled when the provider has a default price to bill it at. Without a
+	// price it stays closed, since an unpriced model cannot be served.
 	now := time.Now()
 	added := 0
 	for _, key := range keys {
 		if known[key] {
 			continue
 		}
-		row := model.ChatModel{ProviderID: providerID, ModelKey: key, Name: key, Enabled: false, Pricing: defaultPricing, DiscoveredAt: &now}
+		row := model.ChatModel{ProviderID: providerID, ModelKey: key, Name: key, Enabled: defaultPricing != "", Vision: true, Pricing: defaultPricing, DiscoveredAt: &now}
 		if err := h.db.WithContext(c.Request.Context()).Create(&row).Error; err != nil {
 			response.Fail(c, response.CodeServerError, "保存模型失败")
 			return
