@@ -3,109 +3,52 @@
    只补这一页需要的排布。颜色、圆角、按钮、输入框、表格、状态胶囊都沿用
    admin.css 的变量与组件类，这里不引入新的色值。
 
-   三层的视觉分工：
-   - 供应商是一个独立区块，头部放名称、计数与开关，是页面上最重的一级；
-   - 接入地址是区块内的一张短列表（通常一到三行），用网格对齐而不是表格；
-   - 模型是区块内的一张数据表，交给 AdminTable。 */
+   主从布局：一个白色表面切成两列。左列是供应商清单（稍暗的底色），右列是
+   选中供应商的设置页——三段内容用留白和 hairline 分隔，不再一段一张卡。
 
-.cp-list {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
+   节奏与尺度（全页只用这几个值）：
+   - 间距 4 / 8 / 12 / 16 / 24 / 32 / 40；行高 48（上下各 12 内边距）
+   - 字号 18（供应商名）/ 14（段标题）/ 13（正文与值）/ 12（说明与次级）
+   - 控件高度 32（按钮、输入框）/ 28（列表内的小输入框与图标按钮）
+   - 所有控件靠右列对齐：头部开关、段工具、地址行开关、定价输入、表格开关 */
+
+.cp-page {
+  flex: 1;
+  min-height: 0;
 }
 
-/* ---------------------------------------------------------------- provider */
-
-.cp-provider {
+.cp-split {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  align-items: stretch;
+  min-height: 560px;
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   background: var(--surface);
   overflow: hidden;
 }
 
-.cp-provider.is-off .cp-section {
-  opacity: 0.72;
-}
+/* ---------------------------------------------------------------- nav */
 
-.cp-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 24px;
-  padding: 20px 24px;
-  border-bottom: 1px solid var(--border);
-}
-
-.cp-ident {
-  min-width: 0;
+.cp-nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  min-width: 0;
+  background: var(--surface-2);
+  border-right: 1px solid var(--border);
 }
 
-.cp-meta {
-  display: flex;
-  gap: 8px;
-  white-space: nowrap;
-}
-
-/* Quiet count chips: the numbers matter, the words are labels. */
-.cp-meta > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 26px;
-  padding: 0 10px;
-  border-radius: var(--r-sm);
-  background: var(--panel);
-  color: var(--text-faint);
-  font-size: 12px;
-}
-
-.cp-meta strong {
-  color: var(--text);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.cp-meta > span.is-live strong {
-  color: var(--accent-strong);
-}
-
-.cp-acts {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.cp-switch {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--text-dim);
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-/* ---------------------------------------------------------------- sections */
-
-.cp-section {
-  padding: 16px 24px 20px;
-}
-
-.cp-section + .cp-section {
-  border-top: 1px solid var(--border-weak);
-}
-
-.cp-section-head {
+.cp-nav-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 12px;
+  gap: 8px;
+  height: 56px;
+  padding: 0 12px 0 20px;
+  border-bottom: 1px solid var(--border);
 }
 
-.cp-section-head h4 {
+.cp-nav-head h2 {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -113,6 +56,220 @@
   font-size: 13px;
   font-weight: 600;
   color: var(--text-dim);
+}
+
+.cp-nav-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.cp-nav-add:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.cp-nav-add:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.cp-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  overflow-y: auto;
+}
+
+.cp-nav-none {
+  margin: 0;
+  padding: 24px 20px;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+.cp-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: var(--r);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.cp-nav-item:hover {
+  background: var(--surface-hover);
+}
+
+.cp-nav-item.on {
+  background: var(--accent-soft);
+}
+
+.cp-nav-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.cp-nav-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.cp-nav-item.on .cp-nav-name {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.cp-nav-item.is-off .cp-nav-name {
+  color: var(--text-faint);
+}
+
+.cp-nav-sub {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-nav-sub b {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.cp-nav-item.on .cp-nav-sub b {
+  color: var(--accent-strong);
+}
+
+.cp-nav-sub em {
+  font-style: normal;
+  color: var(--danger);
+}
+
+/* ---------------------------------------------------------------- detail */
+
+.cp-detail {
+  min-width: 0;
+}
+
+.cp-detail-body {
+  padding: 0 32px 32px;
+}
+
+.cp-detail-body.is-off .cp-sec {
+  opacity: 0.72;
+}
+
+.cp-detail-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 480px;
+}
+
+.cp-dhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 56px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.cp-ident {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.cp-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- sections */
+
+/* Heading rhythm: 40 above a section title, 16 below it, so each section
+   reads as one block before its rows begin. */
+.cp-sec {
+  padding-top: 24px;
+}
+
+.cp-sec + .cp-sec {
+  margin-top: 16px;
+  border-top: 1px solid var(--border-weak);
+}
+
+.cp-sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 40px;
+  margin-bottom: 16px;
+}
+
+.cp-sec-title {
+  min-width: 0;
+}
+
+.cp-sec-title h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-title);
+}
+
+.cp-sec-title p {
+  margin: 4px 0 0;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.cp-sec-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.cp-sec-tools .adm-btn,
+.cp-model-bulk .adm-btn,
+.cp-danger .adm-btn {
+  min-height: var(--control-sm);
+  padding: 0 12px;
+  font-size: 13px;
 }
 
 .cp-n {
@@ -130,11 +287,35 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* An empty list keeps the list's top rule and row padding, so the section
+   does not change shape when the first row arrives. */
 .cp-none {
   margin: 0;
-  padding: 20px 0 4px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--border-weak);
   color: var(--text-faint);
   font-size: 13px;
+}
+
+/* A quiet text action: the words are the control. */
+.cp-linkbtn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-strong);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-underline-offset: 3px;
+}
+
+.cp-linkbtn:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.cp-linkbtn:disabled {
+  color: var(--text-faint);
+  cursor: default;
 }
 
 /* ---------------------------------------------------------------- inline edit */
@@ -144,7 +325,7 @@
 .cp-inline {
   width: 100%;
   min-width: 0;
-  padding: 4px 8px;
+  padding: 2px 8px;
   margin: 0 -8px;
   border: 1px solid transparent;
   border-radius: var(--r-sm);
@@ -171,9 +352,10 @@
 }
 
 .cp-name {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
   color: var(--text-title);
+  letter-spacing: -0.01em;
 }
 
 .cp-remark {
@@ -181,130 +363,60 @@
   color: var(--text-faint);
 }
 
-/* ---------------------------------------------------------------- pricing rules */
-
-.cp-rules {
-  display: grid;
-  grid-template-columns: repeat(3, 160px) minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
-}
-
-.cp-rules-note {
-  margin: 0;
-  padding-top: 18px;
-  color: var(--text-faint);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.cp-rules-note b {
-  color: var(--text);
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-
-.cp-price-hint {
-  grid-column: 1 / -1;
-  margin: 2px 0 0;
-  color: var(--text-faint);
-  font-size: 11px;
-  line-height: 1.4;
-  font-variant-numeric: tabular-nums;
-}
-
-.cp-price-hint b {
-  color: var(--text);
-  font-weight: 500;
-  font-family: var(--mono);
-}
-
 /* ---------------------------------------------------------------- endpoints */
 
-.cp-endpoints {
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  overflow: hidden;
-}
-
-.cp-endpoint {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) 200px 180px 56px 40px;
-  align-items: center;
-  gap: 16px;
-  padding: 12px 16px;
+.cp-eps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   border-top: 1px solid var(--border-weak);
 }
 
-.cp-endpoint:first-child {
-  border-top: 0;
-}
-
-.cp-endpoint-cols {
-  padding: 8px 16px;
-  background: var(--panel);
-  color: var(--text-faint);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.cp-order {
-  display: flex;
+/* Columns: address · credential · health · switch · actions. Every row puts
+   the same thing in the same column, so three addresses read as a table
+   without needing a header. */
+.cp-ep {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) auto 200px auto 84px;
   align-items: center;
-  gap: 6px;
+  gap: 24px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-weak);
 }
 
-.cp-order strong {
-  color: var(--text-dim);
+.cp-ep:has(.cp-ep-order) {
+  grid-template-columns: 16px minmax(200px, 1fr) auto 200px auto 84px;
+}
+
+.cp-ep:last-child {
+  border-bottom: 0;
+}
+
+.cp-ep.is-off .cp-ep-main,
+.cp-ep.is-off .cp-ep-key,
+.cp-ep.is-off .cp-ep-health {
+  opacity: 0.6;
+}
+
+.cp-ep-order {
+  color: var(--text-faint);
   font-family: var(--mono);
   font-size: 12px;
-  font-weight: 500;
   font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 
-.cp-move-group {
-  display: inline-flex;
-  flex-direction: column;
-}
-
-.cp-move {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 14px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--text-faint);
-  cursor: pointer;
-}
-
-.cp-move:hover:not(:disabled) {
-  background: var(--surface-hover);
-  color: var(--text-dim);
-}
-
-.cp-move:disabled {
-  opacity: 0.3;
-  cursor: default;
-}
-
-.cp-addr {
+.cp-ep-main {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .cp-url {
   font-family: var(--mono);
   font-size: 13px;
   color: var(--text);
-}
-
-.cp-addr {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 
 .cp-label {
@@ -319,19 +431,54 @@
   line-height: 1.5;
 }
 
-.cp-keycell {
+.cp-ep-key {
   min-width: 0;
 }
 
 .cp-key {
-  width: 100%;
-  height: var(--control-sm);
-  font-family: var(--mono);
-  letter-spacing: 0.08em;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
 }
 
-.cp-keycell small,
-.cp-health small {
+.cp-key .is-warn {
+  color: var(--warn-strong);
+}
+
+.cp-key-edit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cp-key-edit input {
+  width: 168px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  color: var(--text);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+}
+
+.cp-key-edit input:focus {
+  outline: none;
+}
+
+.cp-ep-health {
+  min-width: 0;
+}
+
+.cp-ep-health small {
   display: block;
   margin-top: 4px;
   color: var(--text-faint);
@@ -341,23 +488,147 @@
   white-space: nowrap;
 }
 
-.cp-health {
-  min-width: 0;
+.cp-ep-acts {
+  justify-self: end;
 }
 
-.cp-toggle {
-  display: flex;
+.cp-ep-acts button,
+.cp-models .rowacts button {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
 }
 
-.cp-rowact {
+.cp-ep-acts button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ---------------------------------------------------------------- pricing rules */
+
+/* Settings rows: the label and its explanation on the left, the control on the
+   right edge — the same edge the switches and buttons above and below sit on. */
+.cp-rules {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  border-top: 1px solid var(--border-weak);
 }
 
-.cp-icon {
-  padding: 0 8px;
+.cp-rule {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-weak);
+}
+
+.cp-rule:last-child {
+  border-bottom: 0;
+}
+
+.cp-rule-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
+}
+
+.cp-rule-label > span {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.cp-rule-label small {
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* Controls share one left edge across rows, like a value column. */
+.cp-rule-ctl {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 440px;
+}
+
+.cp-unit {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cp-unit b {
+  color: var(--text);
+  font-weight: 500;
+  font-family: var(--mono);
+}
+
+/* A number field with its label beside it, for prices and limits. */
+.cp-num {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cp-num > span {
+  color: var(--text-faint);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.cp-num input {
+  width: 96px;
+  height: var(--control-sm);
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  text-align: right;
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+.cp-num input:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.cp-num input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.cp-num input::placeholder {
+  color: var(--text-placeholder);
+  font-family: var(--ui);
+}
+
+.cp-num.is-limit input {
+  color: var(--text-dim);
+}
+
+/* Spin buttons make numbers wobble under the pointer; the value is what matters. */
+.cp-num input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.cp-num input[type="number"]::-webkit-inner-spin-button,
+.cp-num input[type="number"]::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
 }
 
 /* ---------------------------------------------------------------- models */
@@ -366,7 +637,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .cp-model-tools .adm-search {
@@ -378,7 +649,7 @@
 .cp-model-tools .adm-chip small,
 .cp-model-bulk .adm-btn small {
   margin-left: 6px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
   opacity: 0.7;
   font-variant-numeric: tabular-nums;
@@ -390,15 +661,85 @@
   margin-left: auto;
 }
 
+/* The table is the one framed element in the detail: hairline around, so its
+   header row does not float on the page background. */
+.cp-models-wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+
+.cp-models-wrap .adm-table-wrap .adm-table {
+  min-width: 760px;
+}
+
+.cp-models tr:last-child td {
+  border-bottom: 0;
+}
+
+.cp-models .cp-th-hint {
+  margin-left: 8px;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.cp-models td {
+  vertical-align: middle;
+}
+
+.cp-models .rowacts {
+  opacity: 0;
+}
+
+.cp-models tr:hover .rowacts,
+.cp-models .rowacts:focus-within {
+  opacity: 1;
+}
+
+.cp-model {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cp-model-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* Second line: the key, and — only when another provider offers the same
+   model — which one a call goes to first. */
+.cp-model-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 22px;
+}
+
+.cp-model-key {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.cp-model-sub .cp-linkbtn {
+  flex: none;
+  white-space: nowrap;
+}
+
 /* Price at rest: reads as two numbers, becomes an editor on click. */
-.cp-price-view {
+.cp-price {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 3px;
+  gap: 2px;
   width: 100%;
-  padding: 6px 8px;
-  margin: -6px -8px;
+  padding: 4px 8px;
+  margin: -4px -8px;
   border: 1px solid transparent;
   border-radius: var(--r-sm);
   background: transparent;
@@ -409,39 +750,24 @@
   transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 
-.cp-price-view:hover:not(:disabled),
-.cp-price-view:focus-visible {
+.cp-price:hover:not(:disabled) {
   border-color: var(--border);
   background: var(--surface);
 }
 
-.cp-price-view:focus-visible {
+.cp-price:focus-visible {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-.cp-price-view.is-empty {
+.cp-price:disabled {
   cursor: default;
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-}
-
-.cp-price-view.is-empty > small {
-  color: var(--text-faint);
-  font-size: 12px;
-}
-
-.cp-price-fill {
-  height: 28px;
-  padding: 0 10px;
-  font-size: 12px;
 }
 
 .cp-price-main {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
   font-family: var(--mono);
   font-size: 14px;
@@ -458,11 +784,10 @@
   color: var(--text-faint);
 }
 
-.cp-price-main small {
-  font-family: inherit;
-  font-size: 11px;
+.cp-price-none {
+  font-family: var(--ui);
+  font-size: 13px;
   color: var(--text-faint);
-  margin-left: 2px;
 }
 
 .cp-price-pen {
@@ -471,13 +796,13 @@
   transition: opacity var(--dur-fast) var(--ease);
 }
 
-.cp-price-view:hover .cp-price-pen,
-.cp-price-view:focus-visible .cp-price-pen {
+.cp-price:hover .cp-price-pen,
+.cp-price:focus-visible .cp-price-pen {
   opacity: 1;
 }
 
 .cp-price-sub {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
@@ -488,82 +813,34 @@
   color: var(--text-dim);
 }
 
-.cp-models .cp-th-hint {
-  display: block;
-  margin-top: 2px;
-  font-weight: 400;
-  font-size: 11px;
-  color: var(--text-faint);
+.cp-price-sub.is-warn {
+  color: var(--danger);
 }
 
-.cp-models td {
-  vertical-align: middle;
-}
-
-.cp-model {
+.cp-price-edit {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
 }
 
-.cp-model-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text);
+.cp-price-edit .cp-num input {
+  width: 88px;
 }
 
-.cp-model-key {
-  font-family: var(--mono);
+.cp-price-hint {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--text-faint);
   font-size: 12px;
-  color: var(--text-faint);
-}
-
-.cp-price {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.cp-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.cp-field > span {
-  color: var(--text-faint);
-  font-size: 11px;
-  line-height: 1.2;
-  white-space: nowrap;
-}
-
-.cp-field input {
-  width: 100%;
-  min-width: 0;
-  height: var(--control-sm);
-  padding: 0 8px;
-  text-align: right;
-  font-family: var(--mono);
-  font-size: 13px;
+  line-height: 1.5;
   font-variant-numeric: tabular-nums;
 }
 
-.cp-field-limit input {
-  color: var(--text-dim);
-}
-
-/* Spin buttons make numbers wobble under the pointer; the value is what matters. */
-.cp-field input[type="number"] {
-  appearance: textfield;
-  -moz-appearance: textfield;
-}
-
-.cp-field input[type="number"]::-webkit-inner-spin-button,
-.cp-field input[type="number"]::-webkit-outer-spin-button {
-  appearance: none;
-  margin: 0;
+.cp-price-hint b {
+  color: var(--text);
+  font-weight: 500;
+  font-family: var(--mono);
 }
 
 .cp-open {
@@ -572,32 +849,76 @@
   justify-content: center;
 }
 
+/* ---------------------------------------------------------------- danger */
+
+.cp-danger {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 40px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-weak);
+}
+
+.cp-danger small {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
 /* ---------------------------------------------------------------- narrow */
 
 @media (max-width: 1100px) {
-  .cp-head {
-    grid-template-columns: minmax(0, 1fr);
+  .cp-ep,
+  .cp-ep:has(.cp-ep-order) {
+    grid-template-columns: minmax(0, 1fr) auto 84px;
+    row-gap: 8px;
   }
 
-  .cp-acts {
-    justify-content: space-between;
-  }
-
-  .cp-endpoint {
-    grid-template-columns: 56px minmax(0, 1fr) 160px 56px 40px;
-  }
-
-  .cp-endpoint > .cp-health,
-  .cp-endpoint-cols > :nth-child(4) {
+  .cp-ep-order {
     display: none;
   }
 
-  .cp-price {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .cp-ep-main {
+    grid-row: 1;
+    grid-column: 1;
   }
 
-  .cp-rules {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .cp-ep > .sw-toggle {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+  .cp-ep-acts {
+    grid-row: 1;
+    grid-column: 3;
+  }
+
+  .cp-ep-key {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+
+  .cp-ep-health {
+    grid-row: 3;
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .cp-ep-health small {
+    margin-top: 0;
+  }
+
+  .cp-rule {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .cp-rule-ctl {
+    flex: 0 1 auto;
+    flex-wrap: wrap;
   }
 
   .cp-model-tools {
@@ -611,33 +932,42 @@
   .cp-model-bulk {
     margin-left: 0;
   }
+}
 
-  .cp-rules-note {
-    grid-column: 1 / -1;
-    padding-top: 0;
+@media (max-width: 900px) {
+  .cp-split {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
   }
-}
 
-/* Same model under several providers: which one a call goes to first. Shown
-   only where there is a choice to make. */
-.cp-rival {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-  min-width: 0;
-}
+  .cp-nav {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
 
-.cp-rival small {
-  color: var(--text-faint);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+  .cp-nav-list {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
 
-.cp-prefer {
-  height: 24px;
-  padding: 0 8px;
-  font-size: 12px;
+  .cp-nav-item {
+    flex: 0 0 auto;
+    min-width: 180px;
+    max-width: 260px;
+  }
+
+  .cp-detail-body {
+    padding: 0 20px 24px;
+  }
+
+  .cp-dhead {
+    flex-wrap: wrap;
+  }
+
+  .cp-danger {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
 }
