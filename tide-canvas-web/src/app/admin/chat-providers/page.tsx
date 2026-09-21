@@ -358,13 +358,14 @@ function ProviderDetail({
       <PricingSection provider={provider} busy={busy} run={run} />
       <ModelSection provider={provider} busy={busy} run={run} />
 
-      <footer className="cp-danger">
+      {/* A div, not <footer>: the site theme paints a bare <footer> as the black brand strip. */}
+      <div className="cp-danger">
         <button type="button" className="adm-btn ghost danger" disabled={!!busy} onClick={() => void remove()}>
           <Trash2 aria-hidden size={14} />
           删除供应商
         </button>
         <small>连同全部接入地址与模型一起删除，已开放的模型会立刻从聊天里消失。</small>
-      </footer>
+      </div>
     </div>
   );
 }
