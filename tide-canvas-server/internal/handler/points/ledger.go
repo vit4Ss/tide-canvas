@@ -26,6 +26,10 @@ var ErrInsufficient = errors.New("points: insufficient balance")
 // another credit would violate the exactly-once guarantee.
 var ErrRefundConflict = errors.New("points: refund receipt conflict")
 
+// Roll back a newly claimed receipt when the task is already settled without
+// a credit. Returning nil inside the transaction would commit a phantom refund.
+var errRefundSettled = errors.New("points: task settled without refund")
+
 // Ledger ChangeType values written to PointRecord.ChangeType.
 const (
 	ChangeConsume = "consume"
@@ -117,31 +121,8 @@ func refund(db *gorm.DB, userID idgen.ID, amount int, remark string, refID idgen
 	}
 	credited := false
 	err := db.Transaction(func(tx *gorm.DB) error {
-		// Rolling deployments before PointRefundReceipt may already have the
-		// positive refund ledger row. Backfill the receipt and never credit twice.
-		if refID != 0 && allowSettled {
-			var legacyCount int64
-			if err := tx.Model(&model.PointRecord{}).
-				Where("user_id = ? AND change_type = ? AND ref_id = ? AND amount = ?", userID, ChangeRefund, refID, amount).
-				Count(&legacyCount).Error; err != nil {
-				return err
-			}
-			if legacyCount > 0 {
-				receipt := model.PointRefundReceipt{RefID: refID, UserID: userID, Amount: amount}
-				if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&receipt).Error; err != nil {
-					return err
-				}
-				var existing model.PointRefundReceipt
-				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&existing, "ref_id = ?", refID).Error; err != nil {
-					return err
-				}
-				if existing.UserID != userID || existing.Amount != amount {
-					return ErrRefundConflict
-				}
-				return tx.Unscoped().Model(&model.AiTask{}).Where("id = ?", refID).Update("refunded", true).Error
-			}
-		}
-
+		// Claim before reading the ledger so concurrent refunds serialize before
+		// any snapshot is created, including on SQLite.
 		claimedReceipt := false
 		if refID != 0 {
 			claimID := idgen.Next()
@@ -170,10 +151,40 @@ func refund(db *gorm.DB, userID idgen.ID, amount int, remark string, refID idgen
 					return ErrRefundConflict
 				}
 				if task.Refunded && !allowSettled {
+					if claimedReceipt {
+						return errRefundSettled
+					}
 					return nil
 				}
 			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 				return err
+			}
+		}
+		if allowSettled && refID != 0 {
+			// The receipt lock may have waited for another worker to commit.
+			// MySQL's REPEATABLE READ snapshot can still predate that credit;
+			// a locking read sees the current ledger. Check even newly claimed
+			// receipts: legacy workers wrote only the ledger. Hidden rows count too.
+			var legacyRefund model.PointRecord
+			err := tx.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").
+				Where("user_id = ? AND change_type = ? AND ref_id = ? AND amount = ?", userID, ChangeRefund, refID, amount).
+				Take(&legacyRefund).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			if err == nil {
+				if taskExists {
+					return tx.Unscoped().Model(&model.AiTask{}).Where("id = ?", refID).Update("refunded", true).Error
+				}
+				return nil
+			}
+			if !claimedReceipt {
+				// Repair the locked phantom claim in the same transaction as the
+				// credit; removing and recreating the receipt is unnecessary.
+				if err := tx.Model(&model.PointRefundReceipt{}).Where("ref_id = ?", refID).Update("claim_id", idgen.Next()).Error; err != nil {
+					return err
+				}
+				claimedReceipt = true
 			}
 		}
 		if refID != 0 && !claimedReceipt {
@@ -194,7 +205,10 @@ func refund(db *gorm.DB, userID idgen.ID, amount int, remark string, refID idgen
 		}
 		return nil
 	})
-	return credited, err
+	if errors.Is(err, errRefundSettled) {
+		return false, nil
+	}
+	return credited && err == nil, err
 }
 
 // GrantSignup grants the admin-configured signup bonus to a freshly created

@@ -12,7 +12,7 @@
    哪家出了问题，点进去改一处即保存（InlineText / PriceCell 都是点击即编辑）。
 
    三层结构：供应商 → 接入地址（可多组，按顺序尝试，前一组连不上换下一组）
-   → 模型（拉取后默认未开放，填好每百万 Token 单价才能开放）。
+   → 模型（拉取即按默认单价定价并开放，运营再按需改价或收回）。
 
    页面沿用后台的组件与样式体系（AdminModal / AdminTable / StatusPill /
    confirmDialog），不使用浏览器原生弹窗。
@@ -673,6 +673,7 @@ function KeyCell({ endpoint, busy, run }: { endpoint: ChatEndpointVO; busy: stri
 // copied into this provider's unpriced models (the server reports how many),
 // the multiplier scales every model's listed price at sale time.
 function PricingSection({ provider, busy, run }: { provider: ChatProviderVO; busy: string; run: Run }) {
+  const fallback = provider.fallbackPricing;
   const saved = {
     input: provider.defaultPricing?.inputPointsPerMillion ?? "",
     output: provider.defaultPricing?.outputPointsPerMillion ?? "",
@@ -716,9 +717,10 @@ function PricingSection({ provider, busy, run }: { provider: ChatProviderVO; bus
   const multiplier = draft.multiplier.trim();
   const factor = Number(multiplier);
   const validFactor = !atList(multiplier) && Number.isFinite(factor) && factor > 0;
-  const preview = validFactor && draft.input.trim() && draft.output.trim()
-    ? `${trimZeros(Number(draft.input) * factor)} / ${trimZeros(Number(draft.output) * factor)}`
-    : "";
+  // Blank fields mean the built-in default, so the preview prices that.
+  const effectiveInput = draft.input.trim() || fallback.inputPointsPerMillion;
+  const effectiveOutput = draft.output.trim() || fallback.outputPointsPerMillion;
+  const preview = validFactor ? `${trimZeros(Number(effectiveInput) * factor)} / ${trimZeros(Number(effectiveOutput) * factor)}` : "";
 
   return (
     <section className="cp-sec" aria-label="定价规则">
@@ -733,15 +735,15 @@ function PricingSection({ provider, busy, run }: { provider: ChatProviderVO; bus
         <div className="cp-rule">
           <div className="cp-rule-label">
             <span>默认单价</span>
-            <small>新拉取和尚未定价的模型自动使用，已填过的不动</small>
+            <small>留空按内置默认 {fallback.inputPointsPerMillion} / {fallback.outputPointsPerMillion}；拉取和开放时补价的模型都用它</small>
           </div>
           <div className="cp-rule-ctl">
             <label className="cp-num">
-              <input inputMode="decimal" value={draft.input} disabled={!!busy} placeholder="未设置" onChange={(e) => setDraft({ ...draft, input: e.target.value })} onKeyDown={onKey} />
+              <input inputMode="decimal" value={draft.input} disabled={!!busy} placeholder={fallback.inputPointsPerMillion} onChange={(e) => setDraft({ ...draft, input: e.target.value })} onKeyDown={onKey} />
               <span>输入</span>
             </label>
             <label className="cp-num">
-              <input inputMode="decimal" value={draft.output} disabled={!!busy} placeholder="未设置" onChange={(e) => setDraft({ ...draft, output: e.target.value })} onKeyDown={onKey} />
+              <input inputMode="decimal" value={draft.output} disabled={!!busy} placeholder={fallback.outputPointsPerMillion} onChange={(e) => setDraft({ ...draft, output: e.target.value })} onKeyDown={onKey} />
               <span>输出</span>
             </label>
             <span className="cp-unit">积分 / 1M Token</span>
@@ -760,7 +762,7 @@ function PricingSection({ provider, busy, run }: { provider: ChatProviderVO; bus
             <span className="cp-unit">
               {preview ? (
                 <>
-                  按默认单价实收 <b>{preview}</b>
+                  按当前默认单价实收 <b>{preview}</b>
                 </>
               ) : validFactor ? (
                 `各模型按原价 × ${multiplier} 结算`
@@ -789,7 +791,7 @@ function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy:
       async () => {
         const res = await adminChatProvidersApi.fetchModels(provider.id);
         if (res.success && res.data) {
-          toast.info(`上游共 ${res.data.total} 个模型，新增 ${res.data.added} 个`);
+          toast.info(`上游共 ${res.data.total} 个模型，新增 ${res.data.added} 个${res.data.filled ? `，补价并开放 ${res.data.filled} 个` : ""}`);
         }
         return res;
       },
@@ -810,7 +812,7 @@ function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy:
   const counts = useMemo(() => {
     const open = provider.models.filter((m) => m.enabled).length;
     const unpriced = provider.models.filter((m) => !m.pricing).length;
-    const ready = provider.models.filter((m) => m.pricing && !m.enabled).length;
+    const ready = provider.models.filter((m) => !m.enabled && !m.priceError).length;
     return { open, unpriced, ready };
   }, [provider.models]);
 
@@ -827,12 +829,12 @@ function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy:
   // Bulk open/close run as one action so the page reloads once, in order, and
   // stop at the first refusal so the operator sees which row the server rejected.
   const setAll = async (enabled: boolean) => {
-    const targets = provider.models.filter((m) => (enabled ? m.pricing && !m.enabled : m.enabled));
+    const targets = provider.models.filter((m) => (enabled ? !m.enabled && !m.priceError : m.enabled));
     if (!targets.length) return;
     const ok = await confirmDialog({
       title: enabled ? `开放 ${targets.length} 个模型` : `收回 ${targets.length} 个模型`,
       message: enabled
-        ? "开放后用户立刻能在聊天里选到这些模型，并按各自的实收价计费。未定价的模型不会被开放。"
+        ? "开放后用户立刻能在聊天里选到这些模型，并按各自的实收价计费。尚未定价的会先按默认单价定价。"
         : "收回后这些模型立刻从用户的模型列表里消失，进行中的对话不受影响。",
       confirmText: enabled ? "全部开放" : "全部收回",
       danger: !enabled,
@@ -861,9 +863,9 @@ function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy:
     : "没有匹配的模型，换个关键词或筛选试试。";
 
   const desc = provider.models.length === 0
-    ? "拉到的模型默认接受图片；有默认单价时自动开放，否则先填单价"
+    ? "拉到的模型按默认单价定价并开放，默认接受图片"
     : counts.unpriced > 0
-      ? `${counts.unpriced} 个尚未定价，未定价的模型不能开放`
+      ? `${counts.unpriced} 个尚未定价，开放时会按默认单价定价`
       : counts.open > 0
         ? `${counts.open} 个已开放给用户`
         : "都已定价，还没有开放";
@@ -903,7 +905,7 @@ function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy:
           <div className="cp-model-bulk">
             {counts.ready > 0 ? (
               <button type="button" className="adm-btn" disabled={!!busy} onClick={() => void setAll(true)}>
-                开放全部已定价
+                开放全部
                 <small>{counts.ready}</small>
               </button>
             ) : null}
@@ -956,14 +958,14 @@ function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy:
               ),
             },
             {
-              header: <span title="未定价的模型不能开放">开放</span>,
+              header: <span title="未定价的模型开放时按默认单价定价">开放</span>,
               width: "84px",
               align: "center",
               cell: (m) => (
-                <span className="cp-open" title={!m.pricing && !m.enabled ? "先填写单价才能开放" : undefined}>
+                <span className="cp-open" title={m.priceError && !m.enabled ? "单价无效，先修正再开放" : !m.pricing ? "开放时按默认单价定价" : undefined}>
                   <SwitchToggle
                     checked={m.enabled}
-                    disabled={!m.pricing && !m.enabled}
+                    disabled={!!m.priceError && !m.enabled}
                     aria-label={`${m.name || m.modelKey} 是否开放给用户`}
                     onChange={(enabled) =>
                       void run(`me-${m.id}`, () => adminChatProvidersApi.updateModel(m.id, { enabled }), enabled ? "已开放" : "已收回")
@@ -1246,7 +1248,7 @@ function CreateProviderModal({
         } else {
           const fetched = await adminChatProvidersApi.fetchModels(created.data.id);
           if (fetched.success && fetched.data) {
-            toast.success(input ? `已新增供应商，拉到 ${fetched.data.total} 个模型，已按默认单价定价并开放` : `已新增供应商，拉到 ${fetched.data.total} 个模型；填好单价后即可开放`);
+            toast.success(`已新增供应商，拉到 ${fetched.data.total} 个模型，已按默认单价定价并开放`);
           } else {
             toast.info(`已新增供应商和接入地址；拉取模型失败：${fetched.message || "请稍后重试"}`);
           }
@@ -1291,7 +1293,7 @@ function CreateProviderModal({
         <Field label="地址备注" span={2} hint="如「主用」「备用」">
           <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="可留空" />
         </Field>
-        <Field label="默认输入单价" span={2} hint="积分 / 1M Token，拉到的模型自动使用">
+        <Field label="默认输入单价" span={2} hint="积分 / 1M Token，留空按内置默认">
           <input inputMode="decimal" value={defaultInput} onChange={(e) => setDefaultInput(e.target.value)} placeholder="可留空" />
         </Field>
         <Field label="默认输出单价" span={2} hint="积分 / 1M Token">

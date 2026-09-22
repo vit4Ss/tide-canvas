@@ -4,6 +4,7 @@ package points
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -116,6 +117,129 @@ func TestRefundExistingReceiptMarksAiTaskRefundedWithoutCreditingAgain(t *testin
 	}
 }
 
+func TestAdminRefundConcurrentExactlyOnce(t *testing.T) {
+	db := refundTestDB(t)
+	userID, taskID := idgen.Next(), idgen.Next()
+	if err := db.Create(&model.User{ID: userID, Username: "admin-refund-race", Points: 75}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AiTask{ID: taskID, UserID: userID, PointCost: 25, Refunded: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		credited bool
+		err      error
+	}
+	const workers = 16
+	start := make(chan struct{})
+	results := make(chan result, workers)
+	for range workers {
+		go func() {
+			<-start
+			credited, err := AdminRefund(db, userID, 25, "concurrent administrator refund", taskID)
+			results <- result{credited, err}
+		}()
+	}
+	close(start)
+	credits := 0
+	for range workers {
+		r := <-results
+		if r.err != nil {
+			t.Error(r.err)
+		}
+		if r.credited {
+			credits++
+		}
+	}
+	var user model.User
+	if err := db.First(&user, "id = ?", userID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var records int64
+	if err := db.Model(&model.PointRecord{}).Where("ref_id = ? AND change_type = ?", taskID, ChangeRefund).Count(&records).Error; err != nil {
+		t.Fatal(err)
+	}
+	if credits != 1 || user.Points != 100 || records != 1 {
+		t.Fatalf("refund race: credits=%d points=%d records=%d", credits, user.Points, records)
+	}
+}
+
+func TestAdminRefundFailureRollsBackClaimBalanceAndLedger(t *testing.T) {
+	for _, failAt := range []string{"ledger", "task"} {
+		t.Run(failAt, func(t *testing.T) {
+			db := refundTestDB(t)
+			userID, taskID, originalClaim := idgen.Next(), idgen.Next(), idgen.Next()
+			if err := db.Create(&model.User{ID: userID, Username: "refund-rollback", Points: 75}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&model.AiTask{ID: taskID, UserID: userID, PointCost: 25}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&model.PointRefundReceipt{RefID: taskID, ClaimID: originalClaim, UserID: userID, Amount: 25}).Error; err != nil {
+				t.Fatal(err)
+			}
+			injected := errors.New("refund storage unavailable")
+			const callback = "fail-refund-write"
+			var remove func() error
+			if failAt == "ledger" {
+				if err := db.Callback().Create().Before("gorm:create").Register(callback, func(tx *gorm.DB) {
+					if tx.Statement.Table == "point_record" {
+						tx.AddError(injected)
+					}
+				}); err != nil {
+					t.Fatal(err)
+				}
+				remove = func() error { return db.Callback().Create().Remove(callback) }
+			} else {
+				if err := db.Callback().Update().Before("gorm:update").Register(callback, func(tx *gorm.DB) {
+					if tx.Statement.Table == (model.AiTask{}).TableName() {
+						tx.AddError(injected)
+					}
+				}); err != nil {
+					t.Fatal(err)
+				}
+				remove = func() error { return db.Callback().Update().Remove(callback) }
+			}
+			credited, err := AdminRefund(db, userID, 25, "refund with storage failure", taskID)
+			if !errors.Is(err, injected) || credited {
+				t.Errorf("failed transaction reported a credit: credited=%v err=%v", credited, err)
+			}
+			var user model.User
+			var task model.AiTask
+			var receipt model.PointRefundReceipt
+			var records int64
+			for _, err := range []error{
+				db.First(&user, "id = ?", userID).Error,
+				db.First(&task, "id = ?", taskID).Error,
+				db.First(&receipt, "ref_id = ?", taskID).Error,
+				db.Model(&model.PointRecord{}).Where("ref_id = ?", taskID).Count(&records).Error,
+			} {
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if user.Points != 75 || task.Refunded || receipt.ClaimID != originalClaim || records != 0 {
+				t.Fatalf("incomplete rollback: points=%d refunded=%v claim=%s records=%d", user.Points, task.Refunded, receipt.ClaimID, records)
+			}
+			if err := remove(); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 2; i++ {
+				credited, err := AdminRefund(db, userID, 25, "retry after storage recovery", taskID)
+				if err != nil || credited != (i == 0) {
+					t.Fatalf("retry %d credited=%v err=%v", i, credited, err)
+				}
+			}
+			if err := db.First(&user, "id = ?", userID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if user.Points != 100 {
+				t.Fatalf("retry balance=%d, want 100", user.Points)
+			}
+		})
+	}
+}
+
 func TestAdminRefundCreditsSettledTaskWithoutRefundEvidence(t *testing.T) {
 	db := refundTestDB(t)
 	userID, taskID := idgen.Next(), idgen.Next()
@@ -156,6 +280,88 @@ func TestAdminRefundCreditsSettledTaskWithoutRefundEvidence(t *testing.T) {
 	}
 }
 
+func TestAutomaticRefundDoesNotClaimReceiptForNonRefundableTask(t *testing.T) {
+	db := refundTestDB(t)
+	userID, taskID := idgen.Next(), idgen.Next()
+	if err := db.Create(&model.User{ID: userID, Username: "settled-without-refund", Points: 75}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AiTask{ID: taskID, UserID: userID, PointCost: 25, Refunded: true, Status: 3}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := Refund(db, userID, 25, "late worker refund", taskID); err != nil {
+		t.Fatal(err)
+	}
+	var receipts int64
+	if err := db.Model(&model.PointRefundReceipt{}).Where("ref_id = ?", taskID).Count(&receipts).Error; err != nil {
+		t.Fatal(err)
+	}
+	if receipts != 0 {
+		t.Fatalf("non-refundable task left %d phantom receipt(s)", receipts)
+	}
+	credited, err := AdminRefund(db, userID, 25, "verified administrator refund", taskID)
+	if err != nil || !credited {
+		t.Fatalf("administrator refund was blocked by a phantom receipt: credited=%v err=%v", credited, err)
+	}
+	var user model.User
+	db.First(&user, "id = ?", userID)
+	if user.Points != 100 {
+		t.Fatalf("balance=%d, want 100", user.Points)
+	}
+}
+
+func TestAdminRefundRepairsAReceiptWithoutFinancialEvidence(t *testing.T) {
+	db := refundTestDB(t)
+	userID, taskID := idgen.Next(), idgen.Next()
+	if err := db.Create(&model.User{ID: userID, Username: "phantom-receipt", Points: 75}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AiTask{ID: taskID, UserID: userID, PointCost: 25, Refunded: true, Status: 3}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.PointRefundReceipt{RefID: taskID, UserID: userID, Amount: 25}).Error; err != nil {
+		t.Fatal(err)
+	}
+	credited, err := AdminRefund(db, userID, 25, "repair verified refund", taskID)
+	if err != nil || !credited {
+		t.Fatalf("stale receipt blocked refund: credited=%v err=%v", credited, err)
+	}
+	var user model.User
+	db.First(&user, "id = ?", userID)
+	if user.Points != 100 {
+		t.Fatalf("balance=%d, want 100", user.Points)
+	}
+	var records, receipts int64
+	db.Model(&model.PointRecord{}).Where("ref_id = ? AND change_type = ?", taskID, ChangeRefund).Count(&records)
+	db.Model(&model.PointRefundReceipt{}).Where("ref_id = ?", taskID).Count(&receipts)
+	if records != 1 || receipts != 1 {
+		t.Fatalf("repaired refund evidence = records:%d receipts:%d, want 1/1", records, receipts)
+	}
+}
+
+func TestAdminRefundRepairsAReceiptWhenTaskFlagIsNotSynchronized(t *testing.T) {
+	db := refundTestDB(t)
+	userID, taskID := idgen.Next(), idgen.Next()
+	if err := db.Create(&model.User{ID: userID, Username: "unsynced-receipt", Points: 75}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AiTask{ID: taskID, UserID: userID, PointCost: 25, Refunded: false, Status: 3}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.PointRefundReceipt{RefID: taskID, UserID: userID, Amount: 25}).Error; err != nil {
+		t.Fatal(err)
+	}
+	credited, err := AdminRefund(db, userID, 25, "repair unsynchronized refund", taskID)
+	if err != nil || !credited {
+		t.Fatalf("unsynchronized stale receipt blocked refund: credited=%v err=%v", credited, err)
+	}
+	var user model.User
+	db.First(&user, "id = ?", userID)
+	if user.Points != 100 {
+		t.Fatalf("balance=%d, want 100", user.Points)
+	}
+}
+
 func TestAdminRefundDoesNotDuplicateLegacyLedgerWithoutReceipt(t *testing.T) {
 	db := refundTestDB(t)
 	userID, taskID := idgen.Next(), idgen.Next()
@@ -189,6 +395,43 @@ func TestAdminRefundDoesNotDuplicateLegacyLedgerWithoutReceipt(t *testing.T) {
 	}
 	if receiptCount != 1 {
 		t.Fatalf("backfilled receipt count = %d, want 1", receiptCount)
+	}
+}
+
+func TestAdminRefundDoesNotRepeatSoftDeletedLedger(t *testing.T) {
+	for _, keepReceipt := range []bool{true, false} {
+		t.Run(fmt.Sprint("receipt=", keepReceipt), func(t *testing.T) {
+			db := refundTestDB(t)
+			userID, taskID := idgen.Next(), idgen.Next()
+			if err := db.Create(&model.User{ID: userID, Username: "hidden-refund", Points: 75}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Create(&model.AiTask{ID: taskID, UserID: userID, PointCost: 25}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if credited, err := AdminRefund(db, userID, 25, "original refund", taskID); err != nil || !credited {
+				t.Fatalf("original refund: credited=%v err=%v", credited, err)
+			}
+			if err := db.Where("ref_id = ?", taskID).Delete(&model.PointRecord{}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if !keepReceipt {
+				if err := db.Where("ref_id = ?", taskID).Delete(&model.PointRefundReceipt{}).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			credited, err := AdminRefund(db, userID, 25, "retry with hidden ledger", taskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var user model.User
+			if err := db.First(&user, "id = ?", userID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if credited || user.Points != 100 {
+				t.Fatalf("hidden ledger credited twice: credited=%v points=%d", credited, user.Points)
+			}
+		})
 	}
 }
 

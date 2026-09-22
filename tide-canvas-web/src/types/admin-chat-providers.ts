@@ -63,6 +63,8 @@ export interface ChatProviderVO {
   defaultPricing: ChatTokenPricing | null;
   /** 十进制字符串，如 "0.7"；空串表示按原价（1）。 */
   priceMultiplier: string;
+  /** 系统内置默认单价：行和供应商都没有单价时按它出售，页面用作占位提示。 */
+  fallbackPricing: ChatTokenPricing;
 }
 
 export interface ChatProviderDTO {
@@ -96,4 +98,6 @@ export interface ChatModelDTO {
 export interface ChatFetchResult {
   total: number;
   added: number;
+  /** 本次为原本未定价的模型补上默认单价并开放的数量。 */
+  filled?: number;
 }

@@ -131,6 +131,82 @@ func TestInputOnlyUsageIsChargedEvenWhenTheProviderReportsFailure(t *testing.T) 
 	}
 }
 
+func TestErrorFrameUsageIsStillCharged(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "data: {\"error\":{\"message\":\"provider failed after reading input\"},\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":0,\"total_tokens\":100}}\n\n")
+	}))
+	defer up.Close()
+	f := setup(t, up.URL)
+	f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, nil)
+	var row model.ModelGatewayRequest
+	var user model.User
+	f.s.d.DB.First(&row)
+	f.s.d.DB.First(&user, "id = ?", f.user.ID)
+	if row.CostMicros != 1_000_000 || row.Status != "partial" || user.PointBalance() != 19 || user.PointHeldMicros != 0 {
+		t.Fatalf("error-frame usage was refunded: status=%s cost=%d balance=%v held=%d", row.Status, row.CostMicros, user.PointBalance(), user.PointHeldMicros)
+	}
+}
+
+func TestPartialReasoningWithoutUsageRequiresBillingReview(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"still thinking\"}}]}\n\n")
+	}))
+	defer up.Close()
+	f := setup(t, up.URL)
+	f.request("POST", "/api/integrations/v1/chat/completions", strings.TrimSuffix(testPrompt, "}")+`,"stream":true}`, f.apiKey, nil)
+	var row model.ModelGatewayRequest
+	var user model.User
+	f.s.d.DB.First(&row)
+	f.s.d.DB.First(&user, "id = ?", f.user.ID)
+	if row.Status != "billing_pending" || row.CostMicros != 0 || user.PointHeldMicros != 1_000_000 {
+		t.Fatalf("partial reasoning released the hold: status=%s cost=%d held=%d", row.Status, row.CostMicros, user.PointHeldMicros)
+	}
+}
+
+func TestInvalidErrorFrameUsageRequiresBillingReview(t *testing.T) {
+	for _, usage := range []string{
+		`{"prompt_tokens":100}`,
+		`{"prompt_tokens":100,"completion_tokens":0,"total_tokens":0}`,
+	} {
+		t.Run(usage, func(t *testing.T) {
+			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, "data: {\"error\":{\"message\":\"provider failed\"},\"usage\":%s}\n\n", usage)
+			}))
+			defer up.Close()
+			f := setup(t, up.URL)
+			w := f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, nil)
+			var bill model.ModelGatewayRequest
+			var user model.User
+			if err := f.s.d.DB.First(&bill).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := f.s.d.DB.First(&user, "id = ?", f.user.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if w.Code != 502 || bill.Status != "billing_pending" || bill.CostMicros != 0 || bill.UsageKnown || user.Points != 20 || user.PointHeldMicros != 1_000_000 {
+				t.Fatalf("invalid usage treated as no consumption: http=%d status=%s cost=%d known=%v points=%d held=%d", w.Code, bill.Status, bill.CostMicros, bill.UsageKnown, user.Points, user.PointHeldMicros)
+			}
+		})
+	}
+}
+
+func TestMultipleChoicesAreRejectedBeforeReservation(t *testing.T) {
+	f := setup(t, "")
+	w := f.request("POST", "/api/integrations/v1/chat/completions", strings.TrimSuffix(testPrompt, "}")+`,"n":2}`, f.apiKey, nil)
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "n=1") {
+		t.Fatalf("multiple choices were not rejected: %d %s", w.Code, w.Body.String())
+	}
+	var held int64
+	var rows int64
+	var user model.User
+	f.s.d.DB.First(&user, "id = ?", f.user.ID)
+	f.s.d.DB.Model(&model.ModelGatewayRequest{}).Count(&rows)
+	held = user.PointHeldMicros
+	if rows != 0 || held != 0 || user.PointBalance() != 20 {
+		t.Fatalf("rejected multiple choices moved billing state: rows=%d held=%d balance=%v", rows, held, user.PointBalance())
+	}
+}
+
 // Every AI chat model is token priced. One left unpriced — or priced with
 // numbers that cannot be read — is not offered and cannot be called, because
 // there would be no way to charge for it.

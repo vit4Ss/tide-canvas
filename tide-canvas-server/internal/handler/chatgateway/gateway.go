@@ -197,7 +197,8 @@ func (s *service) reserve(ctx context.Context, uid idgen.ID, requestKey, bodyHas
 		row = model.ModelGatewayRequest{
 			UserID: uid, RequestKey: requestKey, BodyHash: bodyHash, ModelKey: route.model.ModelKey,
 			Status: "pending", ExpiresAt: time.Now().Add(65 * time.Minute),
-			BillingMode: "token", ReservedMicros: reserved,
+			UpstreamState: "reserved",
+			BillingMode:   "token", ReservedMicros: reserved,
 			PricingSnapshot: pricingSnapshot(pricing), MaxOutputTokens: outputCap,
 			ModelName: route.displayNameOnly(), BillingProviderID: route.provider.ID,
 			BillingProviderName: route.provider.Name, PriceMultiplier: route.provider.PriceMultiplier,
@@ -300,6 +301,15 @@ func (out *completion) inspect(data string) bool {
 	if json.Unmarshal([]byte(data), &frame) != nil {
 		return false
 	}
+	if id, ok := frame["id"].(string); ok {
+		out.id = id
+	}
+	if usage := frame["usage"]; usage != nil {
+		out.usage = usage
+	}
+	// A provider may put its terminal error and the authoritative usage in the
+	// same SSE frame. Capture usage before treating the frame as terminal, or a
+	// failed call that consumed input would be refunded as if it never ran.
 	if e := frame["error"]; e != nil {
 		out.failed = true
 		switch v := e.(type) {
@@ -309,12 +319,6 @@ func (out *completion) inspect(data string) bool {
 			out.errorMessage = v
 		}
 		return true
-	}
-	if id, ok := frame["id"].(string); ok {
-		out.id = id
-	}
-	if usage := frame["usage"]; usage != nil {
-		out.usage = usage
 	}
 	choices, _ := frame["choices"].([]any)
 	if len(choices) == 0 {
@@ -365,7 +369,8 @@ func (out *completion) inspect(data string) bool {
 	return false
 }
 func (out *completion) complete() bool {
-	return out.hasOutput() && out.validTools() && !out.failed && (out.done || out.finish == "stop" || out.finish == "tool_calls") && (out.finish == "" || out.finish == "stop" || out.finish == "tool_calls")
+	usable := strings.TrimSpace(out.text.String()) != "" || (len(out.tools) > 0 && out.validTools())
+	return usable && out.validTools() && !out.failed && (out.done || out.finish == "stop" || out.finish == "tool_calls") && (out.finish == "" || out.finish == "stop" || out.finish == "tool_calls")
 }
 func (out *completion) validTools() bool {
 	for index, call := range out.tools {
@@ -380,7 +385,10 @@ func (out *completion) validTools() bool {
 	return true
 }
 func (out *completion) hasOutput() bool {
-	return strings.TrimSpace(out.text.String()) != "" || (len(out.tools) > 0 && out.validTools())
+	// Reasoning and a partially emitted tool call are provider work too. They
+	// must keep a missing-usage result in manual review instead of releasing the
+	// reservation as a zero-output failure.
+	return strings.TrimSpace(out.text.String()) != "" || out.reasoning.Len() > 0 || out.produced
 }
 func parseCompletion(frames string) *completion {
 	out := &completion{}
@@ -640,14 +648,13 @@ type call struct {
 }
 
 // prepare turns a chat body into a reserved call. The request is the client's:
-// messages, tools, n, temperature — whatever the client built is what the
+// messages, tools, temperature — whatever the client built is what the
 // provider gets, and the provider's own answer is what the user sees when it
 // objects. This gateway exists to swap in the operator's credential and to
-// bill by usage; it is not a second validator in front of the provider, and
-// every rule it used to add here (a history window, a tools switch, a
-// one-reply rule) was one more thing that could disagree with the provider and
-// hide its actual message. On failure the error response has been written and
-// nil is returned.
+// bill by usage. It caps output for the reservation and supports one choice,
+// which is all the stored completion and Responses translator can represent.
+// Other request semantics are left to the provider. On failure the error
+// response has been written and nil is returned.
 func (s *service) prepare(c *gin.Context, body map[string]any, stream bool) *call {
 	modelName, _ := body["model"].(string)
 	// Resolve the model to its provider and credentialed addresses before any
@@ -689,6 +696,13 @@ func (s *service) prepare(c *gin.Context, body map[string]any, stream bool) *cal
 			maxOutput = int64(value)
 		}
 		delete(body, name)
+	}
+	if err := validateGatewayChoiceCount(body); err != nil {
+		// The completion translator currently stores one choice. Refuse a
+		// multi-choice request before reserving points rather than charging
+		// aggregate usage while silently dropping the other choices.
+		gatewayError(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return nil
 	}
 	body[field] = maxOutput
 	// Usage in the stream is how the call is billed; without it nothing can be
@@ -760,6 +774,18 @@ func (s *service) prepare(c *gin.Context, body map[string]any, stream bool) *cal
 	return &call{uid: uid, modelName: modelName, route: route, payload: payload, requestKey: requestKey, row: row, fresh: fresh, stream: stream, path: c.FullPath()}
 }
 
+func validateGatewayChoiceCount(body map[string]any) error {
+	raw, ok := body["n"]
+	if !ok {
+		return nil
+	}
+	n, ok := raw.(float64)
+	if !ok || n != 1 {
+		return errors.New("本网关目前只支持 n=1 的单个回复请求")
+	}
+	return nil
+}
+
 // replayInProgress refuses to answer a replay whose original call is still
 // running: doing so would charge or stream twice. It reports whether the
 // response has been written.
@@ -819,7 +845,15 @@ func (s *service) run(c *gin.Context, call *call, live func(wire string), heartb
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 60*time.Minute)
 	defer cancel()
 	events := make(chan upstreamFrame, 8)
-	go s.readUpstream(ctx, call.route.endpoints, call.payload, events)
+	if err := s.markTokenCallStarted(row); err != nil {
+		// Never send a paid request before its dispatch marker is durable. This
+		// local failure has no provider consumption and follows normal release.
+		logger.L().Error("gateway dispatch checkpoint failed", zap.String("request", row.ID.String()), zap.Error(err))
+		events <- upstreamFrame{err: err, message: "暂时无法开始模型调用，请稍后重试"}
+		close(events)
+	} else {
+		go s.readUpstream(ctx, call.route.endpoints, call.payload, events)
+	}
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	var frames, terminal strings.Builder

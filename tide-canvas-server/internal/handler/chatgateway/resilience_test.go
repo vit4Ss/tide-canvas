@@ -168,6 +168,7 @@ func TestRecoveryOfCheckpointedResultsDoesNotGuessMissingUsage(t *testing.T) {
 		{"partial charged", strings.ReplaceAll(okWithUsage, `"stop"`, `"length"`), "incomplete_response", "partial", 19, 0},
 		{"visible without usage", "data: {\"choices\":[{\"delta\":{\"content\":\"visible\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", "", "billing_pending", 20, 1_000_000},
 		{"error without output", "data: {\"error\":{\"message\":\"unavailable\"}}\n\n", "upstream_error", "failed", 20, 0},
+		{"checkpointed failure without frames", "", "upstream_error", "failed", 20, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := setup(t, "")
@@ -214,5 +215,56 @@ func TestRecoveryOfCheckpointedResultsDoesNotGuessMissingUsage(t *testing.T) {
 				t.Fatal("stale checkpoint overwrote terminal result")
 			}
 		})
+	}
+}
+
+func TestRecoveryOfDispatchedCallWithoutOutcomeKeepsHoldForReview(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		name := "dispatched"
+		if legacy {
+			name = "legacy unknown dispatch"
+		}
+		t.Run(name, func(t *testing.T) { testRecoveryWithoutOutcome(t, legacy) })
+	}
+}
+
+func testRecoveryWithoutOutcome(t *testing.T, legacy bool) {
+	t.Helper()
+	f := setup(t, "")
+	route, err := f.s.routeFor(context.Background(), "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, _, err := f.s.reserve(context.Background(), f.user.ID, "started-without-outcome", "body", route)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy {
+		if err := f.s.d.DB.Model(row).Update("upstream_state", "").Error; err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := f.s.markTokenCallStarted(row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.s.d.DB.Model(row).Update("expires_at", time.Now().Add(-time.Minute)).Error; err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := f.s.reconcilePage(context.Background(), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var bill model.ModelGatewayRequest
+	var user model.User
+	if err := f.s.d.DB.First(&bill, "id = ?", row.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.d.DB.First(&user, "id = ?", f.user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if bill.Status != "billing_pending" || user.PointHeldMicros != 1_000_000 || user.PointBalance() != 19 {
+		t.Fatalf("dispatched call was released as free: status=%s held=%d balance=%v", bill.Status, user.PointHeldMicros, user.PointBalance())
 	}
 }

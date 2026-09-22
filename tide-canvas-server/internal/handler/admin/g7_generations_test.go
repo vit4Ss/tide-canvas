@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
@@ -177,6 +178,11 @@ func TestRefundGenerationIsAdminOnlyAndExactlyOnce(t *testing.T) {
 	if unlinkedRecorder.Code != 409 {
 		t.Fatalf("unlinked legacy refund status = %d, want 409; body=%s", unlinkedRecorder.Code, unlinkedRecorder.Body.String())
 	}
+	// A stale idempotency receipt without a refund ledger must not make the
+	// administrator action a no-op.
+	if err := db.Create(&model.PointRefundReceipt{RefID: taskID, UserID: userID, Amount: 12}).Error; err != nil {
+		t.Fatalf("create stale receipt: %v", err)
+	}
 
 	call := func(recordID idgen.ID) *httptest.ResponseRecorder {
 		recorder := httptest.NewRecorder()
@@ -250,6 +256,23 @@ func TestRefundGenerationIsAdminOnlyAndExactlyOnce(t *testing.T) {
 	}
 	if syncLedger != 1 {
 		t.Fatalf("sync refund ledger count = %d, want 1", syncLedger)
+	}
+	// Hiding a ledger entry does not undo its balance credit or make this
+	// generation refundable again.
+	if err := db.Where("ref_id = ? AND change_type = ?", taskID, points.ChangeRefund).Delete(&model.PointRecord{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !generationRefundedForRecord(db, &markerRecord) {
+		t.Fatal("hidden refund ledger lost the generation's refunded status")
+	}
+	if recorder := call(logID); recorder.Code != 200 {
+		t.Fatalf("retry with hidden ledger: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if err := db.First(&user, "id = ?", userID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if user.Points != 119 {
+		t.Fatalf("hidden refund ledger was credited again: points=%d", user.Points)
 	}
 }
 

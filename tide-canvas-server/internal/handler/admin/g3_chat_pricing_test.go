@@ -120,6 +120,8 @@ func TestUnusableDefaultsAreRefusedAndDefaultsCanBeCleared(t *testing.T) {
 		`{"priceMultiplier":"0"}`,
 		`{"priceMultiplier":"abc"}`,
 		`{"priceMultiplier":"101"}`,
+		`{"defaultPricing":{}}`,
+		`{"defaultPricing":{"tokenPricing":{"enabled":true,"inputPointsPerMillion":1,"outputPointsPerMillion":"2"}}}`,
 		`{"defaultPricing":{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"x","outputPointsPerMillion":"1"}}}`,
 		`{"defaultPricing":{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"1"}}}`,
 	} {
@@ -144,6 +146,20 @@ func TestUnusableDefaultsAreRefusedAndDefaultsCanBeCleared(t *testing.T) {
 	f.h.db.First(&row, "id = ?", f.provider.ID)
 	if row.PriceMultiplier != "" || row.DefaultPricing != "" {
 		t.Fatalf("clearing did not clear: %+v", row)
+	}
+	// Only an explicit disabled flag also clears; malformed pricing must never
+	// silently erase a configured default.
+	if w := f.call("PUT", "/chat-providers/"+f.provider.ID.String(), `{"defaultPricing":`+defaultPricingBody+`}`); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	if w := f.call("PUT", "/chat-providers/"+f.provider.ID.String(), `{"defaultPricing":{"tokenPricing":{"enabled":false}}}`); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	if err := f.h.db.First(&row, "id = ?", f.provider.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.DefaultPricing != "" {
+		t.Fatalf("explicit disabling did not clear defaults: %s", row.DefaultPricing)
 	}
 
 	// Creating a provider accepts the same two fields.

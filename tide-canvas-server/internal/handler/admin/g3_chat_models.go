@@ -20,8 +20,8 @@ import (
 )
 
 // g3_chat_models.go discovers what a provider offers and prices it. A model is
-// only offered to AI chat once an operator has both enabled it and set what a
-// million tokens cost — the gateway has no other way to charge for a call.
+// only offered to AI chat when enabled and priced. Discovery and explicit
+// opening fill missing prices from the provider or built-in default.
 
 func toChatModelVO(m model.ChatModel) chatModelVO {
 	vo := chatModelVO{
@@ -32,16 +32,15 @@ func toChatModelVO(m model.ChatModel) chatModelVO {
 	switch {
 	case err == nil:
 		vo.Pricing = pricing
-	case strings.TrimSpace(m.Pricing) != "" && !errors.Is(err, tokenbilling.ErrNotConfigured):
+	case strings.TrimSpace(m.Pricing) != "":
 		vo.PriceError = "单价配置无效"
 	}
 	return vo
 }
 
 // fetchModels asks the provider's addresses, in order, for their catalogue and
-// records what comes back. Newly discovered models arrive disabled; they carry
-// the provider's default pricing when it has one and are unpriced otherwise.
-// Either way nothing is sold until the operator opens the model.
+// records what comes back. Newly discovered models arrive enabled with the
+// provider's default pricing, or the built-in default when none is configured.
 func (h *chatProvidersHandler) fetchModels(c *gin.Context) {
 	providerID, ok := g4ParseID(c)
 	if !ok {
@@ -52,10 +51,7 @@ func (h *chatProvidersHandler) fetchModels(c *gin.Context) {
 		response.Fail(c, response.CodeNotFound, "供应商不存在")
 		return
 	}
-	defaultPricing := ""
-	if _, err := tokenbilling.Parse(provider.DefaultPricing); err == nil {
-		defaultPricing = provider.DefaultPricing
-	}
+	defaultPricing := effectiveDefaultPricing(provider)
 	var endpoints []model.ChatEndpoint
 	if err := h.db.WithContext(c.Request.Context()).Where("provider_id = ? AND enabled = ?", providerID, true).
 		Order("sort_order ASC, id ASC").Find(&endpoints).Error; err != nil || len(endpoints) == 0 {
@@ -105,24 +101,33 @@ func (h *chatProvidersHandler) fetchModels(c *gin.Context) {
 	// decisions, and a re-fetch must not quietly undo them or drop a model the
 	// upstream stopped advertising but users are still on.
 	//
-	// A new model starts open wherever the rules allow it: images on, and
-	// enabled when the provider has a default price to bill it at. Without a
-	// price it stays closed, since an unpriced model cannot be served.
+	// A new model starts open: images on, priced at the provider's default or
+	// the built-in one, and enabled, so a pull needs no form-filling to be sold.
 	now := time.Now()
 	added := 0
 	for _, key := range keys {
 		if known[key] {
 			continue
 		}
-		row := model.ChatModel{ProviderID: providerID, ModelKey: key, Name: key, Enabled: defaultPricing != "", Vision: true, Pricing: defaultPricing, DiscoveredAt: &now}
+		row := model.ChatModel{ProviderID: providerID, ModelKey: key, Name: key, Enabled: true, Vision: true, Pricing: defaultPricing, DiscoveredAt: &now}
 		if err := h.db.WithContext(c.Request.Context()).Create(&row).Error; err != nil {
 			response.Fail(c, response.CodeServerError, "保存模型失败")
 			return
 		}
 		added++
 	}
-	h.audit(c, providerID, "chat_models_fetch", fmt.Sprintf("拉取模型列表：上游 %d 个，新增 %d 个", len(keys), added))
-	response.OK(c, gin.H{"total": len(keys), "added": added})
+	// Rows pulled before any default existed are still unpriced and closed. They
+	// carry no operator decision to protect, so they take the default and open
+	// too; the operator can still reprice or close any of them afterwards.
+	filled := h.db.WithContext(c.Request.Context()).Model(&model.ChatModel{}).
+		Where("provider_id = ? AND (pricing IS NULL OR TRIM(pricing) = '')", providerID).
+		Updates(map[string]any{"pricing": defaultPricing, "enabled": true})
+	if filled.Error != nil {
+		response.Fail(c, response.CodeServerError, "为未定价模型填入默认单价失败")
+		return
+	}
+	h.audit(c, providerID, "chat_models_fetch", fmt.Sprintf("拉取模型列表：上游 %d 个，新增 %d 个，补价并开放 %d 个", len(keys), added, filled.RowsAffected))
+	response.OK(c, gin.H{"total": len(keys), "added": added, "filled": filled.RowsAffected})
 }
 
 // remoteModels reads GET {base}/v1/models. The body is capped so a broken or
@@ -202,7 +207,7 @@ func (h *chatProvidersHandler) updateModel(c *gin.Context) {
 			pricing = ""
 		}
 		if pricing != "" {
-			if _, err := tokenbilling.Parse(pricing); err != nil && !errors.Is(err, tokenbilling.ErrNotConfigured) {
+			if _, err := tokenbilling.Parse(pricing); err != nil {
 				response.Fail(c, response.CodeBadRequest, "请填写有效的每百万输入/输出 Token 积分单价（最多六位小数）和 Token 上限")
 				return
 			}
@@ -210,11 +215,22 @@ func (h *chatProvidersHandler) updateModel(c *gin.Context) {
 		fields["pricing"] = pricing
 	}
 	if dto.Enabled != nil {
-		// Enabling an unpriced model would put an entry in the picker the
-		// gateway then hides, so refuse here where the reason can be explained.
 		if *dto.Enabled {
-			if _, err := tokenbilling.Parse(pricing); err != nil {
-				response.Fail(c, response.CodeBadRequest, "请先填写该模型的 Token 单价，再开放给 AI 聊天")
+			if strings.TrimSpace(pricing) == "" {
+				// Opening an unpriced model prices it on the way, at the provider's
+				// default or the built-in one, instead of refusing: the switch is the
+				// operator's answer, not a form they forgot.
+				var provider model.ChatProvider
+				if err := h.db.WithContext(c.Request.Context()).First(&provider, "id = ?", row.ProviderID).Error; err != nil {
+					response.Fail(c, response.CodeNotFound, "供应商不存在")
+					return
+				}
+				pricing = effectiveDefaultPricing(provider)
+				fields["pricing"] = pricing
+			} else if _, err := tokenbilling.Parse(pricing); err != nil {
+				// A price that is present but unreadable is an operator error the
+				// gateway would hide behind a missing model; say so here.
+				response.Fail(c, response.CodeBadRequest, "该模型的单价无效，请先修正再开放")
 				return
 			}
 		}

@@ -845,16 +845,11 @@ func refundedTaskEvidence(db *gorm.DB, taskIDs []idgen.ID) map[idgen.ID]bool {
 	if len(taskIDs) == 0 {
 		return out
 	}
-	var receipts []struct{ RefID idgen.ID }
-	if err := db.Model(&model.PointRefundReceipt{}).Select("ref_id").Where("ref_id IN ?", taskIDs).Find(&receipts).Error; err == nil {
-		for _, receipt := range receipts {
-			out[receipt.RefID] = true
-		}
-	}
-	// Compatibility for old deployments that wrote the user-visible refund
-	// ledger but did not yet create PointRefundReceipt.
+	// The receipt is an idempotency claim, not proof that the balance mutation
+	// committed. The ledger is the financial evidence; relying on a receipt
+	// alone would let an interrupted automatic refund hide a real admin refund.
 	var ledger []struct{ RefID idgen.ID }
-	if err := db.Model(&model.PointRecord{}).Select("ref_id").
+	if err := db.Unscoped().Model(&model.PointRecord{}).Select("ref_id").
 		Where("change_type = ? AND amount > 0 AND ref_id IN ?", points.ChangeRefund, taskIDs).
 		Find(&ledger).Error; err == nil {
 		for _, row := range ledger {

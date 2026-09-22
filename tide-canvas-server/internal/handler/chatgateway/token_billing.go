@@ -13,6 +13,28 @@ import (
 	"tidecanvas/internal/pkg/tokenbilling"
 )
 
+// Record dispatch before performing network I/O. If the process dies anywhere
+// before the final outcome checkpoint, recovery must not infer zero consumption
+// from the absence of a saved response.
+func (s *service) markTokenCallStarted(row *model.ModelGatewayRequest) error {
+	if row.BillingMode != "token" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result := s.d.DB.WithContext(ctx).Model(&model.ModelGatewayRequest{}).
+		Where("id = ? AND user_id = ? AND status = ? AND upstream_state = ?", row.ID, row.UserID, "pending", "reserved").
+		Update("upstream_state", "started")
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("gateway request is no longer awaiting dispatch")
+	}
+	row.UpstreamState = "started"
+	return nil
+}
+
 // Persist the completed provider response before mutating the wallet. If the
 // financial transaction fails, the reconciler can still use authoritative
 // usage rather than assume no work happened. This never moves points or
@@ -25,7 +47,7 @@ func (s *service) checkpointTokenOutcome(row *model.ModelGatewayRequest, frames,
 	defer cancel()
 	return s.d.DB.WithContext(ctx).Model(&model.ModelGatewayRequest{}).
 		Where("id = ? AND user_id = ? AND status = ?", row.ID, row.UserID, "pending").Updates(map[string]any{
-		"response_body": frames, "error_code": code,
+		"response_body": frames, "error_code": code, "upstream_state": "finished",
 		"duration_ms": row.DurationMs, "first_token_ms": row.FirstTokenMs,
 		"provider_id": row.ProviderID, "provider_name": row.ProviderName,
 		"endpoint_id": row.EndpointID, "upstream_status": row.UpstreamStatus,
@@ -43,7 +65,11 @@ func (s *service) settleTokens(parent context.Context, row *model.ModelGatewayRe
 		if result.Status != "pending" {
 			return nil
 		}
-		if code == "worker_interrupted" && result.ResponseBody != "" {
+		// Legacy rows with saved outcomes remain recoverable. A started call
+		// with no outcome (or a legacy row with no dispatch evidence) may already
+		// have consumed tokens, so keep its hold for review rather than refund it.
+		unknownConsumption := code == "worker_interrupted" && result.ResponseBody == "" && result.UpstreamState != "reserved" && result.UpstreamState != "finished"
+		if code == "worker_interrupted" && (result.ResponseBody != "" || result.UpstreamState == "finished") {
 			frames, code = result.ResponseBody, result.ErrorCode
 			if code == "" && !parseCompletion(frames).complete() {
 				code = "incomplete_response"
@@ -65,8 +91,9 @@ func (s *service) settleTokens(parent context.Context, row *model.ModelGatewayRe
 			usageErr = tokenbilling.ErrPricing
 		}
 		if usageErr != nil {
-			if code != "" && !out.hasOutput() && pricingErr == nil && usage == nil {
-				// No usable response and no reported consumption: cancel the hold.
+			if code != "" && !unknownConsumption && !out.hasOutput() && pricingErr == nil && out.usage == nil {
+				// No output and no reported usage: cancel the hold. An invalid
+				// usage payload still needs review; it does not prove zero work.
 				status = "failed"
 			} else {
 				status = "billing_pending"
@@ -89,7 +116,7 @@ func (s *service) settleTokens(parent context.Context, row *model.ModelGatewayRe
 				return err
 			}
 		}
-		updates := map[string]any{"status": status, "response_body": frames, "error_code": code, "cost_micros": actual}
+		updates := map[string]any{"status": status, "response_body": frames, "error_code": code, "cost_micros": actual, "upstream_state": "finished"}
 		// A reconciler has no live timings; never overwrite recorded telemetry
 		// with invented zeros when recovering a process interruption.
 		if row.DurationMs != nil {

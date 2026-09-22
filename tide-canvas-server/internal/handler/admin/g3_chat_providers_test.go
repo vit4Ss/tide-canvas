@@ -176,9 +176,10 @@ func TestSavingWithTheMaskKeepsTheStoredKey(t *testing.T) {
 	}
 }
 
-// A model with no price would appear in the picker and then be refused by the
-// gateway. Refuse it here, where the operator can be told why.
-func TestAChatModelCannotBeOpenedWithoutAPrice(t *testing.T) {
+// Opening a model with no price must not be a dead end: the switch prices it
+// at the default (the provider has none here, so the built-in one) and opens
+// it, so the gateway never lists a model it cannot bill.
+func TestOpeningAnUnpricedChatModelPricesItAtTheDefault(t *testing.T) {
 	f := newChatFixture(t)
 	m := model.ChatModel{ProviderID: f.provider.ID, ModelKey: "gpt-x", Name: "gpt-x"}
 	if err := f.h.db.Create(&m).Error; err != nil {
@@ -186,13 +187,13 @@ func TestAChatModelCannotBeOpenedWithoutAPrice(t *testing.T) {
 	}
 
 	w := f.call("PUT", "/chat-models/"+m.ID.String(), `{"enabled":true}`)
-	if !strings.Contains(w.Body.String(), "单价") {
-		t.Fatalf("an unpriced model was opened: %d %s", w.Code, w.Body.String())
+	if w.Code != 200 {
+		t.Fatalf("opening an unpriced model was refused: %d %s", w.Code, w.Body.String())
 	}
 	var after model.ChatModel
 	f.h.db.First(&after, "id = ?", m.ID)
-	if after.Enabled {
-		t.Fatal("an unpriced model is on sale")
+	if !after.Enabled || after.Pricing != builtinDefaultPricing {
+		t.Fatalf("the model did not open at the built-in default: %+v", after)
 	}
 
 	priced := `{"enabled":true,"pricing":{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"2","outputPointsPerMillion":"8"}}}`
@@ -202,6 +203,30 @@ func TestAChatModelCannotBeOpenedWithoutAPrice(t *testing.T) {
 	f.h.db.First(&after, "id = ?", m.ID)
 	if !after.Enabled {
 		t.Fatal("pricing and opening in one save did not take effect")
+	}
+}
+
+func TestInvalidChatModelPricingIsReportedAndCannotReplaceAValidPrice(t *testing.T) {
+	f := newChatFixture(t)
+	m := model.ChatModel{ProviderID: f.provider.ID, ModelKey: "pricing-validation", Pricing: defaultPricingBody}
+	if err := f.h.db.Create(&m).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{`{}`, `{"tokenPricing":{"enabled":false}}`, `{"tokenPricing":{"enabled":true,"inputPointsPerMillion":1,"outputPointsPerMillion":"2"}}`} {
+		if vo := toChatModelVO(model.ChatModel{Pricing: raw}); vo.PriceError == "" || vo.Pricing != nil {
+			t.Errorf("invalid pricing %s was advertised as a blank editable default: %+v", raw, vo)
+		}
+		w := f.call("PUT", "/chat-models/"+m.ID.String(), `{"pricing":`+raw+`}`)
+		if w.Code != 400 {
+			t.Errorf("invalid pricing accepted: %s => %d %s", raw, w.Code, w.Body.String())
+		}
+		var after model.ChatModel
+		if err := f.h.db.First(&after, "id = ?", m.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if after.Pricing != defaultPricingBody {
+			t.Errorf("invalid pricing overwrote the saved price: %s", after.Pricing)
+		}
 	}
 }
 
@@ -229,11 +254,12 @@ func TestChatModelDiscoveryOnlyAdds(t *testing.T) {
 		ProviderID: f.provider.ID, ModelKey: "kept", Name: "运营改过的名字", Enabled: true, Pricing: price,
 	}
 	retired := model.ChatModel{ProviderID: f.provider.ID, ModelKey: "retired", Name: "retired", Enabled: true, Pricing: price}
-	if err := f.h.db.Create(&kept).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := f.h.db.Create(&retired).Error; err != nil {
-		t.Fatal(err)
+	// Pulled before any default existed: no price, closed, no operator decision.
+	unpriced := model.ChatModel{ProviderID: f.provider.ID, ModelKey: "unpriced", Name: "unpriced"}
+	for _, row := range []*model.ChatModel{&kept, &retired, &unpriced} {
+		if err := f.h.db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	w := f.call("POST", "/chat-providers/"+f.provider.ID.String()+"/fetch-models", "{}")
@@ -265,10 +291,15 @@ func TestChatModelDiscoveryOnlyAdds(t *testing.T) {
 	if err := f.h.db.First(&fresh, "model_key = ?", "fresh").Error; err != nil {
 		t.Fatalf("the new model was not recorded: %v", err)
 	}
-	// No default price on this provider, so the model cannot be sold yet and
-	// stays closed; images are on by default regardless.
-	if fresh.Enabled || !fresh.Vision || fresh.Pricing != "" || fresh.DiscoveredAt == nil {
-		t.Fatalf("an unpriced discovered model arrived on sale: %+v", fresh)
+	// No default price on this provider, so the built-in one applies and the
+	// model opens; images are on by default.
+	if !fresh.Enabled || !fresh.Vision || fresh.Pricing != builtinDefaultPricing || fresh.DiscoveredAt == nil {
+		t.Fatalf("a discovered model did not open at the built-in default: %+v", fresh)
+	}
+	var unpricedAfter model.ChatModel
+	f.h.db.First(&unpricedAfter, "id = ?", unpriced.ID)
+	if !unpricedAfter.Enabled || unpricedAfter.Pricing != builtinDefaultPricing {
+		t.Fatalf("a pre-existing unpriced model was not priced and opened by the pull: %+v", unpricedAfter)
 	}
 }
 

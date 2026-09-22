@@ -118,6 +118,9 @@ type chatProviderVO struct {
 	// provider has none. PriceMultiplier is the raw decimal string ("" = 1).
 	DefaultPricing  *tokenbilling.Pricing `json:"defaultPricing"`
 	PriceMultiplier string                `json:"priceMultiplier"`
+	// FallbackPricing is the built-in default a model is sold at when neither
+	// the row nor the provider has a price; the page shows it as the placeholder.
+	FallbackPricing *tokenbilling.Pricing `json:"fallbackPricing"`
 }
 
 func (h *chatProvidersHandler) list(c *gin.Context) {
@@ -149,6 +152,9 @@ func (h *chatProvidersHandler) list(c *gin.Context) {
 		}
 		if defaults, err := tokenbilling.Parse(p.DefaultPricing); err == nil {
 			vo.DefaultPricing = defaults
+		}
+		if fallback, err := tokenbilling.Parse(builtinDefaultPricing); err == nil {
+			vo.FallbackPricing = fallback
 		}
 		byProvider[p.ID] = vo
 		providerRows[p.ID] = p
@@ -234,13 +240,45 @@ func normalizeDefaultPricing(raw json.RawMessage) (string, bool) {
 	if text == "" || text == "null" {
 		return "", true
 	}
+	// Parse also returns ErrNotConfigured for malformed data. Only an explicit
+	// disabled flag means clear here; a typo must not erase an existing price.
+	var payload struct {
+		Pricing *struct {
+			Enabled *bool `json:"enabled"`
+		} `json:"tokenPricing"`
+	}
+	if json.Unmarshal(raw, &payload) != nil || payload.Pricing == nil || payload.Pricing.Enabled == nil {
+		return "", false
+	}
+	if !*payload.Pricing.Enabled {
+		return "", true
+	}
 	if _, err := tokenbilling.Parse(text); err != nil {
-		if errors.Is(err, tokenbilling.ErrNotConfigured) {
-			return "", true
-		}
 		return "", false
 	}
 	return text, true
+}
+
+// builtinDefaultPricing is what a model sells at when neither the row nor its
+// provider has a price: GPT-5.6 Sol's list price (4 / 20 USD per 1M tokens) in
+// points, at 7.2 CNY per USD and the Pro plan's 44 points per CNY, rounded
+// up. It keeps a freshly pulled catalogue sellable without a form to fill
+// first; a provider default or a row's own price overrides it.
+var builtinDefaultPricing = func() string {
+	raw, err := json.Marshal(map[string]any{"tokenPricing": tokenbilling.Pricing{Enabled: true, Input: "1300", Output: "6500", MaxInput: 131072, MaxOutput: 8192}})
+	if err != nil {
+		panic(err)
+	}
+	return string(raw)
+}()
+
+// effectiveDefaultPricing is the provider's default when it has a valid one,
+// else the built-in default.
+func effectiveDefaultPricing(p model.ChatProvider) string {
+	if _, err := tokenbilling.Parse(p.DefaultPricing); err == nil {
+		return p.DefaultPricing
+	}
+	return builtinDefaultPricing
 }
 
 // fillUnpricedModels copies the provider's default pricing into its models that
