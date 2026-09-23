@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -950,12 +951,46 @@ func (s *service) resolveModel(configured, requested, outputType string) (string
 	if configured != "" {
 		return "", fmt.Errorf("configured %s model is unavailable", typeName)
 	}
+	if requested != "" {
+		return "", runUserError{message: "所选模型已不可用，请重新选择模型"}
+	}
+	if typeName == "text" {
+		rows, err := s.defaultTextModels()
+		if err != nil {
+			return "", err
+		}
+		if len(rows) == 0 {
+			return "", errors.New("no available text model")
+		}
+		return rows[0].ModelKey, nil
+	}
 	var row model.MarketModel
 	if err := s.db.Where("status = 1 AND type = ? AND model_key <> ''", typeName).
 		Order("sort_order ASC, id ASC").First(&row).Error; err != nil {
 		return "", fmt.Errorf("no available %s model", typeName)
 	}
 	return row.ModelKey, nil
+}
+
+func isPrimaryTextModel(row model.MarketModel) bool {
+	var config struct {
+		Primary bool `json:"aiOptimizePrimary"`
+	}
+	return json.Unmarshal([]byte(row.Config), &config) == nil && config.Primary
+}
+
+// Generated Manifests omit modelId so every text/analysis step follows the
+// administrator's current primary. Keep historical sort order when none is set.
+func (s *service) defaultTextModels() ([]model.MarketModel, error) {
+	var rows []model.MarketModel
+	if err := s.db.Where("status = 1 AND type = ? AND model_key <> ''", "text").
+		Order("sort_order ASC, id ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		return isPrimaryTextModel(rows[i]) && !isPrimaryTextModel(rows[j])
+	})
+	return rows, nil
 }
 
 func (s *service) resolveTextModelForAssets(configured, requested string, assets []AssetInput) (string, error) {

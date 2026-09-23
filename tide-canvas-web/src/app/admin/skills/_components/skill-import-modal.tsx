@@ -619,6 +619,7 @@ export function SkillImportModal({
         />
         <p className="muted" style={{ margin: "8px 0 16px", fontSize: 12, lineHeight: 1.6 }}>
           AI 智能导入会调用可用文本模型并按模型规则计费；不会开启 MCP、上架 Skill、选择真实模型 ID 或执行包内脚本。
+          配置了文本主模型时，Manifest 生成及导入后的文本、分析步骤默认使用主模型。
           原文只承诺文本时，不会擅自增加图片或视频生成步骤。
         </p>
         {packages.length === 1 && !packages[0].howTo?.trim() ? (

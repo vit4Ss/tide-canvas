@@ -278,14 +278,16 @@ func (s *service) resolveAnalysisModel(handler, configured, requested string) (s
 		}
 		return row.ModelKey, nil
 	}
-	var rows []model.MarketModel
-	if err := s.db.Where("status = 1 AND type = ? AND model_key <> ''", "text").
-		Order("sort_order ASC, id ASC").Find(&rows).Error; err != nil {
+	rows, err := s.defaultTextModels()
+	if err != nil {
 		return "", err
 	}
 	for _, row := range rows {
 		if analysisModelSupports(handler, row) {
 			return row.ModelKey, nil
+		}
+		if isPrimaryTextModel(row) {
+			return "", runUserError{message: "文本主模型未开启文件上传或不支持此技能所需的媒体输入，请在模型管理中调整主模型配置"}
 		}
 	}
 	return "", errors.New("no file-capable text model is available for media analysis")

@@ -133,6 +133,74 @@ test("loading or incomplete version details cannot save an empty replacement", a
   assert.equal(await env.save(), false);
 });
 
+test("regenerating a text Manifest removes the old version model binding", async () => {
+  const env = setup(); await env.flush();
+  const control = env.nodes().find((node) => node.props?.loadRequests && node.props?.onGenerated);
+  assert.ok(control);
+  const [request] = await control.props.loadRequests();
+  const manifest = { kind: "agent", primaryOutputType: "text", outputTypes: ["text"] };
+  control.props.onGenerated([{ key: request.key, signature: request.signature, manifest }]);
+  await env.flush();
+  assert.equal(await env.save(), true);
+  const dto = env.calls.find(([action]) => action === "save")[2];
+  assert.equal(dto.modelId, undefined, "generated defaults must not inherit the previous text model");
+  assert.deepEqual(dto.manifest, manifest);
+});
+
+test("regenerating a media Manifest preserves the administrator's media model", async () => {
+  const env = setup({ getVersion: async () => ok({ ...version(), primaryOutputType: "image", outputTypes: '["text","image"]', modelId: "image-model" }) });
+  await env.flush();
+  const control = env.nodes().find((node) => node.props?.loadRequests && node.props?.onGenerated);
+  const [request] = await control.props.loadRequests();
+  const manifest = { kind: "agent", primaryOutputType: "image", outputTypes: ["text", "image"] };
+  control.props.onGenerated([{ key: request.key, signature: request.signature, manifest }]);
+  await env.flush();
+  assert.equal(await env.save(), true);
+  assert.equal(env.calls.find(([action]) => action === "save")[2].modelId, "image-model");
+});
+
+for (const output of ["text", "file", "image", "video", "audio"]) {
+  test(`regeneration clears text overrides from version and placement defaults (${output})`, async () => {
+    const params = { modelId: "old-output-model", textModelId: "old-text-model", temperature: 0.3, options: { modelId: "content-value" } };
+    const placement = { surface: "canvas", targetType: "*", enabled: true, sortOrder: 0, defaults: { ...params, mode: "review" } };
+    const env = setup({ getVersion: async () => ok({
+      ...version(), primaryOutputType: output, outputTypes: JSON.stringify([output]),
+      defaultParams: JSON.stringify(params), bindings: JSON.stringify([placement]),
+    }) });
+    await env.flush();
+    const control = env.nodes().find((node) => node.props?.loadRequests && node.props?.onGenerated);
+    const [request] = await control.props.loadRequests();
+    const manifest = { kind: "agent", primaryOutputType: output, outputTypes: [output] };
+    control.props.onGenerated([{ key: request.key, signature: request.signature, manifest }]);
+    await env.flush();
+    assert.equal(await env.save(), true);
+    const dto = env.calls.find(([action]) => action === "save")[2];
+    const expected = { temperature: 0.3, options: { modelId: "content-value" } };
+    if (!["text", "file"].includes(output)) expected.modelId = "old-output-model";
+    assert.deepEqual(dto.defaultParams, expected);
+    assert.deepEqual(dto.bindings[0].defaults, { ...expected, mode: "review" });
+  });
+}
+
+test("saving without regeneration preserves deliberate model defaults", async () => {
+  const params = { textModelId: "manual-text-model", modelId: "manual-output-model", temperature: 0.3 };
+  const env = setup({ getVersion: async () => ok({ ...version(), defaultParams: JSON.stringify(params) }) });
+  await env.flush();
+  assert.equal(await env.save(), true);
+  assert.deepEqual(env.calls.find(([action]) => action === "save")[2].defaultParams, params);
+});
+
+test("regeneration cannot hide malformed default parameters from save validation", async () => {
+  const env = setup({ getVersion: async () => ok({ ...version(), defaultParams: "invalid JSON" }) });
+  await env.flush();
+  const control = env.nodes().find((node) => node.props?.loadRequests && node.props?.onGenerated);
+  const [request] = await control.props.loadRequests();
+  control.props.onGenerated([{ key: request.key, signature: request.signature, manifest: { kind: "agent" } }]);
+  await env.flush();
+  assert.equal(await env.save(), false);
+  assert.equal(env.calls.some(([action]) => action === "save"), false);
+});
+
 test("switching skills discards an old package response", async () => {
   const response = deferred();
   const env = setup({ getVersion: (skillId) => skillId === "10" ? response.promise : Promise.resolve(ok({ ...version("201"), skillId: "20", files: [{ path: "SKILL.md", content: "Second skill", mimeType: "text/markdown" }] })) });

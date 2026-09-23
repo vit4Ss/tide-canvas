@@ -19,7 +19,7 @@ import { skillInputSchemaFor, type SkillInputPreset } from "./skill-input-schema
 const MANIFEST_SCOPE = "admin:skill-manifest";
 const POLL_INTERVAL_MS = 1_500;
 const TASK_TIMEOUT_MS = 3 * 60_000;
-const INITIAL_STATUS = "Schema 由管理员决定；AI 只生成 Manifest 草稿，不填写模型 ID。";
+const INITIAL_STATUS = "Schema 由管理员决定；文本和分析步骤默认跟随模型管理中的主模型，AI 不填写模型 ID。";
 
 const STEP_TYPES = new Set(["text", "generate", "tool", "approval", "input"]);
 const HANDLERS = new Set([
@@ -306,13 +306,14 @@ function parseModelConfig(model: AiModelVO): ModelConfig {
 }
 
 function textModels(models: AiModelVO[]): AiModelVO[] {
-  return models
+  const candidates = models.filter((model) => model.type === "text");
+  const primary = candidates.find((model) => parseModelConfig(model).aiOptimizePrimary === true);
+  return (primary ? [primary] : candidates)
     .filter((model) => {
-      if (model.type !== "text" || parseModelConfig(model).availabilityStatus === "maintenance") return false;
+      if (parseModelConfig(model).availabilityStatus === "maintenance") return false;
       const handlers = model.supportedHandlers?.filter(Boolean) ?? [];
       return !handlers.length || handlers.includes("skill_text_completion");
-    })
-    .sort((left, right) => Number(parseModelConfig(right).aiOptimizePrimary === true) - Number(parseModelConfig(left).aiOptimizePrimary === true));
+    });
 }
 
 function taskText(task: AiTaskVO): string {
@@ -691,6 +692,7 @@ ${[...HANDLERS].filter(Boolean).join("、")}。
 
 不得输出 modelId，不得创造处理器，不得执行任意代码或 URL。kind、primaryOutputType、outputTypes 必须与上面管理员选择完全一致。每个执行步骤的 outputType 必须属于“允许输出”。只有 Skill 原文明确要求先产出剧本、提示词或方案再生成媒体时，才增加 text 中间步骤；后续 generate 步骤用 {{previous}} 接收该文本，并在付费媒体生成前加入 approval（不设置 promotePrevious）。generate 步骤必须明确填写与输出匹配的 handler：图片使用 text_to_image 或 image_to_image；视频的单张图片输入使用 image_to_video，多图或多媒体输入使用 reference_to_video，首尾帧输入使用 start_end_to_video，无素材输入使用 text_to_video；音频使用 text_to_audio。媒体分析仅使用对应的 analyze_image、analyze_video、analyze_audio；网页分析使用 analyze_webpage。不要使用账号分析等需要专用业务上下文的处理器。
 
+文本和分析步骤的模型由系统在执行时读取模型管理中的文本主模型，不要在流程中指定其他文本模型。
 优先采用最简单且能完成任务的流程；普通对话型 Agent 可以不写 steps。Tool 必须至少包含一个已注册 tool 步骤。最终步骤，或紧随其后的 promotePrevious 确认步骤，必须产出主输出类型。`;
 }
 
@@ -744,7 +746,7 @@ ${excerpt(request.source, sourceLimit)}
 6. 优先最简单可运行流程。若无步骤 Agent 已能完成文本任务，manifest 不写 steps。视频、音频或图片审查只使用无步骤 Agent 或单个 analyze_* 最终步骤；SKILL.md 的完整专业规则会作为同一次分析调用的系统指令，不得再增加“润色、整理、总结报告”等第二个付费 text 步骤。只有原 Skill 明确要求先生成剧本、提示词或方案，再据此生成媒体时，才增加 text 中间步骤；后续 generate 步骤的 prompt 使用 {{previous}} 接收该文本。文本中间结果与付费媒体生成之间默认加入 approval 步骤（不要 promotePrevious），除非原文明确要求全自动执行。
 7. description、usageScenario、howTo、输入输出说明和示例必须与最终 kind、inputPreset 和 Manifest 的真实可运行能力一致。包内脚本不会执行，不得把脚本能力写成已经接入的功能。
 8. 返回前自行检查 kind、inputPreset、primaryOutputType、outputTypes 和每个 handler 是否相互一致，只输出修正后的最终 JSON。
-9. 不开启 MCP、不决定作者、不选择真实模型 ID；这些由管理员和系统处理。`;
+9. 不开启 MCP、不决定作者、不选择真实模型 ID；这些由管理员和系统处理。文本和分析步骤在执行时默认使用模型管理中的文本主模型，不要指定其他文本模型。`;
 }
 
 function sanitizeAutoConfiguration(raw: string, request: SkillManifestDraftRequest): SkillManifestDraftResult {
@@ -922,14 +924,15 @@ export function SkillManifestAiControl({
       if (needsAI) {
         const modelResponse = await aiApi.listModels();
         if (!active()) return;
-        const availableModels = modelResponse.success ? textModels(modelResponse.data) : [];
-        if (!availableModels.length) throw new Error(modelResponse.message || "暂无可用的文本模型");
+        if (!modelResponse.success) throw new Error(modelResponse.message || "无法加载文本模型，请稍后重试");
+        const availableModels = textModels(modelResponse.data);
+        if (!availableModels.length) throw new Error("文本主模型不可用或未配置可用文本模型，请检查模型管理");
         for (const request of aiRequests) {
           const model = availableModels.find((candidate) => {
             const candidatePrompt = autoConfigure ? autoConfigurationPrompt(request, candidate) : generationPrompt(request, candidate);
             return !modelPromptLimitIssue(candidatePrompt, parseModelConfig(candidate));
           });
-          if (!model) throw new Error(`“${request.title}”的内容超过所有可用文本模型的提示词限制，请精简 SKILL.md`);
+          if (!model) throw new Error(`“${request.title}”的内容超过当前文本模型的提示词限制，请精简 SKILL.md 或调整主模型配置`);
           selectedModels.set(request.key, model);
         }
         if (aiRequests.length > 1) {

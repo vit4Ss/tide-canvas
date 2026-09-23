@@ -341,6 +341,15 @@ function versionManifestSignature(form: VersionForm): string {
   });
 }
 
+function withoutTextModelDefaults(raw: string, primaryOutputType: SkillOutputType): string {
+  const defaults = silentObjectJSON(raw);
+  // Preserve malformed input so the existing save validation reports it.
+  if (!defaults) return raw;
+  delete defaults.textModelId;
+  if (primaryOutputType === "text" || primaryOutputType === "file") delete defaults.modelId;
+  return JSON.stringify(defaults, null, 2);
+}
+
 function versionTone(status: AdminSkillVersionVO["status"]): "green" | "blue" | "gray" {
   if (status === "published") return "green";
   if (status === "draft") return "blue";
@@ -1125,7 +1134,18 @@ export function SkillVersionModal({
               if (!result) return;
               setForm((current) => {
                 if (!current || result.signature !== versionManifestSignature(current)) return current;
-                return { ...current, manifest: JSON.stringify(result.manifest, null, 2) };
+                return {
+                  ...current,
+                  // Regeneration adopts the current primary instead of keeping
+                  // an old version's text-model binding. Media bindings remain.
+                  modelId: ["text", "file"].includes(current.primaryOutputType) ? "" : current.modelId,
+                  defaultParams: withoutTextModelDefaults(current.defaultParams, current.primaryOutputType),
+                  bindings: current.bindings.map((binding) => ({
+                    ...binding,
+                    defaults: withoutTextModelDefaults(binding.defaults, current.primaryOutputType),
+                  })),
+                  manifest: JSON.stringify(result.manifest, null, 2),
+                };
               });
             }}
           />
@@ -1294,7 +1314,7 @@ export function SkillVersionModal({
               onRemove={removeBinding}
             />
           </Field>
-          <Field label="模型 ID" span={2} hint="可留空，由 Manifest 步骤或系统默认模型决定。">
+          <Field label="模型 ID" span={2} hint="可留空；文本和分析默认跟随模型管理中的主模型，手动指定或 Manifest 步骤配置优先。">
             <input
               value={form.modelId}
               onChange={(event) => {

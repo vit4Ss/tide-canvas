@@ -996,7 +996,10 @@ export function CanvasAssistantPanel({
     event.target.value = "";
     if (!files.length) return;
 
-    const attachmentError = assistantAttachmentError(selectedModel, attachments.length + files.length);
+    // Skill input/model validation belongs to its server-side workflow. The
+    // ordinary chat selection must not reject media meant for a Skill.
+    const attachmentModel = selectedSkill ? undefined : selectedModel;
+    const attachmentError = assistantAttachmentError(attachmentModel, attachments.length + files.length);
     if (attachmentError) {
       toast.error(attachmentError);
       return;
@@ -1018,7 +1021,7 @@ export function CanvasAssistantPanel({
       try {
         const kind = referenceKindFromFile(file);
         const result = await uploadFileSmart(file, (progress) => setUploadProgress(progress), {
-          maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
+          maxBytes: resolveModelReferenceLimitBytes(attachmentModel, kind),
           label: kind === "video" ? "参考视频" : "参考文件",
         });
         if (result.success && result.data?.fileUrl) {
@@ -1336,7 +1339,8 @@ export function CanvasAssistantPanel({
     const hasCanvasSources = !!currentSkill && selectedNodeIds.size > 0;
     if ((!text && currentAttachments.length === 0 && !hasCanvasSources) || sendLockRef.current || sending || uploading) return;
 
-    const attachmentError = assistantAttachmentError(selectedModel, currentAttachments.length);
+    const attachmentModel = currentSkill ? undefined : selectedModel;
+    const attachmentError = assistantAttachmentError(attachmentModel, currentAttachments.length);
     if (attachmentError) {
       toast.error(attachmentError);
       return;
@@ -1345,7 +1349,7 @@ export function CanvasAssistantPanel({
     for (const file of currentAttachments) {
       const kind = referenceKindFromMeta(file);
       const validationMessage = validateKnownFileSize(file.fileSize, file.originalName, {
-        maxBytes: resolveModelReferenceLimitBytes(selectedModel, kind),
+        maxBytes: resolveModelReferenceLimitBytes(attachmentModel, kind),
         label: "参考文件",
       });
       if (validationMessage) { toast.error(validationMessage); return; }
@@ -1391,9 +1395,6 @@ export function CanvasAssistantPanel({
       }
       const currentSkillKind = skillKindOf(currentSkill);
       const runParameters = { ...currentParameters };
-      if (currentSkillKind === "agent" && selectedModel?.modelId && !runParameters.textModelId) {
-        runParameters.textModelId = selectedModel.modelId;
-      }
       const previousResultAssets = currentSkillKind === "agent"
         ? recentHistory
           .flatMap((item) => item.run ? [item.run] : [])
@@ -2070,8 +2071,8 @@ export function CanvasAssistantPanel({
               >
                 {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
               </button>
-              {selectedSkillKind === "preset" ? (
-                <span className="shrink-0 px-2 py-1 text-xs text-neutral-500 dark:text-neutral-400">使用技能预设</span>
+              {selectedSkill ? (
+                <span className="shrink-0 px-2 py-1 text-xs text-neutral-500 dark:text-neutral-400">{selectedSkillKind === "preset" ? "使用技能预设" : "使用技能配置"}</span>
               ) : modelsLoading ? (
                 <span className="flex h-8 shrink-0 items-center px-2 text-xs text-neutral-500 dark:text-neutral-400" role="status">
                   加载模型...
