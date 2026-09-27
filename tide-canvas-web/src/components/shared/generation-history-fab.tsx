@@ -21,6 +21,7 @@ export function GenerationHistoryFab() {
     || pathname.startsWith("/admin")
     || pathname.startsWith("/canvas")
     || pathname === "/generation-history"
+    || pathname === "/api-usage"
   ) {
     return null;
   }

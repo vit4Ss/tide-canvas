@@ -56,7 +56,24 @@ export function usageDuration(ms: number | null | undefined): string {
 
 export function usagePoints(row: Pick<ChatUsageRow, "status" | "points" | "netPoints">): string {
   if (row.status === "pending" || row.status === "billing_pending") return "待结算";
-  return Number(row.netPoints ?? row.points).toLocaleString("zh-CN", { maximumFractionDigits: 6 });
+  return usageDecimal(row.netPoints ?? row.points);
+}
+
+// Monetary values arrive as decimal strings. Avoid converting them to Number:
+// large balances can otherwise lose the micro-point precision used by billing.
+export function usageDecimal(value: string | null | undefined): string {
+  if (value == null || !/^-?\d+(?:\.\d+)?$/.test(value)) return "—";
+  const [whole, fraction = ""] = value.split(".");
+  const decimals = fraction.replace(/0+$/, "");
+  const normalized = whole.replace(/^(-?)0+(?=\d)/, "$1");
+  return `${normalized.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}${decimals ? `.${decimals}` : ""}`;
+}
+
+export function usagePercent(value: number | null): string {
+  if (value == null || !Number.isFinite(value) || value < 0 || value > 100) return "—";
+  if (value > 0 && value < 0.1) return "<0.1";
+  if (value > 99.9 && value < 100) return ">99.9";
+  return value.toFixed(1);
 }
 
 export function usageProtocol(path: string): string {
@@ -69,4 +86,27 @@ export function usageTime(value: string): string {
   const time = new Date(value);
   if (Number.isNaN(time.getTime())) return "—";
   return time.toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
+}
+
+export type UsageDatePreset = "all" | "today" | "7d" | "30d" | "custom";
+
+// API filters use Beijing dates, independent of the viewer's local timezone.
+export function usageDateRange(preset: Exclude<UsageDatePreset, "custom">, now = new Date()): { startDate: string; endDate: string } {
+  if (preset === "all") return { startDate: "", endDate: "" };
+  const end = new Date(now.getTime() + 8 * 3600_000);
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - (preset === "30d" ? 29 : preset === "7d" ? 6 : 0));
+  return { startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) };
+}
+
+export function usageCachePercent(input: number, cached: number): number | null {
+  if (!Number.isFinite(input) || !Number.isFinite(cached) || input <= 0 || cached < 0 || cached > input) return null;
+  return cached / input * 100;
+}
+
+export function usageDateParts(value: string): { date: string; time: string } {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) return { date: "—", time: "—" };
+  const shifted = new Date(parsed.getTime() + 8 * 3600_000).toISOString();
+  return { date: shifted.slice(0, 10), time: shifted.slice(11, 19) };
 }
