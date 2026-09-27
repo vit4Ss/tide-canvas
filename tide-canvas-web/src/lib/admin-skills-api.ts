@@ -13,6 +13,9 @@ import type {
   AdminSkillBindingDTO,
   AdminSkillBindingVO,
   AdminSkillArchivePreviewVO,
+  AdminSkillGitHubPreviewVO,
+  AdminSkillImportSource,
+  AdminSkillAdaptationPreviewVO,
   AdminSkillImportPackage,
   AdminSkillImportValidationVO,
   AdminSkillVO,
@@ -91,8 +94,14 @@ export const adminSkillsApi = {
   ),
   validateImport: (skills: AdminSkillImportPackage[]) =>
     http.post<AdminSkillImportValidationVO>("/api/admin/skills/validate-import", { skills }),
-  validateFiles: (packages: AdminSkillFilePackageDTO[]) =>
-    http.post<AdminSkillFileValidationVO>("/api/admin/skills/validate-files", { packages }),
+  validateFiles: (packages: AdminSkillFilePackageDTO[], signal?: AbortSignal) =>
+    http.post<AdminSkillFileValidationVO>("/api/admin/skills/validate-files", { packages }, { signal }),
+  previewGitHub: (url: string, signal?: AbortSignal) =>
+    http.post<AdminSkillGitHubPreviewVO>("/api/admin/skills/github-preview", { url }, { signal }),
+  prepareDraft: (text: string, signal?: AbortSignal) =>
+    http.post<AdminSkillFilePackageDTO>("/api/admin/skills/draft-source", { text }, { signal }),
+  previewAdaptation: (dto: AdminSkillImportSource & { description: string; instructions: string }, signal?: AbortSignal) =>
+    http.post<AdminSkillAdaptationPreviewVO>("/api/admin/skills/adaptation-preview", dto, { signal }),
   previewArchive: (file: File) => {
     const form = new FormData();
     form.append("file", file);

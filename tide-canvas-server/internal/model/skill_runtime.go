@@ -49,23 +49,26 @@ const (
 // its schemas/capabilities but never expose PromptTemplate, ManifestJSON or files.
 type SkillVersion struct {
 	BaseModel
-	SkillID           idgen.ID   `gorm:"column:skill_id;not null;uniqueIndex:idx_skill_version_no,priority:1;index" json:"skillId"`
-	Version           int        `gorm:"column:version_no;not null;uniqueIndex:idx_skill_version_no,priority:2" json:"version"`
-	Kind              string     `gorm:"column:kind;size:16;not null;default:'preset';index" json:"kind"`
-	Status            string     `gorm:"column:status;size:16;not null;default:'draft';index" json:"status"`
-	EntryPoints       string     `gorm:"column:entry_points;type:text" json:"entryPoints"`
-	PrimaryOutputType string     `gorm:"column:primary_output_type;size:16;index" json:"primaryOutputType"`
-	OutputTypes       string     `gorm:"column:output_types;type:text" json:"outputTypes"`
-	InputSchema       string     `gorm:"column:input_schema;type:longtext" json:"inputSchema"`
-	ManifestJSON      string     `gorm:"column:manifest_json;type:longtext" json:"manifest"`
-	PromptTemplate    string     `gorm:"column:prompt_template;type:longtext" json:"promptTemplate"`
-	ModelID           string     `gorm:"column:model_id;size:128" json:"modelId"`
-	DefaultParams     string     `gorm:"column:default_params;type:longtext" json:"defaultParams"`
-	BindingsJSON      string     `gorm:"column:bindings_json;type:longtext" json:"bindings"`
-	PrimaryFilePath   string     `gorm:"column:primary_file_path;size:512" json:"primaryFilePath"`
-	ContentHash       string     `gorm:"column:content_hash;size:64;index" json:"contentHash"`
-	CreatedBy         idgen.ID   `gorm:"column:created_by;default:0;index" json:"createdBy"`
-	PublishedAt       *time.Time `gorm:"column:published_at" json:"publishedAt"`
+	SkillID           idgen.ID `gorm:"column:skill_id;not null;uniqueIndex:idx_skill_version_no,priority:1;index" json:"skillId"`
+	Version           int      `gorm:"column:version_no;not null;uniqueIndex:idx_skill_version_no,priority:2" json:"version"`
+	Kind              string   `gorm:"column:kind;size:16;not null;default:'preset';index" json:"kind"`
+	Status            string   `gorm:"column:status;size:16;not null;default:'draft';index" json:"status"`
+	EntryPoints       string   `gorm:"column:entry_points;type:text" json:"entryPoints"`
+	PrimaryOutputType string   `gorm:"column:primary_output_type;size:16;index" json:"primaryOutputType"`
+	OutputTypes       string   `gorm:"column:output_types;type:text" json:"outputTypes"`
+	InputSchema       string   `gorm:"column:input_schema;type:longtext" json:"inputSchema"`
+	ManifestJSON      string   `gorm:"column:manifest_json;type:longtext" json:"manifest"`
+	PromptTemplate    string   `gorm:"column:prompt_template;type:longtext" json:"promptTemplate"`
+	ModelID           string   `gorm:"column:model_id;size:128" json:"modelId"`
+	DefaultParams     string   `gorm:"column:default_params;type:longtext" json:"defaultParams"`
+	BindingsJSON      string   `gorm:"column:bindings_json;type:longtext" json:"bindings"`
+	PrimaryFilePath   string   `gorm:"column:primary_file_path;size:512" json:"primaryFilePath"`
+	// Audit-only source of an AI adaptation; never expanded by the runtime or
+	// serialized by public/MCP responses. Admin detail explicitly exposes it.
+	ImportSourceJSON string     `gorm:"column:import_source;type:longtext" json:"-"`
+	ContentHash      string     `gorm:"column:content_hash;size:64;index" json:"contentHash"`
+	CreatedBy        idgen.ID   `gorm:"column:created_by;default:0;index" json:"createdBy"`
+	PublishedAt      *time.Time `gorm:"column:published_at" json:"publishedAt"`
 }
 
 func (SkillVersion) TableName() string { return "skill_version" }

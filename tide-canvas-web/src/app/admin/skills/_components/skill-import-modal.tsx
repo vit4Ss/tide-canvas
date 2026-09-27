@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileText, FolderOpen, Loader2, Upload } from "lucide-react";
+import { FileText, FolderOpen, Link2, Loader2, Upload } from "lucide-react";
 import { AdminAlert, AdminModal, Field, FormCard, FormGrid } from "@/components/admin";
 import { toast } from "@/components/shared/toast";
 import { adminSkillsApi } from "@/lib/admin-skills-api";
@@ -10,6 +10,7 @@ import type {
   AdminSkillFileInput,
   AdminSkillImportPackage,
   AdminSkillImportValidationVO,
+  AdminSkillImportSource,
 } from "@/types/admin-skill";
 import {
   SKILL_CATEGORIES,
@@ -30,6 +31,7 @@ import {
 import { SkillManifestAiControl, type SkillManifestDraftRequest } from "./skill-manifest-ai-control";
 import { SKILL_INPUT_PRESETS, skillInputSchemaFor, type SkillInputPreset } from "./skill-input-schema-presets";
 import { SkillMCPSettings } from "./skill-mcp-settings";
+import { SkillAdaptationReview } from "./skill-adaptation-review";
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_PRIMARY_FILE_BYTES = 1024 * 1024;
@@ -72,6 +74,10 @@ interface PreparedPackage {
   ignoredFiles?: number;
   manifestText?: string;
   outputTypes?: SkillOutputType[];
+  sourceUrl?: string;
+  commitSha?: string;
+  importSource?: AdminSkillImportSource;
+  draftSource?: boolean;
 }
 
 const IMPORT_GUIDANCE_FIELDS = [
@@ -91,10 +97,12 @@ function packagePrimaryContent(pkg: PreparedPackage): string {
   return pkg.files.find((file) => file.path.toLowerCase() === pkg.primaryFilePath.toLowerCase())?.content ?? "";
 }
 
-function packageSourceForAI(pkg: PreparedPackage): string {
-  const primary = packagePrimaryContent(pkg);
-  const references = pkg.files
-    .filter((file) => file.path.toLowerCase() !== pkg.primaryFilePath.toLowerCase())
+function packageSourceForAI(pkg: PreparedPackage, useOriginal = false): string {
+  const files = useOriginal && pkg.importSource ? pkg.importSource.files : pkg.files;
+  const primaryPath = useOriginal && pkg.importSource ? pkg.importSource.primaryFilePath : pkg.primaryFilePath;
+  const primary = files.find(file => file.path === primaryPath)?.content || "";
+  const references = files
+    .filter((file) => file.path.toLowerCase() !== primaryPath.toLowerCase())
     .map((file) => `\n\n<skill_reference path=${JSON.stringify(file.path)}>\n${file.content}\n</skill_reference>`)
     .join("");
   return `${primary}${references}`;
@@ -233,6 +241,43 @@ async function prepareFiles(selected: File[]): Promise<PreparedPackage[]> {
     ignoredFiles: (pkg.ignoredFiles ?? 0) + (index === 0 ? ignoredFiles : 0) }));
 }
 
+async function prepareGitHubPackages(url: string, signal: AbortSignal): Promise<PreparedPackage[]> {
+  const response = await adminSkillsApi.previewGitHub(url.trim(), signal);
+  if (signal.aborted) throw new Error("GitHub 读取已取消");
+  if (!response.success || !response.data) throw new Error(response.message || "GitHub 读取失败");
+  const preview = response.data;
+  if (!Array.isArray(preview.packages) || !preview.packages.length || preview.packages.length > MAX_PACKAGES
+    || !/^[a-f\d]{40}$/i.test(preview.commitSha)
+    || !preview.sourceUrl?.startsWith("https://github.com/")) {
+    throw new Error("GitHub 返回的 Skill 文件包不完整，请重试");
+  }
+  const metadata = checkedSkillFileMetadata(await adminSkillsApi.validateFiles(
+    preview.packages.map((pkg) => ({ primaryFilePath: pkg.primaryFilePath, files: pkg.files })), signal,
+  ), preview.packages.length);
+  if (signal.aborted) throw new Error("GitHub 读取已取消");
+  return preview.packages.map((pkg, index) => ({
+    key: `github:${preview.sourceUrl}:${index}`,
+    title: metadata[index].name,
+    description: truncateRunes(metadata[index].description, 255),
+    primaryFilePath: pkg.primaryFilePath,
+    files: pkg.files,
+    ignoredFiles: index === 0 ? preview.ignoredFiles : 0,
+    sourceUrl: preview.sourceUrl,
+    commitSha: preview.commitSha,
+  }));
+}
+
+async function prepareDraftPackage(text: string, signal: AbortSignal): Promise<PreparedPackage[]> {
+  const result = await adminSkillsApi.prepareDraft(text, signal);
+  if (signal.aborted) throw new Error("草稿读取已取消");
+  if (!result.success || !result.data?.files?.length) throw new Error(result.message || "草稿读取失败");
+  const pkg = result.data;
+  const [meta] = checkedSkillFileMetadata(await adminSkillsApi.validateFiles([pkg], signal), 1);
+  if (signal.aborted) throw new Error("草稿读取已取消");
+  return [{ key: `draft:${meta.name}`, title: meta.name, description: truncateRunes(meta.description, 255),
+    primaryFilePath: pkg.primaryFilePath, files: pkg.files, draftSource: true }];
+}
+
 export function SkillImportModal({
   open,
   onClose,
@@ -244,6 +289,9 @@ export function SkillImportModal({
 }) {
   const [packages, setPackages] = useState<PreparedPackage[]>([]);
   const [reading, setReading] = useState(false);
+  const [githubUrl, setGithubUrl] = useState("");
+  const [adaptToPlatform, setAdaptToPlatform] = useState(true);
+  const [draftText, setDraftText] = useState("");
   const [fileError, setFileError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [manifestBusy, setManifestBusy] = useState(false);
@@ -259,9 +307,11 @@ export function SkillImportModal({
     defaultAdminSkillEntryPoints("agent"),
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const draftInputRef = useRef<HTMLInputElement>(null);
   const validationPendingRef = useRef(false);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const readSeqRef = useRef(0);
+  const readControllerRef = useRef<AbortController | null>(null);
   const directoryProps = { webkitdirectory: "", directory: "" } as React.InputHTMLAttributes<HTMLInputElement>;
 
   const totalBytes = useMemo(
@@ -279,13 +329,22 @@ export function SkillImportModal({
 
   useEffect(() => () => {
     readSeqRef.current += 1;
+    readControllerRef.current?.abort();
   }, []);
 
-  const readSelection = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const selected = [...(event.target.files ?? [])];
-    event.target.value = "";
-    if (!selected.length || submitting || manifestBusy) return;
+  const readSource = async (load: (signal: AbortSignal) => Promise<PreparedPackage[]>) => {
+    if (validationPendingRef.current || submitting || manifestBusy) return;
     const readSeq = ++readSeqRef.current;
+    const controller = new AbortController();
+    readControllerRef.current = controller;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener("abort", () => reject(new Error("文件读取已取消")), { once: true });
+      timeout = setTimeout(() => {
+        reject(new Error("文件读取超时，请重试或下载 ZIP 后导入"));
+        controller.abort();
+      }, 75_000);
+    });
     validationPendingRef.current = true;
     setReading(true);
     setFileError("");
@@ -302,8 +361,9 @@ export function SkillImportModal({
     setMcpEnabled(false);
     setEntryPoints(defaultAdminSkillEntryPoints("agent"));
     try {
-      const prepared = await prepareFiles(selected);
+      const prepared = await Promise.race([load(controller.signal), deadline]);
       if (readSeq === readSeqRef.current) {
+        if (prepared.some(pkg => pkg.draftSource)) setAdaptToPlatform(true);
         setPackages(prepared);
         setValidation(null);
         if (prepared.length === 1) setAutoStartToken((current) => current + 1);
@@ -315,11 +375,36 @@ export function SkillImportModal({
         toast.error(message);
       }
     } finally {
+      clearTimeout(timeout);
+      if (readControllerRef.current === controller) readControllerRef.current = null;
       if (readSeq === readSeqRef.current) {
         validationPendingRef.current = false;
         setReading(false);
       }
     }
+  };
+
+  const readSelection = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = [...(event.target.files ?? [])];
+    event.target.value = "";
+    if (selected.length) await readSource(() => prepareFiles(selected));
+  };
+
+  const readGitHub = async () => {
+    if (!githubUrl.trim()) return;
+    await readSource((signal) => prepareGitHubPackages(githubUrl, signal));
+  };
+
+  const readDraft = async (file?: File) => {
+    if (!file && !draftText.trim()) return;
+    await readSource(async signal => {
+      if (file && (!/\.(md|txt)$/i.test(file.name) || file.size > MAX_PRIMARY_FILE_BYTES)) {
+        throw new Error("GPT 草稿请选择 1 MB 内的 .md 或 .txt 文件");
+      }
+      const text = file ? await readUTF8File(file, file.name) : draftText;
+      if (signal.aborted) throw new Error("草稿读取已取消");
+      return prepareDraftPackage(text, signal);
+    });
   };
 
   const toggleEntry = (entry: SkillEntryPoint) => {
@@ -333,7 +418,8 @@ export function SkillImportModal({
   };
 
   const clearManifestDrafts = () => {
-    setPackages((current) => current.map((pkg) => ({ ...pkg, manifestText: undefined, outputTypes: undefined })));
+    setPackages((current) => current.map((pkg) => ({ ...pkg, manifestText: undefined, outputTypes: undefined,
+      importSource: pkg.importSource ? { ...pkg.importSource, reviewed: false } : undefined })));
     setValidation(null);
   };
 
@@ -360,12 +446,13 @@ export function SkillImportModal({
     return [{
       key: pkg.key,
       title: pkg.title,
-      source: packageSourceForAI(pkg),
+      source: packageSourceForAI(pkg, true),
       kind: "agent",
       primaryOutputType: "text",
       outputTypes: ["text"],
       inputSchema: skillInputSchemaFor("text") as Record<string, unknown>,
-      signature: JSON.stringify({ key: pkg.key, primaryFilePath: pkg.primaryFilePath, source: packageSourceForAI(pkg) }),
+      signature: JSON.stringify({ key: pkg.key, source: packageSourceForAI(pkg, true), adaptToPlatform }),
+      adaptToPlatform,
     }];
   };
 
@@ -398,6 +485,7 @@ export function SkillImportModal({
       bindings: defaultAdminSkillBindings(normalizedEntryPoints, primaryOutputType),
       primaryFilePath: pkg.primaryFilePath,
       files: pkg.files,
+      importSource: pkg.importSource,
       publish: true,
     }));
   };
@@ -422,6 +510,10 @@ export function SkillImportModal({
     }
     if (packages.some((pkg) => !pkg.title.trim())) {
       toast.error("Skill 名称不能为空");
+      return false;
+    }
+    if (adaptToPlatform && packages.some(pkg => !pkg.importSource?.reviewed)) {
+      toast.error("请先生成并审核本站适配方案，确认能力变更后再导入");
       return false;
     }
     let skills: AdminSkillImportPackage[];
@@ -471,9 +563,9 @@ export function SkillImportModal({
       open={open}
       size="lg"
       title="导入 Skill"
-      subtitle="选择文件后，AI 会自动识别用途并完成配置。确认无误后直接导入。"
+      subtitle="导入现有 Skill，或把 GPT 内容交给 AI 整理。审核使用说明与能力变更后，沿用原流程导入。"
       saveLabel={manifestBusy ? "AI 配置中…" : "导入 Skill"}
-      saveDisabled={reading || manifestBusy || submitting || !packages.length || (kind !== "preset" && packages.some((pkg) => !pkg.manifestText?.trim()))}
+      saveDisabled={reading || manifestBusy || submitting || !packages.length || (adaptToPlatform && packages.some(pkg => !pkg.importSource?.reviewed)) || (kind !== "preset" && packages.some((pkg) => !pkg.manifestText?.trim()))}
       footNote={manifestBusy ? "正在读取 Skill 并生成安全配置，请保持窗口打开。" : "导入后默认下架，可在技能管理中确认后再开放。"}
       closeable={!manifestBusy}
       showCancel={!manifestBusy}
@@ -485,7 +577,68 @@ export function SkillImportModal({
         aria-busy={reading || submitting || manifestBusy}
         style={{ border: 0, margin: 0, minWidth: 0, padding: 0 }}
       >
-        <FormCard title="文件">
+        <FormCard title="Skill 来源">
+        <label style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 12 }}>
+          <input type="checkbox" checked={adaptToPlatform} disabled={reading || submitting || manifestBusy || packages.some(pkg => pkg.draftSource)}
+            onChange={event => {
+              setAdaptToPlatform(event.target.checked);
+              setPackages(current => current.map(pkg => ({ ...pkg,
+                files: pkg.importSource?.files ?? pkg.files,
+                primaryFilePath: pkg.importSource?.primaryFilePath ?? pkg.primaryFilePath,
+                importSource: undefined, manifestText: undefined, outputTypes: undefined,
+                howTo: undefined, usageScenario: undefined, inputDescription: undefined, outputDescription: undefined,
+                inputExample: undefined, outputExample: undefined,
+              })));
+              setKind("agent"); setInputPreset("text"); setPrimaryOutputType("text");
+              setEntryPoints(defaultAdminSkillEntryPoints("agent")); setValidation(null);
+            }} />
+          <span><strong>AI 适配本站能力</strong><br /><span className="muted">将外部图片、视频调用改接本站；不支持的能力会列明并移除，原始文本留档。适配结果需审核后才能导入。</span></span>
+        </label>
+        <details style={{ marginBottom: 16 }}>
+          <summary style={{ cursor: "pointer", fontWeight: 600 }}>GPT 写的内容还不是标准 Skill？在这里整理</summary>
+          <p className="muted" style={{ fontSize: 12, lineHeight: 1.7 }}>
+            粘贴用途、步骤或 GPT 生成的说明，不需要自己写配置。AI 会整理格式、改接本站模型，并列出无法支持的部分。
+            点击下方按钮会读取并开始 AI 整理，按文本模型规则计费；不会直接上架。
+          </p>
+          <Field label="GPT 内容 / 技能草稿">
+            <textarea value={draftText} maxLength={100000} rows={7} disabled={reading || submitting || manifestBusy}
+              placeholder="粘贴 GPT 生成的内容，或者描述：这个技能要做什么、需要用户提供什么、希望产出什么。"
+              onChange={event => {
+                setDraftText(event.target.value);
+                if (packages.some(pkg => pkg.draftSource)) { setPackages([]); setValidation(null); }
+              }} />
+          </Field>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+            <button type="button" className="adm-btn" disabled={!draftText.trim() || reading || submitting || manifestBusy} onClick={() => void readDraft()}>读取并 AI 整理</button>
+            <button type="button" className="adm-btn ghost" disabled={reading || submitting || manifestBusy} onClick={() => draftInputRef.current?.click()}><FileText size={14} aria-hidden />选择 GPT 文本文件</button>
+          </div>
+        </details>
+        <Field label="从 GitHub 导入" hint="公开仓库、技能子目录或 SKILL.md 页面地址。读取后仍需审核并确认导入。">
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <input
+              type="url"
+              value={githubUrl}
+              aria-label="GitHub Skill 地址"
+              autoComplete="off"
+              spellCheck={false}
+              maxLength={2048}
+              disabled={reading || submitting || manifestBusy}
+              placeholder="https://github.com/owner/repo/tree/main/skills/my-skill"
+              style={{ flex: "1 1 280px", minWidth: 0 }}
+              onChange={(event) => setGithubUrl(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") { event.preventDefault(); void readGitHub(); }
+              }}
+            />
+            <button type="button" className="adm-btn ghost" disabled={!githubUrl.trim() || reading || submitting || manifestBusy} onClick={() => void readGitHub()}>
+              {reading ? <Loader2 className="adm-spin" aria-hidden size={14} /> : <Link2 aria-hidden size={14} />}
+              {reading ? "正在读取…" : "读取 GitHub"}
+            </button>
+          </div>
+        </Field>
+        <p className="muted" style={{ margin: "8px 0 12px", fontSize: 12, lineHeight: 1.6 }}>
+          支持公开仓库，压缩下载最大 16 MB；私有或超大仓库请将所需 Skill 单独打包，再通过下方入口导入。
+        </p>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <button type="button" className="adm-btn ghost" disabled={reading || manifestBusy} onClick={() => fileInputRef.current?.click()}>
             {reading ? <Loader2 className="adm-spin" aria-hidden size={14} /> : <Upload aria-hidden size={14} />}
@@ -516,17 +669,29 @@ export function SkillImportModal({
               ? `${packages.length} 个 Skill · ${(totalBytes / 1024).toFixed(1)} KB${ignoredFiles ? ` · 已忽略 ${ignoredFiles} 个包外或非文本文件` : ""}`
               : "ZIP 最大 16 MB；主文件/展开上下文 1 MB，参考文件 2 MB，文本合计 8 MB。"}
           </span>
+          <input ref={draftInputRef} type="file" aria-label="GPT 草稿文件" accept=".md,.txt,text/markdown,text/plain" hidden onChange={event => {
+            const file = event.target.files?.[0]; event.target.value = ""; if (file) void readDraft(file);
+          }} />
         </div>
+        {packages[0]?.sourceUrl && (
+          <p className="muted" style={{ margin: "10px 0 0", fontSize: 12, overflowWrap: "anywhere" }}>
+            已读取固定版本：<a href={packages[0].sourceUrl} target="_blank" rel="noopener noreferrer">查看 GitHub 来源</a>
+            {" · 提交 "}{packages[0].commitSha?.slice(0, 12)}
+          </p>
+        )}
         <p className="muted" style={{ margin: "8px 0 0", fontSize: 12, lineHeight: 1.6 }}>
           仅接受标准 Skill：主文件必须为 SKILL.md，包含 YAML 元数据（name、description）和 Markdown 正文；目录名需与 name 一致。
           包内 .md/.txt 可作为参考资料；脚本、YAML 和二进制文件不会导入或执行。
         </p>
         {fileError && (
-          <AdminAlert tone="error" title="Skill 格式校验未通过">
+          <AdminAlert tone="error" title="Skill 读取或格式校验失败">
             <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>{fileError}</p>
             未导入任何文件，请修正后重新选择。
           </AdminAlert>
         )}
+        {packages.some(pkg => pkg.draftSource) && <AdminAlert tone="info" title="正在整理为标准 Skill">
+          原始文字只作留档。需要生成适配版、确认能力范围后才能导入；不会把普通文本直接当作可执行 Skill。
+        </AdminAlert>}
         {ignoredFiles ? (
           <div style={{ marginTop: 12 }}>
             <AdminAlert tone="warning" title={`有 ${ignoredFiles} 个文件不会导入`}>
@@ -592,10 +757,40 @@ export function SkillImportModal({
           disabled={reading || submitting || manifestBusy || packages.length !== 1}
           loadRequests={loadAutoConfigurationRequests}
           onBusyChange={setManifestBusy}
-          onGenerated={(results) => {
+          onGenerated={async (results, signal) => {
             const result = results[0];
             const config = result?.autoConfiguration;
-            if (!result || !config || result.key !== packages[0]?.key) return;
+            if (!result || !config || result.key !== packages[0]?.key || signal.aborted) return;
+            const original = packages[0];
+            const seq = readSeqRef.current;
+            let adapted: Awaited<ReturnType<typeof adminSkillsApi.previewAdaptation>>["data"];
+            if (adaptToPlatform) {
+              if (!result.adaptation) throw new Error("适配说明缺失，请重新生成");
+              const controller = new AbortController();
+              const cancel = () => controller.abort();
+              signal.addEventListener("abort", cancel, { once: true });
+              readControllerRef.current = controller;
+              const timer = setTimeout(() => controller.abort(), 30_000);
+              try {
+                const checked = await adminSkillsApi.previewAdaptation({
+                  files: original.importSource?.files ?? original.files,
+                  primaryFilePath: original.importSource?.primaryFilePath ?? original.primaryFilePath,
+                  sourceUrl: original.sourceUrl,
+                  report: result.adaptation.report, reviewed: false,
+                  description: config.description, instructions: result.adaptation.instructions,
+                }, controller.signal);
+                if (readSeqRef.current !== seq || signal.aborted) return;
+                if (!checked.success || !checked.data?.files?.length || !checked.data.importSource) {
+                  throw new Error(controller.signal.aborted ? "适配结果校验超时，请重试" : checked.message || "适配结果校验失败");
+                }
+                adapted = checked.data;
+              } finally {
+                clearTimeout(timer);
+                signal.removeEventListener("abort", cancel);
+                if (readControllerRef.current === controller) readControllerRef.current = null;
+              }
+            }
+            if (readSeqRef.current !== seq || signal.aborted) return;
             setKind(config.kind);
             setInputPreset(config.inputPreset);
             setPrimaryOutputType(config.primaryOutputType);
@@ -613,12 +808,22 @@ export function SkillImportModal({
               outputExample: config.outputExample,
               outputTypes: config.outputTypes,
               manifestText: JSON.stringify(result.manifest, null, 2),
+              files: adapted?.files ?? pkg.files,
+              primaryFilePath: adapted?.primaryFilePath ?? pkg.primaryFilePath,
+              importSource: adapted?.importSource,
             }));
             setValidation(null);
           }}
         />
+        {packages.map(pkg => pkg.importSource ? <div key={`adapted:${pkg.key}`} style={{ marginTop: 16 }}>
+          <SkillAdaptationReview source={pkg.importSource} document={packagePrimaryContent(pkg)} disabled={manifestBusy || submitting}
+            onReview={reviewed => setPackages(current => current.map(item => item.key !== pkg.key || !item.importSource ? item : {
+              ...item, importSource: { ...item.importSource, reviewed },
+            }))} />
+        </div> : null)}
         <p className="muted" style={{ margin: "8px 0 16px", fontSize: 12, lineHeight: 1.6 }}>
           AI 智能导入会调用可用文本模型并按模型规则计费；不会开启 MCP、上架 Skill、选择真实模型 ID 或执行包内脚本。
+          适配时只使用模型管理中的本站生成能力，不会绕到 AI 聊天供应商或原 Skill 的外部账户扣费。
           配置了文本主模型时，Manifest 生成及导入后的文本、分析步骤默认使用主模型。
           原文只承诺文本时，不会擅自增加图片或视频生成步骤。
         </p>
@@ -631,7 +836,7 @@ export function SkillImportModal({
         ) : null}
         {packages.length > 1 ? (
           <AdminAlert tone="warning" title="智能导入一次处理一个 Skill">
-            当前文件包含 {packages.length} 个 Skill。请拆分后逐个导入，以便 AI 为每个 Skill 正确判断输入、输出和运行流程；高级用户也可在下方手动配置后批量导入。
+            当前文件包含 {packages.length} 个 Skill。AI 平台适配请拆分后逐个导入；高级用户可关闭“AI 适配本站能力”，使用下方手动配置批量导入。
           </AdminAlert>
         ) : null}
         {packages.length === 1 && packages[0].howTo?.trim() ? (

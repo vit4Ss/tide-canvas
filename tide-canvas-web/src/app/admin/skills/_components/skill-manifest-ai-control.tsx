@@ -15,6 +15,7 @@ import type { SkillKind, SkillOutputType } from "@/types/skill";
 import { toast } from "@/components/shared/toast";
 import { SKILL_CATEGORIES } from "@/types/skill";
 import { skillInputSchemaFor, type SkillInputPreset } from "./skill-input-schema-presets";
+import { parseSkillAdaptation, SKILL_ADAPTATION_RULES, skillAdaptationCapabilities, type SkillAdaptationDraft } from "@/lib/admin-skill-adaptation";
 
 const MANIFEST_SCOPE = "admin:skill-manifest";
 const POLL_INTERVAL_MS = 1_500;
@@ -52,6 +53,7 @@ export interface SkillManifestDraftRequest {
   outputTypes: SkillOutputType[];
   inputSchema: Record<string, unknown>;
   signature: string;
+  adaptToPlatform?: boolean;
 }
 
 export interface SkillAutoConfiguration {
@@ -75,6 +77,7 @@ export interface SkillManifestDraftResult {
   signature: string;
   manifest: Record<string, unknown>;
   autoConfiguration?: SkillAutoConfiguration;
+  adaptation?: SkillAdaptationDraft;
 }
 
 const AUTO_INPUT_PRESETS = new Set<SkillInputPreset>(["text", "text_image", "image", "images", "keyframes", "video", "audio", "file", "webpage", "mixed"]);
@@ -696,10 +699,13 @@ ${[...HANDLERS].filter(Boolean).join("、")}。
 优先采用最简单且能完成任务的流程；普通对话型 Agent 可以不写 steps。Tool 必须至少包含一个已注册 tool 步骤。最终步骤，或紧随其后的 promotePrevious 确认步骤，必须产出主输出类型。`;
 }
 
-function autoConfigurationPrompt(request: SkillManifestDraftRequest, model: AiModelVO): string {
+function autoConfigurationPrompt(request: SkillManifestDraftRequest, model: AiModelVO, models: AiModelVO[] = []): string {
   const config = parseModelConfig(model);
   const limit = modelPromptCharLimit(config);
   const sourceLimit = Math.max(500, Math.min(18_000, limit ? limit - 4_500 : 18_000));
+  // Adaptation must see the full original; truncation could hide external
+  // dependencies and produce a falsely "fully compatible" result.
+  if (request.adaptToPlatform && [...request.source].length > 120_000) throw new Error("Skill 原文与参考资料超过 12 万字，请精简后再适配；不会截断后假定完整兼容");
   return `分析下面的标准 Agent Skill，并生成一份可审核的 FlowingLight 智能导入配置。
 
 技能原名：${excerpt(request.title, 64)}
@@ -716,7 +722,7 @@ function autoConfigurationPrompt(request: SkillManifestDraftRequest, model: AiMo
 当前运行边界：analyze_video 和 analyze_audio 每次只处理 1 个对应素材；analyze_image 每次处理 1–9 张图片；analyze_webpage 每次处理 1 个 URL。mixed 不能代替明确的单媒体分析流程。Skill 同时声明批量视频、参考图等扩展能力但当前运行时不能完整承载时，选择最核心且实际可运行的输入，不得在说明和示例中继续承诺未接入的能力。
 
 <skill_definition>
-${excerpt(request.source, sourceLimit)}
+${request.adaptToPlatform ? request.source : excerpt(request.source, sourceLimit)}
 </skill_definition>
 
 只返回严格 JSON 对象，字段必须为：
@@ -734,7 +740,15 @@ ${excerpt(request.source, sourceLimit)}
   "inputPreset":"一个可选输入预设",
   "primaryOutputType":"一个可选主输出",
   "outputTypes":["主输出以及流程实际产生的中间输出类型"],
-  "manifest":{}
+  "manifest":{}${request.adaptToPlatform ? `,
+  "adaptation": {
+    "status":"ready 或 partial 或 blocked",
+    "summary":"本次保留了什么、改接了什么、最终能交付什么",
+    "instructions":"适配版完整 Markdown 正文，不含 YAML 头，自包含，不依赖原始文件",
+    "replacements":[{"from":"原调用或外部工具", "to":"本站能力", "handler":"实际 Manifest 使用的处理器"}],
+    "removed":[{"feature":"无法执行的能力", "reason":"为什么移除"}],
+    "limitations":["用户实际会遇到的限制"]
+  }` : ""}
 }
 
 推断边界：
@@ -746,15 +760,21 @@ ${excerpt(request.source, sourceLimit)}
 6. 优先最简单可运行流程。若无步骤 Agent 已能完成文本任务，manifest 不写 steps。视频、音频或图片审查只使用无步骤 Agent 或单个 analyze_* 最终步骤；SKILL.md 的完整专业规则会作为同一次分析调用的系统指令，不得再增加“润色、整理、总结报告”等第二个付费 text 步骤。只有原 Skill 明确要求先生成剧本、提示词或方案，再据此生成媒体时，才增加 text 中间步骤；后续 generate 步骤的 prompt 使用 {{previous}} 接收该文本。文本中间结果与付费媒体生成之间默认加入 approval 步骤（不要 promotePrevious），除非原文明确要求全自动执行。
 7. description、usageScenario、howTo、输入输出说明和示例必须与最终 kind、inputPreset 和 Manifest 的真实可运行能力一致。包内脚本不会执行，不得把脚本能力写成已经接入的功能。
 8. 返回前自行检查 kind、inputPreset、primaryOutputType、outputTypes 和每个 handler 是否相互一致，只输出修正后的最终 JSON。
-9. 不开启 MCP、不决定作者、不选择真实模型 ID；这些由管理员和系统处理。文本和分析步骤在执行时默认使用模型管理中的文本主模型，不要指定其他文本模型。`;
+9. 不开启 MCP、不决定作者、不选择真实模型 ID；这些由管理员和系统处理。文本和分析步骤在执行时默认使用模型管理中的文本主模型，不要指定其他文本模型。
+${request.adaptToPlatform ? `${SKILL_ADAPTATION_RULES}\n当前本站能力：${skillAdaptationCapabilities(models)}` : ""}
+无论内容是否由 GPT 编写，说明和样例都面向不懂技术的人：用简短中文说清楚怎么用、需要输入什么、会得到什么；不要要求用户填写 Manifest、模型 ID、供应商地址或密钥。`;
 }
 
 function sanitizeAutoConfiguration(raw: string, request: SkillManifestDraftRequest): SkillManifestDraftResult {
   const parsed = parseJSONObject(raw);
   if (!parsed) throw new Error(`“${request.title}”返回的智能导入配置不是合法 JSON`);
   const allowed = new Set(["title", "description", "usageScenario", "howTo", "inputDescription", "outputDescription", "inputExample", "outputExample", "category", "kind", "inputPreset", "primaryOutputType", "outputTypes", "manifest"]);
+  if (request.adaptToPlatform) allowed.add("adaptation");
   for (const field of Object.keys(parsed)) {
     if (!allowed.has(field)) throw new Error(`“${request.title}”的智能导入配置包含未知字段 ${field}`);
+  }
+  if (request.adaptToPlatform && (parsed.adaptation as { status?: string } | undefined)?.status === "blocked") {
+    parseSkillAdaptation(parsed.adaptation, {});
   }
   const kind = parsed.kind;
   const inputPreset = parsed.inputPreset;
@@ -770,7 +790,9 @@ function sanitizeAutoConfiguration(raw: string, request: SkillManifestDraftReque
   const reconciledInputPreset = reconcileGeneratedInputPreset(inputPreset as SkillInputPreset, manifest);
   manifest = canonicalizeGeneratedMediaAnalysisManifest(
     manifest,
-    kind,
+    // Adaptation reports name the executed handler; keep a single explicit
+    // analysis step instead of an implicit Agent step, still avoiding double billing.
+    request.adaptToPlatform && kind === "agent" ? "tool" : kind,
     reconciledInputPreset,
     primaryOutputType as SkillOutputType,
   );
@@ -810,7 +832,9 @@ function sanitizeAutoConfiguration(raw: string, request: SkillManifestDraftReque
   const issue = manifestRequestIssue(derived);
   if (issue) throw new Error(issue);
   const rawManifest = JSON.stringify(manifest);
-  return { key: request.key, signature: request.signature, manifest: sanitizeManifest(rawManifest, derived), autoConfiguration: configuration };
+  const safeManifest = sanitizeManifest(rawManifest, derived);
+  const adaptation = request.adaptToPlatform ? parseSkillAdaptation(parsed.adaptation, safeManifest) : undefined;
+  return { key: request.key, signature: request.signature, manifest: safeManifest, autoConfiguration: configuration, adaptation };
 }
 
 function wait(ms: number): Promise<void> {
@@ -827,7 +851,7 @@ export function SkillManifestAiControl({
 }: {
   disabled?: boolean;
   loadRequests: () => Promise<SkillManifestDraftRequest[]>;
-  onGenerated: (results: SkillManifestDraftResult[]) => void;
+  onGenerated: (results: SkillManifestDraftResult[], signal: AbortSignal) => void | Promise<void>;
   onBusyChange?: (busy: boolean) => void;
   autoConfigure?: boolean;
   autoStartToken?: number;
@@ -838,6 +862,7 @@ export function SkillManifestAiControl({
     ? "AI 将读取 Skill 原文与参考资料，生成可审核的完整导入配置。"
     : INITIAL_STATUS);
   const runRef = useRef(0);
+  const runControllerRef = useRef<AbortController | null>(null);
   const taskIdRef = useRef("");
   const ownerRef = useRef("");
   const scopeRef = useRef("");
@@ -867,6 +892,7 @@ export function SkillManifestAiControl({
     return () => {
       mountedRef.current = false;
       runRef.current += 1;
+      runControllerRef.current?.abort();
       const taskId = taskIdRef.current;
       const owner = ownerRef.current;
       const scope = scopeRef.current;
@@ -878,6 +904,7 @@ export function SkillManifestAiControl({
   }, []);
 
   const stop = async () => {
+    runControllerRef.current?.abort();
     const taskId = taskIdRef.current;
     const owner = ownerRef.current;
     const scope = scopeRef.current;
@@ -905,7 +932,9 @@ export function SkillManifestAiControl({
   };
 
   const generate = async () => {
-    if (busy || disabled) return;
+    if (busy || disabled || (runControllerRef.current && !runControllerRef.current.signal.aborted)) return;
+    const controller = new AbortController();
+    runControllerRef.current = controller;
     const run = ++runRef.current;
     const active = () => mountedRef.current && runRef.current === run;
     setGenerationBusy(true);
@@ -920,16 +949,18 @@ export function SkillManifestAiControl({
       if (emptySource) throw new Error(`“${emptySource.title}”没有可供分析的 Skill 主说明`);
       const needsAI = aiRequests.length > 0;
       const selectedModels = new Map<string, AiModelVO>();
+      let modelCatalog: AiModelVO[] = [];
       let owner = "";
       if (needsAI) {
         const modelResponse = await aiApi.listModels();
         if (!active()) return;
         if (!modelResponse.success) throw new Error(modelResponse.message || "无法加载文本模型，请稍后重试");
+        modelCatalog = modelResponse.data;
         const availableModels = textModels(modelResponse.data);
         if (!availableModels.length) throw new Error("文本主模型不可用或未配置可用文本模型，请检查模型管理");
         for (const request of aiRequests) {
           const model = availableModels.find((candidate) => {
-            const candidatePrompt = autoConfigure ? autoConfigurationPrompt(request, candidate) : generationPrompt(request, candidate);
+            const candidatePrompt = autoConfigure ? autoConfigurationPrompt(request, candidate, modelCatalog) : generationPrompt(request, candidate);
             return !modelPromptLimitIssue(candidatePrompt, parseModelConfig(candidate));
           });
           if (!model) throw new Error(`“${request.title}”的内容超过当前文本模型的提示词限制，请精简 SKILL.md 或调整主模型配置`);
@@ -958,12 +989,13 @@ export function SkillManifestAiControl({
           setStatus(`正在生成 ${requestIndex + 1}/${requests.length} · ${request.title}`);
           const draft = { key: request.key, signature: request.signature, manifest: sanitizeManifest("{}", request) };
           results.push(draft);
-          onGenerated([draft]);
+          await onGenerated([draft], controller.signal);
+          if (!active()) return;
           continue;
         }
         const model = selectedModels.get(request.key);
         if (!model) throw new Error(`“${request.title}”没有匹配到可用文本模型`);
-        const prompt = autoConfigure ? autoConfigurationPrompt(request, model) : generationPrompt(request, model);
+        const prompt = autoConfigure ? autoConfigurationPrompt(request, model, modelCatalog) : generationPrompt(request, model);
         setStatus(`正在生成 ${requestIndex + 1}/${requests.length} · ${request.title} · ${model.name} 基础 ${model.pointCost} 积分`);
         const scope = `${MANIFEST_SCOPE}:${request.key}`;
         let created: Awaited<ReturnType<typeof aiApi.generateIdempotent>>;
@@ -987,7 +1019,14 @@ export function SkillManifestAiControl({
             dedupeActivePayload: true,
             ownerUserId: owner,
           });
-          if (!active()) return;
+          if (!active()) {
+            if (created.success && created.data?.id && useAuthStore.getState().user?.id === owner) {
+              const acceptedID=String(created.data.id);
+              await aiApi.cancelTask(acceptedID).catch(()=>undefined);
+              await commitAcceptedAiGeneration(scope,acceptedID,owner).catch(()=>undefined);
+            }
+            return;
+          }
           if (created.success && created.data?.id) break;
           if (!isAmbiguousAiCreateCode(created.code)) throw new Error(created.message || "Manifest 生成请求失败");
           if (!reconnectNoticeShown) {
@@ -1022,11 +1061,13 @@ export function SkillManifestAiControl({
           if (task.status === AiTaskStatus.SUCCESS) {
             const rawManifest = taskText(task);
             await release(taskId, owner, scope);
+            if (!active()) return;
             const draft = autoConfigure
               ? sanitizeAutoConfiguration(rawManifest, request)
               : { key: request.key, signature: request.signature, manifest: sanitizeManifest(rawManifest, request) };
             results.push(draft);
-            onGenerated([draft]);
+            await onGenerated([draft], controller.signal);
+            if (!active()) return;
             break;
           }
           if (task.status === AiTaskStatus.FAILED || task.status === AiTaskStatus.CANCELLED) {
@@ -1046,6 +1087,7 @@ export function SkillManifestAiControl({
         toast.error(message);
       }
     } finally {
+      if (runControllerRef.current === controller) runControllerRef.current = null;
       if (active()) setGenerationBusy(false);
     }
   };

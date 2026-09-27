@@ -54,19 +54,20 @@ type AdminSkillFileDTO struct {
 // SKILL.md is selected as primary. File import routes enforce Agent Skills
 // metadata; manually authored prompt-only versions remain an internal format.
 type AdminSkillVersionCreateDTO struct {
-	Kind              string                 `json:"kind"`
-	EntryPoints       []string               `json:"entryPoints"`
-	PrimaryOutputType string                 `json:"primaryOutputType"`
-	OutputTypes       []string               `json:"outputTypes"`
-	InputSchema       json.RawMessage        `json:"inputSchema"`
-	Manifest          json.RawMessage        `json:"manifest"`
-	PromptTemplate    string                 `json:"promptTemplate"`
-	ModelID           string                 `json:"modelId"`
-	DefaultParams     json.RawMessage        `json:"defaultParams"`
-	PrimaryFilePath   string                 `json:"primaryFilePath"`
-	Files             []AdminSkillFileDTO    `json:"files"`
-	Publish           bool                   `json:"publish"`
-	Bindings          []AdminSkillBindingDTO `json:"bindings"`
+	Kind              string                  `json:"kind"`
+	EntryPoints       []string                `json:"entryPoints"`
+	PrimaryOutputType string                  `json:"primaryOutputType"`
+	OutputTypes       []string                `json:"outputTypes"`
+	InputSchema       json.RawMessage         `json:"inputSchema"`
+	Manifest          json.RawMessage         `json:"manifest"`
+	PromptTemplate    string                  `json:"promptTemplate"`
+	ModelID           string                  `json:"modelId"`
+	DefaultParams     json.RawMessage         `json:"defaultParams"`
+	PrimaryFilePath   string                  `json:"primaryFilePath"`
+	Files             []AdminSkillFileDTO     `json:"files"`
+	Publish           bool                    `json:"publish"`
+	Bindings          []AdminSkillBindingDTO  `json:"bindings"`
+	ImportSource      *AdminSkillImportSource `json:"importSource"`
 }
 
 type AdminSkillBindingDTO struct {
@@ -166,7 +167,8 @@ type AdminSkillBindingsSaveDTO struct {
 
 type AdminSkillVersionVO struct {
 	model.SkillVersion
-	Files []model.SkillFile `json:"files,omitempty"`
+	Files        []model.SkillFile `json:"files,omitempty"`
+	ImportSource json.RawMessage   `json:"importSource,omitempty"`
 }
 
 func registerSkillVersionRoutes(s *gin.RouterGroup, h *skillsHandler) {
@@ -185,7 +187,7 @@ func (h *skillsHandler) listVersions(c *gin.Context) {
 		return
 	}
 	var rows []model.SkillVersion
-	if err := h.db.Where("skill_id = ?", skillID).Order("version_no DESC").Find(&rows).Error; err != nil {
+	if err := h.db.Omit("import_source").Where("skill_id = ?", skillID).Order("version_no DESC").Find(&rows).Error; err != nil {
 		response.Fail(c, response.CodeServerError, "failed to list skill versions")
 		return
 	}
@@ -211,7 +213,7 @@ func (h *skillsHandler) getVersion(c *gin.Context) {
 		response.Fail(c, response.CodeServerError, "failed to load skill files")
 		return
 	}
-	response.OK(c, AdminSkillVersionVO{SkillVersion: version, Files: files})
+	response.OK(c, skillVersionAdminVO(version, files))
 }
 
 func (h *skillsHandler) createVersion(c *gin.Context) {
@@ -256,7 +258,7 @@ func (h *skillsHandler) createVersion(c *gin.Context) {
 		response.Fail(c, response.CodeServerError, "failed to create skill version")
 		return
 	}
-	response.OK(c, AdminSkillVersionVO{SkillVersion: *version, Files: files})
+	response.OK(c, skillVersionAdminVO(*version, files))
 }
 
 // importSkills creates the catalog row and immutable v1 in one transaction.
@@ -293,7 +295,7 @@ func (h *skillsHandler) importSkills(c *gin.Context) {
 			if err := persistSkillVersionTx(tx, &skill, &version, files, true); err != nil {
 				return err
 			}
-			created = append(created, AdminSkillVersionVO{SkillVersion: version, Files: files})
+			created = append(created, skillVersionAdminVO(version, files))
 		}
 		return nil
 	})
@@ -367,6 +369,9 @@ func validateAdminSkillImports(db *gorm.DB, packages []AdminSkillPackageDTO, act
 	groups := make([][]AdminSkillFileDTO, len(packages))
 	for i := range packages {
 		groups[i] = packages[i].Files
+		if packages[i].ImportSource != nil {
+			groups = append(groups, packages[i].ImportSource.Files)
+		}
 	}
 	batchSizeError := validateSkillBatchFileSize(groups)
 	for index := range packages {
@@ -794,7 +799,7 @@ func (h *skillsHandler) replaceBindings(c *gin.Context) {
 		EntryPoints: current.EntryPoints, PrimaryOutputType: current.PrimaryOutputType, OutputTypes: current.OutputTypes,
 		InputSchema: current.InputSchema, ManifestJSON: current.ManifestJSON, PromptTemplate: current.PromptTemplate,
 		ModelID: current.ModelID, DefaultParams: current.DefaultParams, BindingsJSON: model.JSONString(snapshots),
-		PrimaryFilePath: current.PrimaryFilePath, CreatedBy: middleware.CurrentUserID(c)}
+		PrimaryFilePath: current.PrimaryFilePath, ImportSourceJSON: current.ImportSourceJSON, CreatedBy: middleware.CurrentUserID(c)}
 	clonedFiles := make([]model.SkillFile, len(files))
 	for i := range files {
 		clonedFiles[i] = model.SkillFile{Path: files[i].Path, Content: files[i].Content, StorageKey: files[i].StorageKey,
@@ -887,6 +892,11 @@ func buildSkillVersion(_ *gorm.DB, skill *model.Skill, dto AdminSkillVersionCrea
 	if err != nil {
 		return nil, nil, err
 	}
+	for _, file := range files {
+		if file.Path == primary && isSkillDraftSource(file.Content) {
+			return nil, nil, errors.New("这是待整理的 GPT 草稿，请完成 AI 适配并确认后再导入")
+		}
+	}
 	prompt := dto.PromptTemplate
 	if prompt == "" && len(files) > 0 {
 		prompt = defaultSkillPackagePrompt(primary, files)
@@ -954,6 +964,20 @@ func buildSkillVersion(_ *gorm.DB, skill *model.Skill, dto AdminSkillVersionCrea
 	}
 	if err := validateSkillKindContract(version); err != nil {
 		return nil, nil, err
+	}
+	if dto.ImportSource != nil {
+		if err := validateSkillBatchFileSize([][]AdminSkillFileDTO{dto.Files, dto.ImportSource.Files}); err != nil {
+			return nil, nil, err
+		}
+		// The adapted document is the only executable source. Refuse a supplied
+		// prompt override which could reintroduce the original external workflow.
+		if prompt != files[0].Content {
+			return nil, nil, errors.New("适配技能的执行提示词必须与适配后的 SKILL.md 一致")
+		}
+		version.ImportSourceJSON, err = encodeSkillImportSource(dto.ImportSource, primary, files, string(manifest))
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	version.ContentHash = skillVersionContentHash(version, files)
 	return version, files, nil
@@ -1162,6 +1186,11 @@ func persistSkillVersion(db *gorm.DB, skill *model.Skill, version *model.SkillVe
 }
 
 func persistSkillVersionTx(tx *gorm.DB, skill *model.Skill, version *model.SkillVersion, files []model.SkillFile, publish bool) error {
+	for _, file := range files {
+		if file.Path == version.PrimaryFilePath && isSkillDraftSource(file.Content) {
+			return errors.New("GPT 草稿尚未整理成可执行 Skill")
+		}
+	}
 	if _, err := validateStandardSkillFiles(files, version.PrimaryFilePath, ""); err != nil {
 		return err
 	}
@@ -1767,6 +1796,9 @@ func skillVersionContentHash(version *model.SkillVersion, files []model.SkillFil
 		version.Kind, version.EntryPoints, version.PrimaryOutputType, version.OutputTypes,
 		version.InputSchema, version.ManifestJSON, version.PromptTemplate, version.ModelID,
 		version.DefaultParams, version.BindingsJSON, version.PrimaryFilePath,
+	}
+	if version.ImportSourceJSON != "" {
+		parts = append(parts, version.ImportSourceJSON)
 	}
 	for _, part := range parts {
 		_, _ = h.Write([]byte(part))

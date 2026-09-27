@@ -29,6 +29,7 @@ import {
   type AdminSkillBindingDTO,
   type AdminSkillBindingVO,
   type AdminSkillFileInput,
+  type AdminSkillImportSource,
   type AdminSkillVO,
   type AdminSkillVersionCreateDTO,
   type AdminSkillVersionVO,
@@ -42,6 +43,7 @@ import {
 } from "@/types/skill";
 import { SkillManifestAiControl, type SkillManifestDraftRequest } from "./skill-manifest-ai-control";
 import { detectSkillInputPreset, SKILL_INPUT_PRESETS, skillInputSchemaFor, type SkillInputPreset } from "./skill-input-schema-presets";
+import { SkillAdaptationReview } from "./skill-adaptation-review";
 
 const OUTPUT_TYPES: SkillOutputType[] = ["text", "image", "video", "audio", "file"];
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
@@ -61,6 +63,7 @@ interface VersionForm {
   files: AdminSkillFileInput[];
   publish: boolean;
   bindings: BindingFormRow[];
+  importSource?: AdminSkillImportSource;
 }
 
 interface BindingFormRow {
@@ -297,6 +300,7 @@ function formFromVersion(version: AdminSkillVersionVO, fallbackBindings: readonl
     defaultParams: stringify(version.defaultParams),
     primaryFilePath: version.primaryFilePath || "",
     files: files.map((file) => ({ path: file.path, content: file.content!, mimeType: file.mimeType })),
+    importSource: version.importSource,
     publish: false,
     bindings: constrainBindingRows(version.kind, entryPoints, version.primaryOutputType, sourceBindings),
   };
@@ -845,6 +849,7 @@ export function SkillVersionModal({
       setForm((current) => current && ({
         ...current,
         files: next,
+        importSource: undefined,
         primaryFilePath: skillMd.path,
       }));
       setFilesReplaced(true);
@@ -996,6 +1001,7 @@ export function SkillVersionModal({
       defaultParams,
       primaryFilePath: form.primaryFilePath || undefined,
       files: form.files.length ? form.files : undefined,
+      importSource: form.importSource,
       publish: form.publish,
       bindings,
     };
@@ -1422,6 +1428,7 @@ export function SkillVersionModal({
               : "当前没有文件包；请选择含 name、description 元数据的 SKILL.md，也可直接编写上方提示词。"}
           </span>
         </div>
+        {form.importSource && <SkillAdaptationReview source={form.importSource} document={form.files.find(file => file.path === form.primaryFilePath)?.content} />}
         {form.files.length > 0 && (
           <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>
             {filesReplaced ? "新文件包仅用于待保存的草稿，请核对提示词和 Manifest 中的文件引用。" : "不更换则沿用以上版本文件；更换不会修改已发布版本。"}

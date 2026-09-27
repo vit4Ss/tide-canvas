@@ -124,6 +124,19 @@ test("opening an imported skill restores current published package and saves all
   assert.deepEqual(dto.bindings, JSON.parse(version().bindings));
 });
 
+test("editing an adapted version preserves its audit-only originals separately from executable files", async () => {
+  const importSource = {
+    primaryFilePath: "SKILL.md", files: [{ path: "SKILL.md", content: "Original third-party instructions" }],
+    reviewed: true, report: { status: "partial", summary: "已适配", replacements: [], removed: [{ feature: "脚本", reason: "不执行" }], limitations: [] },
+  };
+  const env = setup({ getVersion: async () => ok({ ...version(), importSource }) });
+  await env.flush();
+  assert.equal(await env.save(), true);
+  const dto = env.calls.find(([action]) => action === "save")[2];
+  assert.deepEqual(dto.importSource, importSource);
+  assert.ok(dto.files.every(file => !file.content.includes("Original third-party")));
+});
+
 test("loading or incomplete version details cannot save an empty replacement", async () => {
   const response = deferred();
   const env = setup({ getVersion: () => response.promise }); await env.flush();

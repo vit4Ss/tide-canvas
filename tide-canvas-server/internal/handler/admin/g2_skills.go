@@ -17,6 +17,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -45,6 +46,9 @@ func RegisterSkills(g *gin.RouterGroup, d *app.Deps) {
 	s.GET("", h.list)
 	s.POST("", h.create)
 	s.POST("/archive-preview", h.previewSkillArchive)
+	s.POST("/github-preview", middleware.RateLimit(d, 10, time.Minute), h.previewGitHubSkill)
+	s.POST("/adaptation-preview", h.previewSkillAdaptation)
+	s.POST("/draft-source", h.prepareSkillDraftSource)
 	s.POST("/validate-import", h.validateSkillImport)
 	s.POST("/validate-files", h.validateSkillFiles)
 	s.POST("/import", h.importSkills)

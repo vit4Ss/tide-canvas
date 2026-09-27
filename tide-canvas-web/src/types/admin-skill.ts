@@ -60,12 +60,36 @@ export interface AdminSkillVersionVO {
   createTime: string;
   updateTime: string;
   files?: AdminSkillFileVO[];
+  /** Admin-only audit source; never used as runtime prompt material. */
+  importSource?: AdminSkillImportSource;
 }
 
 export interface AdminSkillFileInput {
   path: string;
   content: string;
   mimeType?: string;
+}
+
+export interface SkillAdaptationReport {
+  status: "ready" | "partial";
+  summary: string;
+  replacements: Array<{ from: string; to: string; handler: string }>;
+  removed: Array<{ feature: string; reason: string }>;
+  limitations: string[];
+}
+
+export interface AdminSkillImportSource {
+  primaryFilePath: string;
+  files: AdminSkillFileInput[];
+  sourceUrl?: string;
+  report: SkillAdaptationReport;
+  reviewed: boolean;
+}
+
+export interface AdminSkillAdaptationPreviewVO {
+  primaryFilePath: string;
+  files: AdminSkillFileInput[];
+  importSource: AdminSkillImportSource;
 }
 
 export interface AdminSkillFilePackageDTO {
@@ -88,6 +112,12 @@ export interface AdminSkillArchivePreviewVO {
   packages: AdminSkillArchivePackageVO[];
   /** Non-text files and text files outside a detected Skill root are never imported. */
   ignoredFiles: number;
+}
+
+export interface AdminSkillGitHubPreviewVO extends AdminSkillArchivePreviewVO {
+  sourceUrl: string;
+  commitSha: string;
+  directory: string;
 }
 
 export interface AdminSkillImportValidationItemVO {
@@ -116,6 +146,7 @@ export interface AdminSkillVersionCreateDTO {
   files?: AdminSkillFileInput[];
   publish?: boolean;
   bindings?: AdminSkillBindingDTO[];
+  importSource?: AdminSkillImportSource;
 }
 
 export interface AdminSkillBindingDTO {
