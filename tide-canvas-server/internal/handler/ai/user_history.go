@@ -291,7 +291,7 @@ func reclassifiableGenError(message string) error {
 
 func isKnownUserFacingGenMessage(message string) bool {
 	switch message {
-	case userFacingGenErr, userFacingSafetyErr, userFacingReferenceRiskErr, userFacingCopyrightErr:
+	case userFacingGenErr, userFacingSafetyErr, userFacingReferenceRiskErr, userFacingCopyrightErr, userFacingSubmissionUnknownErr:
 		return true
 	}
 	for _, rule := range inputErrorRules {
@@ -404,6 +404,7 @@ func collectPublicAssets(value any, fallbackKind string, out *[]UserHistoryAsset
 var publicParameterKeys = []string{
 	"ratio", "aspectRatio", "aspect_ratio", "resolution", "targetResolution", "target_resolution",
 	"duration", "count", "size", "quality", "fps", "seed", "style", "cameraFixed", "camera_fixed",
+	"outputFps", "output_fps", "upscaleModel", "upscale_model",
 	"width", "height", "steps", "cfgScale", "outputFormat",
 }
 

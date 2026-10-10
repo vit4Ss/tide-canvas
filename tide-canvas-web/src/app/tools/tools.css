@@ -524,6 +524,34 @@ body.imini .tool-page .tp-btn.ghost {
   color: currentColor;
   opacity: 0.72;
 }
+.tool-page .tp-parameter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+.tool-page .tp-parameter-grid label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.tool-page .tp-parameter-select {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-solid);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.tool-page .tp-parameter-select:hover {
+  border-color: var(--border-strong);
+}
 .tool-page .tp-cost-summary {
   display: flex;
   align-items: flex-start;
@@ -575,6 +603,7 @@ body.imini .tool-page .tp-btn.ghost {
 }
 .tool-page .tp-model-option:focus-visible,
 .tool-page .tp-resolution-option:focus-visible,
+.tool-page .tp-parameter-select:focus-visible,
 .tool-page .tp-source-change:focus-visible,
 .tool-page .tp-inline-retry:focus-visible,
 .tool-page .tp-btn:focus-visible,

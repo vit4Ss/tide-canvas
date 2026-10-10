@@ -65,7 +65,28 @@ func (s *service) prepareUpscalePricingInput(ctx context.Context, userID idgen.I
 	if len(dto.Input) == 0 || json.Unmarshal(dto.Input, &input) != nil || input == nil {
 		return skillPlacementError{message: "视频超分参数无效，请重新选择视频"}
 	}
+	if extras := input["extras"]; extras != nil {
+		if _, ok := extras.(map[string]any); !ok {
+			return skillPlacementError{message: "视频超分 extras 参数必须是对象"}
+		}
+	}
+	options, err := (&relayProviderClient{}).upscaleParams(m.ModelID, input).NormalizedOptions()
+	if err != nil {
+		message := "所选增强档位不受支持，请调整后重试"
+		if strings.Contains(err.Error(), "output_fps") {
+			message = "所选输出帧率或插帧倍率不受支持，请调整后重试"
+		}
+		return skillPlacementError{message: message}
+	}
 	resolution := strings.ToLower(inputStr(input, "targetResolution", "target_resolution"))
+	switch resolution {
+	case "720p", "1080p", "2k", "4k", "":
+	default:
+		return skillPlacementError{message: "所选目标分辨率不受支持，请调整后重试"}
+	}
+	if resolution == "720p" && strings.EqualFold(strings.TrimSpace(m.ModelID), "bytedance/video-upscaler") {
+		return skillPlacementError{message: "所选模型不支持 720p，请选择更高的目标分辨率"}
+	}
 	if resolution == "" || resolveUpscalePointRate(m, resolution) <= 0 {
 		return skillPlacementError{message: "所选分辨率尚未配置每秒积分，请更换模型或输出规格"}
 	}
@@ -97,6 +118,24 @@ func (s *service) prepareUpscalePricingInput(ctx context.Context, userID idgen.I
 	delete(input, "video_url")
 	delete(input, "sourceVideo")
 	delete(input, "target_resolution")
+	delete(input, "output_fps")
+	delete(input, "upscale_model")
+	for _, field := range []struct{ upstream, input string }{
+		{"output_fps", "outputFps"}, {"upscale_model", "upscaleModel"},
+	} {
+		if value, ok := options[field.upstream]; ok {
+			input[field.input] = value
+		} else {
+			delete(input, field.input)
+		}
+	}
+	if extras, ok := input["extras"].(map[string]any); ok {
+		delete(extras, "output_fps")
+		delete(extras, "upscale_model")
+		if len(extras) == 0 {
+			delete(input, "extras")
+		}
+	}
 	encoded, err := json.Marshal(input)
 	if err != nil {
 		return err

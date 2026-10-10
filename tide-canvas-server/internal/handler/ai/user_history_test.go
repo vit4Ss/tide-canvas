@@ -15,6 +15,28 @@ import (
 	"tidecanvas/internal/pkg/response"
 )
 
+func TestPublicHistoryPreservesSubmissionUnknownWarning(t *testing.T) {
+	for _, message := range []string{
+		userFacingSubmissionUnknownErr,
+		"relaymedia: code 5011: submission_outcome_unknown",
+	} {
+		if got := PublicGenerationFailureReason(message); got != userFacingSubmissionUnknownErr {
+			t.Fatalf("public failure = %q, want submission-unknown warning", got)
+		}
+	}
+}
+
+func TestPublicInputParametersKeepsRHUpscaleOptions(t *testing.T) {
+	params := publicInputParameters(`{"outputFps":"2x","upscaleModel":"max","output_fps":59.94,"upscale_model":"high","secret":"hidden"}`)
+	got := map[string]string{}
+	for _, param := range params {
+		got[param.Key] = param.Value
+	}
+	if len(got) != 4 || got["outputFps"] != "2x" || got["upscaleModel"] != "max" || got["output_fps"] != "59.94" || got["upscale_model"] != "high" {
+		t.Fatalf("public parameters = %+v", got)
+	}
+}
+
 func TestUserHistoryEndpointsKeepBothSourcesCallerScoped(t *testing.T) {
 	db := concurrencyTestDB(t)
 	pool, err := db.DB()

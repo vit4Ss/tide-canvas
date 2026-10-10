@@ -1617,11 +1617,12 @@ func errMessage(err error) string {
 // 原文(含上游 HTTP 细节、密钥路由等)一律不出站——详情进 zap 日志与
 // ai_generation_logs / model_call_log(admin 后台可查)。
 const (
-	userFacingGenErr           = "系统异常，请联系客服"
-	userFacingSafetyErr        = "内容未通过安全审核，请调整后重试"
-	userFacingReferenceRiskErr = "参考图未通过安全审核，请更换参考图后重试"
-	userFacingCopyrightErr     = "提交的素材或创作内容涉及版权限制，请更换素材，或调整描述后重试"
-	userFacingCancelledErr     = "任务已取消，未生成结果"
+	userFacingGenErr               = "系统异常，请联系客服"
+	userFacingSubmissionUnknownErr = "任务提交结果尚未确认，请先查看历史记录或联系客服核实，避免重复提交"
+	userFacingSafetyErr            = "内容未通过安全审核，请调整后重试"
+	userFacingReferenceRiskErr     = "参考图未通过安全审核，请更换参考图后重试"
+	userFacingCopyrightErr         = "提交的素材或创作内容涉及版权限制，请更换素材，或调整描述后重试"
+	userFacingCancelledErr         = "任务已取消，未生成结果"
 )
 
 // inputErrorRules 把「用户可自行修正的输入类」上游错误映射为具体、可操作的
@@ -1758,6 +1759,9 @@ func userFacingGenError(err error) string {
 	// 或落到系统异常兜底。
 	var relayErr *relaymedia.UpstreamError
 	if errors.As(err, &relayErr) {
+		if relayErr.Code == "5011" || relayErr.Type == "submission_outcome_unknown" {
+			return userFacingSubmissionUnknownErr
+		}
 		switch relayErr.Code {
 		case "5001":
 			low := strings.ToLower(relayErr.Message)

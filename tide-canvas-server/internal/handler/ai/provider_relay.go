@@ -354,10 +354,22 @@ func (p *relayProviderClient) threeDParams(model string, in map[string]any) rela
 // resolution 可能是 480p 等超分不支持的档位,带上会让整个任务白白失败,
 // 忽略它则走上游默认 1080p。
 func (p *relayProviderClient) upscaleParams(model string, in map[string]any) relaymedia.UpscaleParams {
+	outputFPS := in["outputFps"]
+	if outputFPS == nil {
+		outputFPS = in["output_fps"]
+	}
+	upscaleModel := in["upscaleModel"]
+	if upscaleModel == nil {
+		upscaleModel = in["upscale_model"]
+	}
+	extras, _ := in["extras"].(map[string]any)
 	return relaymedia.UpscaleParams{
 		Model:            model,
 		VideoURL:         p.upstreamURL(inputStr(in, "videoUrl", "video_url", "video", "sourceVideo")),
 		TargetResolution: inputStr(in, "targetResolution", "target_resolution"),
+		OutputFPS:        outputFPS,
+		UpscaleModel:     upscaleModel,
+		Extras:           extras,
 	}
 }
 

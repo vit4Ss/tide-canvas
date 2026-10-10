@@ -158,6 +158,41 @@ func TestConfigured3DMultiViewLimit(t *testing.T) {
 	}
 }
 
+func TestRHUpscaleParamsMapsOptionalInputs(t *testing.T) {
+	for _, keys := range [][]string{{"outputFps", "upscaleModel"}, {"output_fps", "upscale_model"}} {
+		p := (&relayProviderClient{}).upscaleParams("rh-upscale", map[string]any{
+			"videoUrl": "https://example.com/in.mp4",
+			keys[0]:    59.94,
+			keys[1]:    "max",
+			"extras":   map[string]any{"output_fps": "1x", "upscale_model": "low"},
+		})
+		if p.Model != "rh-upscale" || p.OutputFPS != 59.94 || p.UpscaleModel != "max" || p.Extras["output_fps"] != "1x" {
+			t.Fatalf("upscaleParams = %+v", p)
+		}
+	}
+}
+
+func TestRHUpscaleParamsPreservesInvalidTopLevelForValidation(t *testing.T) {
+	p := (&relayProviderClient{}).upscaleParams("rh-upscale", map[string]any{
+		"upscaleModel": 1, "extras": map[string]any{"upscale_model": "max"},
+	})
+	if _, err := p.NormalizedOptions(); err == nil {
+		t.Fatal("invalid top-level enhancement was silently replaced by extras")
+	}
+}
+
+func TestUserFacingSubmissionUnknownError(t *testing.T) {
+	for _, err := range []error{
+		&relaymedia.UpstreamError{Code: "5011", Message: "prompt is required"},
+		&relaymedia.UpstreamError{Type: "submission_outcome_unknown", Message: "temporary failure"},
+		fmt.Errorf("provider: %w", &relaymedia.UpstreamError{Code: "5011"}),
+	} {
+		if got := userFacingGenError(err); got != userFacingSubmissionUnknownErr {
+			t.Fatalf("unknown submission message = %q", got)
+		}
+	}
+}
+
 func TestUpscaleParamsMapsStudioInput(t *testing.T) {
 	p := (&relayProviderClient{}).upscaleParams("wavespeed-ai/video-upscaler", map[string]any{
 		"videoUrl":         "https://example.com/input.mp4",

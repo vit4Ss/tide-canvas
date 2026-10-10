@@ -8,10 +8,10 @@
    一键操作共用同一批后端处理器与模型解析策略），用户只需上传素材。
    流程：上传 → 确认模型与积分 → 处理 → 原件/结果对照 → 下载；其中：
      - 局部重绘（image_to_image）：一句修改描述；
-     - 视频超分（video_upscale）：目标分辨率档位。
+     - 视频超分（video_upscale）：目标分辨率；RH 还支持增强档位与插帧。
 
    按工具的 type 分流素材形态：image 收图片，video 收视频（模型取「超分」类目、
-   入参只发 videoUrl + targetResolution，该接口不接收 prompt）。
+   入参包含 videoUrl + targetResolution 与可选 RH 参数，该接口不接收 prompt）。
 
    工具定义（标题/文案/处理器/类型/封面等）来自后台「工具管理」
    （GET /api/ai/tools，公开接口）；接口未应答或失败时用 FALLBACK_OPS 出厂兜底，
@@ -50,6 +50,15 @@ import {
   UPSCALE_RESOLUTIONS,
   type ToolType,
 } from "@/lib/ai-tools-catalog";
+import {
+  isRhUpscaleModel,
+  rhUpscaleInput,
+  RH_UPSCALE_LEVELS,
+  RH_UPSCALE_OUTPUT_FPS,
+  selectUpscaleModel,
+  videoUpscaleDefaults,
+  recoveredUpscaleSettings,
+} from "@/lib/video-upscale";
 import {
   commitAcceptedAiGeneration,
   isAmbiguousAiCreateCode,
@@ -152,11 +161,13 @@ async function listImageModels(): Promise<StudioModelVO[]> {
 
 /** 后台可能没有配置档位，也可能残留超分接口不支持的值；只展示可提交档位。 */
 function upscaleResolutionsFor(model: StudioModelVO | null): string[] {
-  const allowed = UPSCALE_RESOLUTIONS as readonly string[];
+  const allowed = UPSCALE_RESOLUTIONS.filter((resolution) =>
+    resolution !== "720p" || model?.modelKey?.trim().toLowerCase() !== "bytedance/video-upscaler",
+  ) as readonly string[];
   const configured = (model?.config?.resolutions ?? [])
     .map((resolution) => (typeof resolution === "string" ? resolution.toLowerCase() : ""))
     .filter((resolution) => allowed.includes(resolution));
-  return configured.length ? Array.from(new Set(configured)) : [...UPSCALE_RESOLUTIONS];
+  return configured.length ? Array.from(new Set(configured)) : [...allowed];
 }
 
 function normalizeVideoDuration(value: unknown): number {
@@ -339,6 +350,8 @@ export default function ToolPage() {
   const [prompt, setPrompt] = useState("");
   // 视频超分的目标分辨率；默认取工具配置的 extra.targetResolution，否则 1080p
   const [resolution, setResolution] = useState("");
+  const [outputFps, setOutputFps] = useState("");
+  const [upscaleModel, setUpscaleModel] = useState("");
   const [videoDuration, setVideoDuration] = useState(0);
   const [videoMetadataState, setVideoMetadataState] = useState<VideoMetadataState>("idle");
   const [serverQuote, setServerQuote] = useState<{
@@ -516,10 +529,11 @@ export default function ToolPage() {
 
   /** 当前选中的超分模型;未选(或选中的已下架)时用列表首个。 */
   const videoModel = useMemo(
-    () => videoModels.find((m) => m.id === modelId) ?? videoModels[0] ?? null,
+    () => selectUpscaleModel(videoModels, modelId),
     [videoModels, modelId],
   );
   const imageModel = useMemo(() => chooseImageModel(def, imageModels), [def, imageModels]);
+  const isRhUpscale = isRhUpscaleModel(videoModel);
   const imagePointCost = useMemo(
     () => imageToolPointCost(imageModel, def),
     [imageModel, def],
@@ -653,16 +667,17 @@ export default function ToolPage() {
               return size ? nearestAspectRatio(size.width, size.height, ratioPool) : null;
             })()
           : null;
-        // 视频超分只收视频 URL 与目标分辨率——该接口不接收 prompt，图片工具
+        // 视频超分收视频 URL、目标分辨率和可选 RH 参数——该接口不接收 prompt，图片工具
         // 的 imageList/sourceImage 也无从谈起，故两类入参完全分开构造。
         const input: Record<string, unknown> =
           def.type === "video"
             ? {
-                ...(def.extra ?? {}),
+                ...videoUpscaleDefaults(pick, def.extra),
                 toolKey: def.key,
                 toolTitle: def.title,
                 videoUrl: srcUrl,
                 targetResolution: targetResolution || defaultResolution,
+                ...rhUpscaleInput(pick, outputFps, upscaleModel),
                 ...(videoDuration > 0 ? { duration: normalizeVideoDuration(videoDuration) } : {}),
               }
             : {
@@ -690,7 +705,9 @@ export default function ToolPage() {
               source: srcUrl,
               prompt: promptText,
               op: params.op,
+              modelId: pick.id,
               resolution: targetResolution || defaultResolution,
+              ...rhUpscaleInput(pick, outputFps, upscaleModel),
               duration: videoDuration > 0 ? normalizeVideoDuration(videoDuration) : undefined,
             },
             ownerUserId,
@@ -716,7 +733,7 @@ export default function ToolPage() {
         fail("网络错误，请重试");
       }
     },
-    [def, defaultResolution, ensureSession, fail, imageModel, journalScope, params.op, poll, serverQuoteReady, videoDuration, videoModel],
+    [def, defaultResolution, ensureSession, fail, imageModel, journalScope, outputFps, params.op, poll, serverQuoteReady, upscaleModel, videoDuration, videoModel],
   );
 
   useEffect(() => {
@@ -736,6 +753,10 @@ export default function ToolPage() {
       if (sourceUrl) setSource(sourceUrl);
       if (typeof recovery.prompt === "string") setPrompt(recovery.prompt);
       if (typeof recovery.resolution === "string") setResolution(recovery.resolution);
+      const upscaleSettings = recoveredUpscaleSettings(entry);
+      if (upscaleSettings.modelId) setModelId(upscaleSettings.modelId);
+      setOutputFps(upscaleSettings.outputFps);
+      setUpscaleModel(upscaleSettings.upscaleModel);
       const recoveredDuration = normalizeVideoDuration(
         recovery.duration ?? entry.payload?.input?.duration,
       );
@@ -845,6 +866,8 @@ export default function ToolPage() {
     setSubmittedPointCost(0);
     setPrompt("");
     setResolution("");
+    setOutputFps("");
+    setUpscaleModel("");
     setVideoDuration(0);
     setVideoMetadataState("idle");
     setServerQuote(null);
@@ -1169,6 +1192,42 @@ export default function ToolPage() {
                 })}
               </div>
             </fieldset>
+
+            {isRhUpscale && (
+              <fieldset className="tp-fieldset">
+                <legend>RH 画质与帧率</legend>
+                <div className="tp-parameter-grid">
+                  <label>
+                    <span>增强档位</span>
+                    <select
+                      className="tp-parameter-select"
+                      value={upscaleModel}
+                      onChange={(event) => setUpscaleModel(event.target.value)}
+                    >
+                      <option value="">使用默认值</option>
+                      {RH_UPSCALE_LEVELS.map((level) => (
+                        <option key={level.value} value={level.value}>{level.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>输出帧率 / 插帧倍率</span>
+                    <select
+                      className="tp-parameter-select"
+                      value={outputFps}
+                      onChange={(event) => setOutputFps(event.target.value)}
+                    >
+                      <option value="">使用默认值</option>
+                      {RH_UPSCALE_OUTPUT_FPS.map((fps) => (
+                        <option key={fps} value={fps}>
+                          {fps === "1x" ? "1x · 保持原帧率" : fps.endsWith("x") ? `${fps} · 插帧倍率` : `${fps} fps`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </fieldset>
+            )}
 
             <div className="tp-cost-summary" aria-live="polite">
               <div>

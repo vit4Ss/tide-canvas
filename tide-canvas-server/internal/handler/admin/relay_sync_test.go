@@ -22,6 +22,35 @@ func TestRelayModalityKeeps3DModelsOutOfImageBucket(t *testing.T) {
 	}
 }
 
+func TestRelayCatalogImportsRHUpscaleSchema(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"rh-upscale","name":"RH Upscale","modality":"upscale","operations":["upscale"],"resolution_options":["720p","1080p","2k","4k"],"params_schema":{"output_fps":["1x","2x",24,60],"upscale_model":["max","high","medium","low"]}}]}`))
+	}))
+	defer server.Close()
+	models, err := FetchRelayModels(server.URL, "test")
+	if err != nil || len(models) != 1 {
+		t.Fatalf("catalog = %+v, error = %v", models, err)
+	}
+	m := models[0]
+	if m.ID != "rh-upscale" || relayModality(m.Modality) != "upscale" {
+		t.Fatalf("model = %+v", m)
+	}
+	var cfg struct {
+		Resolutions  []string       `json:"resolutions"`
+		Operations   []string       `json:"operations"`
+		ParamsSchema map[string]any `json:"paramsSchema"`
+	}
+	if err := json.Unmarshal([]byte(buildStudioConfig(m)), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Resolutions) != 4 || len(cfg.Operations) != 1 || cfg.Operations[0] != "upscale" || cfg.ParamsSchema["output_fps"] == nil || cfg.ParamsSchema["upscale_model"] == nil {
+		t.Fatalf("config = %+v", cfg)
+	}
+}
+
 func TestRelayModalityRecognizesUpscale(t *testing.T) {
 	for _, input := range []string{"upscale", "Upscale", " UPSCALE "} {
 		if got := relayModality(input); got != "upscale" {

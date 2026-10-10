@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"gorm.io/driver/sqlite"
@@ -74,6 +75,88 @@ func TestPrepareUpscalePricingInputOverridesClientDuration(t *testing.T) {
 	}
 	if got := resolveCost(m, dto.Input); got != 11 {
 		t.Fatalf("confirmed cost = %d, want 11", got)
+	}
+}
+
+func TestPrepareUpscalePricingInputRejectsInvalidOptionsBeforeProbe(t *testing.T) {
+	cases := []struct{ name, input, want string }{
+		{"invalid fps", `{"outputFps":"5x"}`, "输出帧率"},
+		{"invalid numeric fps", `{"output_fps":61}`, "输出帧率"},
+		{"invalid fps type", `{"outputFps":true,"extras":{"output_fps":"1x"}}`, "输出帧率"},
+		{"invalid level", `{"upscaleModel":"ultra"}`, "增强档位"},
+		{"invalid level type", `{"upscaleModel":1,"extras":{"upscale_model":"max"}}`, "增强档位"},
+		{"empty explicit level", `{"upscale_model":"","extras":{"upscale_model":"max"}}`, "增强档位"},
+		{"invalid extras", `{"extras":[]}`, "必须是对象"},
+		{"invalid legacy level", `{"extras":{"upscale_model":false}}`, "增强档位"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &service{confirmVideoDuration: func(context.Context, idgen.ID, string) (string, float64, error) {
+				t.Fatal("invalid options reached duration probing")
+				return "", 0, nil
+			}}
+			var input map[string]any
+			if err := json.Unmarshal([]byte(tc.input), &input); err != nil {
+				t.Fatal(err)
+			}
+			input["videoUrl"] = "https://cdn.example/source.mp4"
+			input["targetResolution"] = "4k"
+			raw, _ := json.Marshal(input)
+			dto := generateDTO{Input: raw}
+			m := &model.AiModel{ModelID: "rh-upscale", Type: "upscale", Config: `{"pricePerSecondByResolution":{"4k":2.5}}`}
+			var placement skillPlacementError
+			err := s.prepareUpscalePricingInput(context.Background(), 42, &dto, m)
+			if !errors.As(err, &placement) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want placement error containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestPrepareUpscalePricingInputNormalizesRHOptions(t *testing.T) {
+	for _, input := range []string{
+		`{"output_fps":59.94,"upscale_model":" HIGH "}`,
+		`{"extras":{"output_fps":59.94,"upscale_model":"HIGH"}}`,
+		`{"outputFps":59.94,"upscaleModel":"high","extras":{"output_fps":"invalid","upscale_model":1}}`,
+	} {
+		s := &service{confirmVideoDuration: func(context.Context, idgen.ID, string) (string, float64, error) {
+			return "https://cdn.example/source.mp4", 10, nil
+		}}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(input), &payload); err != nil {
+			t.Fatal(err)
+		}
+		payload["videoUrl"] = "https://cdn.example/source.mp4"
+		payload["targetResolution"] = "4k"
+		raw, _ := json.Marshal(payload)
+		dto := generateDTO{Input: raw}
+		m := &model.AiModel{ModelID: "rh-upscale", Type: "upscale", Config: `{"pricePerSecondByResolution":{"4k":2.5}}`}
+		if err := s.prepareUpscalePricingInput(context.Background(), 42, &dto, m); err != nil {
+			t.Fatal(err)
+		}
+		var normalized map[string]any
+		if err := json.Unmarshal(dto.Input, &normalized); err != nil {
+			t.Fatal(err)
+		}
+		if normalized["outputFps"] != "59.94" || normalized["upscaleModel"] != "high" || normalized["extras"] != nil || normalized["output_fps"] != nil || normalized["upscale_model"] != nil {
+			t.Fatalf("normalized input = %+v", normalized)
+		}
+	}
+}
+
+func TestPrepareUpscalePricingInputRejectsUnsupportedResolutionBeforeProbe(t *testing.T) {
+	for _, tc := range []struct{ model, resolution string }{
+		{"rh-upscale", "8k"}, {"bytedance/video-upscaler", "720p"},
+	} {
+		s := &service{confirmVideoDuration: func(context.Context, idgen.ID, string) (string, float64, error) {
+			t.Fatal("unsupported resolution reached duration probing")
+			return "", 0, nil
+		}}
+		dto := generateDTO{Input: json.RawMessage(`{"videoUrl":"https://cdn.example/source.mp4","targetResolution":"` + tc.resolution + `"}`)}
+		m := &model.AiModel{ModelID: tc.model, Type: "upscale", Config: `{"pricePerSecondByResolution":{"720p":1,"8k":3}}`}
+		if err := s.prepareUpscalePricingInput(context.Background(), 42, &dto, m); err == nil {
+			t.Fatalf("accepted %s/%s", tc.model, tc.resolution)
+		}
 	}
 }
 

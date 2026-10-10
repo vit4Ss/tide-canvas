@@ -6,7 +6,7 @@
 //	POST {baseURL}/openapi/v1/generations — video (mode-driven: t2v/i2v/keyframe/multi_ref)
 //	POST {baseURL}/v1/audio/speech        — audio (TTS 与音乐/音效共用,由模型决定上游)
 //	POST {baseURL}/v1/3d/generations      — Hunyuan 3D 3.1 (text/image/multi-view)
-//	POST {baseURL}/v1/video/upscale       — WaveSpeedAI 视频超分(公网视频 URL)
+//	POST {baseURL}/v1/video/upscale       — 视频超分 / RH 插帧(公网视频 URL)
 //	GET  {baseURL}/v1/tasks/{id}          — poll an async task
 //
 // All generation endpoints share one response contract: a synchronous 200
@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -151,12 +152,15 @@ type AudioParams struct {
 }
 
 // UpscaleParams is a normalized video-upscale request (POST /v1/video/upscale)。
-// 只做超分,不接收 prompt;VideoURL 必须是公网可访问的 http(s) 地址,且在任务
-// 提交与上游处理期间保持有效(WaveSpeedAI 从该地址拉取原视频)。
+// 不接收 prompt;VideoURL 必须是公网可访问的 http(s) 地址,且在任务
+// 提交与上游处理期间保持有效。RH Upscale 还支持增强档位和输出帧率。
 type UpscaleParams struct {
 	Model            string
 	VideoURL         string
-	TargetResolution string // 720p | 1080p | 2k | 4k;空 = 上游默认 1080p
+	TargetResolution string         // 720p | 1080p | 2k | 4k;空 = 上游默认 1080p
+	OutputFPS        any            // RH: string | number; nil = extras / 路由默认值
+	UpscaleModel     any            // RH: max | high | medium | low; nil = extras / 路由默认值
+	Extras           map[string]any // 兼容旧的嵌套参数；对应顶层字段优先
 }
 
 type ThreeDViewImage struct {
@@ -541,7 +545,7 @@ func (c *Client) Generate3D(ctx context.Context, p ThreeDParams) (Result, error)
 	return res, nil
 }
 
-// UpscaleVideo submits a WaveSpeedAI video upscale (POST /v1/video/upscale)。
+// UpscaleVideo submits a video upscale (POST /v1/video/upscale)。
 // 同步等待窗口内完成时 relay 直接 200 带 output_url/data[0].url;更常见的是
 // 202 + task id,由 submit 透明轮询 /v1/tasks/{id} 到终态。
 func (c *Client) UpscaleVideo(ctx context.Context, p UpscaleParams) (Result, error) {
@@ -565,7 +569,66 @@ func (c *Client) UpscaleVideo(ctx context.Context, p UpscaleParams) (Result, err
 	}
 	body := map[string]any{"model": p.Model, "video": videoURL}
 	putNonEmpty(body, "target_resolution", resolution)
+	options, err := p.NormalizedOptions()
+	if err != nil {
+		return Result{}, err
+	}
+	for key, value := range options {
+		body[key] = value
+	}
 	return c.submit(ctx, pathVideoUpscale, body, upscalePollDeadline)
+}
+
+// NormalizedOptions validates RH options without submitting a request. The
+// generation service also uses it before probing media or charging points.
+// Missing top-level fields fall back to extras; malformed explicit values never do.
+func (p UpscaleParams) NormalizedOptions() (map[string]any, error) {
+	options := map[string]any{}
+	outputFPS := p.OutputFPS
+	if outputFPS == nil {
+		outputFPS = p.Extras["output_fps"]
+	}
+	if outputFPS != nil {
+		var fps string
+		switch value := outputFPS.(type) {
+		case string:
+			fps = strings.ToLower(strings.TrimSpace(value))
+		case float64, float32, int, int64:
+			fps = fmt.Sprint(value)
+		case json.Number:
+			number, err := value.Float64()
+			if err != nil {
+				return nil, fmt.Errorf("relaymedia: unsupported upscale output_fps %q", value)
+			}
+			fps = strconv.FormatFloat(number, 'f', -1, 64)
+		default:
+			return nil, fmt.Errorf("relaymedia: unsupported upscale output_fps %v", outputFPS)
+		}
+		switch fps {
+		case "1x", "2x", "3x", "4x", "23.976", "24", "25", "29.97", "30", "48", "50", "59.94", "60", "72", "90", "96", "120", "144":
+			options["output_fps"] = fps
+		default:
+			return nil, fmt.Errorf("relaymedia: unsupported upscale output_fps %q", fps)
+		}
+	}
+	upscaleModel := p.UpscaleModel
+	if upscaleModel == nil {
+		upscaleModel = p.Extras["upscale_model"]
+	}
+	if upscaleModel != nil {
+		text, valid := upscaleModel.(string)
+		if !valid {
+			return nil, fmt.Errorf("relaymedia: unsupported upscale upscale_model %v", upscaleModel)
+		}
+		level := strings.ToLower(strings.TrimSpace(text))
+		switch level {
+		case "max", "high", "medium", "low":
+			options["upscale_model"] = level
+		default:
+			return nil, fmt.Errorf("relaymedia: unsupported upscale upscale_model %q", level)
+		}
+	}
+	return options, nil
 }
 
 func promoteURL(primary string, urls []string) []string {
