@@ -45,13 +45,16 @@ type generateDTO struct {
 // verifies video ownership and probes duration exactly like generate(); the
 // generation path still rechecks so a quote can never authorize a later debit.
 type upscaleQuoteDTO struct {
+	UpscaleModel     any    `json:"upscaleModel"`
 	ModelID          string `json:"modelId"`
 	VideoURL         string `json:"videoUrl"`
 	TargetResolution string `json:"targetResolution"`
 }
 
 type upscaleQuoteVO struct {
+	UpscaleModel    string  `json:"upscaleModel,omitempty"`
 	DurationSeconds float64 `json:"durationSeconds"`
+	BilledSeconds   float64 `json:"billedSeconds"`
 	RatePerSecond   float64 `json:"ratePerSecond"`
 	PointCost       int     `json:"pointCost"`
 	Resolution      string  `json:"resolution"`

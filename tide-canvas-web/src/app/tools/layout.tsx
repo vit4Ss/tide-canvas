@@ -12,6 +12,7 @@ import "@/styles/liuguang/flux.css";
 import "@/styles/liuguang/studio.css";
 import "@/styles/liuguang/imini-theme.css";
 import "./tools.css";
+import "./video-upscale.css";
 
 export default function ToolsLayout({ children }: { children: React.ReactNode }) {
   return <>{children}</>;

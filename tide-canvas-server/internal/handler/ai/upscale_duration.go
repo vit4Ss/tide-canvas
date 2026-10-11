@@ -78,6 +78,11 @@ func (s *service) prepareUpscalePricingInput(ctx context.Context, userID idgen.I
 		}
 		return skillPlacementError{message: message}
 	}
+	// Pin the default sent upstream. A relay route default must not execute a
+	// different enhancement tier from the max tier quoted and charged here.
+	if strings.EqualFold(strings.TrimSpace(m.ModelID), "rh-upscale") && inputStr(options, "upscale_model") == "" {
+		options["upscale_model"] = "max"
+	}
 	resolution := strings.ToLower(inputStr(input, "targetResolution", "target_resolution"))
 	switch resolution {
 	case "720p", "1080p", "2k", "4k", "":
@@ -87,8 +92,8 @@ func (s *service) prepareUpscalePricingInput(ctx context.Context, userID idgen.I
 	if resolution == "720p" && strings.EqualFold(strings.TrimSpace(m.ModelID), "bytedance/video-upscaler") {
 		return skillPlacementError{message: "所选模型不支持 720p，请选择更高的目标分辨率"}
 	}
-	if resolution == "" || resolveUpscalePointRate(m, resolution) <= 0 {
-		return skillPlacementError{message: "所选分辨率尚未配置每秒积分，请更换模型或输出规格"}
+	if resolution == "" || resolveUpscalePointRate(m, resolution, inputStr(options, "upscale_model")) <= 0 {
+		return skillPlacementError{message: "所选规格尚未配置每秒积分，请更换模型、增强档位或输出规格"}
 	}
 	sourceURL := inputStr(input, "videoUrl", "video_url", "video", "sourceVideo")
 	if sourceURL == "" {
@@ -115,6 +120,7 @@ func (s *service) prepareUpscalePricingInput(ctx context.Context, userID idgen.I
 	input["videoUrl"] = canonical
 	input["targetResolution"] = resolution
 	input["duration"] = duration
+	input["billedSeconds"] = model.UpscaleBilledSeconds(m.Config, duration)
 	delete(input, "video_url")
 	delete(input, "sourceVideo")
 	delete(input, "target_resolution")
@@ -140,6 +146,9 @@ func (s *service) prepareUpscalePricingInput(ctx context.Context, userID idgen.I
 	if err != nil {
 		return err
 	}
+	if _, configured, valid := resolveUpscaleTimeCost(m, encoded); !configured || !valid {
+		return skillPlacementError{message: "视频超分积分配置无效或总积分超出系统范围，请联系管理员"}
+	}
 	dto.Input = encoded
 	return nil
 }
@@ -152,9 +161,13 @@ func (s *service) quoteUpscale(ctx context.Context, userID idgen.ID, quote upsca
 	if m == nil || !m.Enabled || m.Type != "upscale" {
 		return nil, errNoModel
 	}
+	if err := validateModelAvailability(m); err != nil {
+		return nil, err
+	}
 	input, err := json.Marshal(map[string]any{
 		"videoUrl":         strings.TrimSpace(quote.VideoURL),
 		"targetResolution": strings.ToLower(strings.TrimSpace(quote.TargetResolution)),
+		"upscaleModel":     quote.UpscaleModel,
 	})
 	if err != nil {
 		return nil, err
@@ -169,12 +182,15 @@ func (s *service) quoteUpscale(ctx context.Context, userID idgen.ID, quote upsca
 	}
 	resolution := inputStr(confirmed, "targetResolution")
 	duration := durationSeconds(confirmed["duration"])
-	rate := resolveUpscalePointRate(m, resolution)
+	level := inputStr(confirmed, "upscaleModel")
+	rate := resolveUpscalePointRate(m, resolution, level)
 	return &upscaleQuoteVO{
 		DurationSeconds: duration,
+		BilledSeconds:   model.UpscaleBilledSeconds(m.Config, duration),
 		RatePerSecond:   rate,
 		PointCost:       resolveCost(m, generate.Input),
 		Resolution:      resolution,
+		UpscaleModel:    level,
 	}, nil
 }
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  isRhUpscaleModel, rhUpscaleInput, selectUpscaleModel, recoveredUpscaleSettings, videoUpscaleDefaults,
+  isRhUpscaleModel, rhUpscaleInput, selectUpscaleModel, recoveredUpscaleSettings, videoUpscaleDefaults, effectiveRhUpscaleLevel,
 } from "./video-upscale.ts";
 
 test("RH model detection uses the upstream key", () => {
@@ -11,12 +11,22 @@ test("RH model detection uses the upstream key", () => {
   assert.equal(isRhUpscaleModel(null), false);
 });
 
-test("RH controls preserve route defaults until explicitly selected", () => {
+test("RH input helper preserves optional values supplied by the resolved controls", () => {
   const model = { modelKey: "rh-upscale" };
   assert.deepEqual(rhUpscaleInput(model, "", ""), {});
   assert.deepEqual(rhUpscaleInput(model, "1x", "max"), { outputFps: "1x", upscaleModel: "max" });
   assert.deepEqual(rhUpscaleInput(model, "59.94", ""), { outputFps: "59.94" });
   assert.deepEqual(rhUpscaleInput(model, "", "high"), { upscaleModel: "high" });
+});
+
+test("RH price and submit select the same explicit/default/tool tier", () => {
+  const rh = { modelKey: "rh-upscale" };
+  assert.equal(effectiveRhUpscaleLevel(rh, ""), "max");
+  assert.equal(effectiveRhUpscaleLevel(rh, "", { upscaleModel: "high" }), "high");
+  assert.equal(effectiveRhUpscaleLevel(rh, "", { extras: { upscale_model: "medium" } }), "medium");
+  assert.equal(effectiveRhUpscaleLevel(rh, " LOW ", { upscaleModel: "high" }), "low");
+  assert.equal(effectiveRhUpscaleLevel({ modelKey: "other" }, "low"), "");
+  assert.deepEqual(rhUpscaleInput(rh, "", effectiveRhUpscaleLevel(rh, "")), { upscaleModel: "max" });
 });
 
 test("switching away from RH does not submit its retained control values", () => {

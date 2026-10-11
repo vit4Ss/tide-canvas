@@ -32,6 +32,7 @@ export function PopoverSelect({
   menuClassName,
   tone = "default",
   minMenuWidth = 140,
+  optionHeight = 36,
 }: {
   value: string;
   options: PopoverSelectOption[];
@@ -47,6 +48,8 @@ export function PopoverSelect({
   /** 常驻深色面板使用 dark，3D 导演台使用 director；默认跟随站点设计令牌。 */
   tone?: PopoverSelectTone;
   minMenuWidth?: number;
+  /** Match custom option styling so edge flipping accounts for the full menu. */
+  optionHeight?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
@@ -81,7 +84,7 @@ export function PopoverSelect({
     if (r.bottom <= 0 || r.top >= window.innerHeight || r.right <= 0 || r.left >= window.innerWidth) return false;
     const viewportPadding = 8;
     const menuGap = 4;
-    const estHeight = Math.min(options.length, 8) * 36 + 12;
+    const estHeight = Math.min(options.length, 8) * optionHeight + 12;
     const below = window.innerHeight - r.bottom - viewportPadding;
     const above = r.top - viewportPadding;
     const up = below < estHeight && r.top > below;
@@ -100,7 +103,7 @@ export function PopoverSelect({
       maxHeight: Math.min(288, availableHeight),
     });
     return true;
-  }, [minMenuWidth, options.length]);
+  }, [minMenuWidth, optionHeight, options.length]);
 
   const openMenu = useCallback(() => {
     if (!measureMenu()) return;

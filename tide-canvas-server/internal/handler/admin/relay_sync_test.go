@@ -22,6 +22,53 @@ func TestRelayModalityKeeps3DModelsOutOfImageBucket(t *testing.T) {
 	}
 }
 
+func TestSyncUpscaleImportsPricesAndKeepsSubsequentAdminEdits(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.MarketModel{}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"wavespeed-ai/video-upscaler","modality":"upscale","credit_cost":999},{"id":"rh-upscale","modality":"upscale","credit_cost":999}]}`))
+	}))
+	defer server.Close()
+	result, err := SyncRelayModels(db, server.URL, "test-key", 0, 123)
+	if err != nil || result.Created != 2 || result.Failed != 0 {
+		t.Fatalf("sync: %+v, %v", result, err)
+	}
+	var rows []model.MarketModel
+	if err := db.Find(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		want := `"1080p":"1"`
+		if row.ModelKey == "rh-upscale" {
+			want = `"max":"2"`
+		}
+		if row.Status != 0 || !strings.Contains(row.Config, want) {
+			t.Fatalf("incorrect import: %+v", row)
+		}
+	}
+	const custom = `{"resolutions":["4k"],"pricePerSecondByResolution":{"4k":99},"upscaleBilling":{"roundUpSeconds":true,"minimumSeconds":5}}`
+	if err := db.Model(&model.MarketModel{}).Where("id = ?", rows[0].ID).Updates(map[string]any{"config": custom, "price": 99}).Error; err != nil {
+		t.Fatal(err)
+	}
+	result, err = SyncRelayModels(db, server.URL, "test-key", 1, 456)
+	if err != nil || result.Updated != 2 || result.Failed != 0 {
+		t.Fatalf("resync: %+v, %v", result, err)
+	}
+	var row model.MarketModel
+	if err := db.First(&row, rows[0].ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != 0 || row.Price.String() != "99" || !strings.Contains(row.Config, `"4k":99`) || !strings.Contains(row.Config, `"minimumSeconds":5`) {
+		t.Fatalf("resync erased admin edits: %+v", row)
+	}
+}
+
 func TestRelayCatalogImportsRHUpscaleSchema(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {

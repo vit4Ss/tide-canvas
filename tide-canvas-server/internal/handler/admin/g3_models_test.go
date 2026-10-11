@@ -123,6 +123,41 @@ func TestValidateUpscalePricingConfig(t *testing.T) {
 	}
 }
 
+func TestValidateUpscalePricingRejectsAmbiguousRatesAndInvalidBilling(t *testing.T) {
+	for _, raw := range []string{
+		`{"resolutions":["1080p"],"pricePerSecondByResolution":{"1080p":1,"1080P":99}}`,
+		`{"resolutions":["1080p"],"pricePerSecondByResolution":{"1080p":1e308}}`,
+		`{"resolutions":["1080p"],"pricePerSecondByResolution":{"1080p":1},"upscaleBilling":{"minimumSeconds":3,"maximumSeconds":1}}`,
+		`{"resolutions":["1080p"],"pricePerSecondByResolution":{"1080p":1},"upscaleBilling":{"minimumSeconds":"3"}}`,
+	} {
+		if err := validateUpscalePricingConfig(json.RawMessage(raw)); err == nil {
+			t.Errorf("invalid config accepted: %s", raw)
+		}
+	}
+}
+
+func TestValidateRHUpscalePricesByEnhancementLevel(t *testing.T) {
+	valid := json.RawMessage(`{"pricePerSecondByUpscaleModel":{"max":"1.2096","high":1.008,"medium":0.9072,"low":0.7056}}`)
+	if err := validateUpscalePricingConfig(valid, "rh-upscale"); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateUpscalePricingConfig(valid, "wavespeed-ai/video-upscaler"); err == nil {
+		t.Fatal("RH pricing accepted for resolution-priced model")
+	}
+	for _, raw := range []string{
+		`{"pricePerSecondByResolution":{"1080p":42}}`,
+		`{"pricePerSecondByUpscaleModel":{}}`,
+		`{"pricePerSecondByUpscaleModel":{"max":1,"high":1,"medium":1}}`,
+		`{"pricePerSecondByUpscaleModel":{"max":1,"high":1,"medium":1,"low":0}}`,
+		`{"pricePerSecondByUpscaleModel":{"max":1,"MAX":2,"high":1,"medium":1,"low":1}}`,
+		`{"pricePerSecondByUpscaleModel":{"max":1,"high":1,"medium":1,"low":"NaN"}}`,
+	} {
+		if err := validateUpscalePricingConfig(json.RawMessage(raw), "rh-upscale"); err == nil {
+			t.Errorf("invalid pricing accepted: %s", raw)
+		}
+	}
+}
+
 func TestValidateVideoPerRequestPricingConfig(t *testing.T) {
 	for _, raw := range []json.RawMessage{
 		nil,

@@ -224,6 +224,154 @@ func TestQuoteUpscaleReturnsConfirmedDurationAndCost(t *testing.T) {
 	}
 }
 
+func TestQuoteUpscaleSeparatesSourceAndBilledDuration(t *testing.T) {
+	db := openPricingTestDB(t)
+	key := "wavespeed-ai/video-upscaler-pro"
+	cfg, _, _, err := model.RepricedUpscaleConfig(key, "upscale", `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := model.MarketModel{BaseModel: model.BaseModel{ID: 101}, ModelKey: key, Name: "Pro", Type: "upscale", Status: 1, Config: cfg}
+	if err := db.Create(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	s := &service{repo: newRepo(db), confirmVideoDuration: func(context.Context, idgen.ID, string) (string, float64, error) {
+		return "https://cdn.example/canonical.mp4", 5.132, nil
+	}}
+	quote, err := s.quoteUpscale(context.Background(), 42, upscaleQuoteDTO{ModelID: key, VideoURL: "https://cdn.example/input.mp4", TargetResolution: "1080p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quote.DurationSeconds != 5.132 || quote.BilledSeconds != 6 || quote.RatePerSecond != 5 || quote.PointCost != 30 {
+		t.Fatalf("quote: %+v", quote)
+	}
+	dto := generateDTO{Input: json.RawMessage(`{"videoUrl":"https://cdn.example/input.mp4","targetResolution":"1080p","duration":0.01,"billedSeconds":0.01}`)}
+	m := &model.AiModel{ModelID: key, Type: "upscale", Config: cfg}
+	if err := s.prepareUpscalePricingInput(context.Background(), 42, &dto, m); err != nil {
+		t.Fatal(err)
+	}
+	var normalized map[string]any
+	if err := json.Unmarshal(dto.Input, &normalized); err != nil {
+		t.Fatal(err)
+	}
+	if normalized["duration"] != 5.132 || normalized["billedSeconds"] != float64(6) || resolveCost(m, dto.Input) != quote.PointCost {
+		t.Fatalf("submit differs from quote or trusted client duration: %s", dto.Input)
+	}
+}
+
+func TestRHQuoteAndSubmissionUseSameEnhancementTier(t *testing.T) {
+	db := openPricingTestDB(t)
+	cfg, _, _, err := model.RepricedUpscaleConfig("rh-upscale", "upscale", `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := model.MarketModel{BaseModel: model.BaseModel{ID: 101}, Name: "RH", ModelKey: "rh-upscale", Type: "upscale", Status: 1, Config: cfg}
+	if err := db.Create(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	s := &service{repo: newRepo(db), confirmVideoDuration: func(context.Context, idgen.ID, string) (string, float64, error) {
+		return "https://cdn.example/video.mp4", 5.132, nil
+	}}
+	m := &model.AiModel{ModelID: "rh-upscale", Type: "upscale", Config: cfg}
+	for _, resolution := range []string{"720p", "1080p", "2k", "4k"} {
+		for _, tc := range []struct {
+			level      any
+			normalized string
+			rate       float64
+			cost       int
+		}{
+			{nil, "max", 2, 11}, {"max", "max", 2, 11}, {" HIGH ", "high", 2, 11}, {"medium", "medium", 1, 6}, {"low", "low", 1, 6},
+		} {
+			quote, err := s.quoteUpscale(context.Background(), 42, upscaleQuoteDTO{ModelID: "rh-upscale", VideoURL: "https://cdn.example/video.mp4", TargetResolution: resolution, UpscaleModel: tc.level})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if quote.RatePerSecond != tc.rate || quote.PointCost != tc.cost || quote.UpscaleModel != tc.normalized || quote.BilledSeconds != 5.132 {
+				t.Fatalf("quote: %+v", quote)
+			}
+			input, _ := json.Marshal(map[string]any{"videoUrl": "https://cdn.example/video.mp4", "targetResolution": resolution, "upscaleModel": tc.level, "outputFps": "4x", "duration": 0.01})
+			dto := generateDTO{Input: input}
+			if err := s.prepareUpscalePricingInput(context.Background(), 42, &dto, m); err != nil {
+				t.Fatal(err)
+			}
+			if resolveCost(m, dto.Input) != quote.PointCost {
+				t.Fatalf("submit differs from quote: %s", dto.Input)
+			}
+			var normalized map[string]any
+			_ = json.Unmarshal(dto.Input, &normalized)
+			options, err := (&relayProviderClient{}).upscaleParams("rh-upscale", normalized).NormalizedOptions()
+			if err != nil || options["upscale_model"] != tc.normalized {
+				t.Fatalf("upstream tier differs from charged tier: %+v, %v", options, err)
+			}
+		}
+	}
+	dto := generateDTO{Input: json.RawMessage(`{"videoUrl":"https://cdn.example/video.mp4","targetResolution":"4k","extras":{"upscale_model":"low"}}`)}
+	if err := s.prepareUpscalePricingInput(context.Background(), 42, &dto, m); err != nil {
+		t.Fatal(err)
+	}
+	if resolveCost(m, dto.Input) != 6 || !strings.Contains(string(dto.Input), `"upscaleModel":"low"`) {
+		t.Fatalf("legacy tier mismatch: %s", dto.Input)
+	}
+	s.confirmVideoDuration = func(context.Context, idgen.ID, string) (string, float64, error) {
+		t.Fatal("unpriced tier probed media")
+		return "", 0, nil
+	}
+	m.Config = `{"pricePerSecondByUpscaleModel":{"max":1.2096},"pricePerSecond":99}`
+	if err := s.prepareUpscalePricingInput(context.Background(), 42, &dto, m); err == nil {
+		t.Fatal("unpriced low tier accepted")
+	}
+}
+
+func TestPrepareUpscaleRejectsCostOverflowInsteadOfCreatingFreeTask(t *testing.T) {
+	s := &service{confirmVideoDuration: func(context.Context, idgen.ID, string) (string, float64, error) {
+		return "https://cdn.example/video.mp4", 20, nil
+	}}
+	for _, cfg := range []string{
+		`{"pricePerSecond":9000000000000}`,
+		`{"pricePerSecond":1e308}`,
+		`{"pricePerSecond":1,"upscaleBilling":{"minimumSeconds":3,"maximumSeconds":1}}`,
+		`{"pricePerSecondByResolution":{},"pricePerSecond":1}`,
+	} {
+		dto := generateDTO{Input: json.RawMessage(`{"videoUrl":"https://cdn.example/video.mp4","targetResolution":"1080p"}`)}
+		m := &model.AiModel{Type: "upscale", Config: cfg}
+		err := s.prepareUpscalePricingInput(context.Background(), 42, &dto, m)
+		var placement skillPlacementError
+		if !errors.As(err, &placement) {
+			t.Fatalf("invalid billing reached submit: config=%s, err=%v", cfg, err)
+		}
+	}
+}
+
+func TestUpscaleQuoteRejectsMaintenanceAndUnlistedResolutionBeforeProbe(t *testing.T) {
+	for _, tc := range []struct{ name, key, config, resolution string }{
+		{"maintenance", "rh-upscale", `{"availabilityStatus":"maintenance","pricePerSecondByUpscaleModel":{"max":2}}`, "1080p"},
+		{"hidden resolution", "wavespeed-ai/video-upscaler", `{"resolutions":["1080p"],"pricePerSecondByResolution":{"1080p":1,"4k":9}}`, "4k"},
+		{"hidden RH resolution", "rh-upscale", `{"resolutions":["1080p"],"pricePerSecondByUpscaleModel":{"max":2}}`, "4k"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openPricingTestDB(t)
+			row := model.MarketModel{BaseModel: model.BaseModel{ID: 101}, Name: "Test", ModelKey: tc.key, Type: "upscale", Status: 1, Config: tc.config}
+			if err := db.Create(&row).Error; err != nil {
+				t.Fatal(err)
+			}
+			s := &service{repo: newRepo(db), confirmVideoDuration: func(context.Context, idgen.ID, string) (string, float64, error) {
+				t.Fatal("unavailable configuration probed source")
+				return "", 0, nil
+			}}
+			if _, err := s.quoteUpscale(context.Background(), 42, upscaleQuoteDTO{ModelID: tc.key, VideoURL: "https://cdn.example/video.mp4", TargetResolution: tc.resolution}); err == nil {
+				t.Fatal("unavailable configuration received a quote")
+			}
+			if tc.name != "maintenance" {
+				m := &model.AiModel{ModelID: tc.key, Type: "upscale", Config: tc.config}
+				dto := generateDTO{Input: json.RawMessage(`{"videoUrl":"https://cdn.example/video.mp4","targetResolution":"4k"}`)}
+				if err := s.prepareUpscalePricingInput(context.Background(), 42, &dto, m); err == nil {
+					t.Fatal("submit bypassed disabled resolution")
+				}
+			}
+		})
+	}
+}
+
 // Kept local to these quote tests so pricing's pure unit tests remain DB-free.
 func openPricingTestDB(t *testing.T) *gorm.DB {
 	t.Helper()

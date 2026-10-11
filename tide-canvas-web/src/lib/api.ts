@@ -79,7 +79,7 @@ export const projectApi = {
 export const aiApi = {
   generate: (data: AiGenerateDTO) =>
     http.post<AiTaskVO>("/api/ai/generate", data),
-  upscaleQuote: (data: { modelId: string; videoUrl: string; targetResolution: string }) =>
+  upscaleQuote: (data: { modelId: string; videoUrl: string; targetResolution: string; upscaleModel?: string }) =>
     http.post<UpscaleQuoteVO>("/api/ai/upscale-quote", data),
   referenceVideoQuote: (data: { modelId: string; resolution: string; videoUrls: string[]; clipReshoot?: ClipReshootRequest }) =>
     http.post<ReferenceVideoQuoteVO>("/api/ai/reference-video-quote", data),

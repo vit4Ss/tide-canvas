@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/shopspring/decimal"
+
 	"tidecanvas/internal/model"
 )
 
@@ -15,7 +17,8 @@ import (
 // Resolution order, per generation:
 //
 //	1. upscale config pricePerSecondByResolution[targetResolution] × the
-//	   server-confirmed source duration, rounded up. The legacy uniform
+//	   server-confirmed duration after the model's billing-duration rules,
+//	   with the final points rounded up. The legacy uniform
 //	   pricePerSecond field is accepted only as a rolling-upgrade fallback.
 //	2. video per-request config pricePerRequestByResolution[resolution] when
 //	   videoBillingMode == "per_request". Duration is deliberately ignored.
@@ -292,7 +295,11 @@ func resolveUpscaleTimeCost(m *model.AiModel, rawInput json.RawMessage) (cost in
 		_ = json.Unmarshal(rawInput, &in)
 	}
 	resolution := inputStr(in, "targetResolution", "target_resolution")
-	rate := resolveUpscalePointRate(m, resolution)
+	options, err := (&relayProviderClient{}).upscaleParams(m.ModelID, in).NormalizedOptions()
+	if err != nil {
+		return 0, true, false
+	}
+	rate := resolveUpscalePointRate(m, resolution, inputStr(options, "upscale_model"))
 	if rate <= 0 {
 		return 0, false, false
 	}
@@ -300,14 +307,43 @@ func resolveUpscaleTimeCost(m *model.AiModel, rawInput json.RawMessage) (cost in
 	if duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
 		return 0, true, false
 	}
-	return int(math.Ceil(rate * duration)), true, true
+	duration = model.UpscaleBilledSeconds(m.Config, duration)
+	if duration <= 0 || math.IsNaN(duration) || math.IsInf(duration, 0) {
+		return 0, true, false
+	}
+	costDecimal := decimal.NewFromFloat(rate).Mul(decimal.NewFromFloat(duration)).Ceil()
+	if costDecimal.GreaterThan(decimal.NewFromInt(model.MaxUpscalePointCost)) || costDecimal.GreaterThan(decimal.NewFromInt(int64(maxPointCost()))) {
+		return 0, true, false
+	}
+	return int(costDecimal.IntPart()), true, true
+}
+
+// Reject aliases that normalize to the same price cell instead of selecting a
+// random Go map entry (which can differ from the browser's insertion order).
+func uniqueUpscaleRate(rates map[string]any, target string) float64 {
+	found := false
+	rate := 0.0
+	for key, value := range rates {
+		if !strings.EqualFold(strings.TrimSpace(key), target) {
+			continue
+		}
+		if found {
+			return 0
+		}
+		found = true
+		rate = toNum(value)
+	}
+	if rate <= 0 || rate > float64(model.MaxUpscalePointCost) || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return 0
+	}
+	return rate
 }
 
 // resolveUpscalePointRate returns the configured points/second for one target
 // resolution. New records use pricePerSecondByResolution; pricePerSecond keeps
 // already-published models billable while admins migrate them in a rolling
 // deployment. Resolution lookup is case-insensitive.
-func resolveUpscalePointRate(m *model.AiModel, resolution string) float64 {
+func resolveUpscalePointRate(m *model.AiModel, resolution string, upscaleModel ...string) float64 {
 	if m == nil || m.Type != "upscale" || strings.TrimSpace(m.Config) == "" {
 		return 0
 	}
@@ -319,23 +355,33 @@ func resolveUpscalePointRate(m *model.AiModel, resolution string) float64 {
 	if err := json.Unmarshal([]byte(m.Config), &cfg); err != nil {
 		return 0
 	}
-	if rates, ok := cfg["pricePerSecondByResolution"].(map[string]any); ok && len(rates) > 0 {
-		if resolution != "" {
-			for key, value := range rates {
-				if strings.EqualFold(strings.TrimSpace(key), resolution) {
-					rate := toNum(value)
-					if rate > 0 && !math.IsNaN(rate) && !math.IsInf(rate, 0) {
-						return rate
-					}
-				}
+	if resolutions, ok := cfg["resolutions"].([]any); ok && len(resolutions) > 0 {
+		allowed := false
+		for _, candidate := range resolutions {
+			if text, ok := candidate.(string); ok && strings.EqualFold(strings.TrimSpace(text), resolution) {
+				allowed = true
 			}
 		}
-		// Once a resolution table exists, an absent/zero cell is deliberately
-		// unpriced and must not inherit the old uniform rate.
-		return 0
+		if !allowed {
+			return 0
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(m.ModelID), "rh-upscale") {
+		if rawRates, present := cfg["pricePerSecondByUpscaleModel"]; present {
+			level := "max"
+			if len(upscaleModel) > 0 && strings.TrimSpace(upscaleModel[0]) != "" {
+				level = strings.ToLower(strings.TrimSpace(upscaleModel[0]))
+			}
+			rates, _ := rawRates.(map[string]any)
+			return uniqueUpscaleRate(rates, level)
+		}
+	}
+	if rawRates, present := cfg["pricePerSecondByResolution"]; present {
+		rates, _ := rawRates.(map[string]any)
+		return uniqueUpscaleRate(rates, resolution)
 	}
 	legacy := numField(cfg, "pricePerSecond")
-	if legacy > 0 && !math.IsNaN(legacy) && !math.IsInf(legacy, 0) {
+	if legacy > 0 && legacy <= float64(model.MaxUpscalePointCost) && !math.IsNaN(legacy) && !math.IsInf(legacy, 0) {
 		return legacy
 	}
 	return 0

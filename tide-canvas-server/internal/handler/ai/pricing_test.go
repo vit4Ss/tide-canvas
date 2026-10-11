@@ -243,6 +243,38 @@ func TestResolveCostUpscalePerResolutionSecond(t *testing.T) {
 	}
 }
 
+func TestOfficialUpscaleMarkupUsesSupplierBillingDuration(t *testing.T) {
+	for _, tc := range []struct {
+		key, resolution string
+		duration        float64
+		want            int
+	}{
+		{"wavespeed-ai/video-upscaler", "1080p", 0.2, 3},
+		{"wavespeed-ai/video-upscaler", "4k", 5.132, 18},
+		{"wavespeed-ai/video-upscaler-pro", "1080p", 5.132, 30},
+		{"wavespeed-ai/video-upscaler-pro", "4k", 1, 27},
+		{"bytedance/video-upscaler", "1080p", 0.2, 1},
+		{"bytedance/video-upscaler", "4k", 5.132, 18},
+		{"bytedance/video-upscaler", "4k", 600.1, 1800},
+		{"rh-upscale", "1080p", 5.132, 11},
+		{"rh-upscale", "4k", 1, 2},
+	} {
+		cfg, _, _, err := model.RepricedUpscaleConfig(tc.key, "upscale", `{}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := &model.AiModel{ModelID: tc.key, Type: "upscale", Config: cfg}
+		raw, _ := json.Marshal(map[string]any{"targetResolution": tc.resolution, "duration": tc.duration, "billedSeconds": 0.01})
+		if got := resolveCost(m, raw); got != tc.want {
+			t.Errorf("%s @ %s, %v seconds: got %d, want %d", tc.key, tc.resolution, tc.duration, got, tc.want)
+		}
+	}
+	m := &model.AiModel{Type: "upscale", Config: `{"pricePerSecond":0.07}`}
+	if got := resolveCost(m, json.RawMessage(`{"targetResolution":"4k","duration":100}`)); got != 7 {
+		t.Errorf("floating-point overcharge: %d", got)
+	}
+}
+
 func TestResolveCostUpscaleKeepsUniformPerSecondRollingFallback(t *testing.T) {
 	m := &model.AiModel{
 		Type:      "upscale",
@@ -251,6 +283,40 @@ func TestResolveCostUpscaleKeepsUniformPerSecondRollingFallback(t *testing.T) {
 	}
 	if got := resolveCost(m, json.RawMessage(`{"duration":4.2,"targetResolution":"4k"}`)); got != 6 {
 		t.Errorf("uniform rolling fallback: got %d, want 6", got)
+	}
+}
+
+func TestUpscalePricingRejectsAmbiguousOrOverflowingConfig(t *testing.T) {
+	for _, cfg := range []string{
+		`{"pricePerSecondByResolution":{"1080p":1,"1080P":99}}`,
+		`{"pricePerSecondByResolution":{},"pricePerSecond":99}`,
+		`{"pricePerSecondByResolution":null,"pricePerSecond":99}`,
+		`{"pricePerSecondByResolution":{"1080p":1e308}}`,
+	} {
+		m := &model.AiModel{Type: "upscale", Config: cfg}
+		if rate := resolveUpscalePointRate(m, "1080p"); rate != 0 {
+			t.Errorf("invalid config yielded rate %v: %s", rate, cfg)
+		}
+	}
+	m := &model.AiModel{Type: "upscale", Config: `{"pricePerSecond":9000000000000}`}
+	if cost, _, valid := resolveUpscaleTimeCost(m, json.RawMessage(`{"duration":20,"targetResolution":"1080p"}`)); valid || cost != 0 {
+		t.Errorf("out-of-ledger-range cost accepted: %v / %v", cost, valid)
+	}
+}
+
+func TestUpscaleBillingRetainsTrueDecimalFractions(t *testing.T) {
+	for _, tc := range []struct {
+		rate     string
+		duration float64
+		want     int
+	}{
+		{"0.33333333333333337", 3, 2}, {"1.000000000000001", 1, 2}, {"0.07", 100, 7}, {"1e-7", 1e7, 1},
+	} {
+		m := &model.AiModel{Type: "upscale", Config: `{"pricePerSecond":` + tc.rate + `}`}
+		input, _ := json.Marshal(map[string]any{"duration": tc.duration, "targetResolution": "1080p"})
+		if got := resolveCost(m, input); got != tc.want {
+			t.Errorf("rate %s × %g: got %d want %d", tc.rate, tc.duration, got, tc.want)
+		}
 	}
 }
 

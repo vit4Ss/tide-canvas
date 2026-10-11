@@ -42,6 +42,8 @@ import { confirmDialog } from "@/components/shared/confirm";
 import { adminModelsApi } from "@/lib/admin-models-api";
 import { BRAND_ICONS, brandIconUrl, resolveModelSwatch } from "@/lib/model-brand";
 import { usesVideoPerRequestBilling, videoPerRequestRate } from "@/lib/price-matrix";
+import { isRhUpscaleModel, RH_UPSCALE_LEVELS } from "@/lib/video-upscale";
+import { initialUpscaleRates, normalizeUpscaleRates, upscaleAdminPriceRange } from "@/lib/admin-upscale-pricing";
 import { MAX_MODEL_PROMPT_CHARS } from "@/lib/model-prompt-limit";
 import { MAX_SINGLE_UPLOAD_MB } from "@/lib/upload-limits";
 import { normalizeVideoModes, type VideoMode } from "@/lib/video-modes";
@@ -158,11 +160,7 @@ function referenceMatrixValue(config: ModelConfig, duration: string, resolution:
 
 function billingValue(model: AdminModelVO): number {
   if (model.type === "upscale") {
-    const rates = Object.values(model.config?.pricePerSecondByResolution ?? {})
-      .map(positiveNumber)
-      .filter((rate) => rate > 0);
-    const legacy = positiveNumber(model.config?.pricePerSecond);
-    return rates.length ? Math.min(...rates) : legacy;
+    return upscaleAdminPriceRange(model.config, isRhUpscaleModel(model), RESOLUTION_OPTIONS.upscale)?.min ?? 0;
   }
   if (model.type === "video" && usesVideoPerRequestBilling(model.config)) {
     const rates = (model.config?.resolutions ?? [])
@@ -171,15 +169,6 @@ function billingValue(model: AdminModelVO): number {
     return rates.length ? Math.min(...rates) : 0;
   }
   return positiveNumber(model.pointCost);
-}
-
-function initialUpscaleRates(config: ModelConfig): Record<string, number | string> {
-  const configured = config.pricePerSecondByResolution ?? {};
-  if (Object.keys(configured).length) return configured;
-  const legacy = positiveNumber(config.pricePerSecond);
-  if (legacy <= 0) return {};
-  const resolutions = config.resolutions?.length ? config.resolutions : RESOLUTION_OPTIONS.upscale;
-  return Object.fromEntries(resolutions.map((resolution) => [resolution, legacy]));
 }
 
 function billingLabel(model: AdminModelVO): string {
@@ -193,16 +182,9 @@ function billingLabel(model: AdminModelVO): string {
     return `${low}${high !== low ? `–${high}` : ""} /次 · 按清晰度`;
   }
   if (model.type !== "upscale") return `${model.pointCost} /次`;
-  const rates = Object.values(model.config?.pricePerSecondByResolution ?? {})
-    .map(positiveNumber)
-    .filter((rate) => rate > 0);
-  if (rates.length) {
-    const low = Math.min(...rates);
-    const high = Math.max(...rates);
-    return `${low}${high !== low ? `–${high}` : ""} /秒`;
-  }
-  const legacy = positiveNumber(model.config?.pricePerSecond);
-  return legacy > 0 ? `${legacy} /秒 · 待迁移` : "未定价";
+  const range = upscaleAdminPriceRange(model.config, isRhUpscaleModel(model), RESOLUTION_OPTIONS.upscale);
+  if (!range) return "未定价";
+  return `${range.min}${range.max !== range.min ? `–${range.max}` : ""} /秒${range.legacy ? " · 待迁移" : isRhUpscaleModel(model) ? " · 按增强档位" : ""}`;
 }
 
 export default function AdminModelsPage() {
@@ -864,7 +846,9 @@ function ModelModal({
     errorHints: c0.errorHints ?? [],
     modes: c0.modes ?? [],
     ratios: c0.ratios ?? [],
-    resolutions: c0.resolutions ?? [],
+    resolutions: type === "upscale"
+      ? [...new Set((c0.resolutions ?? []).map((value) => value.trim().toLowerCase()))]
+      : c0.resolutions ?? [],
     qualities: c0.qualities ?? [],
     durations: c0.durations ?? [],
     batchOptions: c0.batchOptions ?? [],
@@ -877,7 +861,10 @@ function ModelModal({
     pricePerRequestByResolution: c0.pricePerRequestByResolution ?? {},
     pricePerSecond: c0.pricePerSecond ?? "",
     // 旧模型的统一每秒价展开到每个可用档位，运营只需按档调整差价即可完成迁移。
-    pricePerSecondByResolution: initialUpscaleRates(c0),
+    pricePerSecondByResolution: initialUpscaleRates(c0, RESOLUTION_OPTIONS.upscale),
+    pricePerSecondByUpscaleModel: type === "upscale" && isRhUpscaleModel({ modelKey })
+      ? normalizeUpscaleRates(c0.pricePerSecondByUpscaleModel)
+      : c0.pricePerSecondByUpscaleModel,
     referenceVideoBillingEnabled: c0.referenceVideoBillingEnabled ?? false,
     uploadCost: c0.uploadCost ?? "",
   });
@@ -894,6 +881,10 @@ function ModelModal({
   const isText = type === "text";
   const is3D = type === "3d";
   const isUpscale = type === "upscale";
+  const isRhUpscale = isUpscale && isRhUpscaleModel({ modelKey });
+  const upscalePricingKeys = isRhUpscale
+    ? RH_UPSCALE_LEVELS.map((level) => level.value)
+    : cfg.resolutions?.length ? cfg.resolutions : RESOLUTION_OPTIONS.upscale;
   const threeDImageSize = Number(cfg.max3DImageSizeMB ?? 0);
   const threeDMultiViewCount = Number(cfg.max3DMultiViewImages ?? MAX_3D_MULTI_VIEW_IMAGES);
   const maxPromptChars = Number(cfg.maxPromptChars ?? 0);
@@ -940,12 +931,12 @@ function ModelModal({
   const matrixCols = cfg.resolutions ?? [];
 
   const upscaleRate = (resolution: string): string | number =>
-    cfg.pricePerSecondByResolution?.[resolution] ?? "";
+    (isRhUpscale ? cfg.pricePerSecondByUpscaleModel : cfg.pricePerSecondByResolution)?.[resolution] ?? "";
   const setUpscaleRate = (resolution: string, value: string) =>
     setCfg((previous) => ({
       ...previous,
-      pricePerSecondByResolution: {
-        ...(previous.pricePerSecondByResolution ?? {}),
+      [isRhUpscale ? "pricePerSecondByUpscaleModel" : "pricePerSecondByResolution"]: {
+        ...((isRhUpscale ? previous.pricePerSecondByUpscaleModel : previous.pricePerSecondByResolution) ?? {}),
         [resolution]: value,
       },
     }));
@@ -1021,11 +1012,11 @@ function ModelModal({
       ? cfg.resolutions
       : (RESOLUTION_OPTIONS.upscale ?? []);
     if (isUpscale) {
-      const missingResolution = upscaleResolutions.find(
-        (resolution) => positiveNumber(cfg.pricePerSecondByResolution?.[resolution]) <= 0,
+      const missingResolution = upscalePricingKeys.find(
+        (resolution) => positiveNumber(upscaleRate(resolution)) <= 0,
       );
       if (missingResolution) {
-        setErr(`请填写 ${missingResolution.toUpperCase()} 的每秒积分`);
+        setErr(`请填写 ${missingResolution.toUpperCase()}${isRhUpscale ? " 增强档位" : ""}的每秒积分`);
         return false;
       }
     }
@@ -1116,7 +1107,10 @@ function ModelModal({
           // 按时长时用于矩阵 miss 回退；视频按次模式明确跳过该字段，只读
           // pricePerRequestByResolution，避免旧值干扰当前扣费。
           creditCost: parseFloat(pointCost.trim()) || 0,
-          pricePerSecondByResolution: isUpscale
+          pricePerSecondByUpscaleModel: isRhUpscale
+            ? Object.fromEntries(upscalePricingKeys.map((level) => [level, positiveNumber(upscaleRate(level))]))
+            : undefined,
+          pricePerSecondByResolution: isRhUpscale ? undefined : isUpscale
             ? Object.fromEntries(
                 upscaleResolutions.map((resolution) => [
                   resolution,
@@ -1125,7 +1119,7 @@ function ModelModal({
               )
             : cfg.pricePerSecondByResolution,
           // 新表单不再写统一单价；保留字段值只服务滚动升级中的旧实例。
-          pricePerSecond: cfg.pricePerSecond,
+          pricePerSecond: isRhUpscale ? positiveNumber(upscaleRate("max")) : cfg.pricePerSecond,
           // priceMatrix 是后台唯一价格矩阵；公开模型接口会按需补出 pricing 别名。
           // 清理旧值可避免两个字段并存且价格不一致时，旧画布读到过期价格。
           pricing: showGen ? undefined : cfg.pricing,
@@ -1648,7 +1642,7 @@ function ModelModal({
           </FormSection>
           <FormSection
             label="目标分辨率"
-            hint="不勾选 = 全部档位；每个可用档位都必须在下方配置每秒积分"
+            hint={isRhUpscale ? "不勾选 = 全部分辨率；同一增强档位下各分辨率同价" : "不勾选 = 全部档位；每个可用档位都必须在下方配置每秒积分"}
           >
             <Chips
               options={(RESOLUTION_OPTIONS[type] ?? []).map((r) => ({ v: r, l: r.toUpperCase() }))}
@@ -1658,21 +1652,21 @@ function ModelModal({
           </FormSection>
           <FormSection
             label="每秒积分"
-            hint="最终积分 = ceil（服务端确认的视频时长 × 用户所选分辨率单价）"
+            hint={isRhUpscale ? "按 max / high / medium / low 增强档位计价，与分辨率无关。最终积分按服务端时长 × 档位单价向上取整" : "最终积分 = ceil（按模型起步时长及取整规则计算的计费秒数 × 分辨率单价）"}
           >
             <div className="fmatrix">
               <div className="adm-table-wrap" role="region" aria-label="视频超分每秒积分" tabIndex={0}>
                 <table aria-label="视频超分每秒积分">
                   <thead>
                     <tr>
-                      <th>目标分辨率</th>
+                      <th>{isRhUpscale ? "增强档位" : "目标分辨率"}</th>
                       <th>积分 / 秒</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(cfg.resolutions?.length ? cfg.resolutions : RESOLUTION_OPTIONS.upscale).map((resolution) => (
+                    {upscalePricingKeys.map((resolution) => (
                       <tr key={resolution}>
-                        <td>{resolution.toUpperCase()}</td>
+                        <td>{isRhUpscale ? RH_UPSCALE_LEVELS.find((level) => level.value === resolution)?.label : resolution.toUpperCase()}</td>
                         <td>
                           <input
                             placeholder="如：2.5"

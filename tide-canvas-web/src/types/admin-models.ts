@@ -107,6 +107,10 @@ export interface ModelConfig {
   pricePerSecond?: number | string;
   /** 视频超分按目标分辨率配置的每秒积分。 */
   pricePerSecondByResolution?: Record<string, number | string>;
+  /** RH 按增强档位计价，各输出分辨率同价。 */
+  pricePerSecondByUpscaleModel?: Record<string, number | string>;
+  /** 超分供应商计费时长规则；不改变实际源视频时长。 */
+  upscaleBilling?: { minimumSeconds?: number; maximumSeconds?: number; roundUpSeconds?: boolean };
   /** 视频模型：是否对随请求提交的参考视频按实际时长额外收费。 */
   referenceVideoBillingEnabled?: boolean;
   /** 视频模型：原生时间戳级视频编辑(Seedance 2.5 一类)。开启后片段重拍全片

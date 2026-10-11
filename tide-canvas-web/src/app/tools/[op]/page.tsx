@@ -24,7 +24,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { Images, Loader2, Plus, X } from "lucide-react";
+import { Aperture, ArrowRight, Check, Clapperboard, Clock3, Film, FolderCheck, Images, Loader2, Monitor, Plus, ScanLine, SlidersHorizontal, Waves, X } from "lucide-react";
+import { PopoverSelect } from "@/components/shared/popover-select";
 import { AssetPickerModal } from "@/components/studio/create-studio/asset-picker-modal";
 import ImageInpaintModal from "@/components/canvas/nodes/image-inpaint-modal";
 import { chooseInpaintModel } from "@/lib/inpaint";
@@ -54,6 +55,7 @@ import {
   isRhUpscaleModel,
   rhUpscaleInput,
   RH_UPSCALE_LEVELS,
+  effectiveRhUpscaleLevel,
   RH_UPSCALE_OUTPUT_FPS,
   selectUpscaleModel,
   videoUpscaleDefaults,
@@ -188,10 +190,18 @@ function pointRateLabel(rate: number): string {
   return `${compactNumber(rate)} 积分/秒`;
 }
 
+function UpscaleModelIcon({ modelKey }: { modelKey?: string }) {
+  const key = modelKey?.toLowerCase() ?? "";
+  const Icon = key === "rh-upscale" ? Clapperboard
+    : key.includes("bytedance") ? ScanLine
+      : key.endsWith("-pro") ? Aperture : Waves;
+  return <Icon size={20} strokeWidth={1.6} aria-hidden />;
+}
+
 /** 与服务端 resolveCost 同口径：新每秒价优先，旧模型才回退到矩阵与固定价。 */
-function upscalePointCost(model: StudioModelVO | null, durationSeconds: number, resolution: string): number {
+function upscalePointCost(model: StudioModelVO | null, durationSeconds: number, resolution: string, level = "max"): number {
   if (!model || !resolution) return 0;
-  return resolveUpscalePointCost(model.config, durationSeconds, resolution, model.pointCost);
+  return resolveUpscalePointCost(model.config, durationSeconds, resolution, model.pointCost, level);
 }
 
 function pointCostLabel(cost: number): string {
@@ -355,7 +365,9 @@ export default function ToolPage() {
   const [videoDuration, setVideoDuration] = useState(0);
   const [videoMetadataState, setVideoMetadataState] = useState<VideoMetadataState>("idle");
   const [serverQuote, setServerQuote] = useState<{
+    upscaleModel?: string;
     durationSeconds: number;
+    billedSeconds?: number;
     ratePerSecond: number;
     pointCost: number;
     resolution: string;
@@ -559,13 +571,15 @@ export default function ToolPage() {
   // 早先按全量档位定下的 resolution 可能是这个模型不支持的档。以可选范围为准，
   // 避免高亮消失、又把不支持的档提交上去。
   const activeResolution = resolutionOptions.includes(resolution) ? resolution : defaultResolution;
+  const activeUpscaleLevel = effectiveRhUpscaleLevel(videoModel, upscaleModel, def?.extra);
+  const defaultUpscaleLevel = effectiveRhUpscaleLevel(videoModel, "", def?.extra);
   const activePointRate = useMemo(
-    () => resolveUpscalePointRate(videoModel?.config, activeResolution),
-    [videoModel, activeResolution],
+    () => resolveUpscalePointRate(videoModel?.config, activeResolution, activeUpscaleLevel),
+    [videoModel, activeResolution, activeUpscaleLevel],
   );
   const activePointCost = useMemo(
-    () => upscalePointCost(videoModel, videoDuration, activeResolution),
-    [videoModel, videoDuration, activeResolution],
+    () => upscalePointCost(videoModel, videoDuration, activeResolution, activeUpscaleLevel),
+    [videoModel, videoDuration, activeResolution, activeUpscaleLevel],
   );
   const activeResolutionPriced = activePointRate > 0;
   const videoDurationReady = videoMetadataState === "ready" && videoDuration > 0;
@@ -574,6 +588,7 @@ export default function ToolPage() {
     serverQuoteState === "ready" &&
     serverQuote?.resolution.toLowerCase() === activeResolution.toLowerCase() &&
     serverQuote?.modelId === activeVideoModelId &&
+    (serverQuote?.upscaleModel ?? "") === activeUpscaleLevel &&
     serverQuote?.videoUrl === source;
 
   // 浏览器时长只用于即时预估；确认页随后向服务端申请权威报价。生成提交时
@@ -597,13 +612,15 @@ export default function ToolPage() {
       modelId: activeVideoModelId,
       videoUrl: source,
       targetResolution: activeResolution,
+      ...(activeUpscaleLevel ? { upscaleModel: activeUpscaleLevel } : {}),
     }).then((response) => {
       if (!alive) return;
       if (
         response.success &&
         response.data &&
         response.data.durationSeconds > 0 &&
-        response.data.ratePerSecond > 0
+        response.data.ratePerSecond > 0 &&
+        (response.data.upscaleModel ?? "") === activeUpscaleLevel
       ) {
         setServerQuote({ ...response.data, modelId: activeVideoModelId, videoUrl: source });
         setServerQuoteState("ready");
@@ -620,14 +637,14 @@ export default function ToolPage() {
       alive = false;
     };
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [activeResolution, activeResolutionPriced, activeVideoModelId, isVideoDef, phase, serverQuoteRevision, source, videoModel]);
+  }, [activeResolution, activeResolutionPriced, activeVideoModelId, activeUpscaleLevel, isVideoDef, phase, serverQuoteRevision, source, videoModel]);
 
   const [maskOpen, setMaskOpen] = useState(false);
   const run = useCallback(
     async (srcUrl: string, promptText: string, targetResolution?: string, masked?: { model: StudioModelVO; input: Record<string, unknown> }) => {
       if (!def) return;
       const submitResolution = targetResolution || defaultResolution;
-      if (def.type === "video" && resolveUpscalePointRate(videoModel?.config, submitResolution) <= 0) {
+      if (def.type === "video" && resolveUpscalePointRate(videoModel?.config, submitResolution, activeUpscaleLevel) <= 0) {
         toast.error("所选分辨率尚未配置每秒积分，请更换模型或输出规格");
         return;
       }
@@ -677,7 +694,7 @@ export default function ToolPage() {
                 toolTitle: def.title,
                 videoUrl: srcUrl,
                 targetResolution: targetResolution || defaultResolution,
-                ...rhUpscaleInput(pick, outputFps, upscaleModel),
+                ...rhUpscaleInput(pick, outputFps, activeUpscaleLevel),
                 ...(videoDuration > 0 ? { duration: normalizeVideoDuration(videoDuration) } : {}),
               }
             : {
@@ -707,7 +724,7 @@ export default function ToolPage() {
               op: params.op,
               modelId: pick.id,
               resolution: targetResolution || defaultResolution,
-              ...rhUpscaleInput(pick, outputFps, upscaleModel),
+              ...rhUpscaleInput(pick, outputFps, activeUpscaleLevel),
               duration: videoDuration > 0 ? normalizeVideoDuration(videoDuration) : undefined,
             },
             ownerUserId,
@@ -733,7 +750,7 @@ export default function ToolPage() {
         fail("网络错误，请重试");
       }
     },
-    [def, defaultResolution, ensureSession, fail, imageModel, journalScope, outputFps, params.op, poll, serverQuoteReady, upscaleModel, videoDuration, videoModel],
+    [def, defaultResolution, ensureSession, fail, imageModel, journalScope, outputFps, params.op, poll, serverQuoteReady, activeUpscaleLevel, videoDuration, videoModel],
   );
 
   useEffect(() => {
@@ -1075,8 +1092,12 @@ export default function ToolPage() {
 
       {/* ── 视频超分：选目标分辨率 ── */}
       {phase === "options" && (
-        <div className="tp-card config">
+        <div className="tp-card config tp-upscale">
           <section className="tp-preview-column" aria-label="源视频预览">
+            <div className="tp-preview-heading">
+              <span><Film size={16} aria-hidden /> 视频预览</span>
+              <span className="tp-source-tag">源文件</span>
+            </div>
             <div className="tp-stage">
               <ToolMedia
                 src={source}
@@ -1097,23 +1118,40 @@ export default function ToolPage() {
               <div>
                 <strong>源视频</strong>
                 <span>
-                  {videoMetadataState === "ready"
-                    ? `浏览器预估 · ${videoDurationLabel(videoDuration)}`
+                  <Clock3 size={12} aria-hidden />
+                  {serverQuoteReady && serverQuote
+                    ? videoDurationLabel(serverQuote.durationSeconds)
+                    : videoMetadataState === "ready"
+                    ? videoDurationLabel(videoDuration)
                     : videoMetadataState === "error"
-                      ? "浏览器未读到时长，等待服务端核验"
-                      : "正在读取视频时长…"}
+                      ? "正在核验时长"
+                      : "读取时长中…"}
                 </span>
               </div>
               <button type="button" className="tp-source-change" onClick={reset}>
                 更换视频
               </button>
             </div>
+
+            <div className="tp-output-summary" aria-label="当前输出设置">
+              <div className="tp-output-heading"><span>本次输出</span><ArrowRight size={15} aria-hidden /></div>
+              <div className="tp-output-resolution"><Monitor size={24} strokeWidth={1.5} aria-hidden /><strong>{activeResolution?.toUpperCase() || "—"}</strong><span>目标分辨率</span></div>
+              <dl>
+                <div><dt>处理模型</dt><dd>{videoModel?.name || "待选择"}</dd></div>
+                {isRhUpscale && <>
+                  <div><dt>增强档位</dt><dd>{RH_UPSCALE_LEVELS.find((level) => level.value === activeUpscaleLevel)?.label || activeUpscaleLevel}</dd></div>
+                  <div><dt>输出帧率</dt><dd>{outputFps === "1x" ? "保持原帧率" : outputFps ? outputFps.endsWith("x") ? `${outputFps} 插帧` : `${outputFps} fps` : "使用默认值"}</dd></div>
+                </>}
+              </dl>
+            </div>
+            <p className="tp-output-note"><FolderCheck size={16} aria-hidden /><span>完成后自动保存到资产库，随时查看与下载。</span></p>
           </section>
 
           <section className="tp-config-panel">
             <header className="tp-config-head">
+              <div className="tp-config-kicker"><SlidersHorizontal size={14} aria-hidden /> 输出设置</div>
               <h1>{def.title}</h1>
-              <p>选择处理模型与输出规格。不同目标分辨率按各自每秒单价计费。</p>
+              <p>选择适合这段视频的模型与画质。</p>
             </header>
 
             <fieldset className="tp-fieldset">
@@ -1131,8 +1169,9 @@ export default function ToolPage() {
                       : modelResolutions.includes(defaultResolution)
                         ? defaultResolution
                         : modelResolutions[0];
-                    const modelRate = resolveUpscalePointRate(model.config, modelResolution);
-                    const modelCost = upscalePointCost(model, videoDuration, modelResolution);
+                    const level = effectiveRhUpscaleLevel(model, upscaleModel, def?.extra);
+                    const modelRate = resolveUpscalePointRate(model.config, modelResolution, level);
+                    const modelCost = upscalePointCost(model, videoDuration, modelResolution, level);
                     const selected = videoModel?.id === model.id;
                     return (
                       <button
@@ -1145,15 +1184,18 @@ export default function ToolPage() {
                           setResolution(modelResolution);
                         }}
                       >
-                        <span className="tp-model-copy">
+                        <span className="tp-model-topline">
+                          <span className="tp-model-icon"><UpscaleModelIcon modelKey={model.modelKey} /></span>
+                          <span className="tp-selection-mark" aria-hidden>{selected && <Check size={13} strokeWidth={2.5} />}</span>
+                        </span>
+                        <span className="tp-model-copy" title={model.name}>
                           <strong>{model.name}</strong>
-                          <small>{model.desc || `支持 ${modelResolutions.length} 个输出档位`}</small>
+                          <small>{isRhUpscaleModel(model) ? `按增强档位 · ${level}` : model.desc || `${modelResolutions.length} 种输出分辨率`}</small>
                         </span>
                         <span className="tp-model-price">
-                          <strong>{modelRate > 0 ? pointRateLabel(modelRate) : "未定价"}</strong>
+                          <span className="tp-rate-value"><strong>{modelRate > 0 ? compactNumber(modelRate) : "—"}</strong><span>{modelRate > 0 ? "积分 / 秒" : "未定价"}</span></span>
                           <small>{modelRate > 0 && videoDurationReady ? `预计 ${pointCostLabel(modelCost)}` : modelResolution.toUpperCase()}</small>
                         </span>
-                        <span className="tp-radio-mark" aria-hidden="true" />
                       </button>
                     );
                   })}
@@ -1172,9 +1214,10 @@ export default function ToolPage() {
 
             <fieldset className="tp-fieldset">
               <legend>目标分辨率</legend>
+              {isRhUpscale && <p className="tp-field-hint">同一增强档位下，各分辨率同价</p>}
               <div className="tp-resolution-list" role="group" aria-label="目标分辨率">
                 {resolutionOptions.map((target) => {
-                  const rate = resolveUpscalePointRate(videoModel?.config, target);
+                  const rate = resolveUpscalePointRate(videoModel?.config, target, activeUpscaleLevel);
                   const selected = activeResolution === target;
                   return (
                     <button
@@ -1186,7 +1229,8 @@ export default function ToolPage() {
                       onClick={() => setResolution(target)}
                     >
                       <strong>{target.toUpperCase()}</strong>
-                      <small>{rate > 0 ? pointRateLabel(rate) : "未定价"}</small>
+                      {!isRhUpscale && <small>{rate > 0 ? pointRateLabel(rate) : "未定价"}</small>}
+                      {selected && <Check size={12} className="tp-resolution-check" aria-hidden />}
                     </button>
                   );
                 })}
@@ -1197,87 +1241,98 @@ export default function ToolPage() {
               <fieldset className="tp-fieldset">
                 <legend>RH 画质与帧率</legend>
                 <div className="tp-parameter-grid">
-                  <label>
+                  <label htmlFor="tp-upscale-level">
                     <span>增强档位</span>
-                    <select
-                      className="tp-parameter-select"
+                    <PopoverSelect
+                      id="tp-upscale-level"
+                      label="增强档位"
+                      tone="dark"
+                      className="tp-parameter-control"
+                      menuClassName="tp-select-menu"
+                      minMenuWidth={272}
+                      optionHeight={44}
                       value={upscaleModel}
-                      onChange={(event) => setUpscaleModel(event.target.value)}
-                    >
-                      <option value="">使用默认值</option>
-                      {RH_UPSCALE_LEVELS.map((level) => (
-                        <option key={level.value} value={level.value}>{level.label}</option>
-                      ))}
-                    </select>
+                      onChange={setUpscaleModel}
+                      options={[
+                        { value: "", label: `默认（${defaultUpscaleLevel}）` },
+                        ...RH_UPSCALE_LEVELS.map((level) => ({ value: level.value, label: `${level.label} · ${pointRateLabel(resolveUpscalePointRate(videoModel?.config, activeResolution, level.value))}` })),
+                      ]}
+                    />
                   </label>
-                  <label>
+                  <label htmlFor="tp-upscale-fps">
                     <span>输出帧率 / 插帧倍率</span>
-                    <select
-                      className="tp-parameter-select"
+                    <PopoverSelect
+                      id="tp-upscale-fps"
+                      label="输出帧率 / 插帧倍率"
+                      tone="dark"
+                      className="tp-parameter-control"
+                      menuClassName="tp-select-menu"
+                      minMenuWidth={224}
+                      optionHeight={44}
                       value={outputFps}
-                      onChange={(event) => setOutputFps(event.target.value)}
-                    >
-                      <option value="">使用默认值</option>
-                      {RH_UPSCALE_OUTPUT_FPS.map((fps) => (
-                        <option key={fps} value={fps}>
-                          {fps === "1x" ? "1x · 保持原帧率" : fps.endsWith("x") ? `${fps} · 插帧倍率` : `${fps} fps`}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={setOutputFps}
+                      options={[
+                        { value: "", label: "使用默认值" },
+                        ...RH_UPSCALE_OUTPUT_FPS.map((fps) => ({ value: fps, label: fps === "1x" ? "1x · 保持原帧率" : fps.endsWith("x") ? `${fps} · 插帧倍率` : `${fps} fps` })),
+                      ]}
+                    />
                   </label>
                 </div>
               </fieldset>
             )}
 
-            <div className="tp-cost-summary" aria-live="polite">
-              <div>
-                <span>本次预计消耗</span>
-                <p>
-                  {!activeResolutionPriced
-                    ? "该模型尚未配置此分辨率的每秒积分"
-                    : serverQuoteReady && serverQuote
-                      ? `服务端已确认 ${videoDurationLabel(serverQuote.durationSeconds)} × ${pointRateLabel(serverQuote.ratePerSecond)}；生成提交时将再次复核`
-                      : serverQuoteState === "error"
-                        ? serverQuoteError || "服务端暂时无法核验视频时长"
-                        : "服务端正在核验视频时长与最终积分…"}
-                </p>
-                {serverQuoteState === "error" && activeResolutionPriced && (
-                  <button
-                    type="button"
-                    className="tp-inline-retry"
-                    onClick={() => setServerQuoteRevision((revision) => revision + 1)}
-                  >
-                    重新核验
-                  </button>
-                )}
+            <div className="tp-upscale-checkout">
+              <div id="tp-upscale-quote" className="tp-cost-summary" aria-live="polite">
+                <div>
+                  <span>本次预计消耗</span>
+                  <p>
+                    {!activeResolutionPriced
+                      ? "该模型尚未配置所选规格的每秒积分"
+                      : serverQuoteReady && serverQuote
+                        ? `${videoDurationLabel(serverQuote.billedSeconds ?? serverQuote.durationSeconds)} × ${pointRateLabel(serverQuote.ratePerSecond)}，向上取整`
+                        : serverQuoteState === "error"
+                          ? serverQuoteError || "服务端暂时无法核验视频时长"
+                          : "服务端正在核验视频时长与最终积分…"}
+                  </p>
+                  {serverQuoteState === "error" && activeResolutionPriced && (
+                    <button
+                      type="button"
+                      className="tp-inline-retry"
+                      onClick={() => setServerQuoteRevision((revision) => revision + 1)}
+                    >
+                      重新核验
+                    </button>
+                  )}
+                </div>
+                <strong className="tp-total-value">
+                  {videoModel && serverQuoteReady && serverQuote
+                    ? <>{serverQuote.pointCost}<small>积分</small></>
+                    : "待核价"}
+                </strong>
               </div>
-              <strong>
-                {videoModel && serverQuoteReady && serverQuote
-                  ? pointCostLabel(serverQuote.pointCost)
-                  : "待核价"}
-              </strong>
-            </div>
 
-            <button
-              type="button"
-              className="tp-btn tp-submit"
-              disabled={
-                !videoModel ||
-                !activeResolution ||
-                videoModelsLoading ||
-                !activeResolutionPriced ||
-                !serverQuoteReady
-              }
-              onClick={() => void run(source, def.title, activeResolution)}
-            >
-              {videoModelsLoading
-                ? "正在读取价格…"
-                : videoModel && activeResolutionPriced
-                  ? serverQuoteReady && serverQuote
-                    ? `开始超分 · ${pointCostLabel(serverQuote.pointCost)}`
-                    : serverQuoteState === "error" ? "核价失败" : "服务端核价中…"
-                  : "暂无可用模型"}
-            </button>
+              <button
+                type="button"
+                className="tp-btn tp-submit"
+                disabled={
+                  !videoModel ||
+                  !activeResolution ||
+                  videoModelsLoading ||
+                  !activeResolutionPriced ||
+                  !serverQuoteReady
+                }
+                aria-describedby="tp-upscale-quote"
+                onClick={() => void run(source, def.title, activeResolution)}
+              >
+                {videoModelsLoading
+                  ? "正在读取价格…"
+                  : videoModel && activeResolutionPriced
+                    ? serverQuoteReady && serverQuote
+                      ? <>开始超分<ArrowRight size={17} aria-hidden /></>
+                      : serverQuoteState === "error" ? "核价失败" : "服务端核价中…"
+                    : "暂无可用模型"}
+              </button>
+            </div>
           </section>
         </div>
       )}

@@ -7,11 +7,84 @@ import {
   matrixPrice,
   resolveImageToolPointCost,
   resolveUpscalePointCost,
+  resolveUpscaleBilledSeconds,
   resolveUpscalePointRate,
   resolveVideoPointCost,
   videoPerRequestPointRange,
   videoPerRequestRate,
 } from "./price-matrix.ts";
+
+test("official upscale billing uses minimum/rounded seconds before multiplying exact rates", () => {
+  const config = {
+    pricePerSecondByResolution: { "1080p": "1", "4k": "3" },
+    upscaleBilling: { minimumSeconds: 3, maximumSeconds: 600, roundUpSeconds: true },
+  };
+  assert.equal(resolveUpscaleBilledSeconds(config, 5.132), 6);
+  assert.equal(resolveUpscaleBilledSeconds(config, 0.2), 3);
+  assert.equal(resolveUpscalePointCost(config, 0.2, "1080p"), 3);
+  assert.equal(resolveUpscalePointCost(config, 5.132, "4k"), 18);
+  assert.equal(resolveUpscalePointCost(config, 600.1, "4k"), 1800);
+  assert.equal(resolveUpscalePointCost(config, Infinity, "4k"), 0);
+  assert.equal(resolveUpscalePointCost(config, NaN, "4k"), 0);
+  assert.equal(resolveUpscalePointCost({ pricePerSecond: 0.07 }, 100, "4k"), 7);
+  assert.equal(resolveUpscaleBilledSeconds({}, 5.132), 5.132);
+});
+
+test("RH prices USD-derived enhancement tiers independently of resolution", () => {
+  const config = {
+    pricePerSecondByUpscaleModel: { max: "2", high: "2", medium: "1", low: "1" },
+    pricePerSecondByResolution: { "1080p": 42 }, pricePerSecond: 99,
+  };
+  for (const resolution of ["720p", "1080p", "2k", "4k"]) {
+    assert.equal(resolveUpscalePointRate(config, resolution), 2);
+    for (const [level, cost] of [["max", 11], ["high", 11], ["medium", 6], ["low", 6]]) {
+      assert.equal(resolveUpscalePointCost(config, 5.132, resolution, 999, level), cost);
+    }
+  }
+  assert.equal(resolveUpscalePointRate(config, "1080p", " HIGH "), 2);
+  assert.equal(resolveUpscalePointRate(config, "1080p", "unknown"), 0);
+  assert.equal(resolveUpscalePointRate({ ...config, pricePerSecondByUpscaleModel: {} }, "1080p"), 0);
+});
+
+test("upscale pricing rejects duplicate/empty rate tables and unsafe amounts", () => {
+  for (const config of [
+    { pricePerSecondByResolution: { "1080p": 1, "1080P": 99 } },
+    { pricePerSecondByResolution: {}, pricePerSecond: 99 },
+    { pricePerSecondByResolution: null, pricePerSecond: 99 },
+    { pricePerSecondByResolution: { "1080p": 1e308 } },
+    { pricePerSecondByUpscaleModel: { max: 1, MAX: 99 } },
+  ]) {
+    assert.equal(resolveUpscalePointRate(config, "1080p"), 0);
+  }
+  assert.equal(resolveUpscalePointRate({pricePerSecond: 1}, ""), 0);
+  assert.equal(resolveUpscalePointCost({pricePerSecond: 9000000000000}, 20, "1080p"), 0);
+  for (const upscaleBilling of [
+    { minimumSeconds: 3, maximumSeconds: 1 },
+    { minimumSeconds: "3" },
+    { roundUpSeconds: "false" },
+    { maximumSeconds: -1 },
+  ]) {
+    assert.equal(resolveUpscalePointCost({pricePerSecond: 1, upscaleBilling}, 5.132, "1080p"), 0);
+  }
+});
+
+test("upscale estimates retain real fractional digits at whole-point boundaries", () => {
+  assert.equal(resolveUpscalePointCost({ pricePerSecond: 0.33333333333333337 }, 3, "1080p"), 2);
+  assert.equal(resolveUpscalePointCost({ pricePerSecond: 1.000000000000001 }, 1, "1080p"), 2);
+  assert.equal(resolveUpscalePointCost({ pricePerSecond: 0.07 }, 100, "1080p"), 7);
+  assert.equal(resolveUpscalePointCost({ pricePerSecond: 1e-7 }, 1e7, "1080p"), 1);
+});
+
+test("disabled output resolutions cannot inherit a remaining price cell", () => {
+  for (const config of [
+    { resolutions: ["1080P"], pricePerSecondByResolution: { "1080p": 1, "4k": 9 } },
+    { resolutions: ["1080P"], pricePerSecondByUpscaleModel: { max: 2, high: 2, medium: 1, low: 1 } },
+  ]) {
+    assert.ok(resolveUpscalePointRate(config, "1080p") > 0);
+    assert.equal(resolveUpscalePointRate(config, "4k"), 0);
+    assert.equal(resolveUpscalePointCost(config, 5.132, "4k"), 0);
+  }
+});
 
 test("upscale pricing selects the target-resolution rate and rounds the final cost", () => {
   const config = { pricePerSecondByResolution: { "1080p": "1.25", "4K": 3 } };

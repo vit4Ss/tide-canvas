@@ -300,7 +300,7 @@ func (h *modelsHandler) create(c *gin.Context) {
 		return
 	}
 	if mType == "upscale" {
-		if err := validateUpscalePricingConfig(dto.Config); err != nil {
+		if err := validateUpscalePricingConfig(dto.Config, dto.ModelKey); err != nil {
 			response.Fail(c, response.CodeBadRequest, err.Error())
 			return
 		}
@@ -521,9 +521,9 @@ func (h *modelsHandler) update(c *gin.Context) {
 	}
 	// The UI sends type+config together, but the API also protects partial/manual
 	// updates so an upscaler can never be saved with an unpriced output tier.
-	if dto.Config != nil || dto.Type != nil || (dto.Status != nil && *dto.Status == 1) {
+	if dto.Config != nil || dto.Type != nil || dto.ModelKey != nil || (dto.Status != nil && *dto.Status == 1) {
 		var current model.MarketModel
-		if err := h.db.Select("type", "config").First(&current, "id = ?", id).Error; err != nil {
+		if err := h.db.Select("type", "config", "model_key").First(&current, "id = ?", id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				response.Fail(c, response.CodeNotFound, "model not found")
 			} else {
@@ -532,6 +532,10 @@ func (h *modelsHandler) update(c *gin.Context) {
 			return
 		}
 		effectiveType := current.Type
+		effectiveModelKey := current.ModelKey
+		if dto.ModelKey != nil {
+			effectiveModelKey = strings.TrimSpace(*dto.ModelKey)
+		}
 		if dto.Type != nil {
 			effectiveType = strings.TrimSpace(*dto.Type)
 		}
@@ -544,7 +548,7 @@ func (h *modelsHandler) update(c *gin.Context) {
 			return
 		}
 		if effectiveType == "upscale" {
-			if err := validateUpscalePricingConfig(effectiveConfig); err != nil {
+			if err := validateUpscalePricingConfig(effectiveConfig, effectiveModelKey); err != nil {
 				response.Fail(c, response.CodeBadRequest, err.Error())
 				return
 			}
@@ -655,7 +659,7 @@ func (h *modelsHandler) setStatus(c *gin.Context) {
 	}
 	if status == 1 {
 		var current model.MarketModel
-		if err := h.db.Select("type", "config").First(&current, "id = ?", id).Error; err != nil {
+		if err := h.db.Select("type", "config", "model_key").First(&current, "id = ?", id).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				response.Fail(c, response.CodeNotFound, "model not found")
 			} else {
@@ -664,7 +668,7 @@ func (h *modelsHandler) setStatus(c *gin.Context) {
 			return
 		}
 		if current.Type == "upscale" {
-			if err := validateUpscalePricingConfig(json.RawMessage(current.Config)); err != nil {
+			if err := validateUpscalePricingConfig(json.RawMessage(current.Config), current.ModelKey); err != nil {
 				response.Fail(c, response.CodeBadRequest, err.Error())
 				return
 			}
@@ -949,20 +953,62 @@ func validateVideoPromptLimitConfig(raw json.RawMessage) error {
 	return nil
 }
 
-func validateUpscalePricingConfig(raw json.RawMessage) error {
+func validateUpscalePricingConfig(raw json.RawMessage, modelKeys ...string) error {
 	if len(raw) == 0 || !json.Valid(raw) {
 		return errors.New("超分模型必须配置各目标分辨率的每秒积分")
 	}
 	var cfg struct {
-		Resolutions                []string                   `json:"resolutions"`
-		PricePerSecondByResolution map[string]json.RawMessage `json:"pricePerSecondByResolution"`
+		Resolutions                  []string                   `json:"resolutions"`
+		PricePerSecondByResolution   map[string]json.RawMessage `json:"pricePerSecondByResolution"`
+		PricePerSecondByUpscaleModel map[string]json.RawMessage `json:"pricePerSecondByUpscaleModel"`
 	}
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return errors.New("超分模型定价配置无效")
 	}
+	if model.UpscaleBilledSeconds(string(raw), 1) <= 0 {
+		return errors.New("超分计费时长配置无效：时长须为非负数字，上限不能低于起步时长")
+	}
+	isRH := len(modelKeys) > 0 && strings.EqualFold(strings.TrimSpace(modelKeys[0]), "rh-upscale")
+	if isRH {
+		seen := map[string]bool{}
+		for key, encoded := range cfg.PricePerSecondByUpscaleModel {
+			level := strings.ToLower(strings.TrimSpace(key))
+			if (level != "max" && level != "high" && level != "medium" && level != "low") || seen[level] {
+				return errors.New("RH 增强档位单价包含重复或不支持的档位")
+			}
+			seen[level] = true
+			var rate float64
+			if json.Unmarshal(encoded, &rate) != nil {
+				var text string
+				if json.Unmarshal(encoded, &text) == nil {
+					rate, _ = strconv.ParseFloat(strings.TrimSpace(text), 64)
+				}
+			}
+			if rate <= 0 || rate > float64(model.MaxUpscalePointCost) || math.IsNaN(rate) || math.IsInf(rate, 0) {
+				return fmt.Errorf("请配置 %s 增强档位的每秒积分", level)
+			}
+		}
+		for _, level := range []string{"max", "high", "medium", "low"} {
+			if !seen[level] {
+				return fmt.Errorf("请配置 %s 增强档位的每秒积分", level)
+			}
+		}
+		return nil
+	}
+	if len(cfg.PricePerSecondByUpscaleModel) > 0 {
+		return errors.New("仅 RH Upscale 支持按增强档位配置每秒积分")
+	}
 	resolutions := cfg.Resolutions
 	if len(resolutions) == 0 {
 		resolutions = defaultUpscalePricingResolutions
+	}
+	seenRateKeys := map[string]bool{}
+	for key := range cfg.PricePerSecondByResolution {
+		normalized := strings.ToLower(strings.TrimSpace(key))
+		if normalized == "" || seenRateKeys[normalized] {
+			return errors.New("超分单价包含重复或空的分辨率档位")
+		}
+		seenRateKeys[normalized] = true
 	}
 	for _, resolution := range resolutions {
 		resolution = strings.ToLower(strings.TrimSpace(resolution))
@@ -982,7 +1028,7 @@ func validateUpscalePricingConfig(raw json.RawMessage) error {
 			}
 			break
 		}
-		if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		if rate <= 0 || rate > float64(model.MaxUpscalePointCost) || math.IsNaN(rate) || math.IsInf(rate, 0) {
 			return fmt.Errorf("请配置 %s 的每秒积分", strings.ToUpper(resolution))
 		}
 	}

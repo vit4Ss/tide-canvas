@@ -23,7 +23,10 @@ export interface ClipReshootRequest {
 }
 
 export interface UpscaleQuoteVO {
+  upscaleModel?: string;
   durationSeconds: number;
+  /** 旧后端可能不返回，届时等于源视频时长。 */
+  billedSeconds?: number;
   ratePerSecond: number;
   pointCost: number;
   resolution: string;

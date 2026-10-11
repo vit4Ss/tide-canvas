@@ -19,6 +19,18 @@ export function isRhUpscaleModel(model: UpscaleModelRef | null): boolean {
   return model?.modelKey?.trim().toLowerCase() === "rh-upscale";
 }
 
+/** 报价、提交、列表预估共用同一档位；缺省固定 max，避免 relay 默认值改变计费。 */
+export function effectiveRhUpscaleLevel(
+  model: UpscaleModelRef | null,
+  selected: string,
+  defaults?: Record<string, unknown>,
+): string {
+  if (!isRhUpscaleModel(model)) return "";
+  const input = record(defaults);
+  const level = selected || input.upscaleModel || input.upscale_model || record(input.extras).upscale_model || "max";
+  return String(level).trim().toLowerCase();
+}
+
 /** 冻结的任务可能使用行 ID 或上游 key；恢复与新提交都解析到同一模型。 */
 export function selectUpscaleModel<T extends UpscaleModelRef & { id: string }>(
   models: readonly T[],

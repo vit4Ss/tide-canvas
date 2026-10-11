@@ -196,6 +196,12 @@ func SyncRelayModels(db *gorm.DB, baseURL, key string, newStatus int, authorID i
 			continue
 		}
 
+		if priced, basePrice, applied, priceErr := model.RepricedUpscaleConfig(modelKey, typ, cfg); priceErr != nil {
+			res.Failed++
+			continue
+		} else if applied {
+			cfg, price = priced, basePrice
+		}
 		row := model.MarketModel{
 			AuthorID: authorID,
 			Name:     name,

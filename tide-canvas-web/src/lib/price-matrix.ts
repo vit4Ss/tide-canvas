@@ -21,6 +21,8 @@ export interface PointPricingConfig {
   pricePerSecond?: number | string;
   /** 视频超分按目标分辨率设置的每秒积分。 */
   pricePerSecondByResolution?: Record<string, number | string>;
+  pricePerSecondByUpscaleModel?: Record<string, number | string>;
+  upscaleBilling?: { minimumSeconds?: number; maximumSeconds?: number; roundUpSeconds?: boolean };
   creditCost?: number | string;
 }
 
@@ -172,20 +174,49 @@ function imageBatchCount(input: Record<string, unknown>): number {
 export function resolveUpscalePointRate(
   config: PointPricingConfig | null | undefined,
   resolution: string,
+  upscaleModel = "max",
 ): number {
   const target = String(resolution ?? "").trim().toLowerCase();
-  const rates = Object.entries(config?.pricePerSecondByResolution ?? {});
-  if (rates.length) {
-    for (const [key, value] of rates) {
-      if (key.trim().toLowerCase() === target) return positivePointValue(value);
-    }
-    return 0;
+  if (!target) return 0;
+  if (config?.resolutions?.length && !config.resolutions.some((candidate) => candidate.trim().toLowerCase() === target)) return 0;
+  if (config && "pricePerSecondByUpscaleModel" in config) {
+    const level = upscaleModel.trim().toLowerCase() || "max";
+    return uniqueUpscaleRate(config.pricePerSecondByUpscaleModel, level);
   }
-  return positivePointValue(config?.pricePerSecond);
+  if (config && "pricePerSecondByResolution" in config) {
+    return uniqueUpscaleRate(config.pricePerSecondByResolution, target);
+  }
+  const rate = positivePointValue(config?.pricePerSecond);
+  return rate <= MAX_UPSCALE_POINT_COST ? rate : 0;
+}
+
+// Same maximum as model.MaxUpscalePointCost (the ledger stores micro-points).
+const MAX_UPSCALE_POINT_COST = 9_223_372_036_853;
+
+function uniqueUpscaleRate(rates: unknown, target: string): number {
+  if (!rates || typeof rates !== "object" || Array.isArray(rates)) return 0;
+  const matches = Object.entries(rates).filter(([key]) => key.trim().toLowerCase() === target);
+  if (matches.length !== 1) return 0;
+  const rate = positivePointValue(matches[0][1]);
+  return rate <= MAX_UPSCALE_POINT_COST ? rate : 0;
+}
+
+// Convert the number's shortest decimal form just as Go's decimal.NewFromFloat
+// does. Fixed significant-digit rounding can erase a real fraction above an
+// integer, while ordinary multiplication can introduce an artificial one.
+function upscaleDecimalFraction(value: number): { numerator: bigint; denominator: bigint } {
+  const [mantissa, exponent = "0"] = value.toString().split("e");
+  const [whole, fraction = ""] = mantissa.split(".");
+  const scale = fraction.length - Number(exponent);
+  const digits = BigInt(whole + fraction);
+  const power = BigInt("1" + "0".repeat(Math.abs(scale)));
+  return scale >= 0
+    ? { numerator: digits, denominator: power }
+    : { numerator: digits * power, denominator: BigInt(1) };
 }
 
 /**
- * 视频超分积分预估。按目标分辨率每秒积分 × 浏览器读取的源视频秒数向上取整。
+ * 视频超分积分预估。先按模型规则计算计费时长，再乘单价并向上取整积分。
  * 服务端会重新读取媒体时长并给出最终权威积分；前端结果仅用于提交前预估。
  */
 export function resolveUpscalePointCost(
@@ -193,10 +224,40 @@ export function resolveUpscalePointCost(
   durationSeconds: number,
   resolution: string,
   modelPointCost?: number | string,
+  upscaleModel = "max",
 ): number {
   void modelPointCost;
-  const rate = resolveUpscalePointRate(config, resolution);
-  return rate > 0 && durationSeconds > 0 ? Math.ceil(rate * durationSeconds) : 0;
+  const rate = resolveUpscalePointRate(config, resolution, upscaleModel);
+  const billedSeconds = resolveUpscaleBilledSeconds(config, durationSeconds);
+  if (rate <= 0 || billedSeconds <= 0) return 0;
+  const price = upscaleDecimalFraction(rate);
+  const duration = upscaleDecimalFraction(billedSeconds);
+  const numerator = price.numerator * duration.numerator;
+  const denominator = price.denominator * duration.denominator;
+  const cost = (numerator + denominator - BigInt(1)) / denominator;
+  return cost <= BigInt(MAX_UPSCALE_POINT_COST) ? Number(cost) : 0;
+}
+
+export function resolveUpscaleBilledSeconds(
+  config: PointPricingConfig | null | undefined,
+  durationSeconds: number,
+): number {
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return 0;
+  const rule = config?.upscaleBilling;
+  if (rule != null && (typeof rule !== "object" || Array.isArray(rule))) return 0;
+  let seconds = rule?.roundUpSeconds === true ? Math.ceil(durationSeconds) : durationSeconds;
+  const minimum = rule?.minimumSeconds;
+  const maximum = rule?.maximumSeconds;
+  if ([minimum, maximum].some((value) => value != null && (typeof value !== "number" || !Number.isFinite(value) || value < 0))) return 0;
+  if (rule?.roundUpSeconds != null && typeof rule.roundUpSeconds !== "boolean") return 0;
+  if (typeof maximum === "number" && maximum > 0 && typeof minimum === "number" && minimum > maximum) return 0;
+  if (typeof minimum === "number" && Number.isFinite(minimum) && minimum > 0) {
+    seconds = Math.max(seconds, minimum);
+  }
+  if (typeof maximum === "number" && Number.isFinite(maximum) && maximum > 0) {
+    seconds = Math.min(seconds, maximum);
+  }
+  return seconds;
 }
 
 
