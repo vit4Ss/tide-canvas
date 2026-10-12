@@ -1,0 +1,9 @@
+node_modules
+.next
+.next-dev
+.git
+.env.local
+.impeccable
+.playwright-mcp
+tests
+*.log
