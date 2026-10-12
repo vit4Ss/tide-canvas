@@ -9,6 +9,7 @@ import (
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/middleware"
+	"tidecanvas/internal/pkg/googleauth"
 	"tidecanvas/internal/pkg/response"
 )
 
@@ -29,6 +30,8 @@ import (
 //	PUT  /api/auth/profile      UpdateProfileDTO        -> UserVO (auth)
 func Register(api *gin.RouterGroup, d *app.Deps) {
 	svc := newService(d.DB, d.RDB, d.Cfg.Email, d.Alerts)
+	svc.google = d.Cfg.Google
+	svc.googleVerifier = googleauth.NewVerifier()
 	h := newHandler(svc)
 
 	g := api.Group("/auth")
@@ -40,6 +43,8 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	g.GET("/register-config", func(c *gin.Context) {
 		response.OK(c, gin.H{"registerClosed": svc.registerClosed()})
 	})
+	g.POST("/google/challenge", middleware.RateLimit(d, 20, 5*time.Minute), h.googleChallenge)
+	g.POST("/google", middleware.RateLimit(d, 10, 5*time.Minute), h.googleLogin)
 	g.POST("/email-code", h.emailCode)
 	g.POST("/register", h.register)
 	// 用户名+密码本地注册(免邮箱,注册即登录)。没有验证码摩擦,批量灌号/薅新手

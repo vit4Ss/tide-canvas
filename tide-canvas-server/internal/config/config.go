@@ -38,6 +38,7 @@ type Config struct {
 	Storage         StorageConfig         `mapstructure:"storage"`
 	CORS            CORSConfig            `mapstructure:"cors"`
 	Email           EmailConfig           `mapstructure:"email"`
+	Google          GoogleConfig          `mapstructure:"google"`
 	LLM             LLMConfig             `mapstructure:"llm"`
 	Relay           RelayConfig           `mapstructure:"relay"`
 	ChatGateway     ChatGatewayConfig     `mapstructure:"chatGateway"`
@@ -49,6 +50,13 @@ type Config struct {
 	// credential. The four JWT-backed supplier credentials are stored in
 	// sys_config and overlaid by the admin balance monitor at request time.
 	BalanceMonitor BalanceMonitorConfig `mapstructure:"balanceMonitor"`
+}
+
+// GoogleConfig enables GIS login on the shared backend. AllowedOrigins is a
+// comma-separated list of exact frontend origins; no client secret is needed.
+type GoogleConfig struct {
+	ClientID       string `mapstructure:"clientId"`
+	AllowedOrigins string `mapstructure:"allowedOrigins"`
 }
 
 // MCPConfig contains the deployment-only, non-user-editable probe target.
@@ -454,6 +462,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("storage.accelerateEnabled", true)
 
 	v.SetDefault("cors.allowOrigins", []string{"http://localhost:3000"})
+	v.SetDefault("google.clientId", "")
+	v.SetDefault("google.allowedOrigins", "")
 
 	v.SetDefault("email.enabled", true)
 	v.SetDefault("email.host", "smtp.gmail.com")

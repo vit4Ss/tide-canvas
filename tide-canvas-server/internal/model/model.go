@@ -20,6 +20,7 @@ func Models() []any {
 	return []any{
 		// Core FULL entities (back real endpoints).
 		&User{},
+		&UserIdentity{},
 		&UserAPIKey{},
 		&MCPSettings{},
 		&ModelGatewayRequest{},

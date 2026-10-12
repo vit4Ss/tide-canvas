@@ -76,10 +76,12 @@ func (s *service) registerClosed() bool {
 }
 
 type service struct {
-	repo   *repo
-	rdb    *redis.Client
-	email  config.EmailConfig
-	alerts *alerting.Service
+	repo           *repo
+	rdb            *redis.Client
+	email          config.EmailConfig
+	alerts         *alerting.Service
+	google         config.GoogleConfig
+	googleVerifier googleCredentialVerifier
 }
 
 func newService(db *gorm.DB, rdb *redis.Client, email config.EmailConfig, alertServices ...*alerting.Service) *service {
