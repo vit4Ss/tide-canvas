@@ -1,8 +1,8 @@
-# Add a separate virtual host for the overseas domain. Configure HTTPS using
+# Production server. Configure HTTPS using
 # your existing certificate tooling; keep the location settings in that host.
 server {
     listen 80;
-    server_name en.example.com;
+    server_name framelyn.tcmzhan.com;
     client_max_body_size 100m;
     gzip on;
     gzip_types text/plain text/css application/javascript application/json image/svg+xml;

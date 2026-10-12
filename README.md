@@ -118,6 +118,9 @@ ghcr.io/vit4ss/tide-canvas-frontend-en:sha-FULL_COMMIT_SHA
 Production/test Compose files, environment templates, Nginx configuration,
 update and rollback instructions are in **[deploy/README.md](deploy/README.md)**.
 The existing backend and Chinese frontend keep their existing image names.
+Production uses `https://framelyn.tcmzhan.com`; test uses
+`https://test-framelyn.tcmzhan.com`. Both deployment templates include their
+matching site URL, while local development remains on `http://localhost:3100`.
 
 For a local image build:
 
