@@ -78,9 +78,9 @@ func (v *PromoVO) DealPrice(planID idgen.ID, cycle string) (decimal.Decimal, boo
 
 // LoadPromo returns the effective 活动 config: the stored sys_config JSON when
 // present/valid, else a disabled zero value.
-func LoadPromo(db *gorm.DB) (PromoVO, error) {
+func LoadPromo(db *gorm.DB, markets ...string) (PromoVO, error) {
 	var row model.SysConfig
-	err := db.Where("config_key = ?", model.ConfigKeyPricingPromo).First(&row).Error
+	err := db.Where("config_key = ?", marketConfigKey(model.ConfigKeyPricingPromo, markets...)).First(&row).Error
 	if err == nil && row.ConfigValue != "" {
 		var vo PromoVO
 		if jsonErr := json.Unmarshal([]byte(row.ConfigValue), &vo); jsonErr == nil {
@@ -94,16 +94,16 @@ func LoadPromo(db *gorm.DB) (PromoVO, error) {
 }
 
 // SavePromo persists the 活动 JSON into sys_config (upsert).
-func SavePromo(db *gorm.DB, vo PromoVO) error {
+func SavePromo(db *gorm.DB, vo PromoVO, markets ...string) error {
 	b, err := json.Marshal(vo)
 	if err != nil {
 		return err
 	}
 	var row model.SysConfig
-	err = db.Where("config_key = ?", model.ConfigKeyPricingPromo).First(&row).Error
+	err = db.Where("config_key = ?", marketConfigKey(model.ConfigKeyPricingPromo, markets...)).First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return db.Create(&model.SysConfig{
-			ConfigKey:   model.ConfigKeyPricingPromo,
+			ConfigKey:   marketConfigKey(model.ConfigKeyPricingPromo, markets...),
 			ConfigValue: string(b),
 			Group:       "pricing",
 			Description: "定价页限时折扣活动",

@@ -16,14 +16,15 @@ import (
 // response envelope, mapping lookup/ownership errors to the frontend codes.
 
 type handler struct {
-	svc *service
+	svc    *service
+	market string
 }
 
 func newHandler(svc *service) *handler { return &handler{svc: svc} }
 
 // listPlans handles GET /api/billing/plans (public). Returns []PlanVO.
 func (h *handler) listPlans(c *gin.Context) {
-	vos, err := h.svc.listPlans()
+	vos, err := h.svc.listPlans(h.market)
 	if err != nil {
 		response.Fail(c, response.CodeServerError, "failed to load plans")
 		return
@@ -35,7 +36,7 @@ func (h *handler) listPlans(c *gin.Context) {
 // page's 方案对比 rows ({rows:[{label, values:{planId: cell}}]}); columns come
 // from GET /plans on the client so the table always mirrors 套餐管理.
 func (h *handler) getCompare(c *gin.Context) {
-	vo, err := LoadCompare(h.svc.repo.db)
+	vo, err := LoadCompare(h.svc.repo.db, h.market)
 	if err != nil {
 		response.Fail(c, response.CodeServerError, "failed to load compare table")
 		return
@@ -46,7 +47,7 @@ func (h *handler) getCompare(c *gin.Context) {
 // getFaq handles GET /api/billing/faq (public). Returns the pricing page's
 // FAQ items ({items:[{q,a}]}), admin-editable in 价格管理.
 func (h *handler) getFaq(c *gin.Context) {
-	vo, err := LoadFaq(h.svc.repo.db)
+	vo, err := LoadFaq(h.svc.repo.db, h.market)
 	if err != nil {
 		response.Fail(c, response.CodeServerError, "failed to load faq")
 		return
@@ -59,7 +60,7 @@ func (h *handler) getFaq(c *gin.Context) {
 // in 价格管理. 到期/关闭由服务端裁决：非 Active 时直接返回 enabled=false 的零值，
 // 前端（横幅、导航「限时」标签）据此隐藏，不再依赖客户端时钟。
 func (h *handler) getPromo(c *gin.Context) {
-	vo, err := LoadPromo(h.svc.repo.db)
+	vo, err := LoadPromo(h.svc.repo.db, h.market)
 	if err != nil {
 		response.Fail(c, response.CodeServerError, "failed to load promo")
 		return
@@ -74,7 +75,7 @@ func (h *handler) getPromo(c *gin.Context) {
 // admin-enabled, cashier-supported pay methods ([]PayChannelVO) so the client
 // renders exactly what the 管理后台 支付渠道 configuration allows.
 func (h *handler) listChannels(c *gin.Context) {
-	vos, err := h.svc.listPayChannels()
+	vos, err := h.svc.listPayChannels(h.market)
 	if err != nil {
 		response.Fail(c, response.CodeServerError, "failed to load pay channels")
 		return
@@ -90,9 +91,11 @@ func (h *handler) createOrder(c *gin.Context) {
 		return
 	}
 	userID := middleware.CurrentUserID(c)
-	vo, err := h.svc.createOrder(userID, dto)
+	vo, err := h.svc.createOrder(userID, dto, h.market)
 	if err != nil {
 		switch {
+		case errors.Is(err, errUSDCheckoutUnavailable):
+			response.Fail(c, response.CodeBadRequest, "USD checkout is not configured yet. Please check back later.")
 		case errors.Is(err, errBadRequest):
 			response.Fail(c, response.CodeBadRequest, "invalid order request")
 		case errors.Is(err, errChannelDisabled):

@@ -41,7 +41,11 @@ import (
 //	GET    /pricing/compare  -> billing.CompareVO（有效值：已存 JSON 或出厂兜底）
 //	PUT    /pricing/compare  billing.CompareVO -> billing.CompareVO（存 sys_config）
 func RegisterPricing(g *gin.RouterGroup, d *app.Deps) {
-	h := &g4PricingHandler{db: d.DB}
+	registerPricingRoutes(g, &g4PricingHandler{db: d.DB, market: model.BillingMarketCN})
+	registerPricingRoutes(g.Group("/en"), &g4PricingHandler{db: d.DB, market: model.BillingMarketEN})
+}
+
+func registerPricingRoutes(g *gin.RouterGroup, h *g4PricingHandler) {
 
 	g.GET("/plans", h.listPlans)
 	g.POST("/plans", h.createPlan)
@@ -59,7 +63,8 @@ func RegisterPricing(g *gin.RouterGroup, d *app.Deps) {
 }
 
 type g4PricingHandler struct {
-	db *gorm.DB
+	db     *gorm.DB
+	market string
 }
 
 // ---- VOs ----
@@ -68,6 +73,8 @@ type g4PricingHandler struct {
 // ({id,name,monthly,yearly,monthlyPoints,featured,items}) plus the admin-only
 // fields (code, desc, cta, sortOrder, status) so the same form round-trips.
 type g4PlanVO struct {
+	Market        string   `json:"market"`
+	Currency      string   `json:"currency"`
 	ID            idgen.ID `json:"id"`
 	Name          string   `json:"name"`
 	Code          string   `json:"code"`
@@ -136,7 +143,7 @@ type g4PlanUpsertDTO struct {
 
 func (h *g4PricingHandler) listPlans(c *gin.Context) {
 	var rows []model.Plan
-	if err := h.db.Order("sort_order asc, create_time asc").Find(&rows).Error; err != nil {
+	if err := h.db.Where("market = ?", model.BillingMarket(h.market)).Order("sort_order asc, create_time asc").Find(&rows).Error; err != nil {
 		response.Fail(c, response.CodeServerError, "failed to load plans")
 		return
 	}
@@ -153,8 +160,14 @@ func (h *g4PricingHandler) createPlan(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
 		return
 	}
-	row := model.Plan{}
+	if !h.validMoney(c, dto.Monthly, dto.Yearly) {
+		return
+	}
+	row := model.Plan{Market: model.BillingMarket(h.market), Currency: model.MarketCurrency(model.BillingMarket(h.market))}
 	g4ApplyPlan(&row, &dto, true)
+	if h.market == model.BillingMarketEN && dto.Status == nil {
+		row.Status = 0
+	}
 	// status is force-written: a struct Create would swallow status:0 (下架)
 	// via the default:1 tag and put the draft plan straight onto /pricing.
 	if err := adminCreateRow(h.db, &row, map[string]any{"status": row.Status}); err != nil {
@@ -178,12 +191,16 @@ func (h *g4PricingHandler) updatePlan(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
 		return
 	}
+	if !h.validMoney(c, dto.Monthly, dto.Yearly) {
+		return
+	}
 	var row model.Plan
-	if err := h.db.First(&row, "id = ?", id).Error; err != nil {
+	if err := h.db.Where("market = ?", model.BillingMarket(h.market)).First(&row, "id = ?", id).Error; err != nil {
 		h.failLookup(c, err, "plan not found", "failed to update plan")
 		return
 	}
 	g4ApplyPlan(&row, &dto, false)
+	row.Currency = model.MarketCurrency(model.BillingMarket(h.market))
 	if err := h.db.Save(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
 			response.Fail(c, response.CodeBadRequest, "套餐编码已存在")
@@ -194,7 +211,7 @@ func (h *g4PricingHandler) updatePlan(c *gin.Context) {
 	}
 	// Re-read so the echo carries the persisted values (decimal(10,2) rounding),
 	// not the pre-persistence in-memory row.
-	if err := h.db.First(&row, "id = ?", id).Error; err != nil {
+	if err := h.db.Where("market = ?", model.BillingMarket(h.market)).First(&row, "id = ?", id).Error; err != nil {
 		response.Fail(c, response.CodeServerError, "failed to reload plan")
 		return
 	}
@@ -206,7 +223,7 @@ func (h *g4PricingHandler) deletePlan(c *gin.Context) {
 	if !ok {
 		return
 	}
-	res := h.db.Delete(&model.Plan{}, "id = ?", id)
+	res := h.db.Where("market = ?", model.BillingMarket(h.market)).Delete(&model.Plan{}, "id = ?", id)
 	if res.Error != nil {
 		response.Fail(c, response.CodeServerError, "failed to delete plan")
 		return
@@ -223,7 +240,7 @@ func (h *g4PricingHandler) deletePlan(c *gin.Context) {
 // getCompare returns the effective 方案对比 rows (stored JSON or the factory
 // default translated onto live plans) so the admin editor starts pre-filled.
 func (h *g4PricingHandler) getCompare(c *gin.Context) {
-	vo, err := billing.LoadCompare(h.db)
+	vo, err := billing.LoadCompare(h.db, h.market)
 	if err != nil {
 		response.Fail(c, response.CodeServerError, "failed to load compare table")
 		return
@@ -250,7 +267,7 @@ func (h *g4PricingHandler) saveCompare(c *gin.Context) {
 		rows = append(rows, r)
 	}
 	vo.Rows = rows
-	if err := billing.SaveCompare(h.db, vo); err != nil {
+	if err := billing.SaveCompare(h.db, vo, h.market); err != nil {
 		response.Fail(c, response.CodeServerError, "failed to save compare table")
 		return
 	}
@@ -259,7 +276,7 @@ func (h *g4PricingHandler) saveCompare(c *gin.Context) {
 
 // getFaq returns the effective 定价 FAQ (stored JSON or factory default).
 func (h *g4PricingHandler) getFaq(c *gin.Context) {
-	vo, err := billing.LoadFaq(h.db)
+	vo, err := billing.LoadFaq(h.db, h.market)
 	if err != nil {
 		response.Fail(c, response.CodeServerError, "failed to load faq")
 		return
@@ -283,7 +300,7 @@ func (h *g4PricingHandler) saveFaq(c *gin.Context) {
 		items = append(items, it)
 	}
 	vo.Items = items
-	if err := billing.SaveFaq(h.db, vo); err != nil {
+	if err := billing.SaveFaq(h.db, vo, h.market); err != nil {
 		response.Fail(c, response.CodeServerError, "failed to save faq")
 		return
 	}
@@ -293,7 +310,7 @@ func (h *g4PricingHandler) saveFaq(c *gin.Context) {
 // getPromo returns the stored 限时折扣横幅 config (disabled zero value when
 // never saved).
 func (h *g4PricingHandler) getPromo(c *gin.Context) {
-	vo, err := billing.LoadPromo(h.db)
+	vo, err := billing.LoadPromo(h.db, h.market)
 	if err != nil {
 		response.Fail(c, response.CodeServerError, "failed to load promo")
 		return
@@ -332,7 +349,7 @@ func (h *g4PricingHandler) savePromo(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, msg)
 		return
 	}
-	if err := billing.SavePromo(h.db, vo); err != nil {
+	if err := billing.SavePromo(h.db, vo, h.market); err != nil {
 		response.Fail(c, response.CodeServerError, "failed to save promo")
 		return
 	}
@@ -354,6 +371,9 @@ func (h *g4PricingHandler) validatePromoDeals(deals []billing.PromoDeal) string 
 			return "同一套餐重复配置了活动价"
 		}
 		seen[d.PlanID] = true
+		if h.market == model.BillingMarketEN && (!decimal.NewFromFloat(d.Monthly).Equal(decimal.NewFromFloat(d.Monthly).Round(2)) || !decimal.NewFromFloat(d.Yearly).Equal(decimal.NewFromFloat(d.Yearly).Round(2))) {
+			return "美元活动价最多保留两位小数"
+		}
 		if d.Monthly < 0 || d.Yearly < 0 {
 			return "活动价不能为负数"
 		}
@@ -361,7 +381,7 @@ func (h *g4PricingHandler) validatePromoDeals(deals []billing.PromoDeal) string 
 			return "参与套餐至少要配置一个周期的活动价"
 		}
 		var plan model.Plan
-		if err := h.db.Where("id = ?", d.PlanID).First(&plan).Error; err != nil {
+		if err := h.db.Where("id = ? AND market = ?", d.PlanID, model.BillingMarket(h.market)).First(&plan).Error; err != nil {
 			return "参与套餐不存在或已删除"
 		}
 		if d.Monthly > 0 && !decimal.NewFromFloat(d.Monthly).LessThan(plan.Price) {
@@ -449,6 +469,8 @@ func g4ToPlanVO(p *model.Plan) g4PlanVO {
 	}
 	monthly, _ := p.Price.Float64()
 	return g4PlanVO{
+		Market:        model.BillingMarket(p.Market),
+		Currency:      model.PlanCurrency(p),
 		ID:            p.ID,
 		Name:          p.Name,
 		Code:          p.Code,
@@ -490,4 +512,19 @@ func (h *g4PricingHandler) failLookup(c *gin.Context, err error, notFoundMsg, fa
 		return
 	}
 	response.Fail(c, response.CodeServerError, fallback)
+}
+
+// USD plan prices are maintained in cents; reject silent sub-cent rounding.
+func (h *g4PricingHandler) validMoney(c *gin.Context, values ...float64) bool {
+	if h.market != model.BillingMarketEN {
+		return true
+	}
+	for _, value := range values {
+		amount := decimal.NewFromFloat(value)
+		if !amount.Equal(amount.Round(2)) {
+			response.Fail(c, response.CodeBadRequest, "美元价格最多保留两位小数")
+			return false
+		}
+	}
+	return true
 }

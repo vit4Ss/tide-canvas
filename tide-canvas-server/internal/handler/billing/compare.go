@@ -48,9 +48,9 @@ var defaultCompareByCode = []struct {
 
 // LoadCompare returns the effective compare table: the stored sys_config JSON
 // when present/valid, else the factory default translated onto current plans.
-func LoadCompare(db *gorm.DB) (CompareVO, error) {
+func LoadCompare(db *gorm.DB, markets ...string) (CompareVO, error) {
 	var row model.SysConfig
-	err := db.Where("config_key = ?", model.ConfigKeyPricingCompare).First(&row).Error
+	err := db.Where("config_key = ?", marketConfigKey(model.ConfigKeyPricingCompare, markets...)).First(&row).Error
 	if err == nil && row.ConfigValue != "" {
 		var vo CompareVO
 		if jsonErr := json.Unmarshal([]byte(row.ConfigValue), &vo); jsonErr == nil && vo.Rows != nil {
@@ -60,13 +60,16 @@ func LoadCompare(db *gorm.DB) (CompareVO, error) {
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return CompareVO{Rows: []CompareRow{}}, err
 	}
+	if model.BillingMarket(markets...) == model.BillingMarketEN {
+		return CompareVO{Rows: []CompareRow{}}, nil
+	}
 	return defaultCompare(db)
 }
 
 // defaultCompare builds the factory table against the live plan catalog.
 func defaultCompare(db *gorm.DB) (CompareVO, error) {
 	var plans []model.Plan
-	if err := db.Order("sort_order ASC, id ASC").Find(&plans).Error; err != nil {
+	if err := db.Where("market = ?", model.BillingMarketCN).Order("sort_order ASC, id ASC").Find(&plans).Error; err != nil {
 		return CompareVO{Rows: []CompareRow{}}, err
 	}
 	idByCode := map[string]string{}
@@ -89,7 +92,7 @@ func defaultCompare(db *gorm.DB) (CompareVO, error) {
 }
 
 // SaveCompare persists the compare table JSON into sys_config (upsert).
-func SaveCompare(db *gorm.DB, vo CompareVO) error {
+func SaveCompare(db *gorm.DB, vo CompareVO, markets ...string) error {
 	if vo.Rows == nil {
 		vo.Rows = []CompareRow{}
 	}
@@ -98,10 +101,10 @@ func SaveCompare(db *gorm.DB, vo CompareVO) error {
 		return err
 	}
 	var row model.SysConfig
-	err = db.Where("config_key = ?", model.ConfigKeyPricingCompare).First(&row).Error
+	err = db.Where("config_key = ?", marketConfigKey(model.ConfigKeyPricingCompare, markets...)).First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return db.Create(&model.SysConfig{
-			ConfigKey:   model.ConfigKeyPricingCompare,
+			ConfigKey:   marketConfigKey(model.ConfigKeyPricingCompare, markets...),
 			ConfigValue: string(b),
 			Group:       "pricing",
 			Description: "定价页方案对比表（行内容；列=真实套餐）",

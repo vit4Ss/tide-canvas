@@ -50,7 +50,7 @@ func Seed(db *gorm.DB) error {
 
 func seedPlans(db *gorm.DB) error {
 	var count int64
-	if err := db.Model(&model.Plan{}).Count(&count).Error; err != nil {
+	if err := db.Model(&model.Plan{}).Where("market = ?", model.BillingMarketCN).Count(&count).Error; err != nil {
 		return err
 	}
 	if count > 0 {

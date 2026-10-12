@@ -22,9 +22,10 @@ type repo struct {
 func newRepo(db *gorm.DB) *repo { return &repo{db: db} }
 
 // listPlans returns all on-sale plans (status = 1) ordered by sort_order asc.
-func (r *repo) listPlans() ([]model.Plan, error) {
+func (r *repo) listPlans(markets ...string) ([]model.Plan, error) {
 	var rows []model.Plan
-	err := r.db.Where("status = ?", 1).Order("sort_order ASC, id ASC").Find(&rows).Error
+	market := model.BillingMarket(markets...)
+	err := r.db.Where("status = ? AND market = ? AND currency = ?", 1, market, model.MarketCurrency(market)).Order("sort_order ASC, id ASC").Find(&rows).Error
 	if err != nil {
 		return nil, err
 	}

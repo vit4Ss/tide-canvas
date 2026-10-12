@@ -48,14 +48,17 @@ jobs:
           go-version-file: tide-canvas-server/go.mod
           cache-dependency-path: tide-canvas-server/go.sum
 
-      - name: Test backend authentication before publishing
+      - name: Test backend authentication and billing before publishing
         if: matrix.name == 'backend'
         working-directory: tide-canvas-server
         env:
           CGO_ENABLED: "1"
         run: |
           go test -count=1 ./internal/pkg/googleauth ./internal/handler/auth ./internal/config
+          go test -count=1 ./internal/handler/billing
+          go test -count=1 ./internal/handler/admin -run TestEnglishPricing
           go vet ./internal/pkg/googleauth ./internal/handler/auth ./internal/config
+          go vet ./internal/handler/billing ./internal/handler/admin
 
       - uses: docker/setup-buildx-action@v3
 

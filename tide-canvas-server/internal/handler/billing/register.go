@@ -8,6 +8,7 @@ import (
 
 	"tidecanvas/internal/app"
 	"tidecanvas/internal/middleware"
+	"tidecanvas/internal/model"
 )
 
 // Register mounts the billing & order routes on the /api group.
@@ -43,6 +44,15 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	// epay delivers the async notify as a GET (query params); accept POST too.
 	b.GET("/notify", h.notify)
 	b.POST("/notify", h.notify)
+
+	// A separate namespace cannot fall back to CNY billing on an older server.
+	en := &handler{svc: h.svc, market: model.BillingMarketEN}
+	b.GET("/en/plans", en.listPlans)
+	b.GET("/en/compare", en.getCompare)
+	b.GET("/en/faq", en.getFaq)
+	b.GET("/en/promo", en.getPromo)
+	b.GET("/en/channels", en.listChannels)
+	api.POST("/en/orders", middleware.JWTAuth(d), en.createOrder)
 
 	// Authenticated orders. The :id param sits only under the static /orders
 	// parent, with no static sibling at the same position.

@@ -37,9 +37,9 @@ var defaultFaq = []FaqItem{
 
 // LoadFaq returns the effective FAQ: the stored sys_config JSON when
 // present/valid, else the factory default.
-func LoadFaq(db *gorm.DB) (FaqVO, error) {
+func LoadFaq(db *gorm.DB, markets ...string) (FaqVO, error) {
 	var row model.SysConfig
-	err := db.Where("config_key = ?", model.ConfigKeyPricingFaq).First(&row).Error
+	err := db.Where("config_key = ?", marketConfigKey(model.ConfigKeyPricingFaq, markets...)).First(&row).Error
 	if err == nil && row.ConfigValue != "" {
 		var vo FaqVO
 		if jsonErr := json.Unmarshal([]byte(row.ConfigValue), &vo); jsonErr == nil && vo.Items != nil {
@@ -49,11 +49,14 @@ func LoadFaq(db *gorm.DB) (FaqVO, error) {
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return FaqVO{Items: []FaqItem{}}, err
 	}
+	if model.BillingMarket(markets...) == model.BillingMarketEN {
+		return FaqVO{Items: []FaqItem{}}, nil
+	}
 	return FaqVO{Items: defaultFaq}, nil
 }
 
 // SaveFaq persists the FAQ JSON into sys_config (upsert).
-func SaveFaq(db *gorm.DB, vo FaqVO) error {
+func SaveFaq(db *gorm.DB, vo FaqVO, markets ...string) error {
 	if vo.Items == nil {
 		vo.Items = []FaqItem{}
 	}
@@ -62,10 +65,10 @@ func SaveFaq(db *gorm.DB, vo FaqVO) error {
 		return err
 	}
 	var row model.SysConfig
-	err = db.Where("config_key = ?", model.ConfigKeyPricingFaq).First(&row).Error
+	err = db.Where("config_key = ?", marketConfigKey(model.ConfigKeyPricingFaq, markets...)).First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return db.Create(&model.SysConfig{
-			ConfigKey:   model.ConfigKeyPricingFaq,
+			ConfigKey:   marketConfigKey(model.ConfigKeyPricingFaq, markets...),
 			ConfigValue: string(b),
 			Group:       "pricing",
 			Description: "定价页常见问题 FAQ",

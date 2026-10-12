@@ -68,6 +68,8 @@ func (CheckinRecord) TableName() string { return "checkin_record" }
 // Plan is a subscription / membership tier shown on /pricing.
 type Plan struct {
 	BaseModel
+	Market   string `gorm:"type:varchar(8);not null;default:cn;index" json:"market"`
+	Currency string `gorm:"type:varchar(3);not null;default:CNY" json:"currency"`
 
 	Name        string          `gorm:"column:name;type:varchar(64);not null" json:"name"`
 	Code        string          `gorm:"column:code;type:varchar(32);uniqueIndex" json:"code"`
@@ -104,6 +106,8 @@ func (PointPackage) TableName() string { return "point_package" }
 // Order is a purchase record (/api/orders + /api/billing payment callbacks).
 type Order struct {
 	BaseModel
+	Market   string `gorm:"type:varchar(8);not null;default:cn;index" json:"market"`
+	Currency string `gorm:"type:varchar(3);not null;default:CNY" json:"currency"`
 
 	OrderNo string   `gorm:"column:order_no;type:varchar(64);uniqueIndex;not null" json:"orderNo"`
 	UserID  idgen.ID `gorm:"column:user_id;index;not null" json:"userId"`

@@ -8,6 +8,8 @@
 
 /** g4PlanVO — admin plan-row view (mirrors the public pricing card + admin extras). */
 export interface AdminPlan {
+  market?: "cn" | "en";
+  currency?: "CNY" | "USD";
   id: string;
   name: string;
   code: string;

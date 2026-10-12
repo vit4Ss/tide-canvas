@@ -35,7 +35,7 @@ import {
 import { toast } from "@/components/shared/toast";
 import { confirmDialog } from "@/components/shared/confirm";
 import { useAuthStore } from "@/stores/use-auth-store";
-import { adminPricingApi } from "@/lib/admin-pricing-api";
+import { pricingApiForMarket, type PricingMarket } from "@/lib/admin-pricing-api";
 import type {
   AdminCompareRow,
   AdminFaqItem,
@@ -43,7 +43,6 @@ import type {
   AdminPlanUpsertDTO,
 } from "@/types/admin-pricing";
 
-const yuan = (n: number) => `¥${n.toLocaleString("zh-CN")}`;
 const num = (n: number) => n.toLocaleString("zh-CN");
 const toNum = (s: string) => {
   const v = Number(String(s).replace(/[^\d.-]/g, ""));
@@ -113,6 +112,27 @@ const planToForm = (p: AdminPlan): PlanForm => ({
 });
 
 export default function AdminPricingPage() {
+  const [market, setMarket] = useState<PricingMarket>("cn");
+  const [dirty, setDirty] = useState(false);
+  const switchMarket = async (next: PricingMarket) => {
+    if (next === market) return;
+    if (dirty && !(await confirmDialog({ title: "切换套餐站点", message: "当前站点有未保存的编辑，切换后这些编辑会丢失。是否继续？", confirmText: "切换站点" }))) return;
+    setDirty(false);
+    setMarket(next);
+  };
+  return <>
+    <div role="group" aria-label="套餐站点与币种" style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+      <button className={`adm-btn${market === "cn" ? "" : " ghost"}`} style={{ minHeight: 44 }} aria-pressed={market === "cn"} onClick={() => void switchMarket("cn")}>中文站 · CNY</button>
+      <button className={`adm-btn${market === "en" ? "" : " ghost"}`} style={{ minHeight: 44 }} aria-pressed={market === "en"} onClick={() => void switchMarket("en")}>英文站 · USD</button>
+    </div>
+    <PricingWorkspace key={market} market={market} onDirtyChange={setDirty} />
+  </>;
+}
+
+function PricingWorkspace({ market, onDirtyChange }: { market: PricingMarket; onDirtyChange: (dirty: boolean) => void }) {
+  const adminPricingApi = useMemo(() => pricingApiForMarket(market), [market]);
+  const currency = market === "en" ? "USD" : "CNY";
+  const formatPrice = (value: number) => new Intl.NumberFormat("zh-CN", { style: "currency", currency, maximumFractionDigits: 2 }).format(value);
   const ensureSession = useAuthStore((s) => s.ensureSession);
 
   const [plans, setPlans] = useState<AdminPlan[]>([]);
@@ -178,6 +198,8 @@ export default function AdminPricingPage() {
   const removePromoDeal = (i: number) =>
     setPromo({ deals: promoForm.deals.filter((_, j) => j !== i) });
 
+  useEffect(() => { onDirtyChange(planOpen || cmpDirty || faqDirty || promoDirty); }, [planOpen, cmpDirty, faqDirty, promoDirty, onDirtyChange]);
+
   // silent：跳过 loading 占位，静默换数据。排序等就地操作用它刷新，
   // 否则表格被「加载中…」卸载重建，行移动的过渡动画会被打断。
   const load = useCallback(
@@ -187,7 +209,7 @@ export default function AdminPricingPage() {
       try {
         await ensureSession();
         const planRes = await adminPricingApi.listPlans();
-        if (planRes.success && planRes.data) setPlans(planRes.data);
+        if (planRes.success && planRes.data) setPlans(planRes.data.filter((plan) => (plan.market || "cn") === market && (plan.currency || "CNY") === currency));
         if (!planRes.success) setError(planRes.message || "加载套餐失败");
         // 对比表 / FAQ 跟随加载（编辑中不覆盖本地未保存的改动）
         const cmpRes = await adminPricingApi.getCompare();
@@ -224,7 +246,7 @@ export default function AdminPricingPage() {
         if (!opts?.silent) setLoading(false);
       }
     },
-    [ensureSession],
+    [ensureSession, adminPricingApi, market, currency],
   );
 
   useEffect(() => {
@@ -243,7 +265,7 @@ export default function AdminPricingPage() {
   /* ── plan actions ────────────────────────────────────────────────────── */
   const openCreatePlan = () => {
     setEditingPlan(null);
-    setPlanForm(emptyPlanForm());
+    setPlanForm({ ...emptyPlanForm(), status: market !== "en" });
     setPlanOpen(true);
   };
   const openEditPlan = (p: AdminPlan) => {
@@ -493,11 +515,11 @@ export default function AdminPricingPage() {
         return;
       }
       if (plan && monthly > 0 && monthly >= plan.monthly) {
-        toast.error(`「${plan.name}」的月付活动价需低于月付原价 ¥${plan.monthly}`);
+        toast.error(`「${plan.name}」的月付活动价需低于月付原价 ${formatPrice(plan.monthly)}`);
         return;
       }
       if (plan && yearly > 0 && plan.yearly > 0 && yearly >= plan.yearly) {
-        toast.error(`「${plan.name}」的年付活动价需低于年付原价 ¥${plan.yearly}`);
+        toast.error(`「${plan.name}」的年付活动价需低于年付原价 ${formatPrice(plan.yearly)}`);
         return;
       }
       if (plan && yearly > 0 && plan.yearly <= 0) {
@@ -586,10 +608,12 @@ export default function AdminPricingPage() {
         </AdminAlert>
       ) : null}
 
+      {market === "en" && <AdminAlert tone="info" title="英文站独立美元定价">套餐名称、文案和权益请填写英文。月价与全年总价独立维护，不做汇率换算；新增套餐默认下架。美元支付渠道接入前，英文站只展示已上架价格，付费购买保持关闭。</AdminAlert>}
+
       {/* 套餐管理 */}
       <Panel
-        title="套餐管理"
-        sub={`会员套餐定价与权益 · ${planSummary} · 与公开定价同源`}
+        title={market === "en" ? "英文站套餐管理" : "中文站套餐管理"}
+        sub={`${currency} 定价与权益 · ${planSummary} · ${market === "en" ? "仅用于 Framelyn 英文站" : "仅用于中文站"}`}
         tools={
           <button type="button" className="adm-btn" onClick={openCreatePlan}>
             <Plus aria-hidden size={15} />
@@ -626,8 +650,8 @@ export default function AdminPricingPage() {
                   </span>
                 ),
               },
-              { header: "月价", className: "mono", cell: (r) => yuan(r.monthly) },
-              { header: "年付总价", className: "mono", cell: (r) => yuan(r.yearly) },
+              { header: "月价", className: "mono", cell: (r) => formatPrice(r.monthly) },
+              { header: "年付总价", className: "mono", cell: (r) => formatPrice(r.yearly) },
               { header: "每月积分", className: "mono", cell: (r) => num(r.monthlyPoints) },
               {
                 header: "权益",
@@ -958,8 +982,8 @@ export default function AdminPricingPage() {
                           .filter((p) => p.monthly > 0)
                           .map((p) => (
                             <option key={p.id} value={p.id}>
-                              {p.name}（月付 ¥{p.monthly}
-                              {p.yearly > 0 ? ` / 年付 ¥${p.yearly}` : ""}）
+                              {p.name}（月付 {formatPrice(p.monthly)}
+                              {p.yearly > 0 ? ` / 年付 ${formatPrice(p.yearly)}` : ""}）
                             </option>
                           ))}
                       </select>
@@ -967,7 +991,7 @@ export default function AdminPricingPage() {
                         type="number"
                         min={0}
                         step="0.01"
-                        placeholder={plan ? `月付活动价 < ¥${plan.monthly}` : "月付活动价"}
+                        placeholder={plan ? `月付活动价 < ${formatPrice(plan.monthly)}` : "月付活动价"}
                         aria-label="月付活动价"
                         value={d.monthly}
                         onChange={(e) => setPromoDeal(i, { monthly: e.target.value })}
@@ -980,7 +1004,7 @@ export default function AdminPricingPage() {
                         placeholder={
                           plan
                             ? plan.yearly > 0
-                              ? `年付活动价 < ¥${plan.yearly}`
+                              ? `年付活动价 < ${formatPrice(plan.yearly)}`
                               : "未配年付原价"
                             : "年付活动价"
                         }
@@ -1017,7 +1041,7 @@ export default function AdminPricingPage() {
         open={planOpen}
         size="lg"
         title={editingPlan ? "编辑套餐" : "新增套餐"}
-        subtitle="配置会员套餐的定价、积分与权益（保存后同步公开定价）"
+        subtitle={`配置${market === "en" ? "英文站 USD" : "中文站 CNY"}套餐的定价、积分与权益`}
         footNote="保存后立即同步公开定价页；已产生的订单金额不会重算"
         saveLabel="保存套餐"
         onClose={() => setPlanOpen(false)}
@@ -1039,11 +1063,11 @@ export default function AdminPricingPage() {
               hint={
                 editingPlan
                   ? "唯一编码，创建后不可修改"
-                  : "唯一编码，仅字母 / 数字 / - / _，如：pro、ultra；创建后不可修改"
+                  : (market === "en" ? "全站唯一编码，建议 en_pro、en_ultra；创建后不可修改" : "唯一编码，仅字母 / 数字 / - / _，如：pro、ultra；创建后不可修改")
               }
             >
               <input
-                placeholder="如：pro"
+                placeholder={market === "en" ? "如：en_pro" : "如：pro"}
                 value={planForm.code}
                 disabled={!!editingPlan}
                 onChange={(e) => setPlanForm((f) => ({ ...f, code: e.target.value }))}
@@ -1071,7 +1095,7 @@ export default function AdminPricingPage() {
                 onChange={(e) => setPlanForm((f) => ({ ...f, cta: e.target.value }))}
               />
             </Field>
-            <Field label="月价 (¥)" required span={2}>
+            <Field label={`月价 (${currency})`} required span={2}>
               <input
                 type="number"
                 placeholder="如：39"
@@ -1080,10 +1104,10 @@ export default function AdminPricingPage() {
               />
             </Field>
             <Field
-              label="年付总价 (¥/年)"
+              label={`年付总价 (${currency}/年)`}
               required
               span={2}
-              hint="一年总价，年付下单收款即此价；前台年付档显示「¥总价/年」并划线展示原价（月价 × 12）"
+              hint={market === "en" ? "填写一整年的美元总价；英文站展示月均价，并在下方标明全年实际金额。" : "一年总价，年付下单收款即此价；前台年付档显示总价/年。"}
             >
               <input
                 type="number"

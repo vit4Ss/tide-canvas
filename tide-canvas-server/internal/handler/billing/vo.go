@@ -21,6 +21,8 @@ import (
 // feature bullet list) are decoded from Features here rather than adding model
 // columns. Monthly price comes from Price; monthlyPoints from PointsGrant.
 type PlanVO struct {
+	Market        string   `json:"market"`
+	Currency      string   `json:"currency"`
 	ID            idgen.ID `json:"id"`
 	Name          string   `json:"name"`
 	Desc          string   `json:"desc"`
@@ -53,6 +55,8 @@ type PlanPromoVO struct {
 
 // OrderVO is the order view returned by create/list/detail.
 type OrderVO struct {
+	Market     string    `json:"market"`
+	Currency   string    `json:"currency"`
 	ID         idgen.ID  `json:"id"`
 	OrderNo    string    `json:"orderNo"`
 	Type       string    `json:"type"`
@@ -73,10 +77,10 @@ type OrderVO struct {
 // planFeatures is the JSON shape stored in model.Plan.Features. It carries the
 // presentation extras that have no dedicated model column.
 type planFeatures struct {
-	Desc     string   `json:"desc"`
-	Yearly   float64  `json:"yearly"`
-	Cta      string   `json:"cta"`
-	Featured bool     `json:"featured"`
+	Desc     string  `json:"desc"`
+	Yearly   float64 `json:"yearly"`
+	Cta      string  `json:"cta"`
+	Featured bool    `json:"featured"`
 	// HideCta：定价卡隐藏 CTA 按钮（后台开关；存量数据无此字段 = false = 展示）。
 	HideCta bool     `json:"hideCta"`
 	Items   []string `json:"items"`
@@ -105,6 +109,8 @@ func toPlanVO(p *model.Plan) PlanVO {
 	}
 	monthly, _ := p.Price.Float64()
 	return PlanVO{
+		Market:        model.BillingMarket(p.Market),
+		Currency:      model.PlanCurrency(p),
 		ID:            p.ID,
 		Name:          p.Name,
 		Desc:          f.Desc,
@@ -123,6 +129,8 @@ func toPlanVO(p *model.Plan) PlanVO {
 func toOrderVO(o *model.Order) OrderVO {
 	amount, _ := o.Amount.Float64()
 	vo := OrderVO{
+		Market:     model.BillingMarket(o.Market),
+		Currency:   model.OrderCurrency(o),
 		ID:         o.ID,
 		OrderNo:    o.OrderNo,
 		Type:       o.OrderType,

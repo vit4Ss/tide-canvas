@@ -26,11 +26,12 @@ import (
 
 // Sentinel errors mapped to business codes by the handler.
 var (
-	errForbidden       = errors.New("billing: not owner")
-	errBadRequest      = errors.New("billing: invalid request")
-	errPayUnavailable  = errors.New("billing: payment gateway unavailable")
-	errChannelDisabled = errors.New("billing: pay channel not enabled")
-	errAlreadyOnPlan   = errors.New("billing: already on this plan")
+	errForbidden              = errors.New("billing: not owner")
+	errBadRequest             = errors.New("billing: invalid request")
+	errPayUnavailable         = errors.New("billing: payment gateway unavailable")
+	errChannelDisabled        = errors.New("billing: pay channel not enabled")
+	errAlreadyOnPlan          = errors.New("billing: already on this plan")
+	errUSDCheckoutUnavailable = errors.New("billing: USD checkout is not configured")
 )
 
 // payTTL is how long a pending order stays payable. After the deadline the
@@ -95,14 +96,18 @@ func payKey(t string) string {
 // PayChannelVO is one selectable cashier pay method, driven by the admin
 // 支付渠道 configuration (/admin/payments → pay_channel.enabled).
 type PayChannelVO struct {
-	Key  string `json:"key"`  // epay method: "alipay" | "wxpay"
-	Name string `json:"name"` // display name from the admin channel row
+	Currency string `json:"currency"`
+	Key      string `json:"key"`  // epay method: "alipay" | "wxpay"
+	Name     string `json:"name"` // display name from the admin channel row
 }
 
 // listPayChannels returns the admin-enabled channels the cashier can serve,
 // normalized to epay keys, deduped, in the admin's sort order. An empty result
 // means checkout is effectively closed (the client shows 未开通).
-func (s *service) listPayChannels() ([]PayChannelVO, error) {
+func (s *service) listPayChannels(markets ...string) ([]PayChannelVO, error) {
+	if model.BillingMarket(markets...) == model.BillingMarketEN {
+		return []PayChannelVO{}, nil
+	}
 	rows, err := s.repo.enabledPayChannels()
 	if err != nil {
 		return nil, err
@@ -115,7 +120,7 @@ func (s *service) listPayChannels() ([]PayChannelVO, error) {
 			continue
 		}
 		seen[k] = true
-		vos = append(vos, PayChannelVO{Key: k, Name: rows[i].Name})
+		vos = append(vos, PayChannelVO{Key: k, Name: rows[i].Name, Currency: model.CurrencyCNY})
 	}
 	return vos, nil
 }
@@ -185,12 +190,12 @@ func vipForPlan(plan *model.Plan) int {
 // 限时折扣活动 is live, participating plans get the Promo overlay (activity
 // prices + tag + end time) so the pricing cards can render 活动价+划线原价;
 // once the activity expires the overlay vanishes and cards fall back to 原价.
-func (s *service) listPlans() ([]PlanVO, error) {
-	rows, err := s.repo.listPlans()
+func (s *service) listPlans(markets ...string) ([]PlanVO, error) {
+	rows, err := s.repo.listPlans(markets...)
 	if err != nil {
 		return nil, err
 	}
-	promo, promoErr := LoadPromo(s.repo.db)
+	promo, promoErr := LoadPromo(s.repo.db, markets...)
 	promoLive := promoErr == nil && promo.Active(time.Now())
 
 	vos := make([]PlanVO, 0, len(rows))
@@ -238,7 +243,7 @@ func (s *service) effectivePlanPricing(plan *model.Plan, cycle string) (decimal.
 	// 活动配置读取失败宁可让下单失败重试，也绝不静默回退原价——否则会出现
 	// 页面展示活动价、收银台却按原价收款的多收事故。（键不存在不算错误，
 	// LoadPromo 对 RecordNotFound 返回关闭零值。）
-	promo, promoErr := LoadPromo(s.repo.db)
+	promo, promoErr := LoadPromo(s.repo.db, plan.Market)
 	if promoErr != nil {
 		return decimal.Zero, 0, promoErr
 	}
@@ -254,7 +259,10 @@ func (s *service) effectivePlanPricing(plan *model.Plan, cycle string) (decimal.
 // is taken from the referenced plan/package's price so the client cannot set
 // its own price. For plans the chosen billing cycle drives the charge: monthly
 // = Price, yearly = the yearly TOTAL Features price.
-func (s *service) createOrder(userID idgen.ID, dto CreateOrderDTO) (*OrderVO, error) {
+func (s *service) createOrder(userID idgen.ID, dto CreateOrderDTO, markets ...string) (*OrderVO, error) {
+	if model.BillingMarket(markets...) == model.BillingMarketEN {
+		return nil, errUSDCheckoutUnavailable
+	}
 	// The requested pay channel must be one the admin has enabled
 	// (/admin/payments → pay_channel.enabled) AND the epay cashier supports.
 	chKey := payKey(dto.PayChannel)
@@ -269,6 +277,8 @@ func (s *service) createOrder(userID idgen.ID, dto CreateOrderDTO) (*OrderVO, er
 	o := &model.Order{
 		BaseModel: model.BaseModel{ID: idgen.Next()},
 		OrderNo:   genOrderNo(),
+		Market:    model.BillingMarketCN,
+		Currency:  model.CurrencyCNY,
 		UserID:    userID,
 		OrderType: dto.Type,
 		PayMethod: chKey,
@@ -288,6 +298,9 @@ func (s *service) createOrder(userID idgen.ID, dto CreateOrderDTO) (*OrderVO, er
 		plan, err := s.repo.findPlan(planID)
 		if err != nil {
 			return nil, err
+		}
+		if plan.Status != 1 || model.BillingMarket(plan.Market) != model.BillingMarketCN || (plan.Currency != "" && plan.Currency != model.CurrencyCNY) {
+			return nil, errBadRequest
 		}
 		// 已是该档（或更高档）会员：拦掉重复购买——会员有效期尚未实现，
 		// 重复购买只会再收一次钱（用户反馈 2026-07-12）。等续费/有效期
@@ -405,6 +418,9 @@ type orderGrant struct {
 // read live from the plan/package so a mid-flight price edit can't be exploited,
 // mirroring the order.Amount captured at creation.
 func (s *service) resolveGrant(o *model.Order) (*orderGrant, error) {
+	if model.OrderCurrency(o) != model.CurrencyCNY {
+		return nil, errUSDCheckoutUnavailable
+	}
 	switch o.OrderType {
 	case OrderTypePlan:
 		if o.PlanID == nil {
@@ -413,6 +429,9 @@ func (s *service) resolveGrant(o *model.Order) (*orderGrant, error) {
 		plan, err := s.repo.findPlan(*o.PlanID)
 		if err != nil {
 			return nil, err
+		}
+		if model.BillingMarket(plan.Market) != model.BillingMarket(o.Market) || model.PlanCurrency(plan) != model.OrderCurrency(o) {
+			return nil, errBadRequest
 		}
 		price, points, err := planPricing(plan, o.Cycle)
 		if err != nil {
@@ -539,7 +558,7 @@ func (s *service) verifyOrder(ctx context.Context, userID idgen.ID, orderNo stri
 		return &VerifyResult{}, nil
 	}
 	// Never let a user credit themselves off another buyer's order number.
-	if o.UserID != userID {
+	if o.UserID != userID || model.OrderCurrency(o) != model.CurrencyCNY {
 		return &VerifyResult{}, nil
 	}
 	if o.Status == 1 {
