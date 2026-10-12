@@ -1,0 +1,14 @@
+.card { min-width: 0; }
+.card h3 { font-size: 13px; font-weight: 500; }
+.card footer span { font-size: 11px; line-height: 1.6; display: block; overflow-wrap: anywhere; }
+.card footer :global(.icon-button) { flex-shrink: 0; width: 36px; height: 36px; }
+.summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; color: var(--muted); font-size: 12px; }
+@media (max-width: 650px) {
+  .card > footer { flex-wrap: wrap; gap: 4px; padding: 12px; }
+  .card footer > div { flex-basis: 100%; margin-bottom: 6px; }
+  .card h3 { font-size: 12px; }
+  .card footer :global(.icon-button) { width: 44px; height: 44px; }
+}
+@media (pointer: coarse) {
+  .card footer :global(.icon-button) { width: 44px; height: 44px; }
+}

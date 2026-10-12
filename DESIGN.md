@@ -101,3 +101,23 @@ separate readable rows rather than 8 px metadata. The navigation browser suite
 uses a 122-model fixture and covers typing, history recovery, focus, scroll cleanup,
 preview and zero mutation requests. Run it with `node tests/navigation-browser.mjs`
 against `FRONTEND_TEST_URL` (and `BROWSER_PATH` when Chrome is not on the default path).
+
+## Workspace detail pass
+
+Activity keeps its desktop table and uses compact records on phones, with the
+same source, outcome, credit, refund and timestamp data. Search has an explicit
+submit action, clear/reset controls and a distinct filtered-empty state. Details
+open immediately with loading/error/retry states; closed or replaced requests
+are aborted and remain isolated to the authenticated account.
+
+Library metadata uses readable 11 px text and separate date/size rows. Filtering
+and first-use empty states lead to the relevant action. External-file links use
+an external-link icon, delete failures appear within the confirmation dialog and
+deleting the last item on a later page returns to the previous page.
+
+Studio format tabs support arrow/Home/End exploration and Enter/Space activation.
+Clicking the active format preserves reference files. Prompt enhancement keeps a
+newer draft intact and offers the returned suggestion explicitly, without another
+service call to apply it. No billing rates or generation endpoints are changed.
+The workspace-detail browser suite covers slow/out-of-order replies, account
+switching, retries, pagination, touch targets and 320–1440 px layouts using mocks.

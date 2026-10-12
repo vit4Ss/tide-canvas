@@ -16,6 +16,11 @@
 .output-options[open] summary > svg { transform: rotate(180deg); }
 .reference-list img { object-fit: cover; flex-shrink: 0; }
 .reference-list .icon-button { flex-shrink: 0; }
+.studio-tabs button:disabled { opacity: .55; cursor: wait; }
+.prompt-suggestion { display: grid; gap: 12px; padding: 14px; margin-top: 12px; border: 1px solid var(--line); border-left: 2px solid var(--accent); border-radius: 8px; background: var(--bg); }
+.prompt-suggestion p { font-size: 12px; line-height: 1.7; }
+.prompt-suggestion textarea { min-height: 120px; max-height: 240px; }
+.prompt-suggestion > div { display: flex; flex-wrap: wrap; gap: 8px; }
 @media (pointer: coarse) {
   .studio-tabs button, .prompt-label button, .prompt-bottom button { min-height: 44px; }
   .reference-list .icon-button, .task-overlay .icon-button { width: 44px; height: 44px; }
