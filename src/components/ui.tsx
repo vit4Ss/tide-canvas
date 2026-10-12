@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { ArrowRight, AlertCircle, Loader2, X } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { useAuth } from "./auth-provider";
 
 export function Loading({ label = "Loading…" }: { label?: string }) { return <div className="loading" role="status"><Loader2 size={18} className="spin" /><span>{label}</span></div>; }
@@ -16,8 +16,18 @@ export function RequireAccount({ children, title = "Your workspace, ready when y
 }
 export function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => { const dialog = ref.current; dialog?.showModal(); return () => dialog?.close(); }, []);
-  return <dialog ref={ref} className="modal" onCancel={onClose} onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="modal-inner"><header><h2>{title}</h2><button className="icon-button" aria-label="Close dialog" onClick={onClose}><X size={20} /></button></header>{children}</div></dialog>;
+  const titleId = useId();
+  useEffect(() => {
+    const dialog = ref.current;
+    const previousFocus = document.activeElement;
+    dialog?.showModal();
+    return () => {
+      dialog?.close();
+      // React may already have detached the dialog when native close runs.
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected && !previousFocus.closest("[inert]")) previousFocus.focus({ preventScroll: true });
+    };
+  }, []);
+  return <dialog ref={ref} className="modal" aria-labelledby={titleId} onCancel={onClose} onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="modal-inner"><header><h2 id={titleId}>{title}</h2><button className="icon-button" aria-label="Close dialog" onClick={onClose}><X size={20} /></button></header>{children}</div></dialog>;
 }
 export function CopyButton({ value, label = "Copy" }: { value: string; label?: string }) {
   const ref = useRef<HTMLButtonElement>(null);

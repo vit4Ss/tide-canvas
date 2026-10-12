@@ -11,6 +11,13 @@ export const MODEL_PROVIDERS = [
   { id: "suno", name: "Suno", icon: "suno", monochrome: false, match: /suno/i },
   { id: "xai", name: "xAI", icon: "grok", monochrome: true, match: /grok|\bxai\b/i },
   { id: "tencent", name: "Tencent / Hunyuan", icon: "hunyuan", monochrome: false, match: /hunyuan|hy[-_ ]?3d/i },
+  { id: "black-forest-labs", name: "Black Forest Labs", icon: "flux", monochrome: true, match: /flux|black[-_ ]?forest/i },
+  { id: "kling", name: "Kling", icon: "kling", monochrome: false, match: /kling/i },
+  { id: "runway", name: "Runway", icon: "runway", monochrome: true, match: /runway|\bgen[-_ ]?[34]\b/i },
+  { id: "luma", name: "Luma", icon: "luma", monochrome: false, match: /luma|dream[-_ ]?machine/i },
+  { id: "ideogram", name: "Ideogram", icon: "ideogram", monochrome: true, match: /ideogram/i },
+  { id: "pika", name: "Pika", icon: "pika", monochrome: true, match: /\bpika/i },
+  { id: "stability", name: "Stability AI", icon: "stability", monochrome: false, match: /stability|stable[-_ ]?diffusion|\bsdxl\b|\bsd3\b/i },
 ] as const;
 
 export function modelProvider(model: { type?: unknown; modelKey?: string; name?: string }) {

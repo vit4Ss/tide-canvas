@@ -3,11 +3,13 @@
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
 import styles from "./select.module.css";
+import type { ReactNode } from "react";
 
 export interface SelectOption {
   value: string;
   label: string;
   disabled?: boolean;
+  icon?: ReactNode;
 }
 
 interface SelectProps {
@@ -48,7 +50,9 @@ export function Select({
         className={styles.trigger}
         aria-label={ariaLabel}
         aria-describedby={ariaDescribedBy}
+        title={selected?.label || placeholder}
       >
+        {selected?.icon && <span className={styles.leadingIcon} aria-hidden="true">{selected.icon}</span>}
         <span className={styles.value}>
           <SelectPrimitive.Value placeholder={placeholder}>
             {selected?.label}
@@ -79,6 +83,7 @@ export function Select({
                 disabled={option.disabled}
                 className={styles.option}
               >
+                {option.icon && <span className={styles.leadingIcon} aria-hidden="true">{option.icon}</span>}
                 <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
                 <SelectPrimitive.ItemIndicator className={styles.check}>
                   <Check size={15} strokeWidth={2} aria-hidden="true" />

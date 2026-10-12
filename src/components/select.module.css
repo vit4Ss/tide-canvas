@@ -53,6 +53,10 @@
   white-space: nowrap;
 }
 
+.leadingIcon { display: inline-flex; align-items: center; flex: none; }
+.option .leadingIcon { margin-right: 12px; }
+.option > span:not(.leadingIcon):not(.check) { min-width: 0; }
+
 .chevron {
   display: flex;
   flex-shrink: 0;

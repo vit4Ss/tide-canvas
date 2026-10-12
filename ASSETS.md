@@ -33,3 +33,7 @@ The jellyfish photograph is by Spencer: [original photo](https://unsplash.com/ph
 ## Media model logos
 
 `public/model-icons/{openai,google,bytedance,qwen,minimax,midjourney,suno,grok,hunyuan}.png` are reused from the shared project’s local [Lobe Icons](https://github.com/lobehub/lobe-icons) assets. The MIT notice is retained at `public/model-icons/LICENSE-lobe-icons.txt`. Trademarks belong to their respective owners. Logos identify media model families present in the live catalog; they do not assert a partnership or endorsement. Text-only models cannot add providers to this strip.
+
+The same local logos are used in the Studio model selector and model collection. Static, code-authored line illustrations on collection cards represent media formats only, not example outputs from the listed models. No additional remote imagery is required.
+
+`public/model-icons/{flux,kling,runway,luma,ideogram,pika,stability}.png` extend the same locally reused Lobe Icons collection and are covered by the retained MIT notice. Black monochrome marks are displayed in white against the graphite theme; original color logos retain their colors.

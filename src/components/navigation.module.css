@@ -1,0 +1,9 @@
+.sidebar { overflow-y: auto; overscroll-behavior: contain; }
+.sidebar > * { flex-shrink: 0; }
+.sidebar :global(.sidebar-help) > svg:only-child { margin-left: 0; }
+
+@media (max-width: 800px) {
+  /* A translated drawer must also leave keyboard and assistive navigation. */
+  .sidebar:not([data-open="true"]) { visibility: hidden; pointer-events: none; }
+  .publicMenu { max-height: calc(100dvh - 76px); overflow-y: auto; overscroll-behavior: contain; }
+}

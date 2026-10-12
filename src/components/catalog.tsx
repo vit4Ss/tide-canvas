@@ -1,25 +1,11 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { MODEL_PROVIDERS, modelProvider } from "@/lib/model-providers";
-import { ArrowUpRight, Search, Image as ImageIcon, Video, AudioLines, Box, ScanLine, Bookmark, SlidersHorizontal } from "lucide-react";
+import { ArrowUpRight, Bookmark } from "lucide-react";
 import { PublicPage } from "./shell";
-import { Alert, EmptyState, Loading } from "./ui";
-import { INSPIRATION, modelName, number } from "@/lib/brand";
-import { useResource } from "@/lib/use-resource";
-import { isMediaModel } from "@/lib/model-visibility";
-import type { StudioModel } from "@/lib/api";
+import { INSPIRATION } from "@/lib/brand";
+export { Catalog } from "./model-catalog";
 
-const categories = [{ value: "all", label: "All models" }, { value: "image", label: "Image" }, { value: "video", label: "Video" }, { value: "audio", label: "Audio" }, { value: "3d", label: "3D" }, { value: "upscale", label: "Enhance" }];
-const icons = { image: ImageIcon, video: Video, audio: AudioLines, "3d": Box, upscale: ScanLine };
-const descriptions: Record<string, string> = { image: "Turn a prompt or reference into a new visual direction.", video: "Bring a scene to life, frame by frame.", audio: "Explore speech, music and sound with a prompt.", "3d": "Shape an idea into a downloadable 3D asset.", upscale: "Give your source footage a clearer view." };
-export function Catalog({ providerId = "" }: { providerId?: string }) {
-  const provider = MODEL_PROVIDERS.find((item) => item.id === providerId);
-  const [filter, setFilter] = useState("all"); const [search, setSearch] = useState("");
-  const resource = useResource<StudioModel[]>("/api/market/studio-models");
-  const models = (resource.data || []).filter((model) => isMediaModel(model) && (!provider || modelProvider(model)?.id === provider.id) && (filter === "all" || model.type === filter) && `${modelName(model)} ${model.modelKey}`.toLowerCase().includes(search.toLowerCase()));
-  return <PublicPage><div className="wrap"><header className="public-title"><p className="page-overline">The model collection</p><h1>Find the right kind<br />of possibility.</h1><p>Different models see the world differently. Explore what&apos;s available, then choose the one that fits your next idea.</p></header>{provider && <div className="catalog-provider-filter"><span>Models from <strong>{provider.name}</strong></span><Link className="button small" href="/models">View all providers</Link></div>}<div className="catalog-toolbar"><div className="filters">{categories.map((item) => <button className={filter === item.value ? "on" : ""} key={item.value} onClick={() => setFilter(item.value)}>{item.label}</button>)}</div><div className="search-field"><Search size={16} /><input aria-label="Search models" placeholder="Find a model…" value={search} onChange={(event) => setSearch(event.target.value)} /></div></div>{resource.loading && <Loading label="Opening the collection…" />}{resource.error && <Alert>{resource.error}<button className="text-link" onClick={resource.refresh}>Try again</button></Alert>}{!resource.loading && !resource.error && !models.length && <EmptyState title="Nothing here just yet." description={search ? "Try another model name or choose a different format." : "Available models will appear here when they are published."} />}<div className="catalog-grid">{models.map((model) => { const Icon = icons[model.type as keyof typeof icons] || Box; const maintenance = model.config?.availabilityStatus === "maintenance"; return <article className="catalog-card" key={model.id}><div className="catalog-card-top"><span className="model-icon"><Icon size={25} /></span><span className="tag">{categories.find((item) => item.value === model.type)?.label || model.type}</span></div><h2>{modelName(model)}</h2><p>{model.desc && !/[\p{Script=Han}]/u.test(model.desc) ? model.desc : descriptions[model.type] || "Explore this model in the studio."}</p><div className="catalog-settings">{model.config?.resolutions?.slice(0, 4).map((resolution) => <span key={resolution}>{resolution.toUpperCase()}</span>)}{maintenance && <span className="maintenance">Maintenance</span>}</div><footer><span>{model.type === "upscale" || model.type === "video" ? "Estimate in the studio" : `${number(model.pointCost)} credits / request`}</span><Link className="button small" href={`/studio?type=${model.type}&model=${encodeURIComponent(model.modelKey || model.id)}`}>Explore <ArrowUpRight size={13} /></Link></footer></article>; })}</div><div className="catalog-note"><SlidersHorizontal size={18} /><p>Availability and settings come from the live model catalog. Your studio shows the options and credit estimate for the selected model.</p><Link href="/docs">Read the model guide <ArrowUpRight size={14} /></Link></div></div></PublicPage>;
-}
 export function Explore() {
   const [filter, setFilter] = useState("All"); const [saved, setSaved] = useState<string[]>([]); const [notice, setNotice] = useState("");
   useEffect(() => { let active = true; Promise.resolve().then(() => { try { const value = JSON.parse(localStorage.getItem("framelyn.inspiration") || "[]"); if (active && Array.isArray(value)) setSaved(value.filter((id) => typeof id === "string" && INSPIRATION.some((item) => item.id === id))); } catch { /* Invalid browser state falls back to an empty saved list. */ } }); return () => { active = false; }; }, []);

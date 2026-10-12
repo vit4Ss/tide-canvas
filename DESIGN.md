@@ -72,3 +72,32 @@ Final review is performed in this session because no subagent runner is availabl
 The approved hero and existing homepage sections stay in place. A local provider logo strip identifies only media model families returned by the live catalog; each link opens its filtered collection. A full-width, two-row photographic inspiration gallery adds twelve varied crops and editable English prompts. It uses native horizontal scrolling, manual previous/next controls, keyboard navigation and reduced-motion behavior, with no automatic loop or autoplay. New references are locally hosted WebP files with source records in ASSETS.md. Failed images retain a usable prompt link and a visible explanation.
 
 Homepage verification: lint and production build passed. Desktop (1440 px) and touch/mobile (390 px, reduced motion) checks confirmed twelve decoded images, native swipe and keyboard scrolling, arrow boundaries, prompt transfer into the studio, provider filtering and reset, and zero page runtime errors. Catalog failures, a text-only catalog and an unavailable image were exercised separately. Screenshot artifacts are under `.impeccable/review/home-{providers,showcase}-*.png`. No generation request was submitted. Verdict: ready for review on localhost:3100; not committed or deployed.
+
+## Model collection and Studio selection
+
+The model selector now shares local family logos with the collection cards. The selected value and menu options show the same icon while retaining plain text labels for keyboard typeahead and accessible names. Unknown families and failed logo images fall back to a format glyph. Other selects keep their existing behavior.
+
+The collection uses a more compact heading, counts derived from the media catalog, provider links and format filters. Logo-led cards pair each medium with a static line illustration, actual model settings, original credit labels and a single link into Studio. Illustrations identify media formats; they are not generated samples, measurements or quality scores. The graphite/chartreuse palette, independent billing and existing generation requests remain unchanged.
+
+Validation covers 320–1440 px layouts, provider/search/format filtering, selected-model handoff, icon failures, empty/error states and the existing keyboard/touch select checks. Browser previews use mocked catalog data and are stored at `.impeccable/review/models-refined-*.png` and `.impeccable/review/studio-model-*.png`.
+
+The detail pass adds one-click filter resets with focus recovery, Escape-to-clear search, full-name trigger tooltips, explicit maintenance labels, static loading placeholders and additional local media-family logos. Catalog models with price matrices, modifiers or conflicting base prices defer the estimate to Studio rather than advertising a fixed per-request charge. This is presentation only: generation estimates and backend billing are unchanged.
+
+The interaction audit persists collection search and format filters in the URL,
+including Back/reload recovery, without a catalog request per keystroke. Mobile
+workspace navigation hides closed links from keyboard navigation, contains focus
+while open, supports Escape/outside dismissal, restores focus and releases its
+scroll lock on route or viewport changes. Both landscape and short desktop
+sidebars scroll independently. The skip link now targets the content region;
+preview dialogs expose their actual title to assistive technology.
+Closing a preview explicitly restores its initiating control even when React
+detaches the dialog before native focus restoration. Reduced-motion transitions
+are disabled rather than shortened to a fractional frame, so hidden navigation
+becomes focusable reliably on opening.
+
+Studio supporting actions have larger touch targets and an explicit disclosure
+chevron. Small-screen prompts use 16 px text; creation dates and credits use
+separate readable rows rather than 8 px metadata. The navigation browser suite
+uses a 122-model fixture and covers typing, history recovery, focus, scroll cleanup,
+preview and zero mutation requests. Run it with `node tests/navigation-browser.mjs`
+against `FRONTEND_TEST_URL` (and `BROWSER_PATH` when Chrome is not on the default path).

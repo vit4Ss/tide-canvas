@@ -1,0 +1,17 @@
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--accent);
+}
+.small { width: 24px; height: 24px; }
+.large {
+  width: 58px;
+  height: 58px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg);
+}
+.icon img { display: block; object-fit: contain; }
+.monochrome { filter: brightness(0) invert(1); }

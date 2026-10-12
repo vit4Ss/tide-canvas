@@ -5,3 +5,25 @@
 @media(max-width:370px){.result-grid{grid-template-columns:1fr}.studio-tabs button{padding-inline:9px;font-size:11px}}
 
 .output-options{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:14px 0;margin:5px 0 10px}.output-options[hidden]{display:none}.output-options summary{cursor:pointer;display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--muted);list-style:none}.output-options summary::-webkit-details-marker{display:none}.output-options[open] summary{margin-bottom:18px}.output-options[open] .field:last-child{margin-bottom:8px}
+
+/* Keep supporting actions readable and comfortably clickable in the composer. */
+.prompt-label button, .prompt-bottom button { min-height: 32px; padding: 4px; font-size: 11px; border-radius: 5px; }
+.prompt-label button:hover:not(:disabled), .prompt-bottom button:hover { background: var(--hover); color: var(--accent); }
+.prompt-bottom { font-size: 11px; }
+.output-options { padding-block: 4px; }
+.output-options summary { min-height: 44px; }
+.output-options summary > svg { transition: transform 160ms; }
+.output-options[open] summary > svg { transform: rotate(180deg); }
+.reference-list img { object-fit: cover; flex-shrink: 0; }
+.reference-list .icon-button { flex-shrink: 0; }
+@media (pointer: coarse) {
+  .studio-tabs button, .prompt-label button, .prompt-bottom button { min-height: 44px; }
+  .reference-list .icon-button, .task-overlay .icon-button { width: 44px; height: 44px; }
+}
+@media (max-width: 650px) {
+  .composer textarea { font-size: 16px; }
+  .prompt-label { flex-wrap: wrap; column-gap: 8px; }
+  .task-caption { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .task-caption strong { font-size: 12px; }
+  .task-caption span, .task-caption small { font-size: 11px; line-height: 1.5; }
+}

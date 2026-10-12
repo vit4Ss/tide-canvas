@@ -3,6 +3,7 @@ import { GeistSans } from "geist/font/sans";
 import { AuthProvider } from "@/components/auth-provider";
 import { getServerConfig } from "@/lib/server-config";
 import { RuntimeConfigProvider } from "@/components/runtime-config";
+import { SkipLink } from "@/components/skip-link";
 import "./globals.css";
 import "./studio.css";
 import "./pages.css";
@@ -15,5 +16,5 @@ export function generateMetadata(): Metadata {
 }
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const { publicConfig } = getServerConfig();
-  return <html lang="en"><body className={GeistSans.className}><a className="skip-link" href="#main-content">Skip to content</a><RuntimeConfigProvider config={publicConfig}><AuthProvider><div id="main-content">{children}</div></AuthProvider></RuntimeConfigProvider></body></html>;
+  return <html lang="en"><body className={GeistSans.className}><SkipLink /><RuntimeConfigProvider config={publicConfig}><AuthProvider><div id="main-content">{children}</div></AuthProvider></RuntimeConfigProvider></body></html>;
 }
