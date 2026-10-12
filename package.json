@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.mjs",
     "test:browser": "node tests/browser-smoke.mjs",
-    "test:google": "node tests/google-login-browser.mjs"
+    "test:google": "node tests/google-login-browser.mjs",
+    "test:runtime": "node tests/runtime-smoke.mjs"
   },
   "dependencies": {
     "geist": "1.7.2",

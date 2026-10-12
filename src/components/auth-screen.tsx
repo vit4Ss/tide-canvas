@@ -1,4 +1,5 @@
 "use client";
+import { useBrand } from "./runtime-config";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -8,10 +9,11 @@ import { useAuth } from "./auth-provider";
 import { Alert } from "./ui";
 import { GoogleSignIn } from "./google-sign-in";
 import { authApi } from "@/lib/api";
-import { BRAND } from "@/lib/brand";
+
 import { useResource } from "@/lib/use-resource";
 
 export default function AuthScreen({ mode }: { mode: "login" | "signup" | "reset" }) {
+  const { BRAND } = useBrand();
   const router = useRouter(); const search = useSearchParams(); const auth = useAuth(); const [emailMode, setEmailMode] = useState(false);
   const [account, setAccount] = useState(""); const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [code, setCode] = useState("");
   const [visible, setVisible] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState(""); const [sending, setSending] = useState(false); const [cooldown, setCooldown] = useState(0);

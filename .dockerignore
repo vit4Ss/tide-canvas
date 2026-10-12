@@ -2,8 +2,12 @@ node_modules
 .next
 .next-dev
 .git
-.env.local
+.env*
 .impeccable
 .playwright-mcp
 tests
+deploy
+.github
+.runtime
+*.tsbuildinfo
 *.log

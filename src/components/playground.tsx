@@ -10,10 +10,11 @@ import { useResource } from "@/lib/use-resource";
 import { userApiKeyApi, type UserApiKey } from "@/lib/user-api-key";
 import { ENDPOINTS, curlExample, parseRequestBody, requestPath, requestTemplate, type EndpointKey } from "@/lib/developer";
 import { englishError } from "@/lib/english";
-import { BRAND } from "@/lib/brand";
+import { useBrand } from "./runtime-config";
 
 interface ApiModel { modelId?: string; id: string; name?: string; type?: string; endpoint?: string }
 export default function Playground() {
+  const { BRAND } = useBrand();
   const query = useSearchParams(); const { user } = useAuth(); const [endpoint, setEndpoint] = useState<EndpointKey>(query.get("endpoint") === "chat" ? "chat" : "models");
   const [credential, setCredential] = useState({ owner: "", key: "" }); const [showKey, setShowKey] = useState(false); const [models, setModels] = useState<ApiModel[]>([]); const [modelId, setModelId] = useState(""); const [body, setBody] = useState(""); const [taskId, setTaskId] = useState("");
   const [busy, setBusy] = useState(false); const [keyBusy, setKeyBusy] = useState(false); const [error, setError] = useState(""); const [output, setOutput] = useState(""); const [status, setStatus] = useState<number | null>(null); const [elapsed, setElapsed] = useState<number | null>(null); const [origin, setOrigin] = useState(""); const [autoFollow, setAutoFollow] = useState(true);

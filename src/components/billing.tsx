@@ -1,4 +1,5 @@
 "use client";
+import { useBrand } from "./runtime-config";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
@@ -8,10 +9,11 @@ import { useAuth } from "./auth-provider";
 import { Alert, EmptyState, Loading, PageHeading, RequireAccount } from "./ui";
 import { useResource } from "@/lib/use-resource";
 import { orderApi } from "@/lib/api";
-import { date, money } from "@/lib/brand";
+import { date } from "@/lib/brand";
 import type { OrderVO } from "@/types/billing";
 
 export default function Billing() {
+  const { money } = useBrand();
   const query = useSearchParams(); const { user, refresh } = useAuth(); const id = query.get("order") || ""; const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const order = useResource<OrderVO>(`/api/orders/${encodeURIComponent(id)}`, !!user && !!id, user?.id);
   const verify = async () => { setBusy(true); setError(""); const result = await orderApi.verify(id); if (result.success) { setNotice(result.data.paid ? "Payment confirmed. Your account has been updated." : "Payment has not been confirmed yet. Please check again after completing checkout."); order.refresh(); void refresh(); if (result.data.paid) localStorage.removeItem("framelyn.pending-order"); } else setError(result.message); setBusy(false); };

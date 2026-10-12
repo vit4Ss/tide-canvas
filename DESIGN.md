@@ -32,7 +32,7 @@ existing login/signup composition. Preparing, submitting, unavailable and expire
 states have explicit copy. Email verification appears inline for account linking
 or third-party email ownership, while the password flow remains usable. Provider
 and credential errors never create a local session. The public client ID is a
-build-time setting; Google's client secret is never used by the frontend.
+runtime setting supplied by the server; Google's client secret is never used by the frontend.
 
 The follow-up auth review added bounded/cancellable credential requests, per-flow
 nonce binding and guards against stale account responses. Username signup now

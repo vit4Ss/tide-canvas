@@ -22,7 +22,7 @@ Copy-Item .env.example .env.local
 npm run dev
 ```
 
-Open **http://localhost:3100**. The default proxy connects to the existing backend at **http://localhost:8080**. Change `BACKEND_URL` in `.env.local` if the shared backend runs elsewhere. Keep API credentials out of public environment variables.
+Open **http://localhost:3100**. The default proxy connects to the existing backend at **http://127.0.0.1:8081**. Change `BACKEND_URL` in `.env.local` if the shared backend runs elsewhere. Keep API credentials out of public environment variables.
 
 This workspace's ignored `.env.local` currently points to the existing deployed shared service from the source project's Nginx configuration. Its public catalog and plans endpoints were verified read-only. Local port 8080 currently belongs to an unrelated Java process, so the preview uses the deployed service instead. No account, generation, payment or email was submitted to the live service during development.
 
@@ -55,7 +55,7 @@ The frontend reuses the existing generation journal and pricing helpers. The jou
 
 ## Google sign-in
 
-Set `NEXT_PUBLIC_GOOGLE_CLIENT_ID` before building. The local ignored `.env.local`
+Set `GOOGLE_CLIENT_ID` when starting the frontend. The local ignored `.env.local`
 contains the supplied public Web Client ID. No client secret is stored or needed.
 Login and signup use Google's official English popup button; password login and
 recovery remain available. The frontend exchanges the Google credential for the
@@ -84,15 +84,16 @@ requirements for a public launch. The popup callback does not use redirect URIs.
 
 Brand settings are centralized in `src/lib/brand.ts` and `.env.example`. Framelyn is a provisional name, not a representation of registered business or domain ownership.
 
-Set these variables **before building**, since public variables and rewrite destinations are captured by the production build:
+Set these variables **when starting the process/container**. The same build or image can be used for test and production:
 
 ```text
+APP_ENV=prod
 BACKEND_URL=https://your-existing-backend.example
-NEXT_PUBLIC_BRAND_NAME=Framelyn
-NEXT_PUBLIC_SITE_URL=https://your-new-site.example
-NEXT_PUBLIC_BILLING_CURRENCY=CNY
-NEXT_PUBLIC_SUPPORT_EMAIL=your-actual-support-address
-NEXT_PUBLIC_GOOGLE_CLIENT_ID=your-web-client-id.apps.googleusercontent.com
+BRAND_NAME=Framelyn
+SITE_URL=https://your-new-site.example
+BILLING_CURRENCY=CNY
+SUPPORT_EMAIL=your-actual-support-address
+GOOGLE_CLIENT_ID=your-web-client-id.apps.googleusercontent.com
 ```
 
 ```powershell
@@ -102,14 +103,42 @@ npm start
 
 The backend remains the authority for model availability, permissions, account balances, payment methods, prices, refunds and email delivery. Currency must match what the backend actually charges: changing the label is not a currency conversion. Existing checkout pages and account emails remain controlled by that service. For an overseas launch, use its actual international payment configuration and English email templates rather than frontend placeholders. The informational privacy and terms pages should be reviewed against the operator's actual policies before publication.
 
-## Docker
+## Docker and automatic publishing
+
+Pushes to `flowlight-en` run `.github/workflows/frontend-en-image.yml`. The workflow
+checks the source, builds the image, boots that same image in both environments,
+and publishes it only after its runtime checks pass:
 
 ```text
-docker build --build-arg BACKEND_URL=https://your-existing-backend.example --build-arg NEXT_PUBLIC_SITE_URL=https://your-new-site.example -t framelyn-web .
-docker run --rm -p 3100:3100 framelyn-web
+ghcr.io/vit4ss/tide-canvas-frontend-en:latest
+ghcr.io/vit4ss/tide-canvas-frontend-en:flowlight-en
+ghcr.io/vit4ss/tide-canvas-frontend-en:sha-FULL_COMMIT_SHA
 ```
 
-Only the frontend is started. A backend address of `localhost` inside a container refers to that container, so supply the reachable shared service address when building.
+Production/test Compose files, environment templates, Nginx configuration,
+update and rollback instructions are in **[deploy/README.md](deploy/README.md)**.
+The existing backend and Chinese frontend keep their existing image names.
+
+For a local image build:
+
+```text
+docker build -t framelyn-web .
+docker run --rm -p 3100:3100 --env APP_ENV=test --env BACKEND_URL=https://your-test-backend.example --env SITE_URL=http://localhost:3100 framelyn-web
+```
+
+`NODE_ENV` stays `production` in both deployment modes. `APP_ENV` selects prod/test
+behavior; `BACKEND_URL` explicitly selects the existing backend. Browser-safe
+runtime settings are provided through the root layout and `/runtime-config`;
+backend addresses and secrets are not included. Legacy local `NEXT_PUBLIC_*`
+settings are accepted on the server as fallback values. The image excludes all
+`.env*` files and uses no environment-specific build arguments. Production
+metadata, API examples and Google sign-in follow runtime settings. Test deployments
+are marked noindex and have no sitemap entries.
+
+Only the frontend is started. The host-network Compose files target the existing
+Linux hosts, where each environment's shared backend runs on port 8081. A health
+check is available at `/healthz`. Publishing an image does not restart deployed
+containers.
 
 ## Verification
 
@@ -118,6 +147,7 @@ npm test
 npm run typecheck
 npm run lint
 npm run build
+npm run test:runtime
 ```
 
 Browser checks require a running frontend and an installed Chromium-compatible browser:

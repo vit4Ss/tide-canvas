@@ -1,14 +1,13 @@
 import type { NextConfig } from "next";
 
-const backend = (process.env.BACKEND_URL || "http://localhost:8080").replace(/\/$/, "");
 const nextConfig: NextConfig = {
   output: "standalone",
+  // Framework gzip buffers proxied SSE chunks. Nginx compresses HTML/assets;
+  // API event streams must reach the client without waiting for the last chunk.
+  compress: false,
   distDir: process.env.NODE_ENV === "development" ? ".next-dev" : ".next",
   devIndicators: false,
   experimental: { proxyClientMaxBodySize: "100mb", proxyTimeout: 3_600_000 },
-  async rewrites() {
-    return [{ source: "/api/:path*", destination: `${backend}/api/:path*` }];
-  },
   async headers() {
     return [{ source: "/:path*", headers: [
       { key: "X-Content-Type-Options", value: "nosniff" },

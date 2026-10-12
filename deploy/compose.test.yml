@@ -1,0 +1,17 @@
+name: tidecanvas-en-test
+services:
+  frontend-en:
+    image: ${FRAMELYN_IMAGE:-ghcr.io/vit4ss/tide-canvas-frontend-en:latest}
+    container_name: tidecanvas-frontend-en-test
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      APP_ENV: test
+      PORT: ${FRAMELYN_PORT:-3100}
+      HOSTNAME: ${FRAMELYN_HOSTNAME:-127.0.0.1}
+      BACKEND_URL: ${FRAMELYN_BACKEND_URL:-http://127.0.0.1:8081}
+      SITE_URL: ${FRAMELYN_SITE_URL:-http://localhost:3100}
+      BRAND_NAME: ${FRAMELYN_BRAND_NAME:-Framelyn}
+      GOOGLE_CLIENT_ID: ${FRAMELYN_GOOGLE_CLIENT_ID:-}
+      BILLING_CURRENCY: ${FRAMELYN_BILLING_CURRENCY:-CNY}
+      SUPPORT_EMAIL: ${FRAMELYN_SUPPORT_EMAIL:-}

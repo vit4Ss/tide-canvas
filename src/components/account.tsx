@@ -1,4 +1,5 @@
 "use client";
+import { useBrand } from "./runtime-config";
 import Link from "next/link";
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -9,11 +10,12 @@ import { Alert, CopyButton, EmptyState, Loading, Modal, PageHeading, RequireAcco
 import { useResource } from "@/lib/use-resource";
 import { authApi, orderApi } from "@/lib/api";
 import { userApiKeyApi, type UserApiKey } from "@/lib/user-api-key";
-import { date, money, number } from "@/lib/brand";
+import { date, number } from "@/lib/brand";
 import type { OrderVO } from "@/types/billing";
 import type { PageData } from "@/types/api";
 
 export default function Account() {
+  const { money } = useBrand();
   const { user, refresh } = useAuth(); const query = useSearchParams(); const [tab, setTab] = useState(query.get("tab") === "orders" ? "orders" : "profile");
   const [nickname, setNickname] = useState<string | null>(null); const [oldPassword, setOldPassword] = useState(""); const [newPassword, setNewPassword] = useState(""); const [revealed, setRevealed] = useState<{ owner: string; key: string } | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState(""); const [rotate, setRotate] = useState(false); const [page, setPage] = useState(1); const [cancelId, setCancelId] = useState("");

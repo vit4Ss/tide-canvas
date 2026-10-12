@@ -7,9 +7,10 @@ import { getAccessToken } from "@/lib/http";
 import type { LoginVO } from "@/types/user";
 import { Alert } from "./ui";
 import { useAuth } from "./auth-provider";
+import { useRuntimeConfig } from "./runtime-config";
 
-const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "";
 export function GoogleSignIn({ disabled, onBusy, onSuccess }: { disabled: boolean; onBusy: (busy: boolean) => void; onSuccess: (result: LoginVO) => void }) {
+  const { googleClientId: clientId } = useRuntimeConfig();
   const { sessionVersion } = useAuth();
   const host = useRef<HTMLDivElement>(null);
   const callbacks = useRef({ onBusy, onSuccess, disabled });
@@ -86,7 +87,7 @@ export function GoogleSignIn({ disabled, onBusy, onSuccess }: { disabled: boolea
     };
     void initialize();
     return () => { mounted = false; version.current += 1; controller.abort(); exchangeController.current?.abort(); codeController.current?.abort(); inFlight.current = false; observer?.disconnect(); if (expiry) clearTimeout(expiry); if (active.current && currentVersion < version.current) callbacks.current.onBusy(false); };
-  }, [attempt, sessionVersion]);
+  }, [attempt, sessionVersion, clientId]);
 
   const sendCode = async () => {
     if (!pending || sending || cooldown > 0) return;

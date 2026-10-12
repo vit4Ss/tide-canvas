@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
-import { readFile, mkdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { chromium } from "playwright-core";
 import path from "node:path";
 import { englishError } from "../src/lib/english.ts";
 
 const base = process.env.FRONTEND_TEST_URL || "http://localhost:3100";
-const environment = await readFile(".env.local", "utf8").catch(() => "");
-const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || environment.match(/^NEXT_PUBLIC_GOOGLE_CLIENT_ID=(.+)$/m)?.[1]?.trim();
+const clientId = (await (await fetch(`${base}/runtime-config`)).json()).googleClientId;
 assert.ok(clientId, "Set the frontend Google Client ID to run the browser integration test");
 const browser = await chromium.launch({ headless: true, executablePath: process.env.BROWSER_PATH || "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" });
 const context = await browser.newContext({ viewport: { width: 1440, height: 1050 } });

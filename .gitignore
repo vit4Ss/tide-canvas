@@ -7,6 +7,9 @@ coverage/
 next-env.d.ts
 .env*
 !.env.example
+!deploy/*.env.example
+deploy/*.env
+.runtime/
 .playwright-mcp/
 .impeccable/review/
 *.log

@@ -1,4 +1,5 @@
 "use client";
+import { useBrand } from "./runtime-config";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Plus, ArrowUpRight, Coins, Loader2 } from "lucide-react";
@@ -7,7 +8,7 @@ import { useAuth } from "./auth-provider";
 import { Alert, EmptyState, Loading, Modal } from "./ui";
 import { useResource } from "@/lib/use-resource";
 import { orderApi } from "@/lib/api";
-import { BRAND, money, number } from "@/lib/brand";
+import { number } from "@/lib/brand";
 import { englishLabel } from "@/lib/english";
 import { planPurchase } from "@/lib/billing";
 import type { BillCycle, PayChannel, PayChannelVO, PlanVO } from "@/types/billing";
@@ -21,6 +22,7 @@ const questions = [
   ["Can I use every model with a plan?", "The live model catalog and your account permissions determine availability. Some models may be temporarily under maintenance. Check the studio for current settings and pricing."],
 ];
 export default function Pricing() {
+  const { BRAND, money } = useBrand();
   const { user } = useAuth(); const router = useRouter(); const [cycle, setCycle] = useState<BillCycle>("monthly"); const [selected, setSelected] = useState<PlanVO | null>(null); const [channel, setChannel] = useState<PayChannel | "">(""); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
   const plans = useResource<PlanVO[]>("/api/billing/plans"); const channels = useResource<PayChannelVO[]>("/api/billing/channels");
   const amount = (plan: PlanVO) => planPurchase(plan, cycle).total;
