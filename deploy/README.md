@@ -63,7 +63,7 @@ docker compose --env-file deploy/test.env -f deploy/compose.test.yml up -d
 | `FRAMELYN_SITE_URL` | `SITE_URL` | 生产 https://framelyn.tcmzhan.com；测试 https://test-framelyn.tcmzhan.com |
 | `FRAMELYN_GOOGLE_CLIENT_ID` | `GOOGLE_CLIENT_ID` | Google Web Client ID；留空隐藏 Google 登录 |
 | `FRAMELYN_BRAND_NAME` | `BRAND_NAME` | 默认 Framelyn |
-| `FRAMELYN_BILLING_CURRENCY` | `BILLING_CURRENCY` | 默认 CNY，必须与后端实际收费一致 |
+| `FRAMELYN_BILLING_CURRENCY` | `BILLING_CURRENCY` | 默认 USD；英文套餐独立定价，历史订单按自身币种显示 |
 | `FRAMELYN_SUPPORT_EMAIL` | `SUPPORT_EMAIL` | 对外客服邮箱 |
 | `FRAMELYN_IMAGE` | — | 镜像标签，可指定某次提交回滚 |
 
@@ -104,3 +104,15 @@ curl http://127.0.0.1:3100/healthz
 `/healthz` 检查前端自身可用性；后端连接可通过 `/api/market/studio-models?type=image` 验证。回滚时把 `FRAMELYN_IMAGE` 改为之前的 `sha-完整提交SHA` 标签，再运行 pull/up。GHCR 若要求鉴权，使用有该包读取权限的账号执行 `docker login ghcr.io`。
 
 Actions 使用仓库自动提供的 `GITHUB_TOKEN` 发布镜像，无需生产密钥。若仓库限制了工作流或 Packages 权限，需要在 GitHub 仓库设置中启用相应权限。
+
+
+## 英文站美元套餐
+
+共享后端和 Flowlight 管理后台也需要更新。后台「价格管理」新增「英文站 · USD」，
+独立维护套餐、年付总价、积分、英文文案、方案对比、FAQ 和促销；新套餐默认下架。
+英文前端读取 `/api/billing/en/*`，不会把中文套餐金额直接标成美元。
+
+美元支付服务商接入前，后端不会创建英文付费订单，前端显示报价并关闭付费购买。
+先在后台填入实际美元价格，再按业务准备情况上架。现有人民币订单保持原币种和金额。
+部署时先更新共享后端及中文后台，再更新 `frontend-en`；具体说明见共享后端的
+`docs/EN_BILLING.md`。

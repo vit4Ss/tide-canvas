@@ -22,7 +22,7 @@ function origin(raw: string, field: string): string {
 export function resolveRuntimeConfig(env: Environment) {
   const environment = value(env, "APP_ENV") || "test";
   if (environment !== "prod" && environment !== "test") throw new Error("APP_ENV must be prod or test.");
-  const currency = value(env, "BILLING_CURRENCY", "NEXT_PUBLIC_BILLING_CURRENCY") || "CNY";
+  const currency = value(env, "BILLING_CURRENCY", "NEXT_PUBLIC_BILLING_CURRENCY") || "USD";
   if (!/^[A-Z]{3}$/.test(currency)) throw new Error("BILLING_CURRENCY must be a three-letter currency code.");
   const port = value(env, "PORT") || "3100";
   if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new Error("PORT must be between 1 and 65535.");

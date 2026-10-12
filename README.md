@@ -34,22 +34,22 @@ This workspace's ignored `.env.local` currently points to the existing deployed 
 | `/studio` | Image, video, audio, 3D and video enhancement; model options, references, estimates, task recovery, polling and previews |
 | `/models` | Live catalog, format filters, model search and studio deep links |
 | `/explore` | Photographic references and editable prompt starting points |
-| `/library` | Uploaded files and completed creations, previews, downloads and upload deletion |
-| `/history` | Caller-scoped generation activity, filters, details and refunds |
+| `/library` | Uploaded files and completed media creations, previews, downloads and upload deletion |
+| `/history` | Caller-scoped media generation activity, filters, details and refunds |
 | `/developers` | Developer introduction and capability overview |
 | `/docs` | English API guide with cURL, JavaScript and Python examples |
 | `/playground` | Real API requests, account key retrieval, JSON editing, task following and safe example copying |
 | `/pricing` | Live plans, monthly/annual totals and available checkout methods |
 | `/billing` | Order review, cashier link and payment verification |
 | `/account` | Profile, password, key reveal/rotation/enablement and order history |
-| `/usage` | Actual balance, credit ledger and token-metered API calls |
+| `/usage` | Actual shared balance and media generation charges/refunds |
 | `/login`, `/signup`, `/forgot-password` | Existing account login, username or verified-email registration and password reset |
 | `/tools` | Real enhancement, image editing and image-to-3D entry points |
 | `/about`, `/help`, `/privacy`, `/terms` | English supporting pages |
 
 ## Shared backend contracts
 
-Browser requests remain on this website's `/api/*` origin and are forwarded by Next.js. Website actions use the existing JWT session routes. Public generation requests use `/api/open/v1`; chat and Responses use `/api/integrations/v1`. API keys are held in memory in the playground, never persisted there.
+Browser requests remain on this website's `/api/*` origin and are forwarded by Next.js. Website actions use the existing JWT session routes. Public media generation requests use `/api/open/v1`. Text models, Chat/Responses entry points and text usage reports are not exposed in the English interface. API keys are held in memory in the playground, never persisted there.
 
 The frontend reuses the existing generation journal and pricing helpers. The journal is namespaced by this frontend and the authenticated account. Image batches use `batchCount`; reference video and audio use `videoReferences` and `audioReferences`, matching the provider adapters. Quotes verify owned video duration before enhancement and reference-video surcharges. Session-bound generation headers prevent an account switch from sending a prepared request under a different account.
 
@@ -91,7 +91,7 @@ APP_ENV=prod
 BACKEND_URL=https://your-existing-backend.example
 BRAND_NAME=Framelyn
 SITE_URL=https://your-new-site.example
-BILLING_CURRENCY=CNY
+BILLING_CURRENCY=USD
 SUPPORT_EMAIL=your-actual-support-address
 GOOGLE_CLIENT_ID=your-web-client-id.apps.googleusercontent.com
 ```
@@ -101,7 +101,7 @@ npm run build
 npm start
 ```
 
-The backend remains the authority for model availability, permissions, account balances, payment methods, prices, refunds and email delivery. Currency must match what the backend actually charges: changing the label is not a currency conversion. Existing checkout pages and account emails remain controlled by that service. For an overseas launch, use its actual international payment configuration and English email templates rather than frontend placeholders. The informational privacy and terms pages should be reviewed against the operator's actual policies before publication.
+The shared backend remains authoritative for prices, permissions, balances and refunds. Framelyn reads an independent USD catalog from `/api/billing/en/*`, maintained in Flowlight Admin → Pricing → English / USD. Annual prices are annual totals. Until a USD payment provider is integrated, the backend returns no USD payment methods and rejects English order creation; the UI displays configured prices with paid checkout disabled. Historical orders retain their actual currency. See the backend's `docs/EN_BILLING.md` for deployment and configuration. The informational privacy and terms pages should be reviewed against the operator's actual policies before publication.
 
 ## Docker and automatic publishing
 
@@ -160,8 +160,15 @@ Browser checks require a running frontend and an installed Chromium-compatible b
 $env:BROWSER_PATH = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
 npm run test:browser
 npm run test:google
+npm run test:media
+npm run test:pricing
 ```
 
 The browser suite intercepts all backend requests with explicit test fixtures. It covers the 21 routes at desktop and phone sizes, login, generation/batch input, task polling, uploads, RH quotes, API key use, API generation and annual checkout totals. No live provider request, payment, email or account mutation is made by these tests. Screenshots and results are written to `.impeccable/review` and are ignored by Git.
+
+`test:media` additionally requires FFmpeg (or `FFMPEG_PATH`) to create a small,
+local video fixture from an existing reference image. It verifies decoded video
+covers, paused playback, deferred offscreen requests, 3D/audio metadata, hidden text records,
+uploaded videos and preview retry on desktop and touch-sized browser contexts.
 
 See `ASSETS.md` for the shipped imagery and `DESIGN.md` for the frontend design system.

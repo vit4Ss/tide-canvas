@@ -14,5 +14,5 @@ export function useRuntimeConfig() {
 }
 export function useBrand() {
   const BRAND = useRuntimeConfig();
-  return { BRAND, money: (amount: number) => formatMoney(amount, BRAND.currency) };
+  return { BRAND, money: (amount: number, currency = BRAND.currency) => formatMoney(amount, currency) };
 }

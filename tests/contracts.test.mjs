@@ -3,7 +3,7 @@ import test from "node:test";
 import { buildGenerationInput, validateReferences, resultUrls, estimatedCost } from "../src/lib/studio.ts";
 import { ENDPOINTS, requestPath, requestTemplate, parseRequestBody, curlExample } from "../src/lib/developer.ts";
 import { englishError } from "../src/lib/english.ts";
-import { planPurchase } from "../src/lib/billing.ts";
+import { isEnglishPlan, planPurchase } from "../src/lib/billing.ts";
 
 const model = { id: "9007199254740993", modelKey: "rh-upscale", type: "upscale", name: "RH", pointCost: "2", config: {} };
 const settings = { media: "image", mode: "text_to_image", prompt: "A scene", resolution: "4k", ratio: "16:9", quality: "high", duration: "5s", count: 2, refs: [], outputFps: "2x", upscaleModel: "max", voice: "", lyrics: "", instrumental: false, enablePbr: false };
@@ -47,7 +47,8 @@ test("playground builds a compatible handler for every media type", () => {
   assert.equal("prompt" in requestTemplate("generate", "rh-upscale", "upscale").input, false);
 });
 test("developer namespaces match the shared service routes", () => {
-  assert.equal(ENDPOINTS.generate.path, "/api/open/v1/generations"); assert.equal(ENDPOINTS.chat.path, "/api/integrations/v1/chat/completions");
+  assert.equal(ENDPOINTS.generate.path, "/api/open/v1/generations");
+  assert.deepEqual(Object.keys(ENDPOINTS), ["models", "generate", "task"]);
 });
 test("request bodies must be valid JSON objects", () => {
   for (const body of ["null", "[]", "broken", '"hello"']) assert.throws(() => parseRequestBody(body));
@@ -58,14 +59,24 @@ test("copied cURL escapes shell quotes and uses an environment variable", () => 
   assert.match(curl, /FRAMELYN_API_KEY/); assert.match(curl, /creator'\\''s/);
 });
 test("annual billing is a full annual payment with twelve credit allowances", () => {
-  assert.deepEqual(planPurchase({ monthly: 29, yearly: 20, monthlyPoints: 1000 }, "yearly"), { monthlyEquivalent: 20, total: 240, credits: 12000, available: true });
+  assert.deepEqual(planPurchase({ monthly: 29, yearly: 240, monthlyPoints: 1000 }, "yearly"), { monthlyEquivalent: 20, total: 240, credits: 12000, available: true });
 });
-test("annual promotions follow the authoritative absolute monthly equivalent", () => {
-  assert.equal(planPurchase({ monthly: 29, yearly: 20, monthlyPoints: 1000, promo: { yearly: 15 } }, "yearly").total, 180);
+test("annual promotions follow the authoritative annual total", () => {
+  assert.equal(planPurchase({ monthly: 29, yearly: 240, monthlyPoints: 1000, promo: { yearly: 180 } }, "yearly").total, 180);
 });
 test("missing annual prices are not advertised as a free upgrade", () => assert.equal(planPurchase({ monthly: 29, yearly: 0, monthlyPoints: 1000 }, "yearly").available, false));
 test("legacy errors become actionable English messages", () => {
   assert.match(englishError("积分不足"), /enough credits/);
   assert.match(englishError("任务提交结果尚未确认"), /before submitting again/);
   assert.equal(/[\p{Script=Han}]/u.test(englishError("其他中文错误")), false);
+});
+
+test("English billing requires an explicit USD catalog and keeps annual totals exact", () => {
+  assert.equal(isEnglishPlan({ market: "cn", currency: "CNY" }), false);
+  assert.equal(isEnglishPlan({}), false);
+  assert.equal(isEnglishPlan({ market: "en", currency: "USD" }), true);
+  const purchase = planPurchase({ monthly: 12, yearly: 100, monthlyPoints: 600 }, "yearly");
+  assert.equal(purchase.total, 100);
+  assert.equal(purchase.credits, 7200);
+  assert.equal(planPurchase({ monthly: 0, yearly: 0, monthlyPoints: 60 }, "yearly").credits, 60);
 });

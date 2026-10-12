@@ -15,6 +15,7 @@ English-speaking independent creators, designers and developers. Desktop support
 Existing frontend contracts, model pricing helpers, authentication endpoints, file uploads, account API keys, asynchronous generation endpoints and task recovery logic are available in the adjacent source project.
 
 ## Product principles
+- The English edition offers only image, video, audio, 3D and enhancement models. Hide text models, text generation history and text API usage. The account balance remains shared and authoritative.
 - English throughout product navigation, instructions and system errors.
 - A coherent independent identity; no original developer name, Chinese site brand, regulatory footer or source-project promotional links in the interface.
 - Real catalog, account, credit, task and billing data. Example artwork must be identified as inspiration, never as a customer's generated results.
@@ -23,4 +24,4 @@ Existing frontend contracts, model pricing helpers, authentication endpoints, fi
 - Keyboard access, readable contrast, touch targets, responsive layouts and reduced-motion support.
 
 ## Implementation constraints
-Project root: D:/mbfczzzz/claude/canvasEN. Frontend only, using Next.js and the same REST contracts. Backend origin is configured through BACKEND_URL, with http://localhost:8080 for development. Production deployments must provide their actual shared backend address. Existing backend checkout uses CNY; display its true currency unless a backend deployment supports a different one. Brand name and deployment settings are centralized.
+Project root: D:/mbfczzzz/claude/canvasEN. Frontend only, using Next.js and the same REST contracts. Backend origin is configured through BACKEND_URL, with http://localhost:8080 for development. Production deployments must provide their actual shared backend address. English plans use an independently maintained USD catalog in the shared backend. Existing CNY orders keep their original currency. Paid English checkout remains closed until a real USD payment provider is integrated. Brand name and deployment settings are centralized.

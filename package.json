@@ -10,10 +10,13 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.mjs",
     "test:browser": "node tests/browser-smoke.mjs",
+    "test:media": "node tests/library-media-browser.mjs",
+    "test:pricing": "node tests/pricing-browser.mjs",
     "test:google": "node tests/google-login-browser.mjs",
     "test:runtime": "node tests/runtime-smoke.mjs"
   },
   "dependencies": {
+    "@radix-ui/react-select": "2.4.0",
     "geist": "1.7.2",
     "lucide-react": "1.16.0",
     "next": "16.2.6",

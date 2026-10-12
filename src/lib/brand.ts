@@ -8,7 +8,7 @@ export const INSPIRATION = [
 export function number(value: number | string): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(Number(value) || 0);
 }
-export function money(value: number, currency = "CNY"): string {
+export function money(value: number, currency = "USD"): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: Number.isInteger(value) ? 0 : 2 }).format(value);
 }
 export function date(value: string): string {

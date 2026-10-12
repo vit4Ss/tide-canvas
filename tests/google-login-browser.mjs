@@ -38,7 +38,7 @@ await context.route("**/api/**", async (route) => {
   else if (pathname === "/api/market/studio-models") data = [];
   else if (pathname === "/api/points/balance") data = { points: 42, frozen: 0 };
   else if (pathname === "/api/ai/tasks") data = { records: [], total: 0, pageNum: 1, pageSize: 24 };
-  else if (pathname === "/api/ai/history") data = { records: request.headers().authorization === "Bearer privacy-owner-access" ? [] : [{ id: "private-record", model: "Image model", prompt: "Private previous-account prompt", mediaType: "image", success: 1, pointCost: 4, createTime: "2026-10-12T08:00:00Z" }], total: 1, pageNum: 1, pageSize: 20 };
+  else if (pathname === "/api/ai/history") data = { records: (request.headers().authorization === "Bearer privacy-owner-access" || (new URL(request.url()).searchParams.get("mediaType") && new URL(request.url()).searchParams.get("mediaType") !== "image")) ? [] : [{ id: "private-record", model: "Image model", prompt: "Private previous-account prompt", mediaType: "image", success: 1, pointCost: 4, createTime: "2026-10-12T08:00:00Z" }], total: request.headers().authorization === "Bearer privacy-owner-access" || new URL(request.url()).searchParams.get("mediaType") !== "image" ? 0 : 1, pageNum: 1, pageSize: 20 };
   else if (pathname === "/api/ai/history/private-record") data = { id: "private-record", model: "Image model", prompt: "Private previous-account prompt", pointCost: 4, durationMs: 1000, resultAssets: [], parameters: [], createTime: "2026-10-12T08:00:00Z" };
   await route.fulfill({ status: code, contentType: "application/json", body: JSON.stringify({ success: code === 200, code, message, data, timestamp: Date.now() }) }).catch((error) => { if (!request.failure()) throw error; });
 });

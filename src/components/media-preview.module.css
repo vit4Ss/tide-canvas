@@ -1,0 +1,9 @@
+.results { display: grid; gap: 24px; }
+.result { min-width: 0; }
+.result img, .result video { display: block; width: 100%; max-height: 65vh; object-fit: contain; border-radius: 8px; }
+.result audio { display: block; width: 100%; }
+.actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.textResult { display: grid; justify-items: start; gap: 16px; }
+.textResult pre { width: 100%; max-height: 60vh; overflow: auto; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.8; }
+.fileResult { display: grid; justify-items: center; gap: 20px; text-align: center; }
+.fileResult > svg { color: var(--accent); }

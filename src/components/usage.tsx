@@ -6,18 +6,46 @@ import { WorkspaceShell } from "./shell";
 import { useAuth } from "./auth-provider";
 import { Alert, EmptyState, Loading, PageHeading, RequireAccount } from "./ui";
 import { useResource } from "@/lib/use-resource";
+import { useMediaHistory } from "@/lib/use-media-history";
 import { date, number } from "@/lib/brand";
-import type { PageData } from "@/types/api";
+import type { UserGenerationHistoryVO } from "@/types/ai";
 
-interface CreditRecord { id: string; changeType: string; amount: number; balance: number; remark: string; createTime: string }
-interface CallRecord { id: string; model: string; modelName: string; status: string; points: string; netPoints?: string; inputTokens: number; outputTokens: number; durationMs: number | null; createTime: string }
-interface CallPage { records: CallRecord[]; total: number; pages: number; summary: { calls: number; points: string; inputTokens: number; outputTokens: number; pending: number } }
-const reasons: Record<string, string> = { recharge: "Credits added", consume: "AI usage", checkin: "Check-in reward", reward: "Credits awarded", refund: "Refund", adjust: "Credit adjustment" };
 export default function Usage() {
-  const { user, refresh: refreshUser } = useAuth(); const [tab, setTab] = useState("credits"); const [page, setPage] = useState(1);
+  const { user, refresh: refreshUser } = useAuth();
+  const [page, setPage] = useState(1);
   const balance = useResource<{ points: number; frozen: number }>("/api/points/balance", !!user, user?.id);
-  const records = useResource<PageData<CreditRecord>>(`/api/points/records?pageNum=${page}&pageSize=20`, !!user && tab === "credits", user?.id);
-  const calls = useResource<CallPage>(`/api/chat-gateway/usage?accountId=${user?.id || ""}&pageNum=${page}&pageSize=20`, !!user && tab === "api", user?.id);
-  const resource = tab === "credits" ? records : calls;
-  return <WorkspaceShell><PageHeading title="A clear view of your credits." description="Understand what you use, what you have and what comes next." action={<Link className="button small" href="/pricing">Find your plan <ArrowUpRight size={14} /></Link>} /><RequireAccount><div className="stats-strip"><div><span>Available credits</span><strong>{balance.data ? number(balance.data.points) : "—"}</strong><small>Ready for your next idea</small></div><div><span>Reserved credits</span><strong>{balance.data ? number(balance.data.frozen) : "—"}</strong><small>Held for calls in progress</small></div><div><span>{tab === "api" ? "API calls" : "Your account"}</span><strong>{tab === "api" ? calls.data ? number(calls.data.summary.calls) : "—" : "One balance"}</strong><small>{tab === "api" ? "Based on the usage query" : "For the studio and API"}</small></div></div><div className="toolbar"><div className="tabs" style={{ marginBottom: 0 }}><button className={tab === "credits" ? "on" : ""} onClick={() => { setTab("credits"); setPage(1); }}>Credit activity</button><button className={tab === "api" ? "on" : ""} onClick={() => { setTab("api"); setPage(1); }}>API & chat calls</button></div><button className="button small" onClick={() => { resource.refresh(); balance.refresh(); void refreshUser(); }}><RefreshCw size={13} />Refresh</button></div>{balance.error && <Alert>{balance.error}</Alert>}{resource.error && <Alert>{resource.error}</Alert>}{resource.loading && <Loading label="Reading your usage…" />}{resource.data?.records.length === 0 && <EmptyState title="A clean slate." description="Usage and credit changes will appear here as you use your account." />}{!!resource.data?.records.length && <div className="table-wrap"><table>{tab === "credits" ? <><thead><tr><th>Activity</th><th>Credit change</th><th>Balance after</th><th>Date</th></tr></thead><tbody>{records.data?.records.map((row) => <tr key={row.id}><td>{row.remark && !/[\p{Script=Han}]/u.test(row.remark) ? row.remark : reasons[row.changeType] || "Credit activity"}</td><td style={{ color: row.amount > 0 ? "var(--accent)" : "var(--text)" }}>{row.amount > 0 ? "+" : ""}{number(row.amount)}</td><td>{number(row.balance)}</td><td>{date(row.createTime)}</td></tr>)}</tbody></> : <><thead><tr><th>Model</th><th>Status</th><th>Input tokens</th><th>Output tokens</th><th>Credits</th><th>Duration</th><th>Date</th></tr></thead><tbody>{calls.data?.records.map((row) => <tr key={row.id}><td>{row.modelName && !/[\p{Script=Han}]/u.test(row.modelName) ? row.modelName : row.model}</td><td><span className={`tag ${row.status === "success" ? "good" : ""}`}>{row.status.replaceAll("_", " ")}</span></td><td>{number(row.inputTokens)}</td><td>{number(row.outputTokens)}</td><td>{number(row.netPoints ?? row.points)}</td><td>{row.durationMs === null ? "—" : `${number(row.durationMs / 1000)}s`}</td><td>{date(row.createTime)}</td></tr>)}</tbody></>}</table></div>}{resource.data && resource.data.total > 20 && <div className="pagination"><span>Page {page} · {number(resource.data.total)} records</span><div><button className="button small" disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</button><button className="button small" disabled={page * 20 >= resource.data.total} onClick={() => setPage(page + 1)}>Next</button></div></div>}{tab === "api" && <p className="small muted" style={{ marginTop: 24 }}>Image, video and other generation API tasks are recorded in <Link href="/history" className="text-link">Activity <ArrowUpRight size={12} /></Link>. This view shows token-metered chat and Responses calls.</p>}</RequireAccount></WorkspaceShell>;
+  const usage = useMediaHistory<UserGenerationHistoryVO>(`/api/ai/history?pageNum=${page}&pageSize=20`, !!user, user?.id);
+  return <WorkspaceShell>
+    <PageHeading title="A clear view of your credits." description="Follow the credits used for your images, video, audio and 3D creations." action={<Link className="button small" href="/pricing">Find your plan <ArrowUpRight size={14} /></Link>} />
+    <RequireAccount>
+      <div className="stats-strip">
+        <div><span>Available credits</span><strong>{balance.data ? number(balance.data.points) : "—"}</strong><small>Ready for your next idea</small></div>
+        <div><span>Reserved credits</span><strong>{balance.data ? number(balance.data.frozen) : "—"}</strong><small>Held for requests in progress</small></div>
+        <div><span>Your account</span><strong>One balance</strong><small>Shared across all account activity</small></div>
+      </div>
+      <div className="toolbar">
+        <h2>Media activity</h2>
+        <button className="button small" onClick={() => { usage.refresh(); balance.refresh(); void refreshUser(); }}><RefreshCw size={13} />Refresh</button>
+      </div>
+      {balance.error && <Alert>{balance.error}</Alert>}
+      {usage.error && <Alert>{usage.error}</Alert>}
+      {usage.loading && <Loading label="Reading your usage…" />}
+      {usage.data?.records.length === 0 && <EmptyState title="A clean slate." description="Your media generation charges and refunds will appear here." />}
+      {!!usage.data?.records.length && <div className="table-wrap"><table>
+        <thead><tr><th>Creation</th><th>Format</th><th>Charged credits</th><th>Refunded credits</th><th>Date</th></tr></thead>
+        <tbody>{usage.data.records.map((row) => <tr key={row.id}>
+          <td>{row.model && !/[\p{Script=Han}]/u.test(row.model) ? row.model : "Media creation"}</td>
+          <td>{row.mediaType === "3d" ? "3D" : row.mediaType}</td>
+          <td>{row.pointCost === undefined ? "—" : number(row.pointCost)}</td>
+          <td>{row.refundedPoints === undefined ? "—" : number(row.refundedPoints)}</td>
+          <td>{date(row.createTime)}</td>
+        </tr>)}</tbody>
+      </table></div>}
+      {usage.data && usage.data.total > 20 && <div className="pagination">
+        <span>Page {page} · {number(usage.data.total)} records</span>
+        <div><button className="button small" disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</button><button className="button small" disabled={page * 20 >= usage.data.total} onClick={() => setPage(page + 1)}>Next</button></div>
+      </div>}
+      <p className="small muted" style={{ marginTop: 24 }}>See task details in <Link href="/history" className="text-link">Activity <ArrowUpRight size={12} /></Link>, or review purchases in <Link href="/billing" className="text-link">Billing <ArrowUpRight size={12} /></Link>.</p>
+    </RequireAccount>
+  </WorkspaceShell>;
 }

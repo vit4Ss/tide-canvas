@@ -15,6 +15,7 @@ export function modesFor(media: MediaType, model: StudioModel | null) {
   return (configured.length ? [...new Set(configured)] : defaults[media]).map((value) => ({ value, label: modeLabels[value] }));
 }
 export function mediaForHandler(handler: string): MediaType {
+  if (handler === "video_frame_capture") return "image";
   if (handler === "video_upscale") return "upscale";
   if (handler === "generate_3d") return "3d";
   if (handler === "text_to_audio") return "audio";
@@ -80,9 +81,4 @@ export function estimatedCost(model: StudioModel | null, settings: StudioSetting
   if (settings.media === "image") return resolveImageToolPointCost(model.config, buildGenerationInput(settings, model), model.pointCost);
   return Math.max(0, Number(model.pointCost) || 0);
 }
-export function resultUrls(meta: unknown, primary = ""): string[] {
-  let parsed: unknown = meta;
-  if (typeof parsed === "string") { try { parsed = JSON.parse(parsed); } catch { parsed = {}; } }
-  const urls = parsed && typeof parsed === "object" && "urls" in parsed && Array.isArray(parsed.urls) ? parsed.urls.filter((url): url is string => typeof url === "string") : [];
-  return [...new Set([primary, ...urls].filter(Boolean))].filter((url) => /^https?:\/\//i.test(url) || url.startsWith("/"));
-}
+export { resultUrls } from "./media.ts";

@@ -3,10 +3,13 @@
 
 /** Pricing-card view of a subscription plan (PlanVO). */
 export interface PlanVO {
+  market?: "cn" | "en";
+  currency?: "CNY" | "USD";
   id: string;
   name: string;
   desc: string;
   monthly: number;
+  /** Full annual price, not the monthly equivalent. */
   yearly: number;
   monthlyPoints: number;
   featured: boolean;
@@ -71,18 +74,19 @@ export interface PromoVO {
   deals?: PromoDeal[];
 }
 
-/** epay pay method. Maps to the backend payChannel → epay type. */
-export type PayChannel = "alipay" | "wxpay";
+/** Provider channel key returned by the currency-scoped billing API. */
+export type PayChannel = string;
 
 /** One selectable pay method (PayChannelVO), driven by the 管理后台 支付渠道
  *  enabled switches (GET /api/billing/channels). */
 export interface PayChannelVO {
+  currency?: string;
   key: PayChannel;
   name: string;
 }
 
-/** Billing cycle for plan orders. Yearly charges 12 × the plan's discounted
- *  per-month yearly price and grants 12 × the monthly points. */
+/** Billing cycle for plan orders. Yearly charges the authoritative annual total
+ *  and grants 12 × the paid plan's monthly points. */
 export type BillCycle = "monthly" | "yearly";
 
 /** Body for POST /api/orders (CreateOrderDTO). Only plan purchases are
@@ -98,6 +102,9 @@ export interface CreateOrderDTO {
  *  is the epay cashier URL to redirect the browser to. Status:
  *  0 待支付 / 1 已支付 / 2 已取消 / 3 已退款. */
 export interface OrderVO {
+  market?: "cn" | "en";
+  /** Legacy orders without this field were charged in CNY. */
+  currency?: string;
   id: string;
   orderNo: string;
   type: string;

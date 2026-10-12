@@ -35,7 +35,7 @@ export const aiApi = {
   referenceQuote: (modelId: string, resolution: string, videoUrls: string[]) => http.post<ReferenceVideoQuoteVO>("/api/ai/reference-video-quote", { modelId, resolution, videoUrls }),
 };
 export const orderApi = {
-  create: (data: CreateOrderDTO) => http.post<OrderVO>("/api/orders", data),
+  create: (data: CreateOrderDTO) => http.post<OrderVO>("/api/en/orders", data),
   verify: (id: string) => http.post<{ paid: boolean; granted: boolean }>(`/api/orders/${id}/verify`),
   cancel: (id: string) => http.post<void>(`/api/orders/${id}/cancel`),
 };
