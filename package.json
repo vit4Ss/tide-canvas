@@ -17,7 +17,8 @@
     "test:google": "node tests/google-login-browser.mjs",
     "test:runtime": "node tests/runtime-smoke.mjs",
     "test:stripe": "node tests/stripe-browser.mjs && node tests/stripe-session-browser.mjs && node tests/stripe-dialog-browser.mjs && node tests/stripe-existing-browser.mjs && node tests/stripe-cancel-browser.mjs && node tests/stripe-owner-browser.mjs",
-    "test:pancake": "node tests/pancake-browser.mjs"
+    "test:pancake": "node tests/pancake-browser.mjs",
+    "test:policies": "node tests/legal-pages-browser.mjs"
   },
   "dependencies": {
     "@google/model-viewer": "4.4.0",

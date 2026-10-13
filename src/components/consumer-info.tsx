@@ -14,7 +14,7 @@ function useCustomerResources() {
   const registration = { ...registrationResource, error: registrationResource.error || (!registrationResource.loading && typeof registrationResource.data?.registerClosed !== "boolean" ? "Registration availability could not be confirmed." : "") };
   const plansResource = useResource<PlanVO[]>("/api/billing/en/plans");
   const plans = { ...plansResource, data: Array.isArray(plansResource.data) ? plansResource.data : null, error: plansResource.error || (!plansResource.loading && plansResource.data && !Array.isArray(plansResource.data) ? "Credit prices could not be loaded. Please try again." : "") };
-  const info = { ...consumerDefaults, ...policies.data, supportEmail: policies.data?.supportEmail || config.supportEmail || consumerDefaults.supportEmail };
+  const info = { ...consumerDefaults, ...policies.data, refundTiming: policies.data?.refundTiming || "For Waffo-processed purchases, refunds follow Waffo Pancake's Buyer Terms. Read our refund policy for eligibility, the request window and processing details.", supportEmail: policies.data?.supportEmail || config.supportEmail || consumerDefaults.supportEmail };
   return { info, policies, registration, plans };
 }
 const Context = createContext<ReturnType<typeof useCustomerResources> | null>(null);
@@ -39,7 +39,7 @@ export function ConsumerPolicies({ fields = Object.keys(policyLabels) as (keyof 
   return <section className="consumer-policies" aria-label="Purchase and usage policies">
     <h2>Before you purchase or upload</h2>
     {policies.error && <p className="small muted">The latest policy details could not be loaded. <button className="text-link" onClick={policies.refresh}>Try again</button></p>}
-    <dl>{fields.map((key) => <div key={key}><dt>{policyLabels[key]}</dt><dd>{info[key] || (policies.loading ? "Checking published details…" : "Not yet published.")}</dd></div>)}</dl>
+    <dl>{fields.map((key) => <div key={key}><dt>{policyLabels[key]}</dt><dd>{info[key] || (policies.loading ? "Checking published details…" : "Not yet published.")}{key === "refundTiming" && <> <Link href="/refunds">Read the refund policy</Link>.</>}</dd></div>)}</dl>
     {!policies.loading && fields.some(key => !info[key]) && <p className="small muted">Some terms have not been published. Ask support to confirm them before purchasing or uploading material that depends on these terms.</p>}
     <SupportLink />
   </section>;

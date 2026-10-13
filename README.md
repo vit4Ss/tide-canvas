@@ -216,3 +216,15 @@ admin payment channels and follow backend `docs/PANCAKE.md`. The EN frontend nee
 no Waffo credentials. Pancake checkout opens in a new tab from the invoice; prices
 exclude applicable tax, with tax and the final paid amount shown separately.
 Run `npm run test:pancake` for the mocked browser payment/return/refund flow.
+
+Public purchase and content policies are available at `/terms`, `/refunds`,
+`/aup` and `/privacy`. Waffo-processed refunds follow its published Buyer Terms;
+Framelyn does not add a separate guaranteed approval or bank-arrival deadline.
+The homepage, terms and model collection render actual public media-model names
+on the server so visitors and review tools can read them without JavaScript.
+No substitute model names are invented when the catalogue is unavailable.
+
+`npm run test:policies` checks the public pages with JavaScript disabled and on
+desktop/mobile sizes; it needs the configured backend's public model catalogue.
+Independent prompt/output moderation is still pending: the public AUP describes
+provider-side safety responses and report-based review, not unimplemented screening.

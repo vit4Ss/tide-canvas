@@ -7,7 +7,7 @@ import { ArrowRight, ArrowUpRight, AudioLines, Box, CircleAlert, Image as ImageI
 import { MODEL_PROVIDERS, modelProvider } from "@/lib/model-providers";
 import { modelName, number } from "@/lib/brand";
 import { useResource } from "@/lib/use-resource";
-import { isMediaModel } from "@/lib/model-visibility";
+import { publicMediaModels } from "@/lib/public-models";
 import { catalogCreditValue } from "@/lib/catalog-presentation";
 import type { StudioModel } from "@/lib/api";
 import { modelGuidance } from "@/lib/model-guidance";
@@ -81,7 +81,7 @@ function ModelCard({ model, selected, onCompare, onExamples }: { model: StudioMo
   </article>;
 }
 
-export function Catalog({ providerId = "" }: { providerId?: string }) {
+export function Catalog({ providerId = "", initialModels = [] }: { providerId?: string; initialModels?: StudioModel[] }) {
   const [comparison, setComparison] = useState<string[]>([]);
   const [example, setExample] = usePreviewState<StudioModel>("model-examples");
   const [compareNotice, setCompareNotice] = useState("");
@@ -91,7 +91,7 @@ export function Catalog({ providerId = "" }: { providerId?: string }) {
   const search = query.get("q") || "";
   const searchRef = useRef<HTMLInputElement>(null);
   const resource = useResource<StudioModel[]>("/api/market/studio-models");
-  const available = useMemo(() => (resource.data || []).filter((model) => isMediaModel(model) && (!provider || modelProvider(model)?.id === provider.id)), [resource.data, provider]);
+  const available = useMemo(() => publicMediaModels(resource.data ?? initialModels).filter((model) => !provider || modelProvider(model)?.id === provider.id), [resource.data, initialModels, provider]);
   // Replace this history entry so Back returns to the chosen collection without
   // creating a history entry or requesting the catalog for every keystroke.
   const updateFilters = (nextFilter: string, nextSearch: string) => {
@@ -106,7 +106,8 @@ export function Catalog({ providerId = "" }: { providerId?: string }) {
   const models = available.filter((model) => (filter === "all" || model.type === filter) && `${modelName(model)} ${model.modelKey} ${modelProvider(model)?.name || ""}`.toLowerCase().includes(search.trim().toLowerCase()));
   const families = MODEL_PROVIDERS.filter((item) => available.some((model) => modelProvider(model)?.id === item.id));
   const formatCount = new Set(available.map((model) => model.type)).size;
-  const ready = !resource.loading && !resource.error;
+  const loading = resource.loading && initialModels.length === 0;
+  const ready = !loading && (!resource.error || initialModels.length > 0);
   const filtering = Boolean(provider || filter !== "all" || search);
   const resetAction = provider
     ? <Link href="/models" className="button small">Reset filters <X size={13} aria-hidden="true" /></Link>
@@ -140,13 +141,13 @@ export function Catalog({ providerId = "" }: { providerId?: string }) {
       <div className={styles.search}><Search size={16} aria-hidden="true" /><input ref={searchRef} aria-label="Search models" placeholder="Find a model…" value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setSearch(""); }} />{search && <button onClick={() => { setSearch(""); searchRef.current?.focus(); }} aria-label="Clear search"><X size={14} aria-hidden="true" /></button>}</div>
     </div>
     {ready && <div className={styles.results}><span aria-live="polite">{models.length} {models.length === 1 ? "model" : "models"}{filter !== "all" ? ` · ${categories.find((item) => item.value === filter)?.label}` : " in the collection"}</span>{filtering && models.length > 0 ? resetAction : <span>Find a model. Make a start.</span>}</div>}
-    {resource.loading && <Loading label="Opening the collection…" />}
+    {loading && <Loading label="Opening the collection…" />}
     {resource.error && <Alert>{resource.error}<button className="text-link" onClick={resource.refresh}>Try again</button></Alert>}
     {ready && !models.length && <EmptyState title={filtering ? "No matching models." : "Nothing here just yet."} description={filtering ? "Try another model name or start again with the full collection." : "Available models will appear here when they are published."} action={filtering ? resetAction : undefined} />}
     {compareNotice && <p role="status">{compareNotice}</p>}
     {comparison.length > 0 && <section className="model-comparison" aria-label="Model comparison"><div className="toolbar"><h2>Compare your options</h2><button className="button small" onClick={() => {setComparison([]);setCompareNotice("");}}>Clear comparison</button></div><p className="small muted">Capabilities come from the current catalog. Generation times and quality vary; no speed ranking or result guarantee is implied.</p><div className="table-wrap"><table><thead><tr><th>Model</th><th>Format</th><th>Supported settings</th><th>Credits</th><th>Try it</th></tr></thead><tbody>{available.filter(model => comparison.includes(model.id)).map(model => <tr key={model.id}><th>{modelName(model)}</th><td>{categories.find(c => c.value === model.type)?.label}</td><td>{modelGuidance(model)}</td><td>{catalogCreditValue(model) === null ? "Varies with settings — estimate in Studio" : `${number(catalogCreditValue(model)!)} per request`}</td><td><Link className="button small" href={`/studio?type=${model.type}&model=${encodeURIComponent(model.modelKey)}`}>Open Studio</Link></td></tr>)}</tbody></table></div></section>}
-    <div className={styles.grid} aria-busy={resource.loading}>
-      {resource.loading ? Array.from({ length: 6 }, (_, i) => <div key={i} className={styles.skeleton} aria-hidden="true"><span /><div><i /><i /><i /></div></div>) : models.map((model) => <ModelCard key={model.id} model={model} selected={comparison.includes(model.id)} onExamples={() => setExample(model)} onCompare={() => {setCompareNotice("");if(comparison.includes(model.id)) setComparison(comparison.filter(id => id !== model.id));else if(comparison.length < 3) setComparison([...comparison,model.id]);else setCompareNotice("Compare up to three models. Remove one before adding another.");}} />)}
+    <div className={styles.grid} aria-busy={loading}>
+      {loading ? Array.from({ length: 6 }, (_, i) => <div key={i} className={styles.skeleton} aria-hidden="true"><span /><div><i /><i /><i /></div></div>) : models.map((model) => <ModelCard key={model.id} model={model} selected={comparison.includes(model.id)} onExamples={() => setExample(model)} onCompare={() => {setCompareNotice("");if(comparison.includes(model.id)) setComparison(comparison.filter(id => id !== model.id));else if(comparison.length < 3) setComparison([...comparison,model.id]);else setCompareNotice("Compare up to three models. Remove one before adding another.");}} />)}
     </div>
     <div className={styles.note}><SlidersHorizontal size={18} aria-hidden="true" /><p>Fine-tune resolution, format and creative controls in the studio. You&apos;ll see your credit estimate before you create.</p><Link href="/docs">Explore the model guide <ArrowRight size={15} aria-hidden="true" /></Link></div>
     {example && <Modal title="Published model examples" size="media" onClose={() => setExample(null)}><PublishedExamples model={example} /></Modal>}
