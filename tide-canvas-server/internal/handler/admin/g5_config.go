@@ -80,6 +80,7 @@ var baselineConfigKeys = func() map[string]struct{} {
 		"points.inviteReward":                {},
 		"points.signupBonus":                 {},
 		"storage.ossAccelerateEnabled":       {},
+		"storage.ossUploadAccelerateEnabled": {},
 	}
 	for _, key := range model.SupplierBalanceConfigKeys {
 		keys[key] = struct{}{}
@@ -144,7 +145,7 @@ func RegisterConfig(g *gin.RouterGroup, d *app.Deps) {
 					return
 				}
 			}
-			if key == "storage.ossAccelerateEnabled" && items[i].ConfigValue != "0" && items[i].ConfigValue != "1" {
+			if (key == "storage.ossAccelerateEnabled" || key == "storage.ossUploadAccelerateEnabled") && items[i].ConfigValue != "0" && items[i].ConfigValue != "1" {
 				response.Fail(c, response.CodeBadRequest, "OSS 传输加速开关必须是 0 或 1")
 				return
 			}

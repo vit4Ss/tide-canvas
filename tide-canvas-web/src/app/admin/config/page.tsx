@@ -112,8 +112,12 @@ const MANAGED_ELSEWHERE: Record<string, { hint: string; href: string }> = {
 const BOOL_KEYS: Record<string, { on: string; off: string }> = {
   "auth.registerClosed": { on: "已关闭注册：新用户无法自助注册", off: "开放注册：用户可自助注册" },
   "storage.ossAccelerateEnabled": {
-    on: "已开启：上传与上游取图使用 OSS 传输加速；重启后端生效",
-    off: "已关闭：上传使用地域 OSS，模型取图使用 CDN（未配置则地域 OSS）；重启后端生效",
+    on: "已开启：OSS 读取、管理与模型取图使用传输加速；上传由独立开关控制，重启后端生效",
+    off: "已关闭：模型取图使用 CDN（未配置则地域 OSS）；不影响上传加速，重启后端生效",
+  },
+  "storage.ossUploadAccelerateEnabled": {
+    on: "已开启：浏览器直传和后端上传均使用 OSS 加速域名；重启后端生效",
+    off: "已关闭：浏览器直传和后端上传均使用地域 OSS；重启后端生效",
   },
   "balance.dlapi.enabled": { on: "已启用 DLAPI 余额监控", off: "已停用 DLAPI 余额监控" },
   "balance.mikoto.enabled": { on: "已启用 Mikoto 余额监控", off: "已停用 Mikoto 余额监控" },
@@ -171,6 +175,7 @@ const BASELINE_KEYS = new Set([
   "points.inviteReward",
   "points.signupBonus",
   "storage.ossAccelerateEnabled",
+  "storage.ossUploadAccelerateEnabled",
   "social.tikhub.enabled",
   "social.tikhub.baseUrl",
   "social.tikhub.apiKey",

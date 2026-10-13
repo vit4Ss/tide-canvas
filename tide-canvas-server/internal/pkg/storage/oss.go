@@ -19,24 +19,23 @@ import (
 // namespaced under a configurable project prefix (e.g. "canvas/uploads/") so a
 // bucket shared across projects never collides. Public URLs are built from the
 // CDN domain when set, else the bucket's regional virtual-host. When a
-// transfer-acceleration host is configured and enabled it is used for (a)
-// server-side uploads and direct-upload presigns and (b) URLs handed to
-// overseas suppliers. When disabled, writes use the regional endpoint and
-// upstream reads stay on the public CDN; the configured host remains recognized
-// so older persisted URLs continue to work.
+// transfer-acceleration host is configured, uploads and supplier reads can use
+// it independently. Upload acceleration defaults on, including deployments where
+// the older reads/upstream acceleration switch is off. Public URLs stay on CDN.
 
 // presignTTL bounds a direct-upload signed URL.
 const presignTTL = 10 * time.Minute
 
 // OSSStorage persists blobs to an OSS bucket.
 type OSSStorage struct {
-	bucket *oss.Bucket
-	prefix string // normalized, no leading slash, trailing slash kept off
+	bucket       *oss.Bucket
+	uploadBucket *oss.Bucket // server writes and browser PUT grants share this client
+	prefix       string      // normalized, no leading slash, trailing slash kept off
 
 	publicBase     string   // base for frontend-facing URLs (CDN or regional)
 	regionalBase   string   // bucket virtual-host on the regional endpoint
 	accelerateBase string   // bucket host on the transfer-acceleration endpoint
-	accelerateOn   bool     // whether writes/presigns/upstream reads use acceleration
+	accelerateOn   bool     // whether upstream reads use acceleration
 	legacyBases    []string // 历史存储域名(老数据遗留),读时一并改写为 publicBase
 }
 
@@ -55,30 +54,44 @@ func NewOSSStorage(cfg config.StorageConfig) (*OSSStorage, error) {
 		publicBase = cdn
 	}
 	accelerateBase := normalizeBase(cfg.AccelerateDomain)
+	accelerateOn := cfg.AccelerateEnabled && accelerateBase != ""
+	if accelerateBase == "" && cfg.UploadAccelerateEnabled {
+		accelerateBase = "https://" + bucketName + ".oss-accelerate.aliyuncs.com"
+	}
 
-	// 配了传输加速域名时,上传/删除/直传签名统一走加速 endpoint(跨境提速);
-	// 展示 URL 不受影响,仍由 publicBase(CDN 优先)决定。
-	clientEndpoint := endpoint
-	var clientOpts []oss.ClientOption
-	if cfg.AccelerateEnabled && accelerateBase != "" {
-		clientEndpoint, clientOpts = accelerateClient(accelerateBase, bucketName)
+	newBucket := func(accelerated bool) (*oss.Bucket, error) {
+		clientEndpoint := endpoint
+		var clientOpts []oss.ClientOption
+		if accelerated {
+			clientEndpoint, clientOpts = accelerateClient(accelerateBase, bucketName)
+		}
+		client, err := oss.New(clientEndpoint, cfg.AccessKey, cfg.SecretKey, clientOpts...)
+		if err != nil {
+			return nil, fmt.Errorf("storage: oss client: %w", err)
+		}
+		return client.Bucket(bucketName)
 	}
-	client, err := oss.New(clientEndpoint, cfg.AccessKey, cfg.SecretKey, clientOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("storage: oss client: %w", err)
-	}
-	bucket, err := client.Bucket(bucketName)
+	// Preserve the existing policy for reads/metadata/deletes and supplier URLs.
+	bucket, err := newBucket(accelerateOn)
 	if err != nil {
 		return nil, fmt.Errorf("storage: oss bucket: %w", err)
+	}
+	uploadBucket := bucket
+	if cfg.UploadAccelerateEnabled != accelerateOn {
+		uploadBucket, err = newBucket(cfg.UploadAccelerateEnabled)
+		if err != nil {
+			return nil, fmt.Errorf("storage: oss upload bucket: %w", err)
+		}
 	}
 
 	return &OSSStorage{
 		bucket:         bucket,
+		uploadBucket:   uploadBucket,
 		prefix:         strings.Trim(strings.TrimSpace(cfg.Prefix), "/"),
 		publicBase:     publicBase,
 		regionalBase:   regionalBase,
 		accelerateBase: accelerateBase,
-		accelerateOn:   cfg.AccelerateEnabled && accelerateBase != "",
+		accelerateOn:   accelerateOn,
 		legacyBases:    parseLegacyHosts(cfg.LegacyHosts),
 	}, nil
 }
@@ -117,7 +130,7 @@ func (o *OSSStorage) Save(ctx context.Context, key string, r io.Reader, contentT
 	if strings.TrimSpace(contentType) != "" {
 		opts = append(opts, oss.ContentType(contentType))
 	}
-	if err := o.bucket.PutObject(o.objectKey(key), r, opts...); err != nil {
+	if err := o.uploadBucket.PutObject(o.objectKey(key), r, opts...); err != nil {
 		return "", fmt.Errorf("storage: oss put: %w", err)
 	}
 	return o.URL(key), nil
@@ -185,7 +198,7 @@ func (o *OSSStorage) URL(key string) string {
 }
 
 // Presign returns a direct-to-OSS upload grant. Its host follows the client
-// selected at startup: acceleration when enabled, regional OSS when disabled.
+// selected at startup by UploadAccelerateEnabled, independently of upstream URLs.
 
 func (o *OSSStorage) Presign(ctx context.Context, key, contentType string, expectedSize int64) (PresignResult, error) {
 	_ = ctx
@@ -199,7 +212,7 @@ func (o *OSSStorage) Presign(ctx context.Context, key, contentType string, expec
 	// The signed x-oss-forbid-overwrite header makes each random key immutable:
 	// replaying the URL cannot replace an asset after it has been registered.
 	opts = append(opts, oss.ForbidOverWrite(true), oss.ContentLength(expectedSize))
-	signed, err := o.bucket.SignURL(o.objectKey(key), oss.HTTPPut, int64(presignTTL/time.Second), opts...)
+	signed, err := o.uploadBucket.SignURL(o.objectKey(key), oss.HTTPPut, int64(presignTTL/time.Second), opts...)
 	if err != nil {
 		return PresignResult{}, fmt.Errorf("storage: oss sign: %w", err)
 	}

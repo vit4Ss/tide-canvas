@@ -82,6 +82,22 @@ func TestLoadAllowsDisablingStorageAccelerationFromEnv(t *testing.T) {
 	if cfg.Storage.AccelerateDomain == "" {
 		t.Fatal("disabling acceleration must retain the configured domain for legacy URL recognition")
 	}
+	if !cfg.Storage.UploadAccelerateEnabled {
+		t.Fatal("legacy acceleration override must not disable the new upload default")
+	}
+}
+
+func TestLoadAllowsExplicitUploadAccelerationOverride(t *testing.T) {
+	t.Setenv("TIDECANVAS_ENV", "test")
+	t.Setenv("TIDECANVAS_STORAGE_UPLOADACCELERATEENABLED", "false")
+	t.Setenv("TIDECANVAS_STORAGE_ACCELERATEENABLED", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Storage.UploadAccelerateEnabled || !cfg.Storage.AccelerateEnabled {
+		t.Fatal("upload acceleration override must remain independent of upstream acceleration")
+	}
 }
 
 func TestLoadIgnoresLegacyDLAPIEnvironmentCredentials(t *testing.T) {
@@ -164,6 +180,9 @@ func TestLoadProdAppliesOverlay(t *testing.T) {
 	}
 	if !cfg.Storage.AccelerateEnabled || cfg.Storage.AccelerateDomain != "flowlinght.oss-accelerate.aliyuncs.com" {
 		t.Errorf("production storage acceleration = %v, %q", cfg.Storage.AccelerateEnabled, cfg.Storage.AccelerateDomain)
+	}
+	if !cfg.Storage.UploadAccelerateEnabled {
+		t.Fatal("production uploads must default to OSS acceleration")
 	}
 }
 

@@ -62,7 +62,8 @@ storage:
   region: ""
   prefix: canvas/uploads/ # project root inside the (possibly shared) bucket
   cdnDomain: "" # optional CDN host for display URLs
-  accelerateEnabled: true # true=uploads/upstream fetch use transfer acceleration; false=regional OSS + CDN
+  accelerateEnabled: true # reads/management and upstream fetch; independent of uploads
+  uploadAccelerateEnabled: true # browser PUT and server uploads use OSS acceleration
   accelerateDomain: scaecrowtoken.oss-accelerate.aliyuncs.com # cross-border upstream fetch
 
 cors:

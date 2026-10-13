@@ -35,4 +35,5 @@ storage:
   # 上游取参考图失败表现为「图片编辑需要至少一张参考图」）。若更换桶，记得
   # 同步开启加速并更新测试库 sys_config 的 storage.ossAccelerateDomain。
   accelerateEnabled: true
+  uploadAccelerateEnabled: true
   accelerateDomain: flowlinght-test.oss-accelerate.aliyuncs.com

@@ -34,7 +34,7 @@ func TestOSSReadsAndWritesHonorCallerCancellation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			store := &OSSStorage{bucket: bucket, publicBase: server.URL}
+			store := &OSSStorage{bucket: bucket, uploadBucket: bucket, publicBase: server.URL}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := make(chan error, 1)

@@ -104,6 +104,23 @@ TIDECANVAS_ENV=prod TIDECANVAS_JWT_SECRET=... TIDECANVAS_RELAY_APIKEY=... go run
 | `relay.apiKey`     | `TIDECANVAS_RELAY_APIKEY`        |
 | `worldLabs.apiKey` | `TIDECANVAS_WORLDLABS_APIKEY`    |
 
+### OSS 上传加速
+
+OSS 上传由 `storage.uploadAccelerateEnabled` 独立控制，默认开启。
+浏览器 `/api/files/presign` 返回的 PUT 地址和后端文件转存使用相同的上传客户端；
+生产环境默认使用 `flowlinght.oss-accelerate.aliyuncs.com`，测试环境使用
+`flowlinght-test.oss-accelerate.aliyuncs.com`。加速域名留空时，根据当前桶生成
+`https://<bucket>.oss-accelerate.aliyuncs.com`，不会把测试文件传入生产桶。
+
+部署新后端并重启时，缺失的 `storage.ossUploadAccelerateEnabled` 数据库配置会
+从文件/环境变量初始化，默认值为 `1`。旧的 `storage.ossAccelerateEnabled=0`
+不会关闭上传加速；原有模型取图策略和 CDN 展示地址保持原配置。
+
+后台「配置管理 → 存储配置」可调整上传开关和 `storage.ossAccelerateDomain`，
+保存后重启后端生效。已有数据库值优先于环境变量；新开关若被明确关闭，后续
+重启会保留该选择。确认实际上传域名时，查看 `/api/files/presign` 返回的
+`uploadUrl`，而不是用于展示的 `fileUrl`。国内和海外前端共用这一后端策略。
+
 > 生产环境密钥（JWT/MySQL/Redis/支付/Relay/World Labs）一律走环境变量注入，
 > 不要写进 `config.prod.yaml` 提交到仓库。
 > Relay 地址由环境固定：`prod` 使用 `https://relay.tcmzhan.com`，其他环境

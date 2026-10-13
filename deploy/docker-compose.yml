@@ -45,7 +45,8 @@ services:
       # OSS 密钥不进镜像，在这里注入或在后台「配置管理→存储配置」录入：
       # TIDECANVAS_STORAGE_ACCESSKEY: ""
       # TIDECANVAS_STORAGE_SECRETKEY: ""
-      # TIDECANVAS_STORAGE_ACCELERATEENABLED: "false" # 上传走地域 OSS；模型取图走 CDN（未配置则地域 OSS）
+      # TIDECANVAS_STORAGE_ACCELERATEENABLED: "false" # 模型取图走 CDN（未配置则地域 OSS）；不影响上传
+      # TIDECANVAS_STORAGE_UPLOADACCELERATEENABLED: "true" # 默认开启：浏览器和后端上传走 OSS 加速域名
       # 供应商余额监控凭据（含 DLAPI）全部在后台「配置管理 → 供应商余额」
       # 维护，保存后实时生效；旧的 TIDECANVAS_BALANCEMONITOR_* 环境变量已废弃。
     volumes:

@@ -60,7 +60,7 @@ var storageFields = []storageField{
 	{"storage.ossCdnDomain", "CDN 域名（可选），用于生成展示 URL",
 		func(c config.StorageConfig) string { return c.CDNDomain },
 		func(c *config.StorageConfig, v string) { c.CDNDomain = v }},
-	{"storage.ossAccelerateEnabled", "OSS 传输加速开关；关闭后上传走地域 OSS、上游取图走 CDN（未配置则地域 OSS），修改后重启生效",
+	{"storage.ossAccelerateEnabled", "OSS 读取、管理与上游取图加速开关；关闭后上游取图走 CDN（未配置则地域 OSS），不影响上传加速；修改后重启生效",
 		func(c config.StorageConfig) string {
 			if c.AccelerateEnabled {
 				return "1"
@@ -68,7 +68,15 @@ var storageFields = []storageField{
 			return "0"
 		},
 		func(c *config.StorageConfig, v string) { c.AccelerateEnabled = storedStorageBool(v) }},
-	{"storage.ossAccelerateDomain", "OSS 传输加速域名（可选），跨境上传与上游取图用",
+	{"storage.ossUploadAccelerateEnabled", "OSS 上传加速开关（默认开启）；浏览器直传和后端上传均使用加速域名，独立于上游取图开关；修改后重启生效",
+		func(c config.StorageConfig) string {
+			if c.UploadAccelerateEnabled {
+				return "1"
+			}
+			return "0"
+		},
+		func(c *config.StorageConfig, v string) { c.UploadAccelerateEnabled = storedStorageBool(v) }},
+	{"storage.ossAccelerateDomain", "OSS 传输加速域名；上传加速开启且留空时使用当前桶的标准加速域名",
 		func(c config.StorageConfig) string { return c.AccelerateDomain },
 		func(c *config.StorageConfig, v string) { c.AccelerateDomain = v }},
 	{"storage.ossLegacyHosts", "历史存储域名（逗号分隔），读时统一改写为 CDN 域名",
@@ -96,10 +104,16 @@ func SeedAndLoadConfig(db *gorm.DB, base config.StorageConfig) (config.StorageCo
 			Group:       storageConfigGroup,
 			Description: f.desc,
 		}
-		if err := db.Clauses(clause.OnConflict{
+		conflict := clause.OnConflict{
 			Columns:   []clause.Column{{Name: "config_key"}},
 			DoNothing: true,
-		}).Create(&row).Error; err != nil {
+		}
+		// Refresh the split policy's help text without overwriting admin values.
+		if f.key == "storage.ossAccelerateEnabled" || f.key == "storage.ossUploadAccelerateEnabled" || f.key == "storage.ossAccelerateDomain" {
+			conflict.DoNothing = false
+			conflict.DoUpdates = clause.AssignmentColumns([]string{"description"})
+		}
+		if err := db.Clauses(conflict).Create(&row).Error; err != nil {
 			return base, err
 		}
 	}

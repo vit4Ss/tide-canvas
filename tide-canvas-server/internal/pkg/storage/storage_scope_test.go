@@ -23,8 +23,10 @@ func TestScopeIDTracksPhysicalNamespaceWithoutCredentials(t *testing.T) {
 	credentialsChanged.AccessKey = "second-access"
 	credentialsChanged.SecretKey = "second-secret"
 	credentialsChanged.CDNDomain = "https://cdn-two.example.com"
+	credentialsChanged.UploadAccelerateEnabled = true
+	credentialsChanged.AccelerateDomain = "https://example-bucket.oss-accelerate.aliyuncs.com"
 	if other := ScopeID(credentialsChanged); other != got {
-		t.Fatalf("credentials or display domain changed physical scope: %q != %q", other, got)
+		t.Fatalf("credentials, display domain or upload transport changed physical scope: %q != %q", other, got)
 	}
 
 	prefixChanged := base
