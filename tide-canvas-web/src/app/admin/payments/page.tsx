@@ -372,7 +372,7 @@ export default function AdminPaymentsPage() {
               { header: "渠道", width: "14%", className: "strong", cell: (r) => r.name },
               { header: "类型", width: "10%", className: "muted", cell: (r) => r.type || "—" },
               { header: "费率", width: "8%", className: "mono", cell: (r) => pct(r.rate) },
-              { header: "今日金额", width: "12%", className: "mono", cell: (r) => r.type.toLowerCase() === "stripe" ? "见订单流水" : orderMoney(r.todayAmount, r.currency) },
+              { header: "今日金额", width: "12%", className: "mono", cell: (r) => ["stripe", "pancake"].includes(r.type.toLowerCase()) ? "见订单流水" : orderMoney(r.todayAmount, r.currency) },
               {
                 header: "回调",
                 width: "34%",
@@ -522,7 +522,11 @@ export default function AdminPaymentsPage() {
                   width: "10%",
                   align: "right",
                   className: "mono strong",
-                  cell: (r) => orderMoney(r.amount, r.currency),
+                  cell: (r) => r.payMethod === "pancake" ? <div>
+                    <div>{orderMoney(r.amount, r.currency)} 税前</div>
+                    {!!r.chargedTotal && <div className="muted">实付 {orderMoney(r.chargedTotal, r.currency)}</div>}
+                    {!!r.refundedTotal && <div className="muted">已退 {orderMoney(r.refundedTotal, r.currency)}</div>}
+                  </div> : orderMoney(r.amount, r.currency),
                 },
                 { header: "渠道", width: "8%", cell: (r) => r.payMethod || "—" },
                 {
@@ -545,7 +549,7 @@ export default function AdminPaymentsPage() {
                   // 仅已支付订单可退款;其余状态无操作。
                   cell: (r) =>
                     r.status === 1 ? (
-                      <RowActions actions={[{ label: "账务退款", danger: true, onClick: () => refundOrder(r) }]} />
+                      r.payMethod === "pancake" ? <span>请在 Pancake 后台退款，系统自动同步</span> : <RowActions actions={[{ label: "账务退款", danger: true, onClick: () => refundOrder(r) }]} />
                     ) : (
                       <span className="muted">—</span>
                     ),
@@ -584,7 +588,7 @@ export default function AdminPaymentsPage() {
             </Field>
             <Field label="类型" required span={2}>
               <input
-                placeholder="如：wechat / alipay / stripe"
+                placeholder="如：wechat / alipay / stripe / pancake"
                 value={chForm.type}
                 onChange={(e) => setChForm((f) => ({ ...f, type: e.target.value }))}
               />

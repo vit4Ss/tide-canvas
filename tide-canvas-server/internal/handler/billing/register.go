@@ -45,6 +45,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	b.GET("/notify", h.notify)
 	b.POST("/notify", h.notify)
 	b.POST("/stripe/webhook", h.stripeWebhook)
+	b.POST("/pancake/webhook", h.pancakeWebhook)
 
 	// A separate namespace cannot fall back to CNY billing on an older server.
 	en := &handler{svc: h.svc, market: model.BillingMarketEN}

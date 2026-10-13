@@ -56,6 +56,9 @@ type g4PaymentsHandler struct {
 // g4OrderVO is the admin order-row view. It carries the buyer block so the
 // finance screen can show who paid without a second lookup.
 type g4OrderVO struct {
+	ChargedTotal  float64       `json:"chargedTotal,omitempty"`
+	TaxTotal      float64       `json:"taxTotal,omitempty"`
+	RefundedTotal float64       `json:"refundedTotal,omitempty"`
 	Currency      string        `json:"currency"`
 	Market        string        `json:"market"`
 	ID            idgen.ID      `json:"id"`
@@ -199,6 +202,11 @@ func (h *g4PaymentsHandler) getOrder(c *gin.Context) {
 func (h *g4PaymentsHandler) refundOrder(c *gin.Context) {
 	id, ok := g4ParseID(c)
 	if !ok {
+		return
+	}
+	var providerOrder model.Order
+	if err := h.db.First(&providerOrder, "id = ?", id).Error; err == nil && providerOrder.PayMethod == "pancake" {
+		response.Fail(c, response.CodeBadRequest, "Pancake 订单请在供应商后台退款，系统会同步实际退款与积分回收。")
 		return
 	}
 
@@ -417,6 +425,9 @@ func g4ToOrderVO(o *model.Order, u *model.User) g4OrderVO {
 		Status:        o.Status,
 		CreateTime:    g4FormatTime(o.CreateTime),
 	}
+	vo.ChargedTotal, _ = o.ChargedTotal.Float64()
+	vo.TaxTotal, _ = o.TaxTotal.Float64()
+	vo.RefundedTotal, _ = o.RefundedTotal.Float64()
 	if o.PayTime != nil {
 		vo.PayTime = g4FormatTime(*o.PayTime)
 	}
@@ -437,7 +448,7 @@ func g4ToPayChannelVO(p *model.PayChannel) g4PayChannelVO {
 	rate, _ := p.Rate.Float64()
 	today, _ := p.TodayAmount.Float64()
 	currency := model.CurrencyCNY
-	if strings.EqualFold(strings.TrimSpace(p.Type), "stripe") {
+	if strings.EqualFold(strings.TrimSpace(p.Type), "stripe") || strings.EqualFold(strings.TrimSpace(p.Type), "pancake") {
 		currency = model.CurrencyUSD
 	}
 	return g4PayChannelVO{

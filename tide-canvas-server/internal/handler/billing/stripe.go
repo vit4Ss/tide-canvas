@@ -82,7 +82,7 @@ func stripeMode(env string) string {
 }
 
 func orderDeadline(o *model.Order) time.Time {
-	if o.PayMethod == "stripe" && o.CheckoutExpiresAt != nil {
+	if (o.PayMethod == "stripe" || o.PayMethod == "pancake") && o.CheckoutExpiresAt != nil {
 		return *o.CheckoutExpiresAt
 	}
 	return payDeadline(o.CreateTime)
@@ -139,7 +139,7 @@ func (s *service) createStripeOrder(userID idgen.ID, dto CreateOrderDTO) (*Order
 		// higher, by settleOrder; an existing tier must not prevent a top-up.
 		// A completed checkout can still have a delayed payment in flight. Only
 		// Stripe-confirmed expiry/failure releases a known session for repurchase.
-		prev := tx.Where("user_id = ? AND plan_id = ? AND market = ? AND currency = ? AND pay_method = ? AND payment_env = ? AND status = 0", userID, planID, "en", "USD", "stripe", stripeMode(s.cfg.Env)).Order("id DESC").First(&order).Error
+		prev := tx.Where("user_id = ? AND plan_id = ? AND market = ? AND currency = ? AND pay_method IN ? AND payment_env = ? AND status = 0", userID, planID, "en", "USD", []string{"stripe", "pancake"}, stripeMode(s.cfg.Env)).Order("id DESC").First(&order).Error
 		if prev == nil {
 			reused = true
 			return nil
@@ -164,7 +164,7 @@ func (s *service) createStripeOrder(userID idgen.ID, dto CreateOrderDTO) (*Order
 		if points > 0 {
 			remaining := model.MaxBillingGrantPoints - buyer.Points - int64(points)
 			var pending []model.Order
-			if err := tx.Select("purchase_snapshot").Where("user_id = ? AND market = ? AND currency = ? AND pay_method = ? AND payment_env = ? AND status = 0", userID, "en", "USD", "stripe", stripeMode(s.cfg.Env)).Find(&pending).Error; err != nil {
+			if err := tx.Select("purchase_snapshot").Where("user_id = ? AND market = ? AND currency = ? AND pay_method IN ? AND payment_env = ? AND status = 0", userID, "en", "USD", []string{"stripe", "pancake"}, stripeMode(s.cfg.Env)).Find(&pending).Error; err != nil {
 				return err
 			}
 			for _, item := range pending {
@@ -185,6 +185,13 @@ func (s *service) createStripeOrder(userID idgen.ID, dto CreateOrderDTO) (*Order
 	})
 	if err != nil {
 		return nil, err
+	}
+	if order.PayMethod == "pancake" {
+		vo, err := s.getOrder(order.ID, userID)
+		if vo != nil {
+			vo.ExistingCheckout = true
+		}
+		return vo, err
 	}
 	vo, err := s.resumeStripeCheckout(ctx, order.ID, userID)
 	if err == nil {

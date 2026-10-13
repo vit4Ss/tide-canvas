@@ -1,0 +1,27 @@
+# Merge with the existing shared backend compose. Does not replace databases,
+# upload volumes, the CN frontend, MCP, or the separate EN frontend.
+# docker compose -f docker-compose.yml -f compose.pancake.yml up -d backend payments
+services:
+  backend:
+    environment:
+      TIDECANVAS_PANCAKE_ENABLED: "${TIDECANVAS_PANCAKE_ENABLED:-false}"
+      TIDECANVAS_PANCAKE_ADAPTERURL: "http://127.0.0.1:${PAYMENTS_PORT:-8083}"
+      TIDECANVAS_PANCAKE_INTERNALTOKEN: "${PAYMENTS_INTERNAL_TOKEN:?Set a random internal token}"
+      TIDECANVAS_PANCAKE_STOREID: "${WAFFO_STORE_ID:-}"
+      TIDECANVAS_PANCAKE_PRODUCTID: "${WAFFO_PRODUCT_ID:-}"
+      TIDECANVAS_PANCAKE_SITEURL: "${WAFFO_SITE_URL:?Set the matching Framelyn site origin}"
+  payments:
+    image: ghcr.io/vit4ss/tide-canvas-payments:latest
+    container_name: tidecanvas-payments
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      WAFFO_ENV: "${WAFFO_ENV:-test}"
+      WAFFO_MERCHANT_ID: "${WAFFO_MERCHANT_ID:-}"
+      WAFFO_STORE_ID: "${WAFFO_STORE_ID:-}"
+      WAFFO_PRODUCT_ID: "${WAFFO_PRODUCT_ID:-}"
+      WAFFO_PRIVATE_KEY: "${WAFFO_PRIVATE_KEY:-}"
+      WAFFO_SITE_URL: "${WAFFO_SITE_URL:?Set the matching Framelyn site origin}"
+      PAYMENTS_INTERNAL_TOKEN: "${PAYMENTS_INTERNAL_TOKEN:?Set a random internal token}"
+      PAYMENTS_HOST: "127.0.0.1"
+      PAYMENTS_PORT: "${PAYMENTS_PORT:-8083}"

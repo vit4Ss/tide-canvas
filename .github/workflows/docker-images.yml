@@ -38,6 +38,10 @@ jobs:
             context: tide-canvas-mcp
             image: tide-canvas-mcp
             build-args: ""
+          - name: payments
+            context: tide-canvas-payments
+            image: tide-canvas-payments
+            build-args: ""
     steps:
       - uses: actions/checkout@v4
 

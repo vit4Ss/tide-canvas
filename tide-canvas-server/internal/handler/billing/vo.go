@@ -55,6 +55,10 @@ type PlanPromoVO struct {
 
 // OrderVO is the order view returned by create/list/detail.
 type OrderVO struct {
+	CancelAvailable   *bool     `json:"cancelAvailable,omitempty"`
+	ChargedTotal      float64   `json:"chargedTotal,omitempty"`
+	TaxTotal          float64   `json:"taxTotal,omitempty"`
+	RefundedTotal     float64   `json:"refundedTotal,omitempty"`
 	PrepareBefore     *string   `json:"prepareBefore,omitempty"`
 	ExistingCheckout  bool      `json:"existingCheckout,omitempty"`
 	PaymentProcessing bool      `json:"paymentProcessing,omitempty"`
@@ -149,12 +153,19 @@ func toOrderVO(o *model.Order) OrderVO {
 		Status:            o.Status,
 		CreateTime:        formatTime(o.CreateTime),
 	}
-	if o.PayMethod == "stripe" {
+	if o.PayMethod == "stripe" || o.PayMethod == "pancake" {
 		var snapshot stripePurchase
 		if json.Unmarshal([]byte(o.PurchaseSnapshot), &snapshot) == nil {
 			vo.PlanName = snapshot.Name
 			vo.Credits = &snapshot.Points
 		}
+	}
+	if o.PayMethod == "pancake" {
+		cancelable := o.Status == 0 && o.CheckoutStartedAt == nil
+		vo.CancelAvailable = &cancelable
+		vo.ChargedTotal, _ = o.ChargedTotal.Float64()
+		vo.TaxTotal, _ = o.TaxTotal.Float64()
+		vo.RefundedTotal, _ = o.RefundedTotal.Float64()
 	}
 	if o.PayTime != nil && !o.PayTime.IsZero() {
 		t := o.PayTime.Format(time.RFC3339)

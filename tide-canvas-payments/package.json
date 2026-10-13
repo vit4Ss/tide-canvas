@@ -1,0 +1,22 @@
+{
+  "name": "tide-canvas-payments",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "check:waffo": "npm run build && node --env-file=.env dist/check.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@waffo/pancake-ts": "0.26.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2"
+  }
+}

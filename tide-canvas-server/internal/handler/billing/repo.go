@@ -115,7 +115,7 @@ func (r *repo) updateOrderPayMethod(id idgen.ID, method string) error {
 // before `cutoff`) to 已取消. Called on list so 待支付 rows are always payable.
 func (r *repo) cancelExpiredOrders(userID idgen.ID, cutoff time.Time) error {
 	return r.db.Model(&model.Order{}).
-		Where("user_id = ? AND status = ? AND (((pay_method IS NULL OR pay_method <> ?) AND create_time < ?) OR (pay_method = ? AND checkout_session_id IS NULL AND checkout_expires_at < ?))", userID, 0, "stripe", cutoff, "stripe", time.Now().UTC().Add(stripePreparationLead)).
+		Where("user_id = ? AND status = ? AND (((pay_method IS NULL OR pay_method NOT IN ?) AND create_time < ?) OR (pay_method = ? AND checkout_session_id IS NULL AND checkout_expires_at < ?))", userID, 0, []string{"stripe", "pancake"}, cutoff, "stripe", time.Now().UTC().Add(stripePreparationLead)).
 		Updates(map[string]any{"status": 2, "payment_processing": false}).Error
 }
 

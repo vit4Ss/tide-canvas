@@ -16,6 +16,9 @@ export interface AdminOrderUser {
 
 /** g4OrderVO — admin order-row view (read-only ledger). */
 export interface AdminOrder {
+  chargedTotal?: number;
+  taxTotal?: number;
+  refundedTotal?: number;
   currency?: string;
   market?: string;
   id: string;

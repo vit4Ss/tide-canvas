@@ -40,6 +40,7 @@ type Config struct {
 	Email           EmailConfig           `mapstructure:"email"`
 	Google          GoogleConfig          `mapstructure:"google"`
 	Stripe          StripeConfig          `mapstructure:"stripe"`
+	Pancake         PancakeConfig         `mapstructure:"pancake"`
 	LLM             LLMConfig             `mapstructure:"llm"`
 	Relay           RelayConfig           `mapstructure:"relay"`
 	ChatGateway     ChatGatewayConfig     `mapstructure:"chatGateway"`
@@ -400,6 +401,9 @@ func Load() (*Config, error) {
 // defaults. It only runs hard checks in prod so local/test boots stay
 // zero-config.
 func validate(cfg *Config) error {
+	if err := cfg.Pancake.Validate(cfg.Env); err != nil {
+		return err
+	}
 	if err := cfg.Stripe.Validate(cfg.Env); err != nil {
 		return err
 	}
@@ -442,6 +446,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("stripe.secretKey", "")
 	v.SetDefault("stripe.webhookSecret", "")
 	v.SetDefault("stripe.siteUrl", "")
+	v.SetDefault("pancake.enabled", false)
+	v.SetDefault("pancake.adapterUrl", "http://127.0.0.1:8083")
+	v.SetDefault("pancake.internalToken", "")
+	v.SetDefault("pancake.storeId", "")
+	v.SetDefault("pancake.productId", "")
+	v.SetDefault("pancake.siteUrl", "")
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("server.mode", "debug")
 
@@ -587,6 +597,11 @@ const defaultLLMSystemPrompt = "你是 TideCanvas（流光）创作平台的 AI 
 	"请用简洁、专业且有启发性的中文回答用户，必要时给出可执行的创意方向或步骤。"
 
 func normalize(cfg *Config) {
+	cfg.Pancake.AdapterURL = strings.TrimRight(strings.TrimSpace(cfg.Pancake.AdapterURL), "/")
+	cfg.Pancake.InternalToken = strings.TrimSpace(cfg.Pancake.InternalToken)
+	cfg.Pancake.StoreID = strings.TrimSpace(cfg.Pancake.StoreID)
+	cfg.Pancake.ProductID = strings.TrimSpace(cfg.Pancake.ProductID)
+	cfg.Pancake.SiteURL = strings.TrimRight(strings.TrimSpace(cfg.Pancake.SiteURL), "/")
 	cfg.Stripe.SecretKey = strings.TrimSpace(cfg.Stripe.SecretKey)
 	cfg.Stripe.WebhookSecret = strings.TrimSpace(cfg.Stripe.WebhookSecret)
 	cfg.Stripe.SiteURL = strings.TrimSpace(cfg.Stripe.SiteURL)

@@ -110,7 +110,12 @@ type PayChannelVO struct {
 // means checkout is effectively closed (the client shows 未开通).
 func (s *service) listPayChannels(markets ...string) ([]PayChannelVO, error) {
 	if model.BillingMarket(markets...) == model.BillingMarketEN {
-		return s.stripeChannels()
+		first, err := s.pancakeChannels()
+		if err != nil {
+			return nil, err
+		}
+		second, err := s.stripeChannels()
+		return append(first, second...), err
 	}
 	rows, err := s.repo.enabledPayChannels()
 	if err != nil {
@@ -268,6 +273,9 @@ func (s *service) effectivePlanPricing(plan *model.Plan, cycle string) (decimal.
 // = Price, yearly = the yearly TOTAL Features price.
 func (s *service) createOrder(userID idgen.ID, dto CreateOrderDTO, markets ...string) (*OrderVO, error) {
 	if model.BillingMarket(markets...) == model.BillingMarketEN {
+		if dto.PayChannel == "pancake" {
+			return s.createPancakeOrder(userID, dto)
+		}
 		return s.createStripeOrder(userID, dto)
 	}
 	// The requested pay channel must be one the admin has enabled
@@ -568,6 +576,9 @@ func (s *service) verifyOrder(ctx context.Context, userID idgen.ID, orderNo stri
 	if o.PayMethod == "stripe" {
 		return s.verifyStripeOrder(ctx, o)
 	}
+	if o.PayMethod == "pancake" {
+		return s.verifyPancakeOrder(ctx, o)
+	}
 	if !s.pay.Enabled() || model.OrderCurrency(o) != model.CurrencyCNY {
 		return &VerifyResult{}, nil
 	}
@@ -640,6 +651,21 @@ func (s *service) getOrder(id, userID idgen.ID) (*OrderVO, error) {
 	if o.UserID != userID {
 		return nil, errForbidden
 	}
+	if o.PayMethod == "pancake" {
+		vo := toOrderVO(o)
+		channels, err := s.pancakeChannels()
+		if err != nil {
+			return nil, err
+		}
+		available := o.Status == 0 && !o.PaymentProcessing && o.PaymentEnv == stripeMode(s.cfg.Env) && time.Until(orderDeadline(o)) > time.Minute && len(channels) > 0
+		vo.CheckoutAvailable = &available
+		cancelable := o.Status == 0 && o.CheckoutStartedAt == nil
+		vo.CancelAvailable = &cancelable
+		if available && safePancakeURL(o.CheckoutURL) {
+			vo.PayURL = o.CheckoutURL
+		}
+		return &vo, nil
+	}
 	if o.Status == 0 && (time.Now().After(orderDeadline(o)) || (o.PayMethod == "stripe" && stripePreparationExpired(o))) {
 		if o.PayMethod == "stripe" && o.CheckoutSessionID != nil {
 			// URL expiry is not payment failure. Stripe can be processing a bank
@@ -695,6 +721,18 @@ func (s *service) cancelOrder(id, userID idgen.ID) error {
 	}
 	if order.UserID != userID {
 		return errForbidden
+	}
+	if order.PayMethod == "pancake" {
+		// Waffo cannot revoke a not-yet-consumed checkout session. Do not claim
+		// cancellation or permit a replacement while an issued link may charge.
+		result := s.repo.db.Model(order).Where("status = 0 AND checkout_started_at IS NULL").Update("status", 2)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return errBadRequest
+		}
+		return nil
 	}
 	if order.PayMethod == "stripe" {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

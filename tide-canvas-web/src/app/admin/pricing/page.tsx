@@ -610,7 +610,7 @@ function PricingWorkspace({ market, onDirtyChange }: { market: PricingMarket; on
         </AdminAlert>
       ) : null}
 
-      {market === "en" && <AdminAlert tone="info" title="英文站独立美元定价">套餐名称、文案和权益请填写英文。标准包与 12 倍积分包分别维护一次性总价，不做汇率换算；新增套餐默认下架。支持重复购买补充积分，不降低已有会员等级，不自动续费。后台启用 stripe 且后端配置好对应环境密钥后才能购买；未配置时只展示价格。</AdminAlert>}
+      {market === "en" && <AdminAlert tone="info" title="英文站独立美元定价">套餐名称、文案和权益请填写英文。标准包与 12 倍积分包分别维护一次性总价，不做汇率换算；新增套餐默认下架。支持重复购买补充积分，不降低已有会员等级，不自动续费。后台启用 stripe 或 pancake 且后端配置好对应环境密钥后才能购买；未配置时只展示价格。</AdminAlert>}
 
       {/* 套餐管理 */}
       {market === "en" && <ConsumerSettings onDirtyChange={setConsumerDirty} />}

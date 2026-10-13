@@ -158,6 +158,17 @@ func (h *handler) resumeCheckout(c *gin.Context) {
 		h.fail(c, errForbidden, "order not found")
 		return
 	}
+	if order.PayMethod == "pancake" {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+		defer cancel()
+		vo, err := h.svc.resumePancakeCheckout(ctx, id, userID)
+		if err != nil {
+			h.fail(c, err, "Checkout could not be prepared. Retry this order or contact support.")
+			return
+		}
+		response.OK(c, vo)
+		return
+	}
 	if order.PayMethod != "stripe" {
 		response.Fail(c, response.CodeBadRequest, "This order does not use Stripe.")
 		return

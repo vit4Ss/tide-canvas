@@ -123,12 +123,18 @@ type Order struct {
 	PayMethod     string          `gorm:"column:pay_method;type:varchar(32)" json:"payMethod"`
 	TransactionID string          `gorm:"column:transaction_id;type:varchar(128)" json:"transactionId"`
 	// Immutable Stripe purchase snapshot. Nullable unique session IDs preserve legacy orders.
-	CheckoutSessionID *string    `gorm:"type:varchar(255);uniqueIndex" json:"-"`
-	CheckoutURL       string     `gorm:"type:text" json:"-"`
-	CheckoutExpiresAt *time.Time `json:"-"`
-	PaymentEnv        string     `gorm:"type:varchar(8)" json:"-"`
-	PurchaseSnapshot  string     `gorm:"type:text" json:"-"`
-	PaymentProcessing bool       `gorm:"not null;default:false" json:"-"`
+	CheckoutSessionID *string         `gorm:"type:varchar(255);uniqueIndex" json:"-"`
+	CheckoutURL       string          `gorm:"type:text" json:"-"`
+	CheckoutExpiresAt *time.Time      `json:"-"`
+	PaymentEnv        string          `gorm:"type:varchar(8)" json:"-"`
+	PurchaseSnapshot  string          `gorm:"type:text" json:"-"`
+	PaymentProcessing bool            `gorm:"not null;default:false" json:"-"`
+	CheckoutStartedAt *time.Time      `json:"-"`
+	PancakeProviderID *string         `gorm:"type:varchar(128);uniqueIndex" json:"-"`
+	ChargedTotal      decimal.Decimal `gorm:"type:decimal(12,2);not null;default:0" json:"chargedTotal"`
+	TaxTotal          decimal.Decimal `gorm:"type:decimal(12,2);not null;default:0" json:"taxTotal"`
+	RefundedTotal     decimal.Decimal `gorm:"type:decimal(12,2);not null;default:0" json:"refundedTotal"`
+	RefundedPoints    int64           `gorm:"not null;default:0" json:"-"`
 
 	// Status: 0 待支付 / 1 已支付 / 2 已取消 / 3 已退款.
 	Status  int        `gorm:"column:status;type:tinyint;not null;default:0" json:"status"`

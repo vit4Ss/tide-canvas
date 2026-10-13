@@ -24,7 +24,7 @@ export function ConsumerSettings({ onDirtyChange }: { onDirtyChange: (value: boo
       if (!alive) return;
       setLoading(false);
       if (info.success && info.data) { setValue({ ...empty, ...info.data }); setError(""); } else setError(info.message || "无法读取英文消费者说明；请先部署后端接口。");
-      setCheckout(channels.success && Array.isArray(channels.data) ? channels.data.some(c => c.key === "stripe") : null);
+      setCheckout(channels.success && Array.isArray(channels.data) ? channels.data.some(c => ["stripe", "pancake"].includes(c.key)) : null);
       setRegistration(signup.success && typeof signup.data?.registerClosed === "boolean" ? !signup.data.registerClosed : null);
     });
     return () => { alive = false; };
@@ -39,7 +39,7 @@ export function ConsumerSettings({ onDirtyChange }: { onDirtyChange: (value: boo
   const change = (key: keyof Info, text: string) => { setValue(v => ({ ...v, [key]: text })); setDirty(true); setSaved(false); };
   return <Panel title="英文站售后与购买说明" sub="以下信息直接展示在英文站帮助、价格及使用条款中。留空会明确显示尚未发布，请填写已确定的英文承诺。">
     <div style={{ padding: 16 }}>
-    <p style={{ marginBottom: 16 }}>上线检查：Stripe {checkout === null ? "状态待确认" : checkout ? "已可用" : "尚未配置或未启用"} · 新用户注册 {registration === null ? "状态待确认" : registration ? "已开放" : "已关闭"}。美元套餐需在下方单独填写价格并上架；注册开关与中文站共用，不会自动开启。</p>
+    <p style={{ marginBottom: 16 }}>上线检查：美元支付 {checkout === null ? "状态待确认" : checkout ? "已可用" : "尚未配置或未启用"} · 新用户注册 {registration === null ? "状态待确认" : registration ? "已开放" : "已关闭"}。美元套餐需在下方单独填写价格并上架；注册开关与中文站共用，不会自动开启。</p>
     <p style={{ marginBottom: 16 }}>此处维护公开文案，不会自动改变文件清理、积分到期或会员降级规则。请只填写服务实际支持的承诺。</p>
     {error && <AdminAlert title="消费者说明加载或保存失败" tone="error">{error}<button className="adm-btn ghost" type="button" onClick={() => { setLoading(true); setRevision(n => n + 1); }}>重新读取</button></AdminAlert>}
     {saved && <p role="status">已保存，英文站刷新后生效。</p>}
