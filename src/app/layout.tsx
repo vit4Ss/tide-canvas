@@ -4,10 +4,13 @@ import { AuthProvider } from "@/components/auth-provider";
 import { getServerConfig } from "@/lib/server-config";
 import { RuntimeConfigProvider } from "@/components/runtime-config";
 import { SkipLink } from "@/components/skip-link";
+import { ConsumerProvider } from "@/components/consumer-info";
 import "./globals.css";
 import "./studio.css";
 import "./pages.css";
 import "./developers.css";
+import "./consumer.css";
+import "./modals.css";
 
 export const dynamic = "force-dynamic";
 export function generateMetadata(): Metadata {
@@ -16,5 +19,5 @@ export function generateMetadata(): Metadata {
 }
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const { publicConfig } = getServerConfig();
-  return <html lang="en"><body className={GeistSans.className}><SkipLink /><RuntimeConfigProvider config={publicConfig}><AuthProvider><div id="main-content">{children}</div></AuthProvider></RuntimeConfigProvider></body></html>;
+  return <html lang="en"><body className={GeistSans.className}><SkipLink /><RuntimeConfigProvider config={publicConfig}><AuthProvider><ConsumerProvider><div id="main-content">{children}</div></ConsumerProvider></AuthProvider></RuntimeConfigProvider></body></html>;
 }

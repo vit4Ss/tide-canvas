@@ -31,7 +31,7 @@ export function resolveRuntimeConfig(env: Environment) {
     description: "A little imagination. An entirely new world.",
     siteUrl: origin(value(env, "SITE_URL", "NEXT_PUBLIC_SITE_URL") || `http://localhost:${port}`, "SITE_URL"),
     currency,
-    supportEmail: value(env, "SUPPORT_EMAIL", "NEXT_PUBLIC_SUPPORT_EMAIL"),
+    supportEmail: value(env, "SUPPORT_EMAIL", "NEXT_PUBLIC_SUPPORT_EMAIL") || "gudexin748@gmail.com",
     googleClientId: value(env, "GOOGLE_CLIENT_ID", "NEXT_PUBLIC_GOOGLE_CLIENT_ID"),
   };
   return { environment, backendUrl: origin(value(env, "BACKEND_URL") || "http://127.0.0.1:8081", "BACKEND_URL"), publicConfig };

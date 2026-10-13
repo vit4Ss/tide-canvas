@@ -33,6 +33,8 @@ export interface UpscaleQuoteVO {
 }
 
 export interface AiTaskVO {
+
+  displayName?: string;
   isApiCall?: boolean;
   id: string; // 后端雪花 ID 序列化为字符串
   handler: string;

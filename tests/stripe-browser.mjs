@@ -1,0 +1,84 @@
+import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
+import { chromium } from "playwright-core";
+
+const base = process.env.FRONTEND_TEST_URL || "http://localhost:3100";
+await mkdir(".impeccable/review", { recursive: true });
+const browser = await chromium.launch({ headless: true, ...(process.platform === "win32" ? { executablePath: "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe" } : { channel: "chrome" }) });
+try {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  await context.addInitScript(() => { localStorage.setItem("access_token", "stripe-fixture"); localStorage.setItem("refresh_token", "stripe-fixture-refresh"); });
+  const page = await context.newPage(); const errors = []; page.on("pageerror", (error) => errors.push(error.message));
+  const writes = []; let paid = false; let verifyFails = false; let checkoutReady = true;
+  let checkoutEnabled = true; let malformedVerify = false; let processing = false;
+  const plan = { id: "801", market: "en", currency: "USD", name: "Creator", monthly: 12.5, yearly: 120, monthlyPoints: 600, items: ["Create images, video, audio and 3D"], vipLevel: 1 };
+  const order = () => ({ id: "9001", orderNo: "STRIPE-FIXTURE", market: "en", currency: "USD", payMethod: "stripe", type: "plan", planName: "Creator", cycle: "yearly", amount: 120, credits: 7200, status: paid ? 1 : 0, paymentProcessing: processing && !paid, checkoutAvailable: checkoutEnabled, createTime: new Date().toISOString(), expireTime: processing ? undefined : new Date(Date.now() + 3600000).toISOString(), payUrl: checkoutReady ? "https://checkout.stripe.com/c/pay/cs_test_fixture" : "" });
+  await context.route("**/api/**", async (route) => {
+    const request = route.request(); const pathname = new URL(request.url()).pathname;
+    if (request.method() === "POST") writes.push({ pathname, body: request.postData() ? request.postDataJSON() : null });
+    let data = {};
+    if (pathname === "/api/auth/me") data = { id: "701", username: "alex", nickname: "Alex", points: paid ? 7210 : 10, vipLevel: paid ? 1 : 0 };
+    else if (pathname === "/api/billing/en/plans") data = [plan];
+    else if (pathname === "/api/billing/en/channels") data = [{ key: "stripe", name: "Stripe", currency: "USD" }];
+    else if (pathname === "/api/billing/en/faq") data = { items: [] };
+    else if (pathname === "/api/billing/en/compare") data = { rows: [] };
+    else if (pathname === "/api/billing/en/promo") data = { enabled: false };
+    else if (pathname === "/api/en/orders" || pathname === "/api/orders/9001") data = order();
+    else if (pathname === "/api/orders/9001/verify") {
+      if (verifyFails) { await route.fulfill({ status: 503, json: { success: false, code: 503, message: "Payment status is temporarily unavailable." } }); return; }
+      data = malformedVerify ? { paid: "false", granted: "false" } : { paid, granted: paid };
+    } else if (pathname === "/api/orders/9001/checkout") { checkoutReady = true; data = order(); }
+    await route.fulfill({ json: { success: true, code: 200, data } });
+  });
+  await page.goto(`${base}/pricing`, { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "12× credits", exact: true }).click();
+  await page.getByRole("button", { name: "Choose this plan" }).click();
+  await page.getByText("One-time · No automatic renewal", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Continue to checkout" }).click();
+  await page.waitForURL("**/billing?order=9001");
+  const link = page.getByRole("link", { name: "Open secure checkout" }); await link.waitFor();
+  assert.equal(await link.getAttribute("href"), "https://checkout.stripe.com/c/pay/cs_test_fixture");
+  assert.equal(writes[0].body.payChannel, "stripe"); assert.equal(writes[0].body.cycle, "yearly");
+  assert.match(await page.locator(".billing-invoice").innerText(), /7,200/);
+  await page.screenshot({ path: ".impeccable/review/stripe-checkout-desktop.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: ".impeccable/review/stripe-checkout-mobile.png", fullPage: true });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  await page.goto(`${base}/billing?order=9001&checkout=success`, { waitUntil: "networkidle" });
+  await page.getByText("Waiting for payment confirmation. This can take a moment.", { exact: true }).waitFor();
+  assert.match(await page.locator(".invoice-heading").innerText(), /Awaiting payment/);
+  await page.goto(`${base}/billing?order=9001&checkout=cancelled`, { waitUntil: "networkidle" });
+  await page.getByText("You returned without completing checkout.", { exact: false }).waitFor();
+  verifyFails = true;
+  await page.getByRole("button", { name: "Check payment status" }).click();
+  await page.getByRole("alert").filter({ hasText: "Payment status is temporarily unavailable." }).waitFor();
+  verifyFails = false; checkoutEnabled = false;
+  await page.reload({ waitUntil: "networkidle" });
+  assert.equal(await link.count(), 0, "Disabled payment channel exposed cached checkout URL");
+  assert.equal(await page.getByRole("button", { name: "Prepare checkout" }).count(), 0);
+  await page.getByText("New payments are temporarily unavailable.", { exact: false }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Check payment status" }).isEnabled(), true);
+  malformedVerify = true;
+  await page.getByRole("button", { name: "Check payment status" }).click();
+  await page.getByRole("alert").filter({ hasText: "The payment response was incomplete." }).waitFor();
+  assert.match(await page.locator(".invoice-heading").innerText(), /Awaiting payment/);
+  malformedVerify = false; checkoutEnabled = true; checkoutReady = false;
+  processing = true;
+  await page.reload({ waitUntil: "networkidle" });
+  await page.getByText("Payment processing", { exact: true }).waitFor();
+  assert.equal(await link.count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Prepare checkout" }).count(), 0);
+  await page.getByText("Stripe is still processing your payment.", { exact: false }).waitFor();
+  processing = false;
+  await page.reload({ waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "Prepare checkout" }).click(); await link.waitFor();
+  assert.equal(writes.filter((r) => r.pathname === "/api/en/orders").length, 1, "Recovery created another order");
+  assert.equal(writes.filter((r) => r.pathname.endsWith("/checkout")).length, 1);
+  paid = true;
+  await page.evaluate(() => { Storage.prototype.removeItem = () => { throw new Error("storage unavailable"); }; });
+  await page.getByRole("button", { name: "Check payment status" }).click();
+  await page.getByRole("link", { name: "Back to creating" }).waitFor();
+  assert.match(await page.locator(".invoice-heading").innerText(), /Paid/);
+  assert.equal(errors.length, 0, errors.join("\n"));
+  console.log("Stripe browser checks passed: one-time annual USD purchase, authoritative verification, cancelled return, provider outage, same-order recovery, storage failure, desktop/mobile.");
+} finally { await browser.close(); }

@@ -26,10 +26,10 @@ try {
   });
   await page.goto(`${base}/pricing`, { waitUntil: "networkidle" });
   assert.equal((await page.locator(".plan-price").innerText()).includes("$12.50"), true);
-  assert.equal(await page.getByRole("button", { name: "Checkout coming soon" }).isDisabled(), true);
-  await page.getByRole("button", { name: "Yearly", exact: true }).click();
-  assert.match(await page.locator(".plan-price").innerText(), /\$10/);
-  assert.match(await page.locator(".plan-billed").innerText(), /\$120 billed yearly/);
+  assert.equal(await page.getByRole("button", { name: "Checkout unavailable" }).isDisabled(), true);
+  await page.getByRole("button", { name: "12× credits", exact: true }).click();
+  assert.match(await page.locator(".plan-price").innerText(), /\$120/);
+  assert.match(await page.locator(".plan-billed").innerText(), /\$120 paid once/);
   assert.match(await page.locator(".plan-credit").innerText(), /7,200/);
   await page.getByRole("heading", { name: "Compare plans" }).waitFor();
   await page.getByText("A question from the English admin", { exact: true }).click();

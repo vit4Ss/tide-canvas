@@ -29,15 +29,16 @@ export const aiApi = {
   models: (type?: string) => http.get<StudioModel[]>("/api/market/studio-models", { type }),
   generate: (data: AiGenerateInput, scope: string, options: AiGenerationJournalOptions) => generateAiTaskIdempotent(data, scope, options),
   task: (id: string, signal?: AbortSignal) => http.get<AiTaskVO>(`/api/ai/tasks/${id}`, undefined, { signal }),
-  cancel: (id: string) => http.delete<void>(`/api/ai/tasks/${id}`),
+  cancel: (id: string) => http.delete<void>(`/api/ai/tasks/${id}`, { signal: AbortSignal.timeout(30_000) }),
   quote: (modelId: string, videoUrl: string, targetResolution: string, upscaleModel?: string) => http.post<UpscaleQuoteVO>("/api/ai/upscale-quote", { modelId, videoUrl, targetResolution, ...(upscaleModel ? { upscaleModel } : {}) }),
   optimize: (prompt: string) => http.post<{ prompt: string }>("/api/ai/optimize-prompt", { prompt }),
   referenceQuote: (modelId: string, resolution: string, videoUrls: string[]) => http.post<ReferenceVideoQuoteVO>("/api/ai/reference-video-quote", { modelId, resolution, videoUrls }),
 };
 export const orderApi = {
-  create: (data: CreateOrderDTO) => http.post<OrderVO>("/api/en/orders", data),
-  verify: (id: string) => http.post<{ paid: boolean; granted: boolean }>(`/api/orders/${id}/verify`),
-  cancel: (id: string) => http.post<void>(`/api/orders/${id}/cancel`),
+  create: (data: CreateOrderDTO, signal?: AbortSignal) => http.post<OrderVO>("/api/en/orders", data, { signal }),
+  verify: (id: string, signal?: AbortSignal) => http.post<{ paid: boolean; granted: boolean }>(`/api/orders/${encodeURIComponent(id)}/verify`, undefined, { signal }),
+  resume: (id: string, signal?: AbortSignal) => http.post<OrderVO>(`/api/orders/${encodeURIComponent(id)}/checkout`, undefined, { signal }),
+  cancel: (id: string, signal?: AbortSignal) => http.post<void>(`/api/orders/${encodeURIComponent(id)}/cancel`, undefined, { signal }),
 };
 
 export async function uploadFile(file: File): Promise<Result<FileVO>> {

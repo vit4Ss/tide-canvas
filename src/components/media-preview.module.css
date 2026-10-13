@@ -7,3 +7,8 @@
 .textResult pre { width: 100%; max-height: 60vh; overflow: auto; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.8; }
 .fileResult { display: grid; justify-items: center; gap: 20px; text-align: center; }
 .fileResult > svg { color: var(--accent); }
+.zoomControls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.zoomControls span { font-size: 12px; color: var(--muted); min-width: 80px; text-align: center; }
+.zoomControls button { min-width: 44px; min-height: 44px; }
+.imagePan { overflow: auto; max-height: 60dvh; max-width: 100%; overscroll-behavior: contain; border-radius: 8px; }
+.imagePan img { height: auto; border-radius: 0; }

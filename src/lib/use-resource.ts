@@ -10,12 +10,20 @@ export function useResource<T>(path: string, enabled = true, scope = "public", l
   useEffect(() => {
     if (!enabled) return;
     const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      setState({ key, data: null, error: "This is taking longer than expected. Check your connection and try again." });
+      controller.abort();
+    }, 15_000);
     const request = loader ? loader(path, controller.signal) : http.get<T>(path, undefined, { signal: controller.signal });
     request.then((result) => {
+      clearTimeout(timeout);
       if (controller.signal.aborted) return;
       setState({ key, data: result.success ? result.data : null, error: result.success ? "" : result.message });
+    }).catch(() => {
+      clearTimeout(timeout);
+      if (!controller.signal.aborted) setState({ key, data: null, error: "Could not load this information. Please try again." });
     });
-    return () => controller.abort();
+    return () => { clearTimeout(timeout); controller.abort(); };
   }, [path, enabled, key, loader]);
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
   return { data: enabled && state.key === key ? state.data : null, error: enabled && state.key === key ? state.error : "", loading: enabled && state.key !== key, refresh };

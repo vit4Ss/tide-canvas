@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { usePreviewState } from "./use-preview-state";
 import { Select } from "./select";
 import { useState } from "react";
 import { Search, ArrowUpRight, RefreshCw, X } from "lucide-react";
@@ -39,7 +40,9 @@ export default function Activity() {
   const [success, setSuccess] = useState("");
   const [query, setQuery] = useState("");
   const [keyword, setKeyword] = useState("");
-  const [detailId, setDetailId] = useState<string | null>(null);
+  const [selection, setSelection] = usePreviewState<{id:string}>(`activity:${user?.id}`);
+  const detailId = selection?.id || null;
+  const setDetailId = (id: string | null) => setSelection(id ? {id} : null);
   const url = `/api/ai/history?pageNum=${page}&pageSize=20${media ? `&mediaType=${media}` : ""}${success ? `&success=${success}` : ""}${keyword ? `&keyword=${encodeURIComponent(keyword)}` : ""}`;
   const resource = useMediaHistory<UserGenerationHistoryVO>(url, !!user, user?.id);
   // Closing or replacing the selected record cancels and isolates its request.
@@ -82,7 +85,7 @@ export default function Activity() {
       </>}
       {resource.data && resource.data.total > 20 && <div className="pagination"><span>{number(resource.data.total)} records · Page {page}</span><div><button className="button small" disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</button><button className="button small" disabled={page * 20 >= resource.data.total} onClick={() => setPage(page + 1)}>Next</button></div></div>}
     </RequireAccount>
-    {detailId && <Modal title="Creation details" onClose={() => setDetailId(null)}>
+    {detailId && <Modal title="Creation details" size="details" onClose={() => setDetailId(null)} footer={<button className="button" onClick={() => setDetailId(null)}>Close details</button>}>
       {detail.loading && <Loading label="Opening creation details…" />}
       {detail.error && <Alert>{detail.error}<button className="button small" onClick={detail.refresh}>Try again</button></Alert>}
       {detail.data && <ActivityDetail detail={detail.data} />}

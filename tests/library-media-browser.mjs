@@ -102,7 +102,7 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
 
     if (!mobile) {
-      await card("Broken image").getByRole("button").click();
+      await card("Broken image").getByRole("button", {name:"Preview creation",exact:true}).click();
       await page.getByRole("dialog").getByRole("alert").waitFor();
       repairImage = true;
       await page.getByRole("button", { name: "Try again", exact: true }).click();

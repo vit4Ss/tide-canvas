@@ -66,7 +66,7 @@ const mockApi = async (route) => {
   else if (pathname === "/api/chat-gateway/usage") data = { ...paged([]), summary: { calls: 0, points: "0", inputTokens: 0, outputTokens: 0, pending: 0 } };
   else if (pathname === "/api/ai/history") data = paged([...tasks.values()].map((task) => ({ id: task.id, mediaType: taskMedia(task).kind, model: task.modelName, prompt: task.input.prompt || "", success: task.status === 1 ? 1 : 0, pointCost: task.pointCost, createTime: task.createTime, durationMs: 1000, isApiCall: false })).filter((row) => !url.searchParams.get("mediaType") || row.mediaType === url.searchParams.get("mediaType")));
   else if (pathname === "/api/billing/en/plans") data = plans;
-  else if (pathname === "/api/billing/en/channels") data = [{ key: "usd-test", name: "Test USD checkout", currency: "USD" }];
+  else if (pathname === "/api/billing/en/channels") data = [{ key: "stripe", name: "Stripe", currency: "USD" }];
   else if (pathname === "/api/billing/en/faq") data = { items: [] };
   else if (pathname === "/api/billing/en/compare") data = { rows: [] };
   else if (pathname === "/api/billing/en/promo") data = { enabled: false };
@@ -116,7 +116,7 @@ try {
   await page.waitForFunction(() => document.querySelector(".response-code")?.textContent.includes('"status": 1'), { timeout: 15000 });
   const apiCall = requests.find((entry) => entry.path === "/api/open/v1/generations"); assert.ok(apiCall.body.clientRequestId); result.tests.push("account key, developer catalog, API generation and task following");
   await page.evaluate(() => window.scrollTo(0, 0)); await page.screenshot({ path: path.join(artifacts, "playground-desktop.png"), fullPage: true });
-  await goto("/pricing"); await click(page.getByRole("button", { name: "Yearly", exact: true })); await click(page.locator(".pricing-card").filter({ hasText: "Essential" }).getByRole("button", { name: "Choose this plan" }));
+  await goto("/pricing"); await click(page.getByRole("button", { name: "12× credits", exact: true })); await click(page.locator(".pricing-card").filter({ hasText: "Essential" }).getByRole("button", { name: "Choose this plan" }));
   await click(page.getByRole("button", { name: "Continue to checkout" })); await page.waitForURL("**/billing?order=*"); assert.equal(orders[0].amount, 240); assert.equal(requests.find((entry) => entry.path === "/api/en/orders" && entry.method === "POST").body.cycle, "yearly");
   result.tests.push("USD annual totals, configured-channel fixture, order creation and currency-aware invoice");
   const routes = ["/", "/studio", "/models", "/explore", "/developers", "/docs", "/playground", "/pricing", "/library", "/history", "/usage", "/account", "/login", "/signup", "/forgot-password", "/billing", "/about", "/help", "/terms", "/privacy", "/tools"];

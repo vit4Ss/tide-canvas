@@ -56,11 +56,31 @@ explicit labels, and the preview dialog provides retry and original-file links.
 The media browser suite uses a local, range-enabled MP4 fixture to verify
 desktop/touch rendering, lazy loading, no autoplay, failure recovery and uploads.
 
-Pricing uses the independent English USD catalog. Annual cards show the monthly
-equivalent plus the full annual total; unpaid provider integration is shown as
-“Checkout coming soon”. Admin-authored English FAQ, comparison and promotion
+Pricing uses the independent English USD catalog. Standard and 12× credit packs
+show their full one-time price and cost per 100 credits. Internal monthly/yearly
+API values remain compatible; the UI does not describe purchases as subscriptions.
+Unavailable checkout includes an explanation and support link. English FAQ, comparison and promotion
 content comes from English-scoped endpoints. Orders format their own currency,
 including legacy CNY purchases. No exchange rate is invented in the frontend.
+
+Studio drafts are account-scoped in tab storage and survive navigation/reload.
+Sign-in transfers an anonymous draft once. Model reads have a timeout and retry
+action. Audio suggestions and controls distinguish music, sound effects and
+speech. On mobile a compact fixed generation button shows the credit amount;
+settings and cost explanations remain in normal document flow.
+
+The Library provides server-filtered search, account-persisted names, owned-file
+downloads and cancellable ZIP downloads (24 files / 100 MB). External legacy
+single-file downloads are checked before saving with a 100 MB browser-memory
+limit; large first-party files use the existing streaming ticket. GLB/glTF previews
+load an interactive viewer only on demand, retaining an original-file fallback.
+
+Compare up to three models using published capabilities and credit metadata.
+Examples come from the explicit `framelyn-examples` community category and a
+matching model label. Publisher-supplied labels are not benchmark evidence.
+Usage reconciles the whole account balance through aggregates without displaying
+text-model records. Support and policies are maintained centrally; missing terms
+remain visibly unpublished.
 
 ## Evidence and verdict
 The browser suite validates 21 routes at 1440 px and 390 px, with no horizontal overflow or runtime exceptions. Explicit mocks cover login, generation, batch inputs, quotes, polling, API keys, API calls and checkout. Source scans verify that original branding and Chinese system copy are absent from rendered fixtures. Shipping imagery has its source recorded in `ASSETS.md` and is identified as photographic reference material.
@@ -121,3 +141,52 @@ newer draft intact and offers the returned suggestion explicitly, without anothe
 service call to apply it. No billing rates or generation endpoints are changed.
 The workspace-detail browser suite covers slow/out-of-order replies, account
 switching, retries, pagination, touch targets and 320–1440 px layouts using mocks.
+
+## Stripe checkout
+
+The shared dialog now separates a fixed header, a scrollable body and fixed
+actions. Confirmation dialogs use 480 px, forms 560 px, details 760 px and media
+1120 px maximum widths. Phone layouts use dynamic viewport height and 44 px
+controls. Opening a dialog locks background scroll; closing restores position
+and focus. Backdrop dismissal requires a click that begins and ends outside,
+so dragging text or images out of a dialog does not dismiss it.
+
+Mutation dialogs visibly disable dismissal while a bounded request is pending.
+API-key replacement and file deletion reconcile uncertain outcomes with a read
+before another mutation. Errors remain inside their dialog. Rename selects the
+current name on opening, disables unchanged submissions and keeps unfinished
+edits on incidental close within the current library page; Discard clears them.
+
+Asset previews show the actual name, downloadable files, optional metadata,
+image zoom and adjacent items on the current page. Preview history lets Back
+dismiss and Forward reopen a cached item while the page remains mounted.
+Navigation retains keyboard focus at the first/last item and resets the content
+scroll when changing assets. Native video/audio controls retain their own keys.
+
+Purchase confirmation names the action plainly and describes Stripe without a
+single-choice payment selector. A new complete order can go straight to Stripe
+only when its plan, currency, cycle, amount and credits match the user's
+selection. Reused, changed, processing or incomplete orders use the owned-order
+review/recovery page. No payment is inferred from a redirect or query parameter.
+
+Dialog regression evidence: desktop, phone and a 420 px-tall viewport cover
+focus/selection, scroll lock, long names, fixed controls, failure/timeout recovery,
+draft retention, preview zoom/download/navigation, Back/Forward, and direct
+Stripe versus price-change/reused-order review. All mutations and checkout
+navigation in these tests use isolated fixtures.
+
+USD purchases use Stripe hosted Checkout in payment mode. Pricing and invoices explicitly state that each purchase is one-time, with no automatic renewal. Annual credits are delivered together after confirmed payment. The invoice presents the immutable order amount, name, credits and deadline. Returning from Stripe prompts a bounded server verification loop; the return query never determines payment status. A failed session creation can be resumed from the original order. Public checkout requests are scoped to the authenticated account, and billing requests are cancelled on navigation/account changes. Secret keys remain server-side.
+
+Stripe validation uses a local mock API and fixture browser routes; no actual Stripe account or charge was used. Local desktop/mobile views and error/recovery states were checked. Real Sandbox verification is required after account setup.
+
+Validation for the Stripe pass: 47 frontend unit/contract tests, production build, ESLint, pricing and Stripe browser flows passed. Shared-backend tests cover concurrent creation/settlement, lost responses, invalid signatures, rollback and retry, currency/owner/environment gates, fixed order snapshots and legacy order deadlines. Admin USD/CNY currency checks and desktop/mobile payment screens passed. Real Stripe Sandbox/production validation remains pending account setup; credentials and live checkout are not enabled.
+
+The payment review added regression coverage for same-account token refresh during create/prepare/verify requests, channel disablement with an existing checkout URL, malformed payment responses, and delayed bank payments. Processing payments retain their original order past the checkout deadline and suppress further payment links. Paid/refunded state comes from the stored order after conditional updates, rather than assuming an expiry or repeated settlement succeeded.
+
+Review evidence: the new same-account session tests failed for all three payment actions before the fix and now pass. Backend tests reproduced and fixed expiry/read and refund/settlement races, disabled-channel link exposure and delayed-payment repurchase. The checkout browser flow also verifies malformed responses and the processing state. Production build, ESLint, unit tests and Go build/vet pass; live Stripe validation is still pending account setup.
+
+The second review verifies that native dialog Escape events respect the parent submission guard, then dismiss and reopen normally after a failed checkout. Changing monthly/yearly options now returns an unfinished order for the same plan, with its original amount disclosed before payment. Processing orders show their real state in account history and do not offer cancellation. Server configuration normalizes copied credentials and accepts incomplete disabled drafts without enabling payments; annual grant bounds are checked before checkout.
+
+The multi-round regression pass covers unissued checkout cancellation/expiry, dropped async-failure notifications, modal cancellation errors/timeouts, same-account refresh and different-account replacement for all four payment actions. Stripe retrieval expands the PaymentIntent for terminal failure recovery. Recharge uses the shared precise ledger, preserving fractional and reserved balances. Pending purchases reserve only incoming capacity, without freezing spendable credits. MySQL-dialect inspection corrected the earlier assumed INT32 bound; limits now derive from the actual fixed-point representation.
+
+Final multi-round evidence: three targeted passes completed. The critical concurrent/late/duplicate-event cases passed five repetitions with randomized test order. The six-script Stripe browser suite passed, including all four actions across same-account refresh and different-account replacement, cancellation failure/timeout, dialog recovery and cycle switching. Frontend build and backend build/vet passed. Database behavior used isolated SQLite plus checks of the actual GORM MySQL dialect; this environment has no configured independent MySQL instance or real Stripe Sandbox, so those integrations remain unverified.

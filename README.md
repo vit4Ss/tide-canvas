@@ -172,3 +172,40 @@ covers, paused playback, deferred offscreen requests, 3D/audio metadata, hidden 
 uploaded videos and preview retry on desktop and touch-sized browser contexts.
 
 See `ASSETS.md` for the shipped imagery and `DESIGN.md` for the frontend design system.
+
+Stripe checkout uses the shared Go backend and requires no Stripe secret in this frontend. It is a one-time payment integration; annual purchases deliver their full credit allowance together. Configure and test the provider using the shared backend `docs/STRIPE.md` before enabling checkout. Run `npm run test:stripe` for mocked payment/return/recovery checks.
+
+Consumer improvements use the shared backend's `/api/billing/en/consumer`,
+`/api/points/summary`, and owner-scoped creation/file rename endpoints. Deploy
+the updated `flowingLight` backend and admin together with this `flowlight-en`
+frontend. The existing migration creates the task display-name column.
+
+In the Chinese admin's English/USD pricing section, publish real pack prices and
+maintain the public support email, commercial scope, file retention, refund timing,
+credit validity and membership terms. Policy text does not implement expiry or
+storage cleanup. Unknown terms stay unpublished. The support fallback is
+`gudexin748@gmail.com`; a configured `SUPPORT_EMAIL` or admin value can replace it.
+Registration remains controlled by the shared backend; this frontend does not
+enable registration or Stripe automatically.
+
+English pricing labels are now “Standard pack” and “12× credits”, showing the full
+one-time amount. The wire values `monthly` and `yearly` remain unchanged. Repeat
+purchases add credits and preserve higher membership tiers. Chinese billing is
+unchanged. No exchange rate or recurring billing is introduced.
+
+Publish model examples deliberately through the community/inspiration admin with
+category `framelyn-examples` and the matching model key or displayed English name.
+Without matching published examples, the UI explains their absence. Existing
+photographic reference imagery is never relabeled as generated output.
+
+Run `npm run test:consumer` for draft handoff/recovery, closed registration, support,
+credit packs, model comparison/examples, audio capabilities, search/rename, ZIP
+and individual downloads, real GLTF rendering, balance totals and timeout/retry
+checks at desktop/mobile widths. Tests use isolated fixtures and never consume
+real credits, issue emails or charge a payment method.
+
+`npm run test:modals` covers dialog focus and scroll restoration, long filenames,
+short viewports, pending/failed/unknown mutation states, retained rename drafts,
+preview navigation and downloads, browser Back/Forward, and safe direct Stripe
+navigation with recovery for changed or reused orders. Browser requests are
+intercepted; the Stripe destination is a local test response, not a real payment.

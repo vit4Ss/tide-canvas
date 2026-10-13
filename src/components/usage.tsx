@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { AccountTotals } from "./account-totals";
 import { useState } from "react";
 import { ArrowUpRight, RefreshCw } from "lucide-react";
 import { WorkspaceShell } from "./shell";
@@ -23,6 +24,7 @@ export default function Usage() {
         <div><span>Reserved credits</span><strong>{balance.data ? number(balance.data.frozen) : "—"}</strong><small>Held for requests in progress</small></div>
         <div><span>Your account</span><strong>One balance</strong><small>Shared across all account activity</small></div>
       </div>
+      <AccountTotals owner={user?.id || ""} />
       <div className="toolbar">
         <h2>Media activity</h2>
         <button className="button small" onClick={() => { usage.refresh(); balance.refresh(); void refreshUser(); }}><RefreshCw size={13} />Refresh</button>

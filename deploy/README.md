@@ -112,7 +112,16 @@ Actions 使用仓库自动提供的 `GITHUB_TOKEN` 发布镜像，无需生产�
 独立维护套餐、年付总价、积分、英文文案、方案对比、FAQ 和促销；新套餐默认下架。
 英文前端读取 `/api/billing/en/*`，不会把中文套餐金额直接标成美元。
 
-美元支付服务商接入前，后端不会创建英文付费订单，前端显示报价并关闭付费购买。
+美元支付使用 Stripe Checkout（一次性付款，不自动续费）。后端凭据和后台 stripe 渠道未配置/启用时，前端显示报价并关闭付费购买。
 先在后台填入实际美元价格，再按业务准备情况上架。现有人民币订单保持原币种和金额。
 部署时先更新共享后端及中文后台，再更新 `frontend-en`；具体说明见共享后端的
 `docs/EN_BILLING.md`。
+
+## Stripe 收款
+
+Stripe 密钥只配置在共享 backend 容器，英文 frontend-en 不需要 Stripe 密钥。后端新增 `TIDECANVAS_STRIPE_ENABLED`、`TIDECANVAS_STRIPE_SECRETKEY`、`TIDECANVAS_STRIPE_WEBHOOKSECRET`、`TIDECANVAS_STRIPE_SITEURL`，默认关闭。测试/生产分别使用自己的密钥与回调地址：
+
+- 测试：`https://test-framelyn.tcmzhan.com/api/billing/stripe/webhook`
+- 生产：`https://framelyn.tcmzhan.com/api/billing/stripe/webhook`
+
+按共享后端 `docs/STRIPE.md` 完成开户、Sandbox 联调、后台渠道启用，再启用生产收款。现有 Nginx `/api/` 反代需原样转发请求体与 Stripe-Signature 头。退款先在 Stripe 完成原路退回，再在后台做账务退款和积分回收；本次不包含自动订阅或退款同步。

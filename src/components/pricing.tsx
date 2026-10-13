@@ -1,8 +1,10 @@
 "use client";
+import { ConsumerPolicies, SupportLink, useConsumer } from "./consumer-info";
+import Link from "next/link";
 import { useBrand } from "./runtime-config";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Plus, ArrowUpRight, Coins, Loader2 } from "lucide-react";
+import { Check, Plus, ArrowUpRight, Coins } from "lucide-react";
 import { PublicPage } from "./shell";
 import { useAuth } from "./auth-provider";
 import { Alert, EmptyState, Loading, Modal } from "./ui";
@@ -10,37 +12,82 @@ import { useResource } from "@/lib/use-resource";
 import { orderApi } from "@/lib/api";
 import { date, number } from "@/lib/brand";
 import { englishLabel } from "@/lib/english";
-import { isEnglishPlan, planPurchase } from "@/lib/billing";
-import type { BillCycle, PayChannel, PayChannelVO, PlanVO, FaqVO, CompareVO, PromoVO } from "@/types/billing";
+import { directCheckoutUrl, purchaseChanged, isEnglishPlan, planPurchase } from "@/lib/billing";
+import type { BillCycle, PayChannelVO, PlanVO, FaqVO, CompareVO, PromoVO } from "@/types/billing";
 
 const questions = [
   ["How do credits work?", "Credits are used when you create through the studio or API. Each model and output setting has its own cost. The studio shows an estimate before you submit, and the service confirms the actual cost."],
   ["Do the studio and API share a balance?", "Yes. Your account uses one credit balance for both the creative studio and your API requests. Media usage and refunds are available in your account."],
-  ["What happens if a generation fails?", "A failed generation follows the service's refund process. You can check the original charge and any refund in Usage & credits. A connection timeout does not mean a task has failed."],
-  ["Are annual prices charged monthly?", "No. The annual option shows a monthly equivalent, but the full annual amount is charged at checkout. The number of credits included with the selected purchase is shown before you pay."],
-  ["Which payment methods can I use?", "Plans are priced in US dollars. Online purchases become available when a supported USD payment method is enabled."],
+  ["What happens if a generation fails?", "Confirmed generation failures are eligible for the service’s credit-refund processing. Queued cancellations can be refunded; cancellations after provider processing has started are charged. A connection timeout does not confirm failure. Check Usage & credits for the posted refund and contact support with the task reference if it is missing. Payment refunds are a separate support request."],
+  ["How does the 12× option work?", "It is one larger credit purchase, not an annual subscription. The full price is shown on the card and charged once. All credits arrive after payment confirmation."],
+  ["Will my plan renew automatically?", "No. Every pack is a single payment. You can buy the same pack again, and the credits are added to your remaining balance. There are no recurring charges."],
+  ["Which payment methods can I use?", "Plans are priced in US dollars. When Stripe checkout is enabled, its secure payment page shows the payment methods available for your purchase."],
   ["Can I use every model with a plan?", "The live model catalog and your account permissions determine availability. Some models may be temporarily under maintenance. Check the studio for current settings and pricing."],
 ];
 export default function Pricing() {
+  const { user } = useAuth();
+  return <PricingContent key={user?.id || "signed-out"} />;
+}
+function PricingContent() {
+  const pending = useRef<AbortController | null>(null);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; pending.current?.abort(); }; }, []);
   const { money: formatMoney } = useBrand();
   const money = (amount: number) => formatMoney(amount, "USD");
-  const { user } = useAuth(); const router = useRouter(); const [cycle, setCycle] = useState<BillCycle>("monthly"); const [selected, setSelected] = useState<PlanVO | null>(null); const [channel, setChannel] = useState<PayChannel | "">(""); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
-  const plans = useResource<PlanVO[]>("/api/billing/en/plans");
+  const { user, sessionVersion } = useAuth(); const router = useRouter(); const [cycle, setCycle] = useState<BillCycle>("monthly"); const [selected, setSelected] = useState<PlanVO | null>(null); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const leavingOrder = useRef<string | null>(null);
+  const [readyOrder, setReadyOrder] = useState<string | null>(null);
+  useEffect(() => {
+    const restored = (event: PageTransitionEvent) => {
+      if (!event.persisted || !leavingOrder.current) return;
+      const id = leavingOrder.current; leavingOrder.current = null; pending.current = null;
+      setBusy(false); setSelected(null); setReadyOrder(null);
+      router.replace(`/billing?order=${encodeURIComponent(id)}`);
+    };
+    window.addEventListener("pageshow", restored);
+    return () => window.removeEventListener("pageshow", restored);
+  }, [router]);
+  const { plans } = useConsumer();
   const channels = useResource<PayChannelVO[]>("/api/billing/en/channels");
   const faq = useResource<FaqVO>("/api/billing/en/faq");
   const compare = useResource<CompareVO>("/api/billing/en/compare");
   const promo = useResource<PromoVO>("/api/billing/en/promo");
   const englishPlans = (plans.data || []).filter(isEnglishPlan);
-  const paymentMethods = (channels.data || []).filter((item) => item.currency === "USD");
+  const paymentMethods = (channels.data || []).filter((item) => item.currency === "USD" && item.key === "stripe");
   const faqItems = faq.data?.items.length ? faq.data.items.map((item) => [item.q, item.a]) : questions;
   const amount = (plan: PlanVO) => planPurchase(plan, cycle).total;
   const choose = (plan: PlanVO) => { setError(""); if (!user) { router.push("/login?redirect=/pricing"); return; } if (!amount(plan)) { router.push("/studio"); return; } setSelected(plan); };
   const checkout = async () => {
-    if (!selected || !isEnglishPlan(selected) || !paymentMethods.length) return; setBusy(true); setError("");
-    const response = await orderApi.create({ type: "plan", planId: selected.id, cycle, ...(channel || paymentMethods[0]?.key ? { payChannel: (channel || paymentMethods[0].key) as PayChannel } : {}) });
-    if (response.success) { try { localStorage.setItem("framelyn.pending-order", response.data.id); } catch { /* The owned order remains accessible without the optional browser shortcut. */ } router.push(`/billing?order=${encodeURIComponent(response.data.id)}`); }
-    else setError(response.code === 0 ? "Checkout was not confirmed. Check your order history before creating another order." : response.message);
+    if (leavingOrder.current) { router.push(`/billing?order=${encodeURIComponent(leavingOrder.current)}&existing=1`); return; }
+    if (!selected || !isEnglishPlan(selected) || !paymentMethods.length || pending.current || busy) return; setBusy(true); setError("");
+    const controller = new AbortController(); pending.current = controller; const version = sessionVersion();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    const response = await orderApi.create({ type: "plan", planId: selected.id, cycle, payChannel: paymentMethods[0].key }, controller.signal);
+    clearTimeout(timer); pending.current = null;
+    if (!alive.current) return;
     setBusy(false);
+    if (sessionVersion() !== version) { setError("Your sign-in was updated. Check your order history before trying checkout again."); return; }
+    if (response.success && (typeof response.data?.id !== "string" || !response.data.id)) { setError("The checkout response was incomplete. Check your order history before trying again."); return; }
+    if (response.success && !controller.signal.aborted) {
+      const order = response.data;
+      try { localStorage.setItem("framelyn.pending-order", order.id); } catch { /* The owned order remains accessible from order history. */ }
+      const paymentURL = directCheckoutUrl(order, selected, cycle);
+      if (paymentURL) {
+        leavingOrder.current = order.id;
+        try {
+          window.location.assign(paymentURL);
+          // Order creation has finished. A stopped/blocked browser navigation
+          // must not leave the site trapped in a permanently busy dialog.
+          setReadyOrder(order.id); setSelected(null); return;
+        } catch { leavingOrder.current = null; }
+      }
+      router.push(`/billing?order=${encodeURIComponent(order.id)}${order.existingCheckout ? "&existing=1" : purchaseChanged(order, selected, cycle) ? "&review=1" : ""}`);
+    }
+    else setError(response.code === 0 || controller.signal.aborted ? "Checkout was not confirmed. Check your order history before creating another order." : response.message);
   };
-  return <PublicPage><div className="wrap"><header className="public-title pricing-title"><p className="page-overline">More room for your imagination</p><h1>A plan for your<br />next creative chapter.</h1><p>Choose the credits that fit your work. The same balance follows you from the studio to your integrations.</p></header>{promo.data?.enabled && <aside className="pricing-promo"><div><strong>{promo.data.title}</strong>{promo.data.subtitle && <p>{promo.data.subtitle}</p>}</div><span>Offer ends {date(promo.data.endsAt)}</span></aside>}<div className="pricing-cycle" aria-label="Billing cycle"><button className={cycle === "monthly" ? "on" : ""} onClick={() => setCycle("monthly")}>Monthly</button><button className={cycle === "yearly" ? "on" : ""} onClick={() => setCycle("yearly")}>Yearly</button></div>{plans.loading && <Loading label="Finding your plans…" />}{plans.error && <Alert>{plans.error}<button onClick={plans.refresh}> Retry</button></Alert>}{!plans.loading && !plans.error && !englishPlans.length && <EmptyState title="Plans are taking a short break." description="Check back when the current plans have been published." />}<div className="pricing-grid">{englishPlans.map((plan, index) => { const label = englishLabel(plan.name, ["Essential", "Creator", "Professional", "Studio"][index] || `Plan ${index + 1}`); const monthly = cycle === "monthly" ? amount(plan) : amount(plan) / 12; const features = plan.items?.filter((item) => item && !/[\p{Script=Han}]/u.test(item)); return <article className={`pricing-card ${plan.featured ? "featured" : ""}`} key={plan.id}>{plan.featured && <span>Featured plan</span>}<h2>{label}</h2><p>{englishLabel(plan.desc, "A credit plan for the way you create.")}</p><div className="plan-price">{planPurchase(plan, cycle).available ? money(monthly) : "—"}<small>/ month</small></div><div className="plan-billed">{!planPurchase(plan, cycle).available ? "Annual billing is unavailable" : amount(plan) === 0 ? "Free plan" : cycle === "yearly" ? `${money(amount(plan))} billed yearly` : "Monthly purchase"}</div><div className="plan-credit"><Coins size={16} /><strong>{number(planPurchase(plan, cycle).credits)}</strong> credits included</div><ul>{(features?.length ? features : ["Create with available AI models", "Keep your results in your library", "Use your credits in the studio and API", "Track costs and request history"]).map((item) => <li key={item}><Check size={14} />{item}</li>)}</ul>{!plan.hideCta && <button className={`button ${plan.featured ? "primary" : ""}`} disabled={!planPurchase(plan, cycle).available || (amount(plan) > 0 && !paymentMethods.length)} onClick={() => choose(plan)}>{!planPurchase(plan, cycle).available ? "Annual plan unavailable" : amount(plan) ? paymentMethods.length ? "Choose this plan" : "Checkout coming soon" : "Start creating"}<ArrowUpRight size={15} /></button>}</article>; })}</div><p className="pricing-footnote">All plan prices are in USD. Annual purchases are charged in full at the yearly total shown.</p>{paymentMethods.length === 0 && <p className="pricing-footnote">Online checkout is currently unavailable. You can still explore the studio and available models.</p>}{!!compare.data?.rows.length && englishPlans.length > 0 && <section className="pricing-comparison"><h2 id="plan-comparison-title">Compare plans</h2><div className="table-wrap"><table aria-labelledby="plan-comparison-title"><thead><tr><th>Included</th>{englishPlans.map((plan) => <th key={plan.id}>{englishLabel(plan.name, "Plan")}</th>)}</tr></thead><tbody>{compare.data.rows.map((row, index) => <tr key={`${row.label}-${index}`}><th scope="row">{row.label}</th>{englishPlans.map((plan) => <td key={plan.id}>{row.values[plan.id] || "—"}</td>)}</tr>)}</tbody></table></div></section>}<section className="faq"><h2>A few things you might be wondering.</h2>{faqItems.map(([question, answer]) => <details key={question}><summary>{question}<Plus size={17} /></summary><p>{answer}</p></details>)}</section></div>{selected && <Modal title="Your next chapter" onClose={() => !busy && setSelected(null)}><div className="invoice-rows"><div><span>Plan</span><strong>{englishLabel(selected.name, "Credit plan")}</strong></div><div><span>Billing cycle</span><strong>{cycle === "yearly" ? "Annual purchase" : "Monthly purchase"}</strong></div><div><span>Credits included</span><strong>{number(planPurchase(selected, cycle).credits)}</strong></div><div><span>Total due</span><strong>{money(amount(selected))}</strong></div></div>{channels.loading ? <Loading label="Checking payment options…" /> : channels.error ? <Alert>{channels.error}</Alert> : paymentMethods.length ? <><p className="small muted">Choose a payment method</p><div className="checkout-methods">{paymentMethods.map((item) => <label key={item.key}><input type="radio" name="pay-channel" value={item.key} checked={(channel || paymentMethods[0]?.key) === item.key} onChange={() => setChannel(item.key)} />{item.key === "alipay" ? "Alipay" : item.key === "wxpay" ? "WeChat Pay" : englishLabel(item.name, item.key)}</label>)}</div></> : <Alert>No online payment method is currently available.</Alert>}{error && <Alert>{error}</Alert>}<div className="modal-actions"><button className="button" disabled={busy} onClick={() => setSelected(null)}>Not now</button><button className="button primary" disabled={busy || !paymentMethods.length} onClick={() => void checkout()}>{busy ? <Loader2 size={15} className="spin" /> : null}{busy ? "Creating your order…" : "Continue to checkout"}<ArrowUpRight size={15} /></button></div></Modal>}</PublicPage>;
+  return <PublicPage><div className="wrap"><header className="public-title pricing-title"><p className="page-overline">More room for your imagination</p><h1>Credits for your<br />next creative chapter.</h1><p>Buy credits when you need them. Pay once, receive the full allowance, and buy again whenever you need more. No subscription or automatic renewal.</p></header>{readyOrder && <p className="pricing-footnote" role="status">Your order is ready. If Stripe did not open, <Link className="text-link" href={`/billing?order=${encodeURIComponent(readyOrder)}`}>review your order</Link> to continue without creating another purchase.</p>}{promo.data?.enabled && <aside className="pricing-promo"><div><strong>{promo.data.title}</strong>{promo.data.subtitle && <p>{promo.data.subtitle}</p>}</div><span>Offer ends {date(promo.data.endsAt)}</span></aside>}<div className="pricing-cycle" aria-label="Credit pack size"><button className={cycle === "monthly" ? "on" : ""} onClick={() => setCycle("monthly")}>Standard pack</button><button className={cycle === "yearly" ? "on" : ""} onClick={() => setCycle("yearly")}>12× credits</button></div>{plans.loading && <Loading label="Finding your plans…" />}{plans.error && <Alert>{plans.error}<button onClick={plans.refresh}> Retry</button></Alert>}{!plans.loading && !plans.error && !englishPlans.length && <EmptyState title="Credit packs are not on sale yet." description="USD prices have not been published. You can browse the models; contact us to ask about purchasing access." action={<SupportLink className="button">Ask about availability</SupportLink>} />}<div className="pricing-grid">{englishPlans.map((plan, index) => { const label = englishLabel(plan.name, ["Essential", "Creator", "Professional", "Studio"][index] || `Plan ${index + 1}`); const totalPrice = amount(plan); const creditCount = planPurchase(plan, cycle).credits; const features = plan.items?.filter((item) => item && !/[\p{Script=Han}]/u.test(item)); return <article className={`pricing-card ${plan.featured ? "featured" : ""}`} key={plan.id}>{plan.featured && <span>Featured plan</span>}<h2>{label}</h2><p>{englishLabel(plan.desc, "A credit plan for the way you create.")}</p><div className="plan-price">{planPurchase(plan, cycle).available ? money(totalPrice) : "—"}<small> / purchase</small></div><div className="plan-billed">{!planPurchase(plan, cycle).available ? "Larger pack not available" : amount(plan) === 0 ? "Free plan" : cycle === "yearly" ? `${money(amount(plan))} paid once` : "One-time credit purchase"}</div><div className="plan-credit"><Coins size={16} /><strong>{number(planPurchase(plan, cycle).credits)}</strong> credits included</div>{creditCount > 0 && totalPrice > 0 && <p className="pack-rate">{money(totalPrice / creditCount * 100)} per 100 credits. A 4-credit request would use {money(totalPrice / creditCount * 4)} of this pack. Actual request costs depend on model settings.</p>}<ul>{(features?.length ? features : ["Create with available AI models", "Keep your results in your library", "Use your credits in the studio and API", "Track costs and request history"]).map((item) => <li key={item}><Check size={14} />{item}</li>)}</ul>{!plan.hideCta && <button className={`button ${plan.featured ? "primary" : ""}`} disabled={!planPurchase(plan, cycle).available || (amount(plan) > 0 && !paymentMethods.length)} onClick={() => choose(plan)}>{!planPurchase(plan, cycle).available ? "Larger pack unavailable" : amount(plan) ? paymentMethods.length ? (user && plan.vipLevel > 0 && (user.vipLevel || 0) >= plan.vipLevel ? "Buy more credits" : "Choose this plan") : "Checkout unavailable" : "Start creating"}<ArrowUpRight size={15} /></button>}</article>; })}</div><p className="pricing-footnote">All plan prices are in USD. Every purchase is a one-time payment with no automatic renewal. The 12× option adds twelve times the standard paid pack’s credits in a single purchase. Existing account benefits are not downgraded when you buy a smaller pack.</p>{paymentMethods.length === 0 && <p className="pricing-footnote">Online checkout is currently unavailable. Existing credits can still be used. For purchasing help, <SupportLink />.</p>}{!!compare.data?.rows.length && englishPlans.length > 0 && <section className="pricing-comparison"><h2 id="plan-comparison-title">Compare plans</h2><div className="table-wrap"><table aria-labelledby="plan-comparison-title"><thead><tr><th>Included</th>{englishPlans.map((plan) => <th key={plan.id}>{englishLabel(plan.name, "Plan")}</th>)}</tr></thead><tbody>{compare.data.rows.map((row, index) => <tr key={`${row.label}-${index}`}><th scope="row">{row.label}</th>{englishPlans.map((plan) => <td key={plan.id}>{row.values[plan.id] || "—"}</td>)}</tr>)}</tbody></table></div></section>}<ConsumerPolicies fields={["creditValidity", "membershipTerms", "refundTiming", "commercialUse"]} /><section className="faq"><h2>A few things you might be wondering.</h2>{faqItems.map(([question, answer]) => <details key={question}><summary>{question}<Plus size={17} /></summary><p>{answer}</p></details>)}</section></div>{selected && <Modal title="Confirm your purchase" size="form" busy={busy} busyLabel="Preparing secure checkout. Please wait for confirmation before closing." description="Review the amount and included credits. This is a single payment with no automatic renewal." onClose={() => setSelected(null)} footer={<><button className="button" data-modal-autofocus disabled={busy} onClick={() => setSelected(null)}>Not now</button><button className="button primary" disabled={busy || !paymentMethods.length} onClick={() => void checkout()}>{busy ? "Preparing checkout…" : "Continue to checkout"}<ArrowUpRight size={15} /></button></>}>
+      <div className="invoice-rows"><div><span>Plan</span><strong>{englishLabel(selected.name, "Credit plan")}</strong></div><div><span>Payment</span><strong>One-time · No automatic renewal</strong></div><div><span>Purchase option</span><strong>{cycle === "yearly" ? "Large credit pack (12×)" : "Standard credit pack"}</strong></div><div><span>Credits included</span><strong>{number(planPurchase(selected, cycle).credits)}</strong></div><div><span>Total due</span><strong>{money(amount(selected))}</strong></div></div>
+      {channels.loading ? <Loading label="Checking payment options…" /> : channels.error ? <Alert>{channels.error}</Alert> : paymentMethods.length ? <p className="secure-checkout-note">Secure payment through Stripe. You will choose an available payment method on its checkout page.</p> : <Alert>Online checkout is currently unavailable. <SupportLink /></Alert>}
+      {error && <Alert>{error} <Link className="text-link" href="/account?tab=orders">Check order history</Link></Alert>}
+    </Modal>}</PublicPage>;
 }

@@ -1,3 +1,4 @@
+import { audioKind } from "./model-guidance.ts";
 import type { StudioModel } from "./api";
 import { resolveImageToolPointCost, resolveVideoPointCost } from "./price-matrix.ts";
 
@@ -46,8 +47,8 @@ export function buildGenerationInput(settings: StudioSettings, model: StudioMode
   }
   if (media === "audio") {
     input.input = settings.prompt.trim();
-    if (settings.voice) input.voice = settings.voice;
-    if (settings.lyrics || settings.instrumental) input.extras = { ...(settings.lyrics ? { lyrics: settings.lyrics } : {}), ...(settings.instrumental ? { make_instrumental: true } : {}) };
+    if (audioKind(model) === "speech" && settings.voice) input.voice = settings.voice;
+    if (audioKind(model) === "music" && (settings.lyrics || settings.instrumental)) input.extras = { ...(settings.lyrics ? { lyrics: settings.lyrics } : {}), ...(settings.instrumental ? { make_instrumental: true } : {}) };
   }
   if (media === "3d") { if (images.length) input.imageUrl = images[0]; input.enablePbr = settings.enablePbr; }
   return input;

@@ -16,3 +16,4 @@
 .pricing-card:only-child{width:100%;max-width:400px;justify-self:center}
 
 .catalog-provider-filter{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0;border-top:1px solid var(--line);margin-bottom:16px;font-size:13px;color:var(--muted)}.catalog-provider-filter strong{color:var(--text);font-weight:500}.catalog-provider-filter .button{min-height:44px}
+.billing-invoice .invoice-total{font-size:clamp(32px,5vw,44px);line-height:1.2;font-weight:500;letter-spacing:-.03em}.invoice-rows strong{min-width:0;text-align:right;overflow-wrap:anywhere}.invoice-rows span{flex-shrink:0;max-width:48%}

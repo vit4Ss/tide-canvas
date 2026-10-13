@@ -102,6 +102,13 @@ export interface CreateOrderDTO {
  *  is the epay cashier URL to redirect the browser to. Status:
  *  0 待支付 / 1 已支付 / 2 已取消 / 3 已退款. */
 export interface OrderVO {
+  prepareBefore?: string;
+  existingCheckout?: boolean;
+  checkoutAvailable?: boolean;
+  paymentProcessing?: boolean;
+  payMethod?: string;
+  planName?: string;
+  credits?: number;
   market?: "cn" | "en";
   /** Legacy orders without this field were charged in CNY. */
   currency?: string;

@@ -17,6 +17,7 @@ export function date(value: string): string {
 }
 export function modelName(model: { name?: string; modelKey?: string; modelId?: string }): string {
   const name = model.name || "";
-  if (name && !/[\p{Script=Han}]/u.test(name)) return name;
-  return model.modelKey || model.modelId || "AI model";
+  const label = name && !/[\p{Script=Han}]/u.test(name) ? name : model.modelKey || model.modelId || "AI model";
+  const known: Record<string, string> = { "suno-sfx-mxapi": "Suno Sound Effects", "qwen-image-2.1-pro": "Qwen Image 2.1 Pro", "gpt-image-2": "GPT Image 2" };
+  return known[label.toLowerCase()] || label;
 }

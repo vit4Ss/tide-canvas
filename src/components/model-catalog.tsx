@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ArrowRight, ArrowUpRight, AudioLines, Box, CircleAlert, Image as ImageIcon, Layers2, ScanLine, Search, SlidersHorizontal, Video, X } from "lucide-react";
 import { MODEL_PROVIDERS, modelProvider } from "@/lib/model-providers";
@@ -10,8 +10,11 @@ import { useResource } from "@/lib/use-resource";
 import { isMediaModel } from "@/lib/model-visibility";
 import { catalogCreditValue } from "@/lib/catalog-presentation";
 import type { StudioModel } from "@/lib/api";
+import { modelGuidance } from "@/lib/model-guidance";
+import { usePreviewState } from "./use-preview-state";
+import { PublishedExamples } from "./published-examples";
 import { PublicPage } from "./shell";
-import { Alert, EmptyState, Loading } from "./ui";
+import { Alert, EmptyState, Loading, Modal } from "./ui";
 import { ModelIcon } from "./model-icon";
 import styles from "./model-catalog.module.css";
 
@@ -23,14 +26,6 @@ const categories = [
   { value: "3d", label: "3D", icon: Box },
   { value: "upscale", label: "Enhance", icon: ScanLine },
 ];
-const descriptions: Record<string, string> = {
-  image: "Turn a prompt or reference into a new visual direction.",
-  video: "Bring a scene to life, frame by frame.",
-  audio: "Explore speech, music and sound with a prompt.",
-  "3d": "Shape an idea into a downloadable 3D asset.",
-  upscale: "Give your source footage a clearer view.",
-};
-
 /** Format illustrations, not output samples, wave measurements or model scores. */
 function FormatIllustration({ type }: { type: string }) {
   return <svg className={styles.illustration} viewBox="0 0 164 76" fill="none" aria-hidden="true">
@@ -52,14 +47,14 @@ function FormatIllustration({ type }: { type: string }) {
   </svg>;
 }
 
-function ModelCard({ model }: { model: StudioModel }) {
+function ModelCard({ model, selected, onCompare, onExamples }: { model: StudioModel; selected: boolean; onCompare: () => void; onExamples: () => void }) {
   const provider = modelProvider(model);
   const format = categories.find((item) => item.value === model.type);
   const FormatIcon = format?.icon || Box;
   const maintenance = model.config?.availabilityStatus === "maintenance";
   const resolutions = [...new Set(model.config?.resolutions || [])].slice(0, 4);
   const durations = model.type === "video" ? (model.config?.durations || []).slice(0, 2) : [];
-  const description = model.desc && !/[\p{Script=Han}]/u.test(model.desc) ? model.desc : descriptions[model.type] || "Explore this model in the studio.";
+  const description = model.desc && !/[\p{Script=Han}]/u.test(model.desc) ? model.desc : modelGuidance(model);
   const credits = catalogCreditValue(model);
 
   return <article className={styles.card} data-model-key={model.modelKey}>
@@ -82,11 +77,14 @@ function ModelCard({ model }: { model: StudioModel }) {
           <span className={styles.open}>{maintenance ? "View model" : "Explore"} <span><ArrowUpRight size={16} aria-hidden="true" /></span></span>
         </footer>
       </div>
-    </Link>
+    </Link><div className="model-card-actions"><button className="button small" aria-pressed={selected} onClick={onCompare}>{selected ? "Remove comparison" : "Compare"}</button><button className="button small" onClick={onExamples}>Examples</button></div>
   </article>;
 }
 
 export function Catalog({ providerId = "" }: { providerId?: string }) {
+  const [comparison, setComparison] = useState<string[]>([]);
+  const [example, setExample] = usePreviewState<StudioModel>("model-examples");
+  const [compareNotice, setCompareNotice] = useState("");
   const provider = MODEL_PROVIDERS.find((item) => item.id === providerId);
   const query = useSearchParams();
   const filter = categories.find((item) => item.value === query.get("type"))?.value || "all";
@@ -145,9 +143,12 @@ export function Catalog({ providerId = "" }: { providerId?: string }) {
     {resource.loading && <Loading label="Opening the collection…" />}
     {resource.error && <Alert>{resource.error}<button className="text-link" onClick={resource.refresh}>Try again</button></Alert>}
     {ready && !models.length && <EmptyState title={filtering ? "No matching models." : "Nothing here just yet."} description={filtering ? "Try another model name or start again with the full collection." : "Available models will appear here when they are published."} action={filtering ? resetAction : undefined} />}
+    {compareNotice && <p role="status">{compareNotice}</p>}
+    {comparison.length > 0 && <section className="model-comparison" aria-label="Model comparison"><div className="toolbar"><h2>Compare your options</h2><button className="button small" onClick={() => {setComparison([]);setCompareNotice("");}}>Clear comparison</button></div><p className="small muted">Capabilities come from the current catalog. Generation times and quality vary; no speed ranking or result guarantee is implied.</p><div className="table-wrap"><table><thead><tr><th>Model</th><th>Format</th><th>Supported settings</th><th>Credits</th><th>Try it</th></tr></thead><tbody>{available.filter(model => comparison.includes(model.id)).map(model => <tr key={model.id}><th>{modelName(model)}</th><td>{categories.find(c => c.value === model.type)?.label}</td><td>{modelGuidance(model)}</td><td>{catalogCreditValue(model) === null ? "Varies with settings — estimate in Studio" : `${number(catalogCreditValue(model)!)} per request`}</td><td><Link className="button small" href={`/studio?type=${model.type}&model=${encodeURIComponent(model.modelKey)}`}>Open Studio</Link></td></tr>)}</tbody></table></div></section>}
     <div className={styles.grid} aria-busy={resource.loading}>
-      {resource.loading ? Array.from({ length: 6 }, (_, i) => <div key={i} className={styles.skeleton} aria-hidden="true"><span /><div><i /><i /><i /></div></div>) : models.map((model) => <ModelCard key={model.id} model={model} />)}
+      {resource.loading ? Array.from({ length: 6 }, (_, i) => <div key={i} className={styles.skeleton} aria-hidden="true"><span /><div><i /><i /><i /></div></div>) : models.map((model) => <ModelCard key={model.id} model={model} selected={comparison.includes(model.id)} onExamples={() => setExample(model)} onCompare={() => {setCompareNotice("");if(comparison.includes(model.id)) setComparison(comparison.filter(id => id !== model.id));else if(comparison.length < 3) setComparison([...comparison,model.id]);else setCompareNotice("Compare up to three models. Remove one before adding another.");}} />)}
     </div>
     <div className={styles.note}><SlidersHorizontal size={18} aria-hidden="true" /><p>Fine-tune resolution, format and creative controls in the studio. You&apos;ll see your credit estimate before you create.</p><Link href="/docs">Explore the model guide <ArrowRight size={15} aria-hidden="true" /></Link></div>
+    {example && <Modal title="Published model examples" size="media" onClose={() => setExample(null)}><PublishedExamples model={example} /></Modal>}
   </div></PublicPage>;
 }
