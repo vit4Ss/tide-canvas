@@ -9,8 +9,8 @@ try {
  const page=await ctx.newPage(),errors=[];page.on("pageerror",e=>errors.push(e.message));
  let paid=false,refunded=false,enabled=true,created=0,verified=0;
  const plan={id:"801",market:"en",currency:"USD",name:"Creator",monthly:12.5,yearly:120,monthlyPoints:600,items:[],vipLevel:1};
- const order=()=>({id:"901",orderNo:"PANCAKE-FIXTURE",market:"en",currency:"USD",payMethod:"pancake",type:"plan",planId:"801",planName:"Creator",cycle:"monthly",amount:12.5,credits:600,status:refunded?3:paid?1:0,chargedTotal:paid?13.75:undefined,taxTotal:paid?1.25:undefined,refundedTotal:refunded?13.75:0,checkoutAvailable:enabled&&!paid,cancelAvailable:false,createTime:new Date().toISOString(),payUrl:enabled&&!paid?"https://checkout.waffo.ai/framelyn/checkout/cs_fixture#token=test":""});
- await ctx.route("https://checkout.waffo.ai/**",route=>route.fulfill({contentType:"text/html",body:"<title>Mock Waffo checkout</title><p>Test fixture only</p>"}));
+ const order=()=>({id:"901",orderNo:"PANCAKE-FIXTURE",market:"en",currency:"USD",payMethod:"pancake",type:"plan",planId:"801",planName:"Creator",cycle:"monthly",amount:12.5,credits:600,status:refunded?3:paid?1:0,chargedTotal:paid?13.75:undefined,taxTotal:paid?1.25:undefined,refundedTotal:refunded?13.75:0,checkoutAvailable:enabled&&!paid,cancelAvailable:false,createTime:new Date().toISOString(),payUrl:enabled&&!paid?"https://pancake.waffo.ai/framelyn/checkout/cs_fixture#token=test":""});
+ await ctx.route("https://pancake.waffo.ai/**",route=>route.fulfill({contentType:"text/html",body:"<title>Mock Waffo checkout</title><p>Test fixture only</p>"}));
  await ctx.route("**/api/**",async route=>{
   const req=route.request(),path=new URL(req.url()).pathname;let data={};
   if(path==="/api/auth/me")data={id:"701",username:"alex",nickname:"Alex",points:paid&&!refunded?610:10,vipLevel:0};
@@ -37,7 +37,7 @@ try {
  const link=page.getByRole("link",{name:"Open secure checkout"});await link.waitFor();
  assert.equal(await link.getAttribute("target"),"_blank");
  const popupPromise=page.waitForEvent("popup");await link.click();const popup=await popupPromise;await popup.waitForLoadState();
- assert.match(popup.url(),/^https:\/\/checkout\.waffo\.ai\//);assert.equal(await popup.evaluate(()=>window.opener===null),true);await popup.close();
+ assert.match(popup.url(),/^https:\/\/pancake\.waffo\.ai\//);assert.equal(await popup.evaluate(()=>window.opener===null),true);await popup.close();
  assert.match(page.url(),/billing\?order=901/);
  await page.goto(base+"/account?tab=orders",{waitUntil:"networkidle"});
  assert.equal(await page.getByRole("button",{name:"Cancel",exact:true}).count(),0);

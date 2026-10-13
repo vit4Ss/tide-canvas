@@ -21,7 +21,7 @@ export function checkoutUrl(order: { payUrl?: string; currency?: string; payMeth
     const url = new URL(order.payUrl);
     if (url.username || url.password) return "";
     if (order.payMethod === "pancake") {
-      return order.currency === "USD" && url.protocol === "https:" && url.host === "checkout.waffo.ai" && !url.username && !url.password ? url.href : "";
+      return order.currency === "USD" && url.protocol === "https:" && ["checkout.waffo.ai", "pancake.waffo.ai"].includes(url.host) ? url.href : "";
     }
     if (order.currency === "USD" || order.payMethod === "stripe") {
       return url.protocol === "https:" && url.host === "checkout.stripe.com" ? url.href : "";
