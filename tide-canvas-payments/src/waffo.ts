@@ -16,7 +16,7 @@ export type CheckoutInput = {
 type Amount = { currency: string; subtotal: string; taxAmount: string; total: string };
 type ProviderOrder = {
   id: string; status: string; currency: string; testMode: boolean; orderMerchantExternalId: string;
-  metadata: Record<string, string>; store: { id: string }; onetimeProduct: { id: string };
+  metadata: Record<string, string> | string; store: { id: string }; onetimeProduct: { id: string };
   priceSnapshot: Amount;
   payments: { id: string; status: string; refundStatus: string | null; snapshotAmountDetails: Amount;
     refunds: { id: string; status: string; pspAmountDetails: { currency: string; amount: string } | null }[] }[];
@@ -25,6 +25,21 @@ export const ORDER_FIELDS = `id status currency testMode orderMerchantExternalId
   store { id } onetimeProduct { id } priceSnapshot { currency subtotal taxAmount total }
   payments { id status refundStatus snapshotAmountDetails { currency subtotal taxAmount total }
     refunds { id status pspAmountDetails { currency amount } } }`;
+
+// GraphQL's metadata scalar is a JSON string in the hosted API, while SDK
+// fixtures/other deployments can return an object. Normalize both before the
+// Go service checks the immutable ownership/nonce fields. Never infer them.
+export function orderMetadata(value: unknown): Record<string, string> {
+  const decoded: unknown = typeof value === "string" ? JSON.parse(value) : value;
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) throw new Error("Invalid order metadata");
+  const source = decoded as Record<string, unknown>;
+  const result: Record<string, string> = {};
+  for (const key of ["order_id", "buyer_id", "nonce", "market", "environment"]) {
+    if (typeof source[key] !== "string" || source[key].length > 128) throw new Error("Incomplete order ownership metadata");
+    result[key] = source[key];
+  }
+  return result;
+}
 
 export function normalizeOrder(order: ProviderOrder, config: Pick<Config, "mode" | "storeId">) {
   if (!order || order.store?.id !== config.storeId || order.testMode !== (config.mode === "test") || order.currency !== "USD" || order.priceSnapshot?.currency !== "USD") throw new Error("Provider scope mismatch");
@@ -50,7 +65,7 @@ export function normalizeOrder(order: ProviderOrder, config: Pick<Config, "mode"
   if (order.status === "completed" && !payment) throw new Error("Completed order has no confirmed payment");
   return {
     providerId: order.id, reference: order.orderMerchantExternalId, storeId: order.store.id,
-    productId: order.onetimeProduct.id, mode: config.mode, currency: "USD", metadata: order.metadata,
+    productId: order.onetimeProduct.id, mode: config.mode, currency: "USD", metadata: orderMetadata(order.metadata),
     subtotal: snapshot.subtotal, total: snapshot.total, tax: snapshot.taxAmount, refunded: display(refund),
     paid: order.status === "completed" && Boolean(payment), paymentId: payment?.id || "",
     refundIds: payment?.refunds.filter(r => r.status === "succeeded").map(r => r.id) || [],
@@ -90,7 +105,7 @@ export function createProvider(config: Config, customFetch: typeof fetch = fetch
         expiresInSeconds, darkMode: true, language: "en",
       }, { idempotencyKey: `${config.merchantId}-${input.reference}` });
       const url = new URL(session.checkoutUrl);
-      if (url.protocol !== "https:" || url.host !== "checkout.waffo.ai" || url.username || url.password) throw new Error("Invalid checkout URL");
+      if (url.protocol !== "https:" || !["checkout.waffo.ai", "pancake.waffo.ai"].includes(url.host) || url.username || url.password) throw new Error("Invalid checkout URL");
       // Any warning about ignored fields must be reviewed rather than charging
       // the base product price while granting an unrelated local credit pack.
       if (session.warnings?.length) throw new Error("Provider did not accept all checkout settings");

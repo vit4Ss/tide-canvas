@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { readConfig } from "../dist/config.js";
-import { createProvider, normalizeOrder, cents } from "../dist/waffo.js";
+import { createProvider, normalizeOrder, cents, orderMetadata } from "../dist/waffo.js";
 import { createAdapter } from "../dist/http.js";
 
 const pair = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -16,7 +16,7 @@ const input = { mode: "test", orderId: "901", reference: "framelyn-test-901", bu
 function fixtureOrder() {
   const amount = { currency: "USD", subtotal: "12.50", taxAmount: "1.25", total: "13.75" };
   return { id: "ORD_123", status: "completed", currency: "USD", testMode: true, orderMerchantExternalId: input.reference,
-    metadata: { nonce: input.nonce }, store: { id: config.storeId }, onetimeProduct: { id: config.productId },
+    metadata: { nonce: input.nonce, order_id: input.orderId, buyer_id: input.buyerId, market: "en", environment: "test" }, store: { id: config.storeId }, onetimeProduct: { id: config.productId },
     priceSnapshot: amount, payments: [{ id: "PAY_123", status: "succeeded", refundStatus: null, snapshotAmountDetails: amount, refunds: [] }] };
 }
 test("SDK sends display amounts, authenticated ownership and a stable checkout idempotency key", async () => {
@@ -26,7 +26,7 @@ test("SDK sends display amounts, authenticated ownership and a stable checkout i
     assert.ok(new Headers(init.headers).get("x-signature"));
     if (String(url).endsWith("/graphql")) return Response.json({ data: { onetimeProduct: { id: config.productId, status: "active", store: { id: config.storeId } } } });
     if (String(url).endsWith("issue-session-token")) return Response.json({ data: { token: "test-token", expiresAt: input.expiresAt } });
-    return Response.json({ data: { sessionId: "cs_123", checkoutUrl: "https://checkout.waffo.ai/store/checkout/cs_123", expiresAt: input.expiresAt } });
+    return Response.json({ data: { sessionId: "cs_123", checkoutUrl: "https://pancake.waffo.ai/store/checkout/cs_123", expiresAt: input.expiresAt } });
   });
   for (let i = 0; i < 2; i++) assert.match((await provider.checkout(input)).checkoutUrl, /#token=test-token$/);
   const writes = calls.filter(c => c.url.endsWith("checkout/create-session"));
@@ -98,4 +98,12 @@ test("SDK canonical query scopes the store/reference and fails closed on GraphQL
  assert.equal(result[0].paid, true); assert.equal(result[0].total, "13.75");
  fail = true; await assert.rejects(provider.orders(input.reference));
  await assert.rejects(provider.orders("framelyn-prod-901"));
+});
+test("hosted GraphQL JSON-string metadata preserves exact order ownership", () => {
+  const order=fixtureOrder();
+  const object=normalizeOrder(order,config);
+  const serialized=normalizeOrder({...order,metadata:JSON.stringify(order.metadata)},config);
+  assert.deepEqual(serialized.metadata,object.metadata);
+  assert.equal(serialized.metadata.nonce,input.nonce);
+  for(const value of [null,[],"not JSON",'"text"','[]','{}',JSON.stringify({...order.metadata,buyer_id:701})]) assert.throws(()=>orderMetadata(value));
 });

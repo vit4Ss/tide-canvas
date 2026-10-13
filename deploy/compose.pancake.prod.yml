@@ -1,0 +1,28 @@
+# Merge into the EXISTING production Compose, preserving its MySQL, Redis,
+# storage, JWT, relay, CN frontend, EN frontend and MCP settings.
+# docker compose -f docker-compose.yml -f compose.pancake.prod.yml up -d
+services:
+  backend:
+    environment:
+      TIDECANVAS_ENV: prod
+      TIDECANVAS_PANCAKE_ENABLED: "${TIDECANVAS_PANCAKE_ENABLED:-false}"
+      TIDECANVAS_PANCAKE_ADAPTERURL: "http://127.0.0.1:${PAYMENTS_PORT:-8083}"
+      TIDECANVAS_PANCAKE_INTERNALTOKEN: "${PAYMENTS_INTERNAL_TOKEN:?Set a random internal token}"
+      TIDECANVAS_PANCAKE_STOREID: "${WAFFO_STORE_ID:?Set the approved store ID}"
+      TIDECANVAS_PANCAKE_PRODUCTID: "${WAFFO_PRODUCT_ID:?Set the published one-time product ID}"
+      TIDECANVAS_PANCAKE_SITEURL: "https://framelyn.tcmzhan.com"
+  payments:
+    image: ghcr.io/vit4ss/tide-canvas-payments:latest
+    container_name: tidecanvas-payments
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      WAFFO_ENV: prod
+      WAFFO_MERCHANT_ID: "${WAFFO_MERCHANT_ID:?Set the merchant ID}"
+      WAFFO_STORE_ID: "${WAFFO_STORE_ID:?Set the approved store ID}"
+      WAFFO_PRODUCT_ID: "${WAFFO_PRODUCT_ID:?Set the published one-time product ID}"
+      WAFFO_PRIVATE_KEY: "${WAFFO_PRIVATE_KEY:-}"
+      WAFFO_SITE_URL: "https://framelyn.tcmzhan.com"
+      PAYMENTS_INTERNAL_TOKEN: "${PAYMENTS_INTERNAL_TOKEN:?Set a random internal token}"
+      PAYMENTS_HOST: "127.0.0.1"
+      PAYMENTS_PORT: "${PAYMENTS_PORT:-8083}"

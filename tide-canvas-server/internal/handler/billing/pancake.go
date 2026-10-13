@@ -53,7 +53,7 @@ func pancakeRef(env string, id idgen.ID) string {
 }
 func safePancakeURL(raw string) bool {
 	u, e := url.Parse(raw)
-	return e == nil && u.Scheme == "https" && u.Host == "checkout.waffo.ai" && u.User == nil
+	return e == nil && u.Scheme == "https" && (u.Host == "checkout.waffo.ai" || u.Host == "pancake.waffo.ai") && u.User == nil
 }
 func (s *service) pancakeCall(ctx context.Context, path string, body []byte, signature string, out any) error {
 	if !s.cfg.Pancake.Configured() || s.cfg.Pancake.Validate(s.cfg.Env) != nil {

@@ -22,6 +22,19 @@ type pancakeFixture struct {
 	event    map[string]string
 }
 
+func TestPancakeHostedOrigins(t *testing.T) {
+	for _, host := range []string{"checkout.waffo.ai", "pancake.waffo.ai"} {
+		if !safePancakeURL("https://" + host + "/store/framelyn/checkout/cs_test#token=test") {
+			t.Fatal("official hosted origin rejected")
+		}
+		for _, raw := range []string{"http://" + host + "/pay", "https://" + host + ".attacker.test/pay", "https://user@" + host + "/pay", "https://" + host + ":8443/pay"} {
+			if safePancakeURL(raw) {
+				t.Fatal("unsafe hosted origin accepted")
+			}
+		}
+	}
+}
+
 func setupPancake(t *testing.T) (*service, *pancakeFixture, CreateOrderDTO) {
 	t.Helper()
 	s, _, dto := setupStripe(t)

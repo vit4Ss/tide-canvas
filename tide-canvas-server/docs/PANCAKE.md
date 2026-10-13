@@ -7,7 +7,8 @@ The EN frontend has no payment secrets and no separate ledger.
 
 The existing store is `STO_5sCh2znmw67eD0IDcdYF7r`, merchant
 `MER_2HQcr4GpEfaaTxdlz2EhR4`. The test one-time product is
-`PROD_1MtsJWKNihc87buXVcS4WE`. The new private key has not been supplied.
+`PROD_1MtsJWKNihc87buXVcS4WE`. Private keys are supplied only through ignored
+local configuration or the deployment secret store.
 No production channel, product or payment has been enabled remotely.
 
 ## Local test setup
@@ -106,6 +107,43 @@ No production channel, product or payment has been enabled remotely.
 
 ## Deployment
 
+For the established **production** site, use the production-specific overlay
+`deploy/compose.pancake.prod.yml` and `deploy/pancake.prod.env.example`. The overlay
+pins both services to `prod` and `https://framelyn.tcmzhan.com`; copy it next to
+the server's existing Compose file and append the environment settings to its
+existing private `.env`. Do not replace existing JWT, database or storage settings.
+
+1. Complete store review in Pancake and publish the existing one-time product to
+   production. The product ID remains the same.
+2. In **production mode**, generate a production API key. Place its private key
+   in the server's `.env` as `WAFFO_PRIVATE_KEY`. A test key cannot enable live billing.
+3. Generate `PAYMENTS_INTERNAL_TOKEN` on the server with `openssl rand -hex 32`.
+   Protect the existing `.env` with `chmod 600 .env`.
+4. After both branches' image builds succeed, pull and recreate with the overlay:
+
+   ```sh
+   docker compose -f docker-compose.yml -f compose.pancake.prod.yml pull
+   docker compose -f docker-compose.yml -f compose.pancake.prod.yml up -d
+   ```
+
+   If the EN frontend has its own Compose project, update it using its existing
+   Compose file as well. Production still uses the same backend on port 8081.
+5. In Pancake **production mode**, register an HTTP Webhook for
+   `https://framelyn.tcmzhan.com/api/billing/pancake/webhook`, with
+   `order.completed` and `refund.succeeded`. The existing Nginx `/api/` proxy is
+   sufficient; no ngrok is needed. Configure this endpoint after the new backend
+   and adapter are deployed, not by changing a test endpoint's environment.
+6. Add/enable the `pancake` channel in FlowLight admin; publish the actual EN USD
+   packs. Set `TIDECANVAS_PANCAKE_ENABLED=true` only after the above steps, then run
+   the same `docker compose ... up -d` command to apply it. Restart alone does not
+   inject changed environment variables.
+
+Readiness checks: `curl http://127.0.0.1:8083/healthz` should report
+`ready: true, mode: prod`; the public `/api/billing/en/channels` should include
+`pancake` only after it is enabled. Readiness means configuration is present; it
+does not prove the opaque RSA key was issued in production—check that in Pancake.
+Test cards are for Sandbox only; do not use them for production transactions.
+
 Pushes to `flowingLight` also build `ghcr.io/vit4ss/tide-canvas-payments:latest`.
 Merge `deploy/compose.pancake.yml` into the existing shared-backend Compose file:
 
@@ -134,8 +172,21 @@ timeouts and internal authentication). Go: `go test ./internal/handler/billing
 ./internal/config`, plus the existing payment admin tests. EN: `npm test`,
 `npm run test:pancake`, `npm run test:stripe`, lint and production build.
 
-These fixtures do not make real provider transactions. Live test checkout, key mode,
-actual schema, webhook delivery and payout eligibility still require account access.
+These fixtures do not make real provider transactions. A separate hosted Sandbox
+check on 2026-10-13 verified merchant/store/product access and the live financial
+GraphQL schema. The account had only a test API key. A USD 10.00 test-card purchase
+was confirmed through the shared billing handlers and credited an isolated SQLite
+ledger with 600 credits; repeated verification left one recharge record.
+
+That check exposed two hosted-API differences now covered by regression tests:
+checkout links can use `pancake.waffo.ai` as well as `checkout.waffo.ai`, and GraphQL
+can serialize order `metadata` as a JSON string. Both forms are validated without
+weakening origin or order-ownership checks.
+
+The public Webhook delivery path is not yet verified: the local MySQL configuration
+returned authentication error 1045 and no authenticated ngrok tunnel was available.
+The live test used an isolated billing-only SQLite harness, not the production site
+or production database. Payout eligibility and production activation remain untested.
 
 Sources: [official skill](https://docs.waffo.ai/zh/integrate/skill),
 [SDK](https://github.com/waffo-com/waffo-pancake-sdk-ts),
