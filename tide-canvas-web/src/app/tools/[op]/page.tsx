@@ -57,6 +57,7 @@ import {
   RH_UPSCALE_LEVELS,
   effectiveRhUpscaleLevel,
   RH_UPSCALE_OUTPUT_FPS,
+  RH_UPSCALE_DEFAULT_FPS,
   selectUpscaleModel,
   videoUpscaleDefaults,
   recoveredUpscaleSettings,
@@ -360,7 +361,7 @@ export default function ToolPage() {
   const [prompt, setPrompt] = useState("");
   // 视频超分的目标分辨率；默认取工具配置的 extra.targetResolution，否则 1080p
   const [resolution, setResolution] = useState("");
-  const [outputFps, setOutputFps] = useState("");
+  const [outputFps, setOutputFps] = useState<string>(RH_UPSCALE_DEFAULT_FPS);
   const [upscaleModel, setUpscaleModel] = useState("");
   const [videoDuration, setVideoDuration] = useState(0);
   const [videoMetadataState, setVideoMetadataState] = useState<VideoMetadataState>("idle");
@@ -883,7 +884,7 @@ export default function ToolPage() {
     setSubmittedPointCost(0);
     setPrompt("");
     setResolution("");
-    setOutputFps("");
+    setOutputFps(RH_UPSCALE_DEFAULT_FPS);
     setUpscaleModel("");
     setVideoDuration(0);
     setVideoMetadataState("idle");
@@ -1140,7 +1141,7 @@ export default function ToolPage() {
                 <div><dt>处理模型</dt><dd>{videoModel?.name || "待选择"}</dd></div>
                 {isRhUpscale && <>
                   <div><dt>增强档位</dt><dd>{RH_UPSCALE_LEVELS.find((level) => level.value === activeUpscaleLevel)?.label || activeUpscaleLevel}</dd></div>
-                  <div><dt>输出帧率</dt><dd>{outputFps === "1x" ? "保持原帧率" : outputFps ? outputFps.endsWith("x") ? `${outputFps} 插帧` : `${outputFps} fps` : "使用默认值"}</dd></div>
+                  <div><dt>输出帧率</dt><dd>{outputFps === "1x" ? "保持原帧率（1x）" : outputFps ? outputFps.endsWith("x") ? `${outputFps} 插帧` : `${outputFps} fps` : "按原任务默认值"}</dd></div>
                 </>}
               </dl>
             </div>
@@ -1271,10 +1272,7 @@ export default function ToolPage() {
                       optionHeight={44}
                       value={outputFps}
                       onChange={setOutputFps}
-                      options={[
-                        { value: "", label: "使用默认值" },
-                        ...RH_UPSCALE_OUTPUT_FPS.map((fps) => ({ value: fps, label: fps === "1x" ? "1x · 保持原帧率" : fps.endsWith("x") ? `${fps} · 插帧倍率` : `${fps} fps` })),
-                      ]}
+                      options={RH_UPSCALE_OUTPUT_FPS.map((fps) => ({ value: fps, label: fps === "1x" ? "保持原帧率（1x）" : fps.endsWith("x") ? `${fps} · 插帧倍率` : `${fps} fps` }))}
                     />
                   </label>
                 </div>

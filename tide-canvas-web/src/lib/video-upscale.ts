@@ -2,7 +2,9 @@ interface UpscaleModelRef {
   modelKey?: string;
 }
 
-/** RH 可选参数未选择时省略，保留已有默认值。 */
+/** 新 RH 任务明确保持源帧率，避免后台默认值改变实际输出。 */
+export const RH_UPSCALE_DEFAULT_FPS = "1x";
+
 export const RH_UPSCALE_LEVELS = [
   { value: "max", label: "最高（max）" },
   { value: "high", label: "高（high）" },
@@ -49,7 +51,7 @@ export function rhUpscaleInput(
 ): Record<string, string> {
   if (!isRhUpscaleModel(model)) return {};
   return {
-    ...(outputFps ? { outputFps } : {}),
+    outputFps: outputFps.trim() || RH_UPSCALE_DEFAULT_FPS,
     ...(upscaleModel ? { upscaleModel } : {}),
   };
 }

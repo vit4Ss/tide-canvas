@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   isRhUpscaleModel, rhUpscaleInput, selectUpscaleModel, recoveredUpscaleSettings, videoUpscaleDefaults, effectiveRhUpscaleLevel,
+  RH_UPSCALE_DEFAULT_FPS, RH_UPSCALE_OUTPUT_FPS,
 } from "./video-upscale.ts";
 
 test("RH model detection uses the upstream key", () => {
@@ -11,12 +12,16 @@ test("RH model detection uses the upstream key", () => {
   assert.equal(isRhUpscaleModel(null), false);
 });
 
-test("RH input helper preserves optional values supplied by the resolved controls", () => {
+test("new RH submissions explicitly retain the source frame rate and preserve selected targets", () => {
   const model = { modelKey: "rh-upscale" };
-  assert.deepEqual(rhUpscaleInput(model, "", ""), {});
+  assert.equal(RH_UPSCALE_DEFAULT_FPS, "1x");
+  assert.deepEqual(rhUpscaleInput(model, "", ""), { outputFps: "1x" });
   assert.deepEqual(rhUpscaleInput(model, "1x", "max"), { outputFps: "1x", upscaleModel: "max" });
   assert.deepEqual(rhUpscaleInput(model, "59.94", ""), { outputFps: "59.94" });
-  assert.deepEqual(rhUpscaleInput(model, "", "high"), { upscaleModel: "high" });
+  assert.deepEqual(rhUpscaleInput(model, "", "high"), { outputFps: "1x", upscaleModel: "high" });
+  for (const outputFps of RH_UPSCALE_OUTPUT_FPS) {
+    assert.deepEqual(rhUpscaleInput(model, outputFps, "max"), { outputFps, upscaleModel: "max" });
+  }
 });
 
 test("RH price and submit select the same explicit/default/tool tier", () => {
@@ -26,7 +31,7 @@ test("RH price and submit select the same explicit/default/tool tier", () => {
   assert.equal(effectiveRhUpscaleLevel(rh, "", { extras: { upscale_model: "medium" } }), "medium");
   assert.equal(effectiveRhUpscaleLevel(rh, " LOW ", { upscaleModel: "high" }), "low");
   assert.equal(effectiveRhUpscaleLevel({ modelKey: "other" }, "low"), "");
-  assert.deepEqual(rhUpscaleInput(rh, "", effectiveRhUpscaleLevel(rh, "")), { upscaleModel: "max" });
+  assert.deepEqual(rhUpscaleInput(rh, "", effectiveRhUpscaleLevel(rh, "")), { outputFps: "1x", upscaleModel: "max" });
 });
 
 test("switching away from RH does not submit its retained control values", () => {
@@ -56,6 +61,15 @@ test("recovery prefers the frozen payload and supports legacy numeric and nested
   }), { modelId: "rh-upscale", outputFps: "3x", upscaleModel: "medium" });
   assert.deepEqual(recoveredUpscaleSettings({ recovery: { modelId: "rh-row", outputFps: "1x", upscaleModel: "max" } }),
     { modelId: "rh-row", outputFps: "1x", upscaleModel: "max" });
+});
+
+test("restoring an old task does not add the new default to its frozen request", () => {
+  const entry = { payload: { modelId: "rh-upscale", input: { videoUrl: "https://example.com/old.mp4" } } };
+  const state = recoveredUpscaleSettings(entry);
+  assert.equal(state.outputFps, "");
+  assert.deepEqual(entry.payload.input, { videoUrl: "https://example.com/old.mp4" });
+  assert.deepEqual(rhUpscaleInput({ modelKey: "rh-upscale" }, state.outputFps, "max"),
+    { outputFps: "1x", upscaleModel: "max" });
 });
 
 test("tool defaults cannot leak RH fields to other models and are not mutated", () => {
