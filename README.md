@@ -209,3 +209,10 @@ short viewports, pending/failed/unknown mutation states, retained rename drafts,
 preview navigation and downloads, browser Back/Forward, and safe direct Stripe
 navigation with recovery for changed or reused orders. Browser requests are
 intercepted; the Stripe destination is a local test response, not a real payment.
+
+Waffo Pancake one-time USD payments are also supported through the shared Go backend
+and the server-only `tide-canvas-payments` SDK adapter. Configure `pancake` in the
+admin payment channels and follow backend `docs/PANCAKE.md`. The EN frontend needs
+no Waffo credentials. Pancake checkout opens in a new tab from the invoice; prices
+exclude applicable tax, with tax and the final paid amount shown separately.
+Run `npm run test:pancake` for the mocked browser payment/return/refund flow.

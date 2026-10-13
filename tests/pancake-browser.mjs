@@ -1,0 +1,61 @@
+import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
+import { chromium } from "playwright-core";
+const base=process.env.FRONTEND_TEST_URL||"http://localhost:3100";
+const browser=await chromium.launch({headless:true,...(process.env.BROWSER_PATH?{executablePath:process.env.BROWSER_PATH}:process.platform==="win32"?{executablePath:"C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"}:{channel:"chrome"})});
+try {
+ const ctx=await browser.newContext({viewport:{width:1280,height:900}});
+ await ctx.addInitScript(()=>{localStorage.setItem("access_token","pancake-fixture");localStorage.setItem("refresh_token","pancake-fixture-refresh");});
+ const page=await ctx.newPage(),errors=[];page.on("pageerror",e=>errors.push(e.message));
+ let paid=false,refunded=false,enabled=true,created=0,verified=0;
+ const plan={id:"801",market:"en",currency:"USD",name:"Creator",monthly:12.5,yearly:120,monthlyPoints:600,items:[],vipLevel:1};
+ const order=()=>({id:"901",orderNo:"PANCAKE-FIXTURE",market:"en",currency:"USD",payMethod:"pancake",type:"plan",planId:"801",planName:"Creator",cycle:"monthly",amount:12.5,credits:600,status:refunded?3:paid?1:0,chargedTotal:paid?13.75:undefined,taxTotal:paid?1.25:undefined,refundedTotal:refunded?13.75:0,checkoutAvailable:enabled&&!paid,cancelAvailable:false,createTime:new Date().toISOString(),payUrl:enabled&&!paid?"https://checkout.waffo.ai/framelyn/checkout/cs_fixture#token=test":""});
+ await ctx.route("https://checkout.waffo.ai/**",route=>route.fulfill({contentType:"text/html",body:"<title>Mock Waffo checkout</title><p>Test fixture only</p>"}));
+ await ctx.route("**/api/**",async route=>{
+  const req=route.request(),path=new URL(req.url()).pathname;let data={};
+  if(path==="/api/auth/me")data={id:"701",username:"alex",nickname:"Alex",points:paid&&!refunded?610:10,vipLevel:0};
+  else if(path==="/api/auth/register-config")data={registerClosed:false};
+  else if(path==="/api/billing/en/consumer")data={supportEmail:"gudexin748@gmail.com"};
+  else if(path==="/api/billing/en/plans")data=[plan];
+  else if(path==="/api/billing/en/channels")data=enabled?[{key:"pancake",name:"Waffo Pancake",currency:"USD"}]:[];
+  else if(path==="/api/billing/en/compare")data={rows:[]};
+  else if(path==="/api/billing/en/faq")data={items:[]};
+  else if(path==="/api/billing/en/promo")data={enabled:false};
+  else if(path==="/api/en/orders"){created++;assert.equal(req.postDataJSON().payChannel,"pancake");data=order();}
+  else if(path==="/api/orders/901")data=order();
+  else if(path==="/api/orders/901/verify"){verified++;data={paid:paid&&!refunded,granted:paid&&!refunded};}
+  else if(path==="/api/orders")data={records:[order()],total:1,pages:1};
+  await route.fulfill({json:{success:true,code:200,data}});
+ });
+ await page.goto(base+"/pricing",{waitUntil:"networkidle"});
+ await page.getByRole("button",{name:"Choose this plan"}).click();
+ await page.getByText("Subtotal before tax",{exact:true}).waitFor();
+ assert.match(await page.getByRole("dialog").innerText(),/Secure payment through Waffo Pancake/);
+ assert.match(await page.getByRole("dialog").innerText(),/taxes are added/);
+ await page.getByRole("button",{name:"Continue to checkout"}).click();
+ await page.waitForURL("**/billing?order=901");
+ const link=page.getByRole("link",{name:"Open secure checkout"});await link.waitFor();
+ assert.equal(await link.getAttribute("target"),"_blank");
+ const popupPromise=page.waitForEvent("popup");await link.click();const popup=await popupPromise;await popup.waitForLoadState();
+ assert.match(popup.url(),/^https:\/\/checkout\.waffo\.ai\//);assert.equal(await popup.evaluate(()=>window.opener===null),true);await popup.close();
+ assert.match(page.url(),/billing\?order=901/);
+ await page.goto(base+"/account?tab=orders",{waitUntil:"networkidle"});
+ assert.equal(await page.getByRole("button",{name:"Cancel",exact:true}).count(),0);
+ paid=true;await page.goto(base+"/billing?order=901&checkout=returned",{waitUntil:"networkidle"});
+ await page.getByRole("link",{name:"Back to creating"}).waitFor();
+ assert.ok(verified>0,"Waffo return did not verify");
+ assert.match(await page.locator(".billing-invoice").innerText(),/13\.75/);
+ assert.match(await page.locator(".billing-invoice").innerText(),/1\.25/);
+ await mkdir(".impeccable/review/pancake",{recursive:true});
+ await page.screenshot({path:".impeccable/review/pancake/paid-desktop.png",fullPage:true});
+ await page.setViewportSize({width:390,height:844});
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+ refunded=true;await page.reload({waitUntil:"networkidle"});
+ await page.getByText("Refunded",{exact:true}).waitFor();
+ assert.equal(await link.count(),0);
+ await page.screenshot({path:".impeccable/review/pancake/refunded-mobile.png",fullPage:true});
+ enabled=false;await page.goto(base+"/pricing",{waitUntil:"networkidle"});
+ assert.equal(await page.getByRole("button",{name:"Checkout unavailable"}).isDisabled(),true);
+ assert.equal(created,1);assert.deepEqual(errors,[]);
+ console.log("Pancake browser: tax disclosure, provider choice, new-tab checkout, no duplicate order, return verification, actual paid total, refunded state, mobile and disabled channel passed.");
+} finally {await browser.close();}

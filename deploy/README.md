@@ -125,3 +125,13 @@ Stripe 密钥只配置在共享 backend 容器，英文 frontend-en 不需要 St
 - 生产：`https://framelyn.tcmzhan.com/api/billing/stripe/webhook`
 
 按共享后端 `docs/STRIPE.md` 完成开户、Sandbox 联调、后台渠道启用，再启用生产收款。现有 Nginx `/api/` 反代需原样转发请求体与 Stripe-Signature 头。退款先在 Stripe 完成原路退回，再在后台做账务退款和积分回收；本次不包含自动订阅或退款同步。
+
+## Waffo Pancake 收款
+
+英文站也支持一次性 USD 积分包的 Pancake 渠道，后台类型为 `pancake`。
+接入代码位于共享 Go 后端和新增的 `tide-canvas-payments` Node SDK 服务，
+前端无需 Waffo 私钥。共享后端 `docs/PANCAKE.md` 说明了本地测试、凭据、
+Webhook、容器覆盖文件和真实 Sandbox 验证步骤。
+
+价格为税前金额，收银台可能加税；账单分别展示套餐小计、税费和实付。
+Pancake 退款请从其后台发起，再由已验签通知同步积分，不能使用旧账务退款按钮。
