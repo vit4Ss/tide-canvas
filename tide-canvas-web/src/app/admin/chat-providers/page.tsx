@@ -7,9 +7,9 @@
    Token 用量从主站积分扣费。和「模型管理 / 创作台」完全分开：这里的任何配置
    都不会影响生成。
 
-   页面是主从布局：左侧一列供应商，右侧是选中供应商的设置页——接入地址、定价
-   规则、模型表，从上到下三段，没有卡片套卡片。运营者一眼看到有哪些供应商、
-   哪家出了问题，点进去改一处即保存（InlineText / PriceCell 都是点击即编辑）。
+   页面参照用户的价格表截图：模型系列标签、供应商倍率卡、输入/输出/缓存三列
+   实收价。接入地址和默认定价收进折叠区；行级价格在明确保存的弹窗中编辑。
+   人民币仅作计价参考，账单仍使用服务端返回的积分单价。
 
    三层结构：供应商 → 接入地址（可多组，按顺序尝试，前一组连不上换下一组）
    → 模型（拉取即按默认单价定价并开放，运营再按需改价或收回）。
@@ -19,7 +19,10 @@
    ============================================================================ */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import Image from "next/image";
+import { ChevronDown, ChevronUp, Copy, Layers3, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { CHAT_FAMILIES, chatModelFamily, chatRateCNY } from "@/lib/chat-pricing-presentation";
+import { ChatPriceEditor } from "./chat-price-editor";
 import {
   AdminAlert,
   AdminEmptyState,
@@ -85,7 +88,9 @@ export default function ChatProvidersPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [addTarget, setAddTarget] = useState<ChatProviderVO | null>(null);
   const [selectedId, setSelectedId] = useState("");
+  const [family, setFamily] = useState("all");
   const requestRef = useRef(0);
+  const mutationRef = useRef(false);
 
   const load = useCallback(async () => {
     const id = ++requestRef.current;
@@ -119,7 +124,8 @@ export default function ChatProvidersPage() {
   // the server's own message on failure (it explains what was wrong with the
   // address, the credential or the price).
   const run: Run = async (key, action, ok) => {
-    if (busy) return;
+    if (mutationRef.current) return;
+    mutationRef.current = true;
     setBusy(key);
     try {
       const res = await action();
@@ -132,6 +138,7 @@ export default function ChatProvidersPage() {
     } catch {
       toast.error("操作失败，请稍后重试");
     } finally {
+      mutationRef.current = false;
       setBusy("");
     }
   };
@@ -142,6 +149,13 @@ export default function ChatProvidersPage() {
 
   return (
     <div className="adm-page cp-page">
+      <div className="cp-family-tabs" role="group" aria-label="模型系列">
+        {CHAT_FAMILIES.map((item) => {
+          const count = new Set(providers.flatMap((p) => p.models).filter((m) => item.id === "all" || chatModelFamily(m.modelKey) === item.id).map((m) => m.modelKey)).size;
+          if (!count && item.id !== "all" && item.id !== family) return null;
+          return <button key={item.id} type="button" aria-pressed={family === item.id} onClick={() => setFamily(item.id)}>{item.icon ? <Image src={`/model-icons/${item.icon}.png`} alt="" width={22} height={22} unoptimized /> : <Layers3 size={18} aria-hidden />}<span>{item.label}</span><small>{count}</small></button>;
+        })}
+      </div>
       {error ? (
         <AdminAlert
           tone="error"
@@ -160,7 +174,7 @@ export default function ChatProvidersPage() {
       <div className="cp-split">
         <ProviderNav
           providers={providers}
-          loading={loading}
+          loading={loading && providers.length === 0}
           selectedId={selected?.id ?? ""}
           onSelect={setSelectedId}
           onCreate={() => setCreateOpen(true)}
@@ -168,7 +182,7 @@ export default function ChatProvidersPage() {
         />
 
         <section className="cp-detail" role="tabpanel" aria-label={selected ? `${selected.name} 的设置` : "供应商设置"}>
-          {loading ? (
+          {loading && providers.length === 0 ? (
             <div className="cp-detail-body">
               <TableSkeleton rows={4} />
             </div>
@@ -186,7 +200,7 @@ export default function ChatProvidersPage() {
               />
             </div>
           ) : (
-            <ProviderDetail key={selected.id} provider={selected} busy={busy} run={run} onAddEndpoint={setAddTarget} />
+            <ProviderDetail key={selected.id} provider={selected} family={family} busy={busy} run={run} onAddEndpoint={setAddTarget} />
           )}
         </section>
       </div>
@@ -223,10 +237,11 @@ function ProviderNav({
   disabled: boolean;
 }) {
   const onKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    if (disabled) return;
+    if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(e.key)) return;
     const index = providers.findIndex((p) => p.id === selectedId);
     if (index < 0) return;
-    const next = providers[index + (e.key === "ArrowDown" ? 1 : -1)];
+    const next = providers[index + (e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : -1)];
     if (!next) return;
     e.preventDefault();
     onSelect(next.id);
@@ -237,7 +252,7 @@ function ProviderNav({
     <aside className="cp-nav">
       <div className="cp-nav-head">
         <h2>
-          供应商
+          选择供应商分组
           {providers.length > 0 ? <span className="cp-n">{providers.length}</span> : null}
         </h2>
         <button type="button" className="cp-nav-add" aria-label="新增供应商" title="新增供应商" disabled={disabled} onClick={onCreate}>
@@ -252,7 +267,7 @@ function ProviderNav({
       ) : providers.length === 0 ? (
         <p className="cp-nav-none">还没有供应商</p>
       ) : (
-        <div className="cp-nav-list" role="tablist" aria-orientation="vertical" aria-label="供应商" onKeyDown={onKey}>
+        <div className="cp-nav-list" role="tablist" aria-orientation="horizontal" aria-label="供应商" onKeyDown={onKey}>
           {providers.map((p) => {
             const open = p.models.filter((m) => m.enabled).length;
             const failing = p.endpoints.some((e) => e.enabled && !!e.lastFailure);
@@ -265,10 +280,12 @@ function ProviderNav({
                 data-id={p.id}
                 aria-selected={on}
                 tabIndex={on ? 0 : -1}
+                disabled={disabled}
                 className={`cp-nav-item${on ? " on" : ""}${p.enabled ? "" : " is-off"}`}
                 onClick={() => onSelect(p.id)}
               >
                 <span className="cp-nav-name">{p.name}</span>
+                <span className="cp-nav-rate"><b>{p.priceMultiplier.trim() || "1"}</b> ×<small>分组倍率</small></span>
                 <span className="cp-nav-sub">
                   {p.models.length > 0 ? (
                     <>
@@ -295,11 +312,13 @@ function ProviderNav({
 
 function ProviderDetail({
   provider,
+  family,
   busy,
   run,
   onAddEndpoint,
 }: {
   provider: ChatProviderVO;
+  family: string;
   busy: string;
   run: Run;
   onAddEndpoint: (provider: ChatProviderVO) => void;
@@ -317,6 +336,11 @@ function ProviderDetail({
 
   return (
     <div className={`cp-detail-body${provider.enabled ? "" : " is-off"}`}>
+
+
+      <div className="cp-billing-banner"><Layers3 size={19} aria-hidden /><div><strong>当前实收：基准单价 × {provider.priceMultiplier.trim() || "1"}</strong><span>计价换算 1 元 = 10 积分 · 有消耗的请求按总费用向上取整到积分</span></div></div>
+      <ModelSection provider={provider} family={family} busy={busy} run={run} />
+      <details className="cp-settings"><summary>接入地址与定价设置 <ChevronDown size={16} aria-hidden /></summary>
       <header className="cp-dhead">
         <div className="cp-ident">
           <InlineText
@@ -347,16 +371,15 @@ function ProviderDetail({
           <span>{provider.enabled ? "启用中" : "已停用"}</span>
           <SwitchToggle
             checked={provider.enabled}
+            disabled={!!busy}
             onChange={(enabled) =>
               void run(`p-${provider.id}`, () => adminChatProvidersApi.updateProvider(provider.id, { enabled }), enabled ? "已启用" : "已停用")
             }
           />
         </label>
       </header>
-
       <EndpointSection provider={provider} busy={busy} run={run} onAdd={onAddEndpoint} />
       <PricingSection provider={provider} busy={busy} run={run} />
-      <ModelSection provider={provider} busy={busy} run={run} />
 
       {/* A div, not <footer>: the site theme paints a bare <footer> as the black brand strip. */}
       <div className="cp-danger">
@@ -366,6 +389,7 @@ function ProviderDetail({
         </button>
         <small>连同全部接入地址与模型一起删除，已开放的模型会立刻从聊天里消失。</small>
       </div>
+      </details>
     </div>
   );
 }
@@ -781,9 +805,12 @@ function PricingSection({ provider, busy, run }: { provider: ChatProviderVO; bus
 
 type ModelFilter = "all" | "open" | "unpriced";
 
-function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy: string; run: Run }) {
+function ModelSection({ provider, family, busy, run }: { provider: ChatProviderVO; family: string; busy: string; run: Run }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<ModelFilter>("all");
+  const [showReference, setShowReference] = useState(true);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const editingModel = provider.models.find((m) => m.id === editingId);
 
   const fetchModels = () =>
     void run(
@@ -809,27 +836,29 @@ function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy:
     void run(`md-${model.id}`, () => adminChatProvidersApi.deleteModel(model.id), "已删除模型");
   };
 
+  const categoryModels = useMemo(() => provider.models.filter((m) => family === "all" || chatModelFamily(m.modelKey) === family), [provider.models, family]);
   const counts = useMemo(() => {
-    const open = provider.models.filter((m) => m.enabled).length;
-    const unpriced = provider.models.filter((m) => !m.pricing).length;
-    const ready = provider.models.filter((m) => !m.enabled && !m.priceError).length;
+    const open = categoryModels.filter((m) => m.enabled).length;
+    const unpriced = categoryModels.filter((m) => !m.pricing).length;
+    const ready = categoryModels.filter((m) => !m.enabled && !m.priceError).length;
     return { open, unpriced, ready };
-  }, [provider.models]);
+  }, [categoryModels]);
 
   const rows = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return provider.models.filter((m) => {
+      if (family !== "all" && chatModelFamily(m.modelKey) !== family) return false;
       if (filter === "open" && !m.enabled) return false;
       if (filter === "unpriced" && m.pricing) return false;
       if (!needle) return true;
       return m.modelKey.toLowerCase().includes(needle) || (m.name || "").toLowerCase().includes(needle);
     });
-  }, [provider.models, query, filter]);
+  }, [provider.models, query, filter, family]);
 
   // Bulk open/close run as one action so the page reloads once, in order, and
   // stop at the first refusal so the operator sees which row the server rejected.
   const setAll = async (enabled: boolean) => {
-    const targets = provider.models.filter((m) => (enabled ? !m.enabled && !m.priceError : m.enabled));
+    const targets = categoryModels.filter((m) => (enabled ? !m.enabled && !m.priceError : m.enabled));
     if (!targets.length) return;
     const ok = await confirmDialog({
       title: enabled ? `开放 ${targets.length} 个模型` : `收回 ${targets.length} 个模型`,
@@ -873,8 +902,8 @@ function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy:
   return (
     <section className="cp-sec cp-sec-models" aria-label="模型">
       <SectionHead
-        title="模型"
-        count={provider.models.length}
+        title={`${CHAT_FAMILIES.find((item) => item.id === family)?.label || "模型"}价格列表`}
+        count={rows.length}
         desc={desc}
         tools={
           <button type="button" className="adm-btn ghost" disabled={!!busy || provider.endpoints.length === 0} onClick={fetchModels}>
@@ -892,7 +921,7 @@ function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy:
           </div>
           <div className="adm-segment" role="group" aria-label="筛选模型">
             {([
-              ["all", "全部", provider.models.length],
+              ["all", "全部", categoryModels.length],
               ["open", "已开放", counts.open],
               ["unpriced", "未定价", counts.unpriced],
             ] as const).map(([key, label, n]) => (
@@ -903,6 +932,7 @@ function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy:
             ))}
           </div>
           <div className="cp-model-bulk">
+            <label className="cp-show-reference"><input type="checkbox" checked={showReference} onChange={(e) => setShowReference(e.target.checked)} />显示参考价</label>
             {counts.ready > 0 ? (
               <button type="button" className="adm-btn" disabled={!!busy} onClick={() => void setAll(true)}>
                 开放全部
@@ -922,6 +952,9 @@ function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy:
       {provider.models.length === 0 ? (
         <p className="cp-none">{emptyText}</p>
       ) : (
+      <>
+      <div className="cp-rate-unit">¥ / 1M Tokens <span>实际扣费积分同时展示；参考价来自定价截图，非实时官方报价</span></div>
+      <p className="cp-table-scroll-hint">左右滑动查看完整价格与管理操作</p>
       <div className="cp-models-wrap">
         <AdminTable<ChatModelVO>
           className="cp-models"
@@ -935,16 +968,14 @@ function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy:
               header: "模型",
               cell: (m) => <ModelNameCell model={m} busy={busy} run={run} />,
             },
-            {
-              header: (
-                <>
-                  单价
-                  <small className="cp-th-hint">积分 / 1M Token</small>
-                </>
-              ),
-              width: "360px",
-              cell: (m) => <PriceCell model={m} multiplier={provider.priceMultiplier} busy={busy} run={run} />,
-            },
+            ...([
+              ["输入价格", "inputPointsPerMillion"],
+              ["输出价格", "outputPointsPerMillion"],
+              ["缓存读取", "cachedInputPointsPerMillion"],
+            ] as const).map(([header, field]) => ({
+              header, width: "160px", align: "right" as const,
+              cell: (m: ChatModelVO) => <TokenRate model={m} field={field} showReference={showReference} />,
+            })),
             {
               header: <span title="是否接受用户传图">图片</span>,
               width: "84px",
@@ -952,6 +983,7 @@ function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy:
               cell: (m) => (
                 <SwitchToggle
                   checked={m.vision}
+                  disabled={!!busy}
                   aria-label={`${m.name || m.modelKey} 是否接受图片`}
                   onChange={(vision) => void run(`mv-${m.id}`, () => adminChatProvidersApi.updateModel(m.id, { vision }), "已保存")}
                 />
@@ -965,7 +997,7 @@ function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy:
                 <span className="cp-open" title={m.priceError && !m.enabled ? "单价无效，先修正再开放" : !m.pricing ? "开放时按默认单价定价" : undefined}>
                   <SwitchToggle
                     checked={m.enabled}
-                    disabled={!!m.priceError && !m.enabled}
+                    disabled={!!busy || (!!m.priceError && !m.enabled)}
                     aria-label={`${m.name || m.modelKey} 是否开放给用户`}
                     onChange={(enabled) =>
                       void run(`me-${m.id}`, () => adminChatProvidersApi.updateModel(m.id, { enabled }), enabled ? "已开放" : "已收回")
@@ -975,12 +1007,13 @@ function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy:
               ),
             },
             {
-              header: "",
-              width: "56px",
+              header: "管理",
+              width: "126px",
               align: "right",
               cell: (m) => (
-                <div className="rowacts">
-                  <button type="button" className="danger" aria-label={`删除 ${m.modelKey}`} disabled={!!busy} onClick={() => void removeModel(m)}>
+                <div className="cp-model-actions">
+                  <button type="button" className="cp-edit-price" disabled={!!busy} onClick={() => setEditingId(m.id)} aria-label={`修改 ${m.name || m.modelKey} 的单价`}><Pencil size={13} aria-hidden />编辑价格</button>
+                  <button type="button" className="cp-remove-model" aria-label={`删除 ${m.modelKey}`} disabled={!!busy} onClick={() => void removeModel(m)}>
                     <Trash2 aria-hidden size={14} />
                   </button>
                 </div>
@@ -989,13 +1022,21 @@ function ModelSection({ provider, busy, run }: { provider: ChatProviderVO; busy:
           ]}
         />
       </div>
+      </>
       )}
+      {editingModel && <ChatPriceEditor key={editingModel.id} model={editingModel} multiplier={provider.priceMultiplier} disabled={!!busy} onClose={() => setEditingId(null)} save={async (pricing) => {
+        let saved = false;
+        await run(`mp-${editingModel.id}`, async () => { const res = await adminChatProvidersApi.updateModel(editingModel.id, { pricing: { tokenPricing: pricing } }); saved = res.success; return res; }, "已保存单价");
+        return saved;
+      }} />}
     </section>
   );
 }
 
 function ModelNameCell({ model, busy, run }: { model: ChatModelVO; busy: string; run: Run }) {
+  const icon = CHAT_FAMILIES.find((item) => item.id === chatModelFamily(model.modelKey))?.icon;
   return (
+    <div className="cp-model-identity"><span className="cp-model-logo">{icon ? <Image src={`/model-icons/${icon}.png`} alt="" width={24} height={24} unoptimized /> : <Layers3 size={21} aria-hidden />}</span>
     <div className="cp-model">
       <InlineText
         label="模型显示名"
@@ -1008,9 +1049,10 @@ function ModelNameCell({ model, busy, run }: { model: ChatModelVO; busy: string;
       {model.name || model.rivals > 0 ? (
         <span className="cp-model-sub">
           {model.name ? <code className="cp-model-key">{model.modelKey}</code> : null}
+          <button type="button" className="cp-copy-key" aria-label={`复制 ${model.modelKey}`} onClick={async () => { try { await navigator.clipboard.writeText(model.modelKey); toast.success("已复制模型 ID"); } catch { toast.error("复制失败，请手动选择模型 ID"); } }}><Copy size={12} aria-hidden /></button>
           {model.rivals > 0 ? (
             model.preferred ? (
-              <span title={`另有  家供应商提供这个模型，首选失败时依次切换`}>
+              <span title={`另有 ${model.rivals} 家供应商提供这个模型，首选失败时依次切换`}>
                 <StatusPill tone="blue">首选</StatusPill>
               </span>
             ) : (
@@ -1019,7 +1061,7 @@ function ModelNameCell({ model, busy, run }: { model: ChatModelVO; busy: string;
                 className="cp-linkbtn"
                 disabled={!!busy}
                 title={model.pricing && model.enabled ? "目前作为备用，首选失败时才会用到" : "开放并定价后才能参与切换"}
-                onClick={() => void run(`mf-`, () => adminChatProvidersApi.preferModel(model.id), "已设为首选供应商")}
+                onClick={() => void run(`mf-${model.id}`, () => adminChatProvidersApi.preferModel(model.id), "已设为首选供应商")}
               >
                 设为首选
               </button>
@@ -1028,150 +1070,15 @@ function ModelNameCell({ model, busy, run }: { model: ChatModelVO; busy: string;
         </span>
       ) : null}
     </div>
+    </div>
   );
 }
 
-// The price reads as text until the operator clicks it: a table of seventeen
-// rows must not be seventeen rows of input boxes. Priced and unpriced rows share
-// one affordance — the whole cell is the button. The editor holds a draft of
-// the four numbers and saves the set once when focus leaves it with something
-// changed; Escape drops the draft.
-function PriceCell({ model, multiplier, busy, run }: { model: ChatModelVO; multiplier: string; busy: string; run: Run }) {
-  const saved = model.pricing ?? emptyPricing();
-  const savedKey = JSON.stringify(saved);
-  const [draft, setDraft] = useState<ChatTokenPricing>(saved);
-  const [seen, setSeen] = useState(savedKey);
-  const [editing, setEditing] = useState(false);
-  if (seen !== savedKey) {
-    setSeen(savedKey);
-    setDraft(saved);
-    setEditing(false);
-  }
-
-  const commit = () => {
-    if (JSON.stringify(draft) === savedKey) {
-      setEditing(false);
-      return;
-    }
-    if (!draft.inputPointsPerMillion.trim() || !draft.outputPointsPerMillion.trim()) {
-      toast.error("请填写输入和输出单价");
-      return;
-    }
-    setEditing(false);
-    void run(
-      `mp-${model.id}`,
-      () => adminChatProvidersApi.updateModel(model.id, { pricing: { tokenPricing: { ...draft, enabled: true } } }),
-      "已保存单价",
-    );
-  };
-
-  const cancel = () => {
-    setDraft(saved);
-    setEditing(false);
-  };
-
-  const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") e.currentTarget.blur();
-    if (e.key === "Escape") {
-      e.preventDefault();
-      cancel();
-    }
-  };
-
-  const scaled = model.effectivePricing && !atList(multiplier) ? model.effectivePricing : null;
-
-  if (!editing) {
-    if (!model.pricing) {
-      return (
-        <button type="button" className="cp-price is-empty" disabled={!!busy} aria-label={`为 ${model.name || model.modelKey} 填写单价`} onClick={() => setEditing(true)}>
-          <span className="cp-price-main">
-            <span className="cp-price-none">{model.priceError ? "单价无效" : "未定价"}</span>
-            <Pencil aria-hidden size={12} className="cp-price-pen" />
-          </span>
-          {model.priceError ? <span className="cp-price-sub is-warn">{model.priceError}</span> : null}
-        </button>
-      );
-    }
-    return (
-      <button type="button" className="cp-price" disabled={!!busy} aria-label={`修改 ${model.name || model.modelKey} 的单价`} onClick={() => setEditing(true)}>
-        <span className="cp-price-main">
-          <b>{model.pricing.inputPointsPerMillion}</b>
-          <i>/</i>
-          <b>{model.pricing.outputPointsPerMillion}</b>
-          <Pencil aria-hidden size={12} className="cp-price-pen" />
-        </span>
-        <span className="cp-price-sub">
-          {scaled ? (
-            <>
-              实收 <em>{scaled.inputPointsPerMillion}</em> / <em>{scaled.outputPointsPerMillion}</em>
-              <span aria-hidden> · </span>
-            </>
-          ) : null}
-          上限 {(model.pricing.maxInputTokens ?? 131072).toLocaleString()} / {(model.pricing.maxOutputTokens ?? 8192).toLocaleString()}
-        </span>
-      </button>
-    );
-  }
-
-  return (
-    <div
-      className="cp-price-edit"
-      onBlur={(e) => {
-        // Commit once when focus leaves the whole editor, not per field.
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) commit();
-      }}
-    >
-      <label className="cp-num">
-        <input
-          inputMode="decimal"
-          autoFocus
-          value={draft.inputPointsPerMillion}
-          disabled={!!busy}
-          onChange={(e) => setDraft({ ...draft, inputPointsPerMillion: e.target.value })}
-          onKeyDown={onKey}
-          placeholder="必填"
-        />
-        <span>输入</span>
-      </label>
-      <label className="cp-num">
-        <input
-          inputMode="decimal"
-          value={draft.outputPointsPerMillion}
-          disabled={!!busy}
-          onChange={(e) => setDraft({ ...draft, outputPointsPerMillion: e.target.value })}
-          onKeyDown={onKey}
-          placeholder="必填"
-        />
-        <span>输出</span>
-      </label>
-      <label className="cp-num is-limit">
-        <input
-          type="number"
-          min={1}
-          value={draft.maxInputTokens ?? 131072}
-          disabled={!!busy}
-          onChange={(e) => setDraft({ ...draft, maxInputTokens: Number(e.target.value) })}
-          onKeyDown={onKey}
-        />
-        <span>输入上限</span>
-      </label>
-      <label className="cp-num is-limit">
-        <input
-          type="number"
-          min={1}
-          value={draft.maxOutputTokens ?? 8192}
-          disabled={!!busy}
-          onChange={(e) => setDraft({ ...draft, maxOutputTokens: Number(e.target.value) })}
-          onKeyDown={onKey}
-        />
-        <span>输出上限</span>
-      </label>
-      <p className="cp-price-hint">
-        {scaled ? <>实收 <b>{scaled.inputPointsPerMillion}</b> / <b>{scaled.outputPointsPerMillion}</b> · 倍率 {multiplier.trim()} · </> : null}
-        回车或移开焦点保存，Esc 取消
-      </p>
-    </div>
-  );
+function TokenRate({ model, field, showReference }: { model: ChatModelVO; field: "inputPointsPerMillion" | "outputPointsPerMillion" | "cachedInputPointsPerMillion"; showReference: boolean }) {
+  const value = model.effectivePricing?.[field] ?? (field === "cachedInputPointsPerMillion" ? model.effectivePricing?.inputPointsPerMillion : undefined);
+  const reference = model.referencePricing?.[field];
+  if (value === undefined) return <span className="cp-rate-unavailable">{model.priceError || "未配置有效单价"}</span>;
+  return <div className="cp-token-rate"><strong>¥{chatRateCNY(value)}</strong><span>{value} 积分</span>{showReference && reference !== undefined && <small>参考 ¥{chatRateCNY(reference)}</small>}</div>;
 }
 
 /* ---------------------------------------------------------------- modals */
@@ -1197,7 +1104,7 @@ function CreateProviderModal({
   const [label, setLabel] = useState("");
   const [defaultInput, setDefaultInput] = useState("");
   const [defaultOutput, setDefaultOutput] = useState("");
-  const [multiplier, setMultiplier] = useState("");
+  const [multiplier, setMultiplier] = useState("2");
 
   const reset = () => {
     setName("");
@@ -1207,7 +1114,7 @@ function CreateProviderModal({
     setLabel("");
     setDefaultInput("");
     setDefaultOutput("");
-    setMultiplier("");
+    setMultiplier("2");
   };
 
   const save = async (): Promise<boolean> => {

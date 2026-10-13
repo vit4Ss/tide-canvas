@@ -96,6 +96,8 @@ type chatModelVO struct {
 	// rates the gateway actually sells at. Equal to Pricing when the provider
 	// has no multiplier; null whenever Pricing is.
 	EffectivePricing *tokenbilling.Pricing `json:"effectivePricing"`
+	// Screenshot reference rates in points, before the supplier multiplier.
+	ReferencePricing *tokenbilling.Pricing `json:"referencePricing,omitempty"`
 	// Priority is this row's rank among the providers offering the same key.
 	// Preferred says whether routing would pick this row for the key; Rivals is
 	// how many other rows for the key could serve it (enabled, priced, under an
@@ -260,12 +262,11 @@ func normalizeDefaultPricing(raw json.RawMessage) (string, bool) {
 }
 
 // builtinDefaultPricing is what a model sells at when neither the row nor its
-// provider has a price: GPT-5.6 Sol's list price (4 / 20 USD per 1M tokens) in
-// points, at 7.2 CNY per USD and the Pro plan's 44 points per CNY, rounded
-// up. It keeps a freshly pulled catalogue sellable without a form to fill
+// provider has a price: the owner's GPT-5.6 Sol screenshot reference, converted
+// at 10 points/CNY, before the supplier multiplier. It keeps a new catalogue sellable
 // first; a provider default or a row's own price overrides it.
 var builtinDefaultPricing = func() string {
-	raw, err := json.Marshal(map[string]any{"tokenPricing": tokenbilling.Pricing{Enabled: true, Input: "1300", Output: "6500", MaxInput: 131072, MaxOutput: 8192}})
+	raw, err := json.Marshal(map[string]any{"tokenPricing": model.ChatReferencePricing("gpt-5.6-sol")})
 	if err != nil {
 		panic(err)
 	}
@@ -279,6 +280,14 @@ func effectiveDefaultPricing(p model.ChatProvider) string {
 		return p.DefaultPricing
 	}
 	return builtinDefaultPricing
+}
+
+func defaultChatModelPricing(provider model.ChatProvider, key string) string {
+	if reference := model.ChatReferencePricing(key); reference != nil {
+		raw, _ := json.Marshal(map[string]any{"tokenPricing": reference})
+		return string(raw)
+	}
+	return effectiveDefaultPricing(provider)
 }
 
 // fillUnpricedModels copies the provider's default pricing into its models that
@@ -301,7 +310,7 @@ func (h *chatProvidersHandler) createProvider(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "请填写供应商名称")
 		return
 	}
-	row := model.ChatProvider{Name: strings.TrimSpace(*dto.Name), Enabled: true}
+	row := model.ChatProvider{Name: strings.TrimSpace(*dto.Name), Enabled: true, PriceMultiplier: model.DefaultChatPriceMultiplier}
 	if dto.Enabled != nil {
 		row.Enabled = *dto.Enabled
 	}

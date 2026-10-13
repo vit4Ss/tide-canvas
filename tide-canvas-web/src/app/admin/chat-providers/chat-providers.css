@@ -1,10 +1,8 @@
 /* /admin/chat-providers — 供应商 / 接入地址 / 模型三层结构。
 
-   只补这一页需要的排布。颜色、圆角、按钮、输入框、表格、状态胶囊都沿用
-   admin.css 的变量与组件类，这里不引入新的色值。
+   复用后台组件；页面局部使用用户参考图的浅玫瑰配色，不覆盖其他后台页面。
 
-   主从布局：一个白色表面切成两列。左列是供应商清单（稍暗的底色），右列是
-   选中供应商的设置页——三段内容用留白和 hairline 分隔，不再一段一张卡。
+   价格表布局：顶部系列标签、供应商倍率卡、三列实际价格；完整接入配置折叠。
 
    节奏与尺度（全页只用这几个值）：
    - 间距 4 / 8 / 12 / 16 / 24 / 32 / 40；行高 48（上下各 12 内边距）
@@ -12,10 +10,7 @@
    - 控件高度 32（按钮、输入框）/ 28（列表内的小输入框与图标按钮）
    - 所有控件靠右列对齐：头部开关、段工具、地址行开关、定价输入、表格开关 */
 
-.cp-page {
-  flex: 1;
-  min-height: 0;
-}
+.cp-page { flex: 1; min-height: 0; }
 
 .cp-split {
   display: grid;
@@ -970,4 +965,103 @@
     align-items: flex-start;
     gap: 8px;
   }
+}
+/* Reference price-sheet layout: rose accents, provider cards and aligned rates. */
+.cp-page {
+  --accent: #ae3559; --accent-strong: #96304e; --accent-active: #8d2946;
+  --accent-soft: #f2dfe6; --accent-border: #d9a6b7; --accent-ring: rgba(174,53,89,.22);
+  --surface: #faf3f6; --surface-2: #f4e9ef; --surface-hover: #efdee6;
+  --border: #e2cbd6; --border-weak: #efdee6; --border-strong: #cfa4b6;
+  --text: #35232e; --text-title: #35232e; --text-dim: #64525f; --text-faint: #776573;
+  width: 100%; max-width: 1600px; margin-inline: auto; gap: 0;
+  border: 1px solid var(--border); border-radius: 18px; background: var(--surface); overflow: hidden;
+}
+.cp-family-tabs { display: flex; gap: 8px; align-items: center; padding: 0 24px; overflow-x: auto; border-bottom: 1px solid var(--border); }
+.cp-family-tabs button { display: inline-flex; align-items: center; flex: none; gap: 10px; min-height: 58px; padding: 12px 18px; color: var(--text-dim); border: 0; border-bottom: 3px solid transparent; background: transparent; font: inherit; font-size: 14px; cursor: pointer; }
+.cp-family-tabs img { width: 22px; height: 22px; object-fit: contain; }
+.cp-family-tabs small { padding: 2px 6px; border-radius: 4px; background: var(--surface-hover); font-size: 11px; font-variant-numeric: tabular-nums; }
+.cp-family-tabs button[aria-pressed=true] { color: var(--accent-strong); border-bottom-color: var(--accent); font-weight: 650; }
+.cp-split { display: block; min-height: 0; border: 0; border-radius: 0; background: transparent; overflow: visible; }
+.cp-nav { background: transparent; border: 0; padding: 8px 24px 0; }
+.cp-nav-head { height: 52px; padding: 0; border: 0; }
+.cp-nav-head h2 { font-weight: 650; color: var(--text); }
+.cp-nav-add { height: 36px; width: 36px; border-color: var(--border); background: var(--accent-soft); color: var(--accent-strong); }
+.cp-nav-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 0 0 20px; overflow: visible; }
+.cp-nav-item { position: relative; min-height: 88px; min-width: 0; max-width: none; padding: 18px 108px 18px 22px; justify-content: center; border: 1px solid var(--border); border-radius: 11px; }
+.cp-nav-item.on { background: var(--accent-soft); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.cp-nav-item:disabled { cursor: wait; opacity: .65; }
+.cp-nav-name { font-size: 15px; font-weight: 650; }
+.cp-nav-sub { margin-top: 6px; font-size: 12px; }
+.cp-nav-rate { position: absolute; right: 20px; top: 50%; transform: translateY(-50%); color: var(--accent-strong); text-align: right; font-weight: 650; }
+.cp-nav-rate b { font-size: 29px; font-variant-numeric: tabular-nums; }
+.cp-nav-rate small { display: block; margin-top: 3px; font-size: 11px; font-weight: 400; }
+.cp-detail-body { padding: 0 24px 24px; }
+.cp-dhead { min-height: 0; padding-block: 12px 16px; border: 0; }
+.cp-name { font-size: 17px; }
+.cp-billing-banner { display: flex; align-items: center; gap: 13px; padding: 16px 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--accent-soft); color: var(--accent-strong); }
+.cp-billing-banner > svg { flex: none; }
+.cp-billing-banner > div { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px; }
+.cp-billing-banner strong { display: block; font-size: 14px; }
+.cp-billing-banner span { display: block; color: var(--text-dim); font-size: 12px; line-height: 1.6; }
+.cp-sec-models { padding-top: 24px; border: 0; }
+.cp-model-tools { gap: 12px; flex-wrap: wrap; }
+.cp-model-search { min-width: 190px; }
+.cp-show-reference { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+.cp-show-reference input { accent-color: var(--accent); }
+.cp-rate-unit { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0 16px; color: var(--text-dim); font-size: 12px; }
+.cp-rate-unit span { color: var(--text-faint); }
+.cp-models-wrap { margin-inline: -24px; overflow-x: auto; }
+.cp-models-wrap .adm-table-wrap table.cp-models { min-width: 1100px; width: 100%; }
+.cp-models th { background: #efdee6; color: var(--text-dim); font-size: 12px; }
+.cp-models td { padding-block: 14px; border-color: var(--border); vertical-align: middle; }
+.cp-models th:first-child, .cp-models td:first-child { padding-left: 24px; }
+.cp-model-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.cp-models td:last-child { padding-inline: 10px; }
+.cp-model-actions .cp-edit-price { width: 100%; }
+.cp-remove-model { display: inline-grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 6px; background: transparent; color: var(--danger); cursor: pointer; }
+.cp-remove-model:hover:not(:disabled) { background: var(--danger-soft); }
+.cp-price-fields { padding: 0; margin: 0; min-width: 0; border: 0; }
+.cp-price-fields:disabled { opacity: .7; }
+.cp-table-scroll-hint { display: none; }
+.cp-model-identity { display: flex; align-items: center; gap: 12px; min-width: 230px; }
+.cp-model-logo { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 12px; background: #30212a; color: white; }
+.cp-model-logo img { object-fit: contain; filter: brightness(0) invert(1); }
+.cp-model-name { font-size: 15px; font-weight: 650; }
+.cp-model-key { font-size: 11px; overflow-wrap: anywhere; white-space: normal; }
+.cp-copy-key { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--text-faint); cursor: pointer; }
+.cp-copy-key:hover { background: var(--surface-hover); color: var(--accent); }
+.cp-token-rate { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; font-variant-numeric: tabular-nums; }
+.cp-token-rate strong { font-size: 19px; line-height: 1.25; font-weight: 700; letter-spacing: -.4px; color: var(--text); }
+.cp-token-rate > span { font-size: 11px; color: var(--text-dim); }
+.cp-token-rate small { font-size: 11px; color: var(--text-faint); }
+.cp-rate-unavailable { font-size: 12px; color: var(--danger); }
+.cp-edit-price { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 32px; border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; background: transparent; color: var(--accent-strong); font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap; }
+.cp-edit-price:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); }
+.cp-settings { margin-top: 24px; border: 1px solid var(--border); border-radius: 10px; padding: 0 20px; }
+.cp-settings > summary { display: flex; align-items: center; justify-content: space-between; min-height: 52px; color: var(--text-dim); cursor: pointer; font-size: 13px; font-weight: 600; list-style: none; }
+.cp-settings > summary::-webkit-details-marker { display: none; }
+.cp-settings[open] > summary > svg { transform: rotate(180deg); }
+.cp-family-tabs button:focus-visible, .cp-copy-key:focus-visible, .cp-edit-price:focus-visible, .cp-settings > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+@media (max-width: 1000px) {
+  .cp-table-scroll-hint { display: block; margin: 0 0 12px; color: var(--text-faint); font-size: 12px; }
+  .cp-family-tabs { padding-inline: 12px; }
+  .cp-nav { padding-inline: 20px; }
+  .cp-detail-body { padding-inline: 20px; }
+  .cp-models-wrap { margin-inline: -20px; }
+}
+@media (max-width: 600px) {
+  .cp-family-tabs button { padding-inline: 12px; min-height: 52px; }
+  .cp-nav { padding-inline: 16px; }
+  .cp-nav-list { grid-template-columns: minmax(0, 1fr); }
+  .cp-detail-body { padding-inline: 16px; }
+  .cp-models-wrap { margin-inline: -16px; }
+  .cp-settings { padding-inline: 14px; }
+}
+@media (pointer: coarse) {
+  .cp-copy-key, .cp-nav-add, .cp-remove-model { min-width: 44px; min-height: 44px; }
+  .cp-edit-price, .cp-show-reference { min-height: 44px; }
+}
+@media (max-width: 600px), (pointer: coarse) {
+  .cp-page .adm-mfoot .adm-btn { min-width: 64px; min-height: 44px; }
+  .cp-price-fields input { font-size: 16px; }
 }

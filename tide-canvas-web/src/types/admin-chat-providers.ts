@@ -41,6 +41,8 @@ export interface ChatModelVO {
   pricing: ChatTokenPricing | null;
   /** 原价 × 供应商倍率，即网关实际按此结算的单价；倍率为 1 时与 pricing 相同。 */
   effectivePricing: ChatTokenPricing | null;
+  /** 用户提供截图的基准积分价，不代表当前官方报价。 */
+  referencePricing?: ChatTokenPricing | null;
   /** 配置了但无法解析时的说明。 */
   priceError: string;
   /** 同一 modelKey 在多家供应商间的顺序，越小越先被调用；「设为首选」会重排为 0,1,2…。 */

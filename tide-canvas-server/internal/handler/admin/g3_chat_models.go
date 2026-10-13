@@ -27,6 +27,7 @@ func toChatModelVO(m model.ChatModel) chatModelVO {
 	vo := chatModelVO{
 		ID: m.ID, ModelKey: m.ModelKey, Name: m.Name,
 		Enabled: m.Enabled, SortOrder: m.SortOrder, Vision: m.Vision,
+		ReferencePricing: model.ChatReferencePricing(m.ModelKey),
 	}
 	pricing, err := tokenbilling.Parse(m.Pricing)
 	switch {
@@ -51,7 +52,6 @@ func (h *chatProvidersHandler) fetchModels(c *gin.Context) {
 		response.Fail(c, response.CodeNotFound, "供应商不存在")
 		return
 	}
-	defaultPricing := effectiveDefaultPricing(provider)
 	var endpoints []model.ChatEndpoint
 	if err := h.db.WithContext(c.Request.Context()).Where("provider_id = ? AND enabled = ?", providerID, true).
 		Order("sort_order ASC, id ASC").Find(&endpoints).Error; err != nil || len(endpoints) == 0 {
@@ -109,7 +109,7 @@ func (h *chatProvidersHandler) fetchModels(c *gin.Context) {
 		if known[key] {
 			continue
 		}
-		row := model.ChatModel{ProviderID: providerID, ModelKey: key, Name: key, Enabled: true, Vision: true, Pricing: defaultPricing, DiscoveredAt: &now}
+		row := model.ChatModel{ProviderID: providerID, ModelKey: key, Name: key, Enabled: true, Vision: true, Pricing: defaultChatModelPricing(provider, key), DiscoveredAt: &now}
 		if err := h.db.WithContext(c.Request.Context()).Create(&row).Error; err != nil {
 			response.Fail(c, response.CodeServerError, "保存模型失败")
 			return
@@ -119,15 +119,22 @@ func (h *chatProvidersHandler) fetchModels(c *gin.Context) {
 	// Rows pulled before any default existed are still unpriced and closed. They
 	// carry no operator decision to protect, so they take the default and open
 	// too; the operator can still reprice or close any of them afterwards.
-	filled := h.db.WithContext(c.Request.Context()).Model(&model.ChatModel{}).
-		Where("provider_id = ? AND (pricing IS NULL OR TRIM(pricing) = '')", providerID).
-		Updates(map[string]any{"pricing": defaultPricing, "enabled": true})
-	if filled.Error != nil {
-		response.Fail(c, response.CodeServerError, "为未定价模型填入默认单价失败")
-		return
+	var filled int64
+	for _, row := range existing {
+		if strings.TrimSpace(row.Pricing) != "" {
+			continue
+		}
+		result := h.db.WithContext(c.Request.Context()).Model(&model.ChatModel{}).
+			Where("id = ? AND (pricing IS NULL OR TRIM(pricing) = '')", row.ID).
+			Updates(map[string]any{"pricing": defaultChatModelPricing(provider, row.ModelKey), "enabled": true})
+		if result.Error != nil {
+			response.Fail(c, response.CodeServerError, "为未定价模型填入默认单价失败")
+			return
+		}
+		filled += result.RowsAffected
 	}
-	h.audit(c, providerID, "chat_models_fetch", fmt.Sprintf("拉取模型列表：上游 %d 个，新增 %d 个，补价并开放 %d 个", len(keys), added, filled.RowsAffected))
-	response.OK(c, gin.H{"total": len(keys), "added": added, "filled": filled.RowsAffected})
+	h.audit(c, providerID, "chat_models_fetch", fmt.Sprintf("拉取模型列表：上游 %d 个，新增 %d 个，补价并开放 %d 个", len(keys), added, filled))
+	response.OK(c, gin.H{"total": len(keys), "added": added, "filled": filled})
 }
 
 // remoteModels reads GET {base}/v1/models. The body is capped so a broken or
@@ -225,7 +232,7 @@ func (h *chatProvidersHandler) updateModel(c *gin.Context) {
 					response.Fail(c, response.CodeNotFound, "供应商不存在")
 					return
 				}
-				pricing = effectiveDefaultPricing(provider)
+				pricing = defaultChatModelPricing(provider, row.ModelKey)
 				fields["pricing"] = pricing
 			} else if _, err := tokenbilling.Parse(pricing); err != nil {
 				// A price that is present but unreadable is an operator error the

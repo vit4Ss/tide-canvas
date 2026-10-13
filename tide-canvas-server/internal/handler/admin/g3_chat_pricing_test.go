@@ -13,6 +13,51 @@ import (
 
 const defaultPricingBody = `{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"100","outputPointsPerMillion":"300"}}`
 
+func TestNewChatProviderAndKnownDiscoveryUseScreenshotPricing(t *testing.T) {
+	f := newChatFixture(t)
+	w := f.call("POST", "/chat-providers", `{"name":"new priced provider"}`)
+	if w.Code != 200 {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	var created model.ChatProvider
+	if err := f.h.db.Where("name = ?", "new priced provider").First(&created).Error; err != nil {
+		t.Fatal(err)
+	}
+	if created.PriceMultiplier != "2" {
+		t.Fatalf("new supplier multiplier = %s", created.PriceMultiplier)
+	}
+	if err := f.h.db.Model(&f.provider).Update("price_multiplier", "2").Error; err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"data":[{"id":"gpt-6.1-sol"},{"id":"gpt-5.6-luna"}]}`)
+	}))
+	defer upstream.Close()
+	f.endpoint(upstream.URL, "test-key")
+	if w := f.call("POST", "/chat-providers/"+f.provider.ID.String()+"/fetch-models", "{}"); w.Code != 200 {
+		t.Fatalf("fetch: %s", w.Body.String())
+	}
+	var row model.ChatModel
+	if err := f.h.db.Where("model_key = ?", "gpt-6.1-sol").First(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	pricing, err := tokenbilling.Parse(row.Pricing)
+	if err != nil || pricing.Input != "10" || pricing.Output != "50" || pricing.CachedInput != "0.5" {
+		t.Fatalf("wrong discovered base price: %+v %v", pricing, err)
+	}
+	// A re-fetch must not overwrite a manually edited price.
+	if err := f.h.db.Model(&row).Update("pricing", defaultPricingBody).Error; err != nil {
+		t.Fatal(err)
+	}
+	if w := f.call("POST", "/chat-providers/"+f.provider.ID.String()+"/fetch-models", "{}"); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	f.h.db.First(&row, "id = ?", row.ID)
+	if row.Pricing != defaultPricingBody {
+		t.Fatal("discovery overwrote an admin edit")
+	}
+}
+
 // An operator who pulled a catalogue of seventeen models should not have to
 // type the same two numbers seventeen times. Saving a default price fills the
 // rows that have none, leaves the rows they already priced alone, and applies
