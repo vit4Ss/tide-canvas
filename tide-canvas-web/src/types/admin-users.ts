@@ -194,6 +194,7 @@ export interface PortraitAssetsVO {
 }
 
 export interface PortraitOrderVO {
+  currency?: string;
   orderNo: string;
   orderType: string;
   cycle: string;
@@ -213,6 +214,7 @@ export interface PortraitClaimVO {
 export interface PortraitCommerceVO {
   paidOrderCount: number;
   paidAmount: string;
+  paidAmountUSD?: string;
   recentOrders: PortraitOrderVO[];
   claimCount: number;
   claimPoints: number;

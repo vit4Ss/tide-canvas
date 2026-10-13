@@ -22,6 +22,8 @@ export interface AdminStatsVO {
   paidOrders: number;
   /** fixed-2 decimal string, e.g. "0.00". */
   todayRevenue: string;
+  todayRevenueUSD?: string;
+  totalRevenueUSD?: string;
   /** fixed-2 decimal string, e.g. "0.00". */
   totalRevenue: string;
 }

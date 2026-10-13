@@ -1,4 +1,5 @@
 "use client";
+import { orderMoney } from "@/lib/order-money";
 
 /* ============================================================================
    /admin/payments — 支付管理 (REAL data).
@@ -42,8 +43,6 @@ import type {
   AdminPayChannelUpsertDTO,
 } from "@/types/admin-payments";
 
-const yuan = (n: number) =>
-  `¥${n.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const pct = (n: number) => `${(n * 100).toFixed(2).replace(/\.?0+$/, "")}%`;
 const toNum = (s: string) => {
   const v = Number(String(s).replace(/[^\d.-]/g, ""));
@@ -208,14 +207,17 @@ export default function AdminPaymentsPage() {
   /* ── KPIs derived from real data ─────────────────────────────────────── */
   const kpis: Kpi[] = useMemo(() => {
     const enabled = channels.filter((c) => c.enabled).length;
-    const todaySum = channels.reduce((s, c) => s + c.todayAmount, 0);
+    const paid = orders.filter((o) => o.status === 1);
+    const cny = paid.filter((o) => !o.currency || o.currency === "CNY").reduce((sum, o) => sum + o.amount, 0);
+    const usd = paid.filter((o) => o.currency === "USD").reduce((sum, o) => sum + o.amount, 0);
     return [
       { k: "支付渠道", v: String(channels.length) },
       { k: "启用中", v: String(enabled) },
-      { k: "今日金额", v: yuan(todaySum) },
+      { k: "本页已付 CNY", v: orderMoney(cny, "CNY") },
+      { k: "本页已付 USD", v: orderMoney(usd, "USD") },
       { k: "交易笔数", v: orderTotal.toLocaleString("zh-CN") },
     ];
-  }, [channels, orderTotal]);
+  }, [channels, orderTotal, orders]);
 
   /* ── channel actions ─────────────────────────────────────────────────── */
   const openCreateCh = () => {
@@ -370,7 +372,7 @@ export default function AdminPaymentsPage() {
               { header: "渠道", width: "14%", className: "strong", cell: (r) => r.name },
               { header: "类型", width: "10%", className: "muted", cell: (r) => r.type || "—" },
               { header: "费率", width: "8%", className: "mono", cell: (r) => pct(r.rate) },
-              { header: "今日金额", width: "12%", className: "mono", cell: (r) => yuan(r.todayAmount) },
+              { header: "今日金额", width: "12%", className: "mono", cell: (r) => r.type.toLowerCase() === "stripe" ? "见订单流水" : orderMoney(r.todayAmount, r.currency) },
               {
                 header: "回调",
                 width: "34%",
@@ -520,7 +522,7 @@ export default function AdminPaymentsPage() {
                   width: "10%",
                   align: "right",
                   className: "mono strong",
-                  cell: (r) => yuan(r.amount),
+                  cell: (r) => orderMoney(r.amount, r.currency),
                 },
                 { header: "渠道", width: "8%", cell: (r) => r.payMethod || "—" },
                 {

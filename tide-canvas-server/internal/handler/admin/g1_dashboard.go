@@ -54,16 +54,18 @@ type dashboardHandler struct {
 //	{totalUsers,todayNewUsers,activeUsers,payingUsers,totalPosts,totalModels,
 //	 totalOrders,paidOrders,todayRevenue,totalRevenue}
 type AdminStatsVO struct {
-	TotalUsers    int64  `json:"totalUsers"`
-	TodayNewUsers int64  `json:"todayNewUsers"`
-	ActiveUsers   int64  `json:"activeUsers"`
-	PayingUsers   int64  `json:"payingUsers"`
-	TotalPosts    int64  `json:"totalPosts"`
-	TotalModels   int64  `json:"totalModels"`
-	TotalOrders   int64  `json:"totalOrders"`
-	PaidOrders    int64  `json:"paidOrders"`
-	TodayRevenue  string `json:"todayRevenue"`
-	TotalRevenue  string `json:"totalRevenue"`
+	TotalUsers      int64  `json:"totalUsers"`
+	TodayNewUsers   int64  `json:"todayNewUsers"`
+	ActiveUsers     int64  `json:"activeUsers"`
+	PayingUsers     int64  `json:"payingUsers"`
+	TotalPosts      int64  `json:"totalPosts"`
+	TotalModels     int64  `json:"totalModels"`
+	TotalOrders     int64  `json:"totalOrders"`
+	PaidOrders      int64  `json:"paidOrders"`
+	TodayRevenueUSD string `json:"todayRevenueUSD"`
+	TotalRevenueUSD string `json:"totalRevenueUSD"`
+	TodayRevenue    string `json:"todayRevenue"`
+	TotalRevenue    string `json:"totalRevenue"`
 }
 
 // stats handles GET /dashboard/stats. It aggregates over the real domain tables.
@@ -95,6 +97,8 @@ func (h *dashboardHandler) stats(c *gin.Context) {
 	h.db.Model(&model.Order{}).Where("status = ?", g1OrderStatusPaid).Count(&vo.PaidOrders)
 	vo.TodayRevenue = h.sumPaidAmount("pay_time >= ?", startOfToday)
 	vo.TotalRevenue = h.sumPaidAmount("", nil)
+	vo.TodayRevenueUSD = h.sumPaidAmount("pay_time >= ?", startOfToday, "USD")
+	vo.TotalRevenueUSD = h.sumPaidAmount("", nil, "USD")
 
 	response.OK(c, vo)
 }
@@ -102,8 +106,13 @@ func (h *dashboardHandler) stats(c *gin.Context) {
 // sumPaidAmount sums the amount of paid orders, optionally constrained by an extra
 // where clause. It returns the total as a fixed-2 decimal string ("0.00" when
 // none). When extraWhere is empty the constraint is omitted.
-func (h *dashboardHandler) sumPaidAmount(extraWhere string, arg any) string {
+func (h *dashboardHandler) sumPaidAmount(extraWhere string, arg any, currencies ...string) string {
 	tx := h.db.Model(&model.Order{}).Where("status = ?", g1OrderStatusPaid)
+	if len(currencies) > 0 && currencies[0] == "USD" {
+		tx = tx.Where("currency = ?", "USD")
+	} else {
+		tx = tx.Where("currency = ? OR currency = ? OR currency IS NULL", "CNY", "")
+	}
 	if extraWhere != "" {
 		tx = tx.Where(extraWhere, arg)
 	}
@@ -550,6 +559,7 @@ func (h *dashboardHandler) dailyRevenue(since time.Time) map[string]decimal.Deci
 	err := h.db.Model(&model.Order{}).
 		Select("DATE_FORMAT(pay_time, ?) AS day, COALESCE(SUM(amount), 0) AS amount", g1DayFmt).
 		Where("status = ? AND pay_time >= ?", g1OrderStatusPaid, since).
+		Where("currency = ? OR currency = ? OR currency IS NULL", "CNY", "").
 		Group("day").
 		Scan(&rows).Error
 	if err != nil {

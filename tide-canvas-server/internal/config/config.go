@@ -39,6 +39,7 @@ type Config struct {
 	CORS            CORSConfig            `mapstructure:"cors"`
 	Email           EmailConfig           `mapstructure:"email"`
 	Google          GoogleConfig          `mapstructure:"google"`
+	Stripe          StripeConfig          `mapstructure:"stripe"`
 	LLM             LLMConfig             `mapstructure:"llm"`
 	Relay           RelayConfig           `mapstructure:"relay"`
 	ChatGateway     ChatGatewayConfig     `mapstructure:"chatGateway"`
@@ -399,6 +400,9 @@ func Load() (*Config, error) {
 // defaults. It only runs hard checks in prod so local/test boots stay
 // zero-config.
 func validate(cfg *Config) error {
+	if err := cfg.Stripe.Validate(cfg.Env); err != nil {
+		return err
+	}
 	if !cfg.IsProd() {
 		return nil
 	}
@@ -434,6 +438,10 @@ func resolveEnv() (string, error) {
 func (c *Config) IsProd() bool { return c.Env == EnvProd }
 
 func setDefaults(v *viper.Viper) {
+	v.SetDefault("stripe.enabled", false)
+	v.SetDefault("stripe.secretKey", "")
+	v.SetDefault("stripe.webhookSecret", "")
+	v.SetDefault("stripe.siteUrl", "")
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("server.mode", "debug")
 
@@ -579,6 +587,9 @@ const defaultLLMSystemPrompt = "你是 TideCanvas（流光）创作平台的 AI 
 	"请用简洁、专业且有启发性的中文回答用户，必要时给出可执行的创意方向或步骤。"
 
 func normalize(cfg *Config) {
+	cfg.Stripe.SecretKey = strings.TrimSpace(cfg.Stripe.SecretKey)
+	cfg.Stripe.WebhookSecret = strings.TrimSpace(cfg.Stripe.WebhookSecret)
+	cfg.Stripe.SiteURL = strings.TrimSpace(cfg.Stripe.SiteURL)
 	// Relay routing is environment-owned, not a free-form deployment override.
 	// This prevents a misspelled/leftover variable from sending test traffic to
 	// production (or production traffic to the test relay).

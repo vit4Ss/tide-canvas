@@ -694,11 +694,12 @@ type AiTask struct {
 	Handler   string   `gorm:"size:64" json:"handler"`
 	// TargetType preserves the originating canvas semantic (image|character|scene)
 	// so asset history can filter generated concept assets separately from uploads.
-	TargetType string   `gorm:"column:target_type;size:32;index" json:"targetType"`
-	ModelID    idgen.ID `gorm:"default:0" json:"modelId"`
-	ModelName  string   `gorm:"size:128" json:"modelName"`
-	Status     int      `gorm:"default:0" json:"status"` // 0 processing,1 success,2 failed,3 cancelled
-	Progress   int      `gorm:"default:0" json:"progress"`
+	TargetType  string   `gorm:"column:target_type;size:32;index" json:"targetType"`
+	ModelID     idgen.ID `gorm:"default:0" json:"modelId"`
+	ModelName   string   `gorm:"size:128" json:"modelName"`
+	DisplayName string   `gorm:"size:160;not null;default:''" json:"displayName"`
+	Status      int      `gorm:"default:0" json:"status"` // 0 processing,1 success,2 failed,3 cancelled
+	Progress    int      `gorm:"default:0" json:"progress"`
 	// UpstreamTaskID is persisted as soon as APIRouter accepts an asynchronous
 	// task. It lets a replacement process resume polling after a restart instead
 	// of leaving the paid task in Processing until the stale-task refund sweep.

@@ -1,4 +1,5 @@
 "use client";
+import { orderMoney } from "@/lib/order-money";
 
 /* ============================================================================
    /admin — 数据概览 (dense ops dashboard).
@@ -288,10 +289,11 @@ export default function AdminDashboardPage() {
             <div className="lead">
               <div className="lbl">
                 <span className="live" />
-                今日营收
+                今日营收（CNY）
               </div>
               <div className="big">{stats ? fmtMoney(stats.todayRevenue) : "¥0.00"}</div>
               <div className="chg">累计 {stats ? fmtMoney(stats.totalRevenue) : "¥0.00"}</div>
+              <div className="chg">美元今日 {orderMoney(stats?.todayRevenueUSD || 0, "USD")} · 累计 {orderMoney(stats?.totalRevenueUSD || 0, "USD")}</div>
             </div>
             <div className="lead point-lead">
               <div className="lbl">

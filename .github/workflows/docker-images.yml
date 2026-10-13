@@ -56,7 +56,10 @@ jobs:
         run: |
           go test -count=1 ./internal/pkg/googleauth ./internal/handler/auth ./internal/config
           go test -count=1 ./internal/handler/billing
-          go test -count=1 ./internal/handler/admin -run TestEnglishPricing
+          go test -count=1 ./internal/handler/admin -run 'TestEnglishPricing|TestStripe'
+          go test -count=1 ./internal/handler/points -run 'TestAccountSummary'
+          go test -count=1 ./internal/handler/ai -run 'TestCreationRename'
+          go test -count=1 ./internal/handler/file -run 'TestFileRename'
           go vet ./internal/pkg/googleauth ./internal/handler/auth ./internal/config
           go vet ./internal/handler/billing ./internal/handler/admin
 

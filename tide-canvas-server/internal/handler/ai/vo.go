@@ -44,10 +44,11 @@ type AiTaskVO struct {
 	TargetType string   `json:"targetType"`
 	// ModelID is the AiModel row id (matches AiModelVO.id)。延长/翻唱须发到
 	// 与原曲相同的模型卡(上游按 key 钉路由),前端据此把模型选回原曲那张。
-	ModelID   idgen.ID `json:"modelId"`
-	ModelName string   `json:"modelName"`
-	Status    int      `json:"status"`
-	Progress  int      `json:"progress"`
+	ModelID     idgen.ID `json:"modelId"`
+	ModelName   string   `json:"modelName"`
+	DisplayName string   `json:"displayName"`
+	Status      int      `json:"status"`
+	Progress    int      `json:"progress"`
 	// PointCost is the points charged for this task (server-computed at submit).
 	PointCost  int64           `json:"pointCost"`
 	ResultURL  string          `json:"resultUrl"`
@@ -92,6 +93,7 @@ func toTaskVO(t *model.AiTask) AiTaskVO {
 		TargetType:   t.TargetType,
 		ModelID:      t.ModelID,
 		ModelName:    t.ModelName,
+		DisplayName:  t.DisplayName,
 		Status:       t.Status,
 		Progress:     t.Progress,
 		PointCost:    t.PointCost,

@@ -108,6 +108,7 @@ type portraitAssetsVO struct {
 }
 
 type portraitOrderVO struct {
+	Currency  string `json:"currency"`
 	OrderNo   string `json:"orderNo"`
 	OrderType string `json:"orderType"`
 	Cycle     string `json:"cycle"`
@@ -124,6 +125,7 @@ type portraitClaimVO struct {
 }
 
 type portraitCommerceVO struct {
+	PaidAmountUSD  string            `json:"paidAmountUSD"`
 	PaidOrderCount int64             `json:"paidOrderCount"`
 	PaidAmount     string            `json:"paidAmount"`
 	RecentOrders   []portraitOrderVO `json:"recentOrders"`
@@ -406,14 +408,16 @@ func (h *userHandler) portraitCommerce(id idgen.ID) portraitCommerceVO {
 	out := portraitCommerceVO{RecentOrders: []portraitOrderVO{}, RecentClaims: []portraitClaimVO{}, PaidAmount: "0"}
 
 	var paid struct {
-		Count  int64
-		Amount string
+		Count     int64
+		Amount    string
+		AmountUSD string
 	}
 	// SUM(decimal) 以字符串接收，避免 float 精度损失（MySQL 返回 DECIMAL、sqlite 返回文本）。
 	h.db.Model(&model.Order{}).
-		Select("COUNT(*) AS count, COALESCE(SUM(amount),0) AS amount").
+		Select("COUNT(*) AS count, COALESCE(SUM(CASE WHEN currency = 'USD' THEN amount ELSE 0 END),0) AS amount_usd, COALESCE(SUM(CASE WHEN currency = 'CNY' OR currency = '' OR currency IS NULL THEN amount ELSE 0 END),0) AS amount").
 		Where("user_id = ? AND status = 1", id).Scan(&paid)
 	out.PaidOrderCount = paid.Count
+	out.PaidAmountUSD = paid.AmountUSD
 	if paid.Amount != "" {
 		out.PaidAmount = paid.Amount
 	}
@@ -421,6 +425,7 @@ func (h *userHandler) portraitCommerce(id idgen.ID) portraitCommerceVO {
 	h.db.Where("user_id = ?", id).Order("create_time DESC").Limit(5).Find(&orders)
 	for i := range orders {
 		out.RecentOrders = append(out.RecentOrders, portraitOrderVO{
+			Currency:  model.OrderCurrency(&orders[i]),
 			OrderNo:   orders[i].OrderNo,
 			OrderType: orders[i].OrderType,
 			Cycle:     orders[i].Cycle,

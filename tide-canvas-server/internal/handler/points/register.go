@@ -33,6 +33,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	g.Use(middleware.JWTAuth(d))
 
 	g.GET("/balance", h.balance)
+	g.GET("/summary", h.accountSummary)
 	g.GET("/records", h.records)
 	g.GET("/checkin", h.checkinStatus)
 	g.POST("/checkin", h.checkin)

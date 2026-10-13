@@ -55,17 +55,24 @@ type PlanPromoVO struct {
 
 // OrderVO is the order view returned by create/list/detail.
 type OrderVO struct {
-	Market     string    `json:"market"`
-	Currency   string    `json:"currency"`
-	ID         idgen.ID  `json:"id"`
-	OrderNo    string    `json:"orderNo"`
-	Type       string    `json:"type"`
-	PlanID     *idgen.ID `json:"planId"`
-	Cycle      string    `json:"cycle,omitempty"`
-	Amount     float64   `json:"amount"`
-	Status     int       `json:"status"`
-	PayTime    *string   `json:"payTime"`
-	CreateTime string    `json:"createTime"`
+	PrepareBefore     *string   `json:"prepareBefore,omitempty"`
+	ExistingCheckout  bool      `json:"existingCheckout,omitempty"`
+	PaymentProcessing bool      `json:"paymentProcessing,omitempty"`
+	CheckoutAvailable *bool     `json:"checkoutAvailable,omitempty"`
+	PayMethod         string    `json:"payMethod,omitempty"`
+	PlanName          string    `json:"planName,omitempty"`
+	Credits           *int      `json:"credits,omitempty"`
+	Market            string    `json:"market"`
+	Currency          string    `json:"currency"`
+	ID                idgen.ID  `json:"id"`
+	OrderNo           string    `json:"orderNo"`
+	Type              string    `json:"type"`
+	PlanID            *idgen.ID `json:"planId"`
+	Cycle             string    `json:"cycle,omitempty"`
+	Amount            float64   `json:"amount"`
+	Status            int       `json:"status"`
+	PayTime           *string   `json:"payTime"`
+	CreateTime        string    `json:"createTime"`
 	// ExpireTime is the checkout deadline (createTime + payTTL), present only
 	// while the order is still pending so the client can show 剩余支付时间.
 	ExpireTime *string `json:"expireTime,omitempty"`
@@ -129,24 +136,38 @@ func toPlanVO(p *model.Plan) PlanVO {
 func toOrderVO(o *model.Order) OrderVO {
 	amount, _ := o.Amount.Float64()
 	vo := OrderVO{
-		Market:     model.BillingMarket(o.Market),
-		Currency:   model.OrderCurrency(o),
-		ID:         o.ID,
-		OrderNo:    o.OrderNo,
-		Type:       o.OrderType,
-		PlanID:     o.PlanID,
-		Cycle:      o.Cycle,
-		Amount:     amount,
-		Status:     o.Status,
-		CreateTime: formatTime(o.CreateTime),
+		PaymentProcessing: o.PaymentProcessing && o.Status == 0,
+		PayMethod:         o.PayMethod,
+		Market:            model.BillingMarket(o.Market),
+		Currency:          model.OrderCurrency(o),
+		ID:                o.ID,
+		OrderNo:           o.OrderNo,
+		Type:              o.OrderType,
+		PlanID:            o.PlanID,
+		Cycle:             o.Cycle,
+		Amount:            amount,
+		Status:            o.Status,
+		CreateTime:        formatTime(o.CreateTime),
+	}
+	if o.PayMethod == "stripe" {
+		var snapshot stripePurchase
+		if json.Unmarshal([]byte(o.PurchaseSnapshot), &snapshot) == nil {
+			vo.PlanName = snapshot.Name
+			vo.Credits = &snapshot.Points
+		}
 	}
 	if o.PayTime != nil && !o.PayTime.IsZero() {
 		t := o.PayTime.Format(time.RFC3339)
 		vo.PayTime = &t
 	}
-	if o.Status == 0 && !o.CreateTime.IsZero() {
-		t := payDeadline(o.CreateTime).Format(time.RFC3339)
-		vo.ExpireTime = &t
+	if o.Status == 0 && !o.PaymentProcessing && !o.CreateTime.IsZero() {
+		if o.PayMethod == "stripe" && o.CheckoutSessionID == nil {
+			t := orderDeadline(o).Add(-stripePreparationLead).Format(time.RFC3339)
+			vo.PrepareBefore = &t
+		} else {
+			t := orderDeadline(o).Format(time.RFC3339)
+			vo.ExpireTime = &t
+		}
 	}
 	return vo
 }

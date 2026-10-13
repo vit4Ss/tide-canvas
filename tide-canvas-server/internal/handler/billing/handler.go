@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -124,9 +125,13 @@ func (h *handler) verify(c *gin.Context) {
 		return
 	}
 	userID := middleware.CurrentUserID(c)
-	o, err := h.svc.getOrder(id, userID)
+	o, err := h.svc.repo.findOrder(id)
 	if err != nil {
 		h.fail(c, err, "failed to verify order")
+		return
+	}
+	if o.UserID != userID {
+		h.fail(c, errForbidden, "order not found")
 		return
 	}
 	res, err := h.svc.verifyOrder(c.Request.Context(), userID, o.OrderNo)
@@ -135,6 +140,41 @@ func (h *handler) verify(c *gin.Context) {
 		return
 	}
 	response.OK(c, res)
+}
+
+// Retry the original checkout rather than creating another order after a timeout.
+func (h *handler) resumeCheckout(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	userID := middleware.CurrentUserID(c)
+	order, err := h.svc.repo.findOrder(id)
+	if err != nil {
+		h.fail(c, err, "order not found")
+		return
+	}
+	if order.UserID != userID {
+		h.fail(c, errForbidden, "order not found")
+		return
+	}
+	if order.PayMethod != "stripe" {
+		response.Fail(c, response.CodeBadRequest, "This order does not use Stripe.")
+		return
+	}
+	channels, err := h.svc.stripeChannels()
+	if err != nil || len(channels) == 0 {
+		response.Fail(c, response.CodeBadRequest, "Stripe checkout is currently unavailable.")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 25*time.Second)
+	defer cancel()
+	vo, err := h.svc.resumeStripeCheckout(ctx, id, userID)
+	if err != nil {
+		h.fail(c, err, "Checkout could not be prepared. Try this order again; no new order is needed.")
+		return
+	}
+	response.OK(c, vo)
 }
 
 // listOrders handles GET /api/orders (auth). Returns a PageData<OrderVO>.
@@ -220,6 +260,8 @@ func (h *handler) settle(c *gin.Context) string {
 // treated as not-found so a user cannot probe other users' order ids.
 func (h *handler) fail(c *gin.Context, err error, fallbackMsg string) {
 	switch {
+	case errors.Is(err, errBadRequest):
+		response.Fail(c, response.CodeBadRequest, "Order state changed. Check its payment status before retrying.")
 	case errors.Is(err, ErrNotFound):
 		response.Fail(c, response.CodeNotFound, "order not found")
 	case errors.Is(err, errForbidden):

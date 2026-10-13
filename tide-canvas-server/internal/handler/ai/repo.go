@@ -183,6 +183,12 @@ func (r *repo) listTasks(ctx context.Context, userID idgen.ID, q taskQuery, offs
 
 func applyTaskListFilters(tx *gorm.DB, userID idgen.ID, q taskQuery) *gorm.DB {
 	tx = visibleTaskHistoryScope(tx.Where("user_id = ?", userID))
+	if keyword := strings.TrimSpace(q.Keyword); keyword != "" {
+		// Bind values and treat wildcard characters literally for name searches.
+		keyword = strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(keyword)
+		like := "%" + keyword + "%"
+		tx = tx.Where("(display_name LIKE ? ESCAPE '!' OR model_name LIKE ? ESCAPE '!' OR input LIKE ? ESCAPE '!')", like, like, like)
+	}
 	if q.IsAPICall != nil {
 		tx = tx.Where("is_api_call = ?", *q.IsAPICall)
 	}

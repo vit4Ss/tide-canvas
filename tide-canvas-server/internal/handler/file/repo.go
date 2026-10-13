@@ -57,6 +57,8 @@ func applyFileListFilters(tx *gorm.DB, ownerID idgen.ID, q fileQuery) *gorm.DB {
 			tx = tx.Where("file_type = ?", "video")
 		case "audio":
 			tx = tx.Where("file_type = ? AND mime_type LIKE ?", "other", "audio/%")
+		case "3d":
+			tx = tx.Where("mime_type LIKE 'model/%' OR LOWER(original_name) LIKE '%.glb' OR LOWER(original_name) LIKE '%.gltf' OR LOWER(original_name) LIKE '%.obj' OR LOWER(storage_key) LIKE '%.glb' OR LOWER(storage_key) LIKE '%.gltf' OR LOWER(storage_key) LIKE '%.obj'")
 		case "doc":
 			tx = tx.Where("file_type = ? AND COALESCE(mime_type, '') NOT LIKE ?", "other", "audio/%")
 		default:

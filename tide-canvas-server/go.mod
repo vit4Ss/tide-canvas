@@ -5,6 +5,7 @@ module tidecanvas
 go 1.24
 
 require (
+	github.com/stripe/stripe-go/v87 v87.0.0
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
 	github.com/bwmarrin/snowflake v0.3.0
 	github.com/gin-gonic/gin v1.10.0

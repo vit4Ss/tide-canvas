@@ -1,4 +1,5 @@
 "use client";
+import { orderMoney } from "@/lib/order-money";
 
 /* ============================================================================
    订单记录 / 积分明细 panels — shared by 个人中心 (compact: latest 5 + 「更多」
@@ -181,7 +182,7 @@ export function OrdersPanel({ full = false }: { full?: boolean }) {
               </div>
             </div>
             <div className="lr-side">
-              <span className="lr-amt">¥{o.amount}</span>
+              <span className="lr-amt">{orderMoney(o.amount, o.currency)}</span>
               {o.status === 0 && (
                 <span className="ord-acts">
                   <button

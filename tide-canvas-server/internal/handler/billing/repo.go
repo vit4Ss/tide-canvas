@@ -6,6 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
 )
@@ -114,8 +115,8 @@ func (r *repo) updateOrderPayMethod(id idgen.ID, method string) error {
 // before `cutoff`) to 已取消. Called on list so 待支付 rows are always payable.
 func (r *repo) cancelExpiredOrders(userID idgen.ID, cutoff time.Time) error {
 	return r.db.Model(&model.Order{}).
-		Where("user_id = ? AND status = ? AND create_time < ?", userID, 0, cutoff).
-		Update("status", 2).Error
+		Where("user_id = ? AND status = ? AND (((pay_method IS NULL OR pay_method <> ?) AND create_time < ?) OR (pay_method = ? AND checkout_session_id IS NULL AND checkout_expires_at < ?))", userID, 0, "stripe", cutoff, "stripe", time.Now().UTC().Add(stripePreparationLead)).
+		Updates(map[string]any{"status": 2, "payment_processing": false}).Error
 }
 
 // cancelExpiredByID flips one expired pending order to 已取消 (caller checked
@@ -123,7 +124,7 @@ func (r *repo) cancelExpiredOrders(userID idgen.ID, cutoff time.Time) error {
 func (r *repo) cancelExpiredByID(id idgen.ID) error {
 	return r.db.Model(&model.Order{}).
 		Where("id = ? AND status = ?", id, 0).
-		Update("status", 2).Error
+		Updates(map[string]any{"status": 2, "payment_processing": false, "checkout_url": ""}).Error
 }
 
 // listOrders returns a page of the user's orders plus the total count, newest
@@ -184,10 +185,8 @@ func (r *repo) findOrderByNo(orderNo string) (*model.Order, error) {
 // — it never double-grants. Cancelled (2) is claimable on purpose: an order the
 // user cancelled or that lazily expired can still be PAID through a stale
 // cashier tab / late notify, and paid money must always convert to credits (the
-// amount was verified upstream) rather than being silently swallowed. Credits
-// are added with an atomic `points + ?` expression (the same pattern
-// points.applyCheckin / AI settlement use) so a concurrent balance change can't
-// lose the update.
+// amount was verified upstream) rather than being silently swallowed. The shared
+// precise ledger locks the user row and preserves fractional/reserved credits.
 //
 // grantPoints is the credits the order buys (plan.PointsGrant or
 // package.Points+BonusPoints); vipLevel, when > 0, lifts the buyer's membership
@@ -202,9 +201,10 @@ func (r *repo) settleOrder(orderID idgen.ID, grantPoints, vipLevel int, remark, 
 		res := tx.Model(&model.Order{}).
 			Where("id = ? AND status IN ?", orderID, []int{0, 2}).
 			Updates(map[string]any{
-				"status":         1,
-				"pay_time":       payTime,
-				"transaction_id": transactionID,
+				"status":             1,
+				"payment_processing": false,
+				"pay_time":           payTime,
+				"transaction_id":     transactionID,
 			})
 		if res.Error != nil {
 			return res.Error
@@ -221,26 +221,7 @@ func (r *repo) settleOrder(orderID idgen.ID, grantPoints, vipLevel int, remark, 
 		}
 
 		if grantPoints != 0 {
-			if err := tx.Model(&model.User{}).
-				Where("id = ?", o.UserID).
-				UpdateColumn("points", gorm.Expr("points + ?", grantPoints)).Error; err != nil {
-				return err
-			}
-			var u model.User
-			if err := tx.Select("id", "points").Where("id = ?", o.UserID).First(&u).Error; err != nil {
-				return err
-			}
-			refID := o.ID
-			ledger := &model.PointRecord{
-				UserID:     o.UserID,
-				ChangeType: "recharge",
-				Amount:     grantPoints,
-				Balance:    int(u.Points),
-				Remark:     remark,
-				RefID:      &refID,
-			}
-			ledger.ID = idgen.Next()
-			if err := tx.Create(ledger).Error; err != nil {
+			if _, err := points.AdjustWhole(tx, o.UserID, int64(grantPoints), "recharge", remark, o.ID); err != nil {
 				return err
 			}
 		}

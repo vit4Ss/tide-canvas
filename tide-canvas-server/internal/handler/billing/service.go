@@ -5,10 +5,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
+	stripe "github.com/stripe/stripe-go/v87"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
@@ -49,6 +51,7 @@ type service struct {
 	repo   *repo
 	cfg    *config.Config
 	pay    *epay.Client
+	stripe *stripe.Client
 	alerts *alerting.Service
 }
 
@@ -65,7 +68,8 @@ func newService(db *gorm.DB, cfg *config.Config, alertServices ...*alerting.Serv
 	if len(alertServices) > 0 {
 		alerts = alertServices[0]
 	}
-	return &service{repo: newRepo(db), cfg: cfg, pay: pc, alerts: alerts}
+	backends := stripe.NewBackendsWithConfig(&stripe.BackendConfig{HTTPClient: &http.Client{Timeout: 12 * time.Second}, MaxNetworkRetries: stripe.Int64(1), LeveledLogger: &stripe.LeveledLogger{Level: stripe.LevelNull}})
+	return &service{repo: newRepo(db), cfg: cfg, pay: pc, stripe: stripe.NewClient(cfg.Stripe.SecretKey, stripe.WithBackends(backends)), alerts: alerts}
 }
 
 // payType maps the frontend payChannel to an epay pay method. WeChat has several
@@ -106,7 +110,7 @@ type PayChannelVO struct {
 // means checkout is effectively closed (the client shows 未开通).
 func (s *service) listPayChannels(markets ...string) ([]PayChannelVO, error) {
 	if model.BillingMarket(markets...) == model.BillingMarketEN {
-		return []PayChannelVO{}, nil
+		return s.stripeChannels()
 	}
 	rows, err := s.repo.enabledPayChannels()
 	if err != nil {
@@ -146,6 +150,9 @@ func (s *service) enabledPayKeySet() (map[string]bool, error) {
 // 12 × the monthly points. A plan without a yearly price cannot be bought
 // yearly.
 func planPricing(plan *model.Plan, cycle string) (decimal.Decimal, int, error) {
+	if !model.ValidBillingGrant(plan.PointsGrant, cycle == CycleYearly) {
+		return decimal.Zero, 0, errBadRequest
+	}
 	if cycle != CycleYearly {
 		return plan.Price, plan.PointsGrant, nil
 	}
@@ -261,7 +268,7 @@ func (s *service) effectivePlanPricing(plan *model.Plan, cycle string) (decimal.
 // = Price, yearly = the yearly TOTAL Features price.
 func (s *service) createOrder(userID idgen.ID, dto CreateOrderDTO, markets ...string) (*OrderVO, error) {
 	if model.BillingMarket(markets...) == model.BillingMarketEN {
-		return nil, errUSDCheckoutUnavailable
+		return s.createStripeOrder(userID, dto)
 	}
 	// The requested pay channel must be one the admin has enabled
 	// (/admin/payments → pay_channel.enabled) AND the epay cashier supports.
@@ -550,15 +557,18 @@ type VerifyResult struct {
 // the amount matches, grants the credits idempotently (same order key as the
 // notify, so it can never double-grant even if the notify also lands).
 func (s *service) verifyOrder(ctx context.Context, userID idgen.ID, orderNo string) (*VerifyResult, error) {
-	if !s.pay.Enabled() {
-		return &VerifyResult{}, nil
-	}
 	o, err := s.repo.findOrderByNo(strings.TrimSpace(orderNo))
 	if err != nil {
 		return &VerifyResult{}, nil
 	}
 	// Never let a user credit themselves off another buyer's order number.
-	if o.UserID != userID || model.OrderCurrency(o) != model.CurrencyCNY {
+	if o.UserID != userID {
+		return &VerifyResult{}, nil
+	}
+	if o.PayMethod == "stripe" {
+		return s.verifyStripeOrder(ctx, o)
+	}
+	if !s.pay.Enabled() || model.OrderCurrency(o) != model.CurrencyCNY {
 		return &VerifyResult{}, nil
 	}
 	if o.Status == 1 {
@@ -630,12 +640,36 @@ func (s *service) getOrder(id, userID idgen.ID) (*OrderVO, error) {
 	if o.UserID != userID {
 		return nil, errForbidden
 	}
-	if o.Status == 0 && time.Now().After(payDeadline(o.CreateTime)) {
-		if err := s.repo.cancelExpiredByID(o.ID); err == nil {
-			o.Status = 2
+	if o.Status == 0 && (time.Now().After(orderDeadline(o)) || (o.PayMethod == "stripe" && stripePreparationExpired(o))) {
+		if o.PayMethod == "stripe" && o.CheckoutSessionID != nil {
+			// URL expiry is not payment failure. Stripe can be processing a bank
+			// payment after checkout closes. An outage keeps the order pending.
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			_, _ = s.verifyStripeOrder(ctx, o)
+			cancel()
+		} else if err := s.repo.cancelExpiredByID(o.ID); err != nil {
+			return nil, err
+		}
+		// The conditional expiry update can lose to a payment/refund commit.
+		// Return the stored state instead of inventing a cancelled state locally.
+		o, err = s.repo.findOrder(o.ID)
+		if err != nil {
+			return nil, err
 		}
 	}
 	vo := toOrderVO(o)
+	if o.PayMethod == "stripe" {
+		channels, err := s.stripeChannels()
+		if err != nil {
+			return nil, err
+		}
+		available := o.Status == 0 && !o.PaymentProcessing && time.Now().Before(orderDeadline(o)) && o.PaymentEnv == stripeMode(s.cfg.Env) && len(channels) > 0
+		vo.CheckoutAvailable = &available
+		if available && safeStripeURL(o.CheckoutURL) {
+			vo.PayURL = o.CheckoutURL
+		}
+		return &vo, nil
+	}
 	if o.Status == 0 && s.pay.Enabled() {
 		if grant, err := s.resolveGrant(o); err == nil {
 			url, err := s.pay.CheckoutURL(epay.CheckoutParams{
@@ -655,6 +689,18 @@ func (s *service) getOrder(id, userID idgen.ID) (*OrderVO, error) {
 
 // cancelOrder cancels the user's pending order.
 func (s *service) cancelOrder(id, userID idgen.ID) error {
+	order, err := s.repo.findOrder(id)
+	if err != nil {
+		return err
+	}
+	if order.UserID != userID {
+		return errForbidden
+	}
+	if order.PayMethod == "stripe" {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		return s.cancelStripeOrder(ctx, id, userID)
+	}
 	if err := s.repo.cancelOrder(id, userID); err != nil {
 		return err
 	}

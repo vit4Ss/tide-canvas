@@ -1,4 +1,5 @@
 "use client";
+import { orderMoney, paidTotals } from "@/lib/order-money";
 
 /* ============================================================================
    用户画像（/admin/users/[id]）— 单用户档案。
@@ -177,7 +178,7 @@ function buildSummary(d: UserPortraitVO): string[] {
 
   const second: string[] = [];
   if (commerce.paidOrderCount > 0) {
-    second.push(`累计付费 ¥${commerce.paidAmount || "0.00"}`);
+    second.push(`累计付费 ${paidTotals(commerce.paidAmount, commerce.paidAmountUSD)}`);
   } else if (commerce.claimPoints > 0) {
     second.push(`靠兑换码获得 ${fmtNum(commerce.claimPoints)} 积分`);
   }
@@ -470,7 +471,7 @@ export default function AdminUserPortraitPage() {
     { header: "时间", width: "22%", className: "mono", cell: (r) => fmtDateTime(r.time) },
     { header: "订单号", width: "26%", className: "mono", cell: (r) => <span title={r.orderNo}>{r.orderNo}</span> },
     { header: "类型", width: "18%", cell: (r) => (r.orderType === "plan" ? `套餐${r.cycle === "yearly" ? "·年付" : r.cycle === "monthly" ? "·月付" : ""}` : "积分包") },
-    { header: "金额", width: "14%", align: "right", className: "mono", cell: (r) => `¥${r.amount}` },
+    { header: "金额", width: "14%", align: "right", className: "mono", cell: (r) => orderMoney(r.amount, r.currency) },
     {
       header: "状态", width: "20%",
       cell: (r) => {
@@ -601,7 +602,7 @@ export default function AdminUserPortraitPage() {
           <MetricCard icon={Coins} tone="violet" label="积分余额" value={fmtNum(points.balance)} detail={`累计获得 ${fmtNum(points.totalEarned)}`} />
           <MetricCard icon={Sparkles} tone="cyan" label="生成总数" value={fmtNum(generation.total)} detail={`近 30 天 ${fmtNum(generation.total30)}`} />
           <MetricCard icon={Activity} tone="green" label="创作成功率" value={successRate} detail={`失败 ${fmtNum(generation.failed)} 次`} />
-          <MetricCard icon={BadgeDollarSign} tone="amber" label="累计付费" value={`¥${paidAmount}`} detail={`${fmtNum(commerce.paidOrderCount)} 笔订单`} />
+          <MetricCard icon={BadgeDollarSign} tone="amber" label="累计付费" value={paidTotals(paidAmount, commerce.paidAmountUSD)} detail={`${fmtNum(commerce.paidOrderCount)} 笔订单`} />
         </section>
 
         <div className="uport-layout">
@@ -734,7 +735,7 @@ export default function AdminUserPortraitPage() {
               <div className="uport-benefit-strip">
                 <div><span>兑换码</span><strong>{fmtNum(commerce.claimCount)} 次</strong><small>+{fmtNum(commerce.claimPoints)} 分</small></div>
                 <div><span>签到</span><strong>{fmtNum(commerce.checkinCount)} 次</strong><small>+{fmtNum(commerce.checkinPoints)} 分</small></div>
-                <div><span>付费订单</span><strong>{fmtNum(commerce.paidOrderCount)} 笔</strong><small>¥{paidAmount}</small></div>
+                <div><span>付费订单</span><strong>{fmtNum(commerce.paidOrderCount)} 笔</strong><small>{paidTotals(paidAmount, commerce.paidAmountUSD)}</small></div>
               </div>
               {commerce.recentOrders.length > 0 ? (
                 <>

@@ -92,5 +92,6 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	// a sibling of the static action routes above (gin panics on static/param
 	// siblings at the same tree position).
 	g.GET("/detail/:id", h.get)
+	g.PUT("/detail/:id/name", h.rename)
 	g.DELETE("/detail/:id", h.remove)
 }

@@ -78,6 +78,10 @@ func TestEnglishPricingScopedCRUD(t *testing.T) {
 	if bad.Code != 400 {
 		t.Fatalf("Sub-cent USD price accepted: %s", bad.Body.String())
 	}
+	oversized := request("POST", "/api/admin/en/plans", map[string]any{"name": "Too many credits", "code": "bad_credit_limit", "monthly": 10, "yearly": 100, "monthlyPoints": model.MaxBillingGrantPoints/12 + 1})
+	if oversized.Code != 400 {
+		t.Fatalf("Annual grant exceeding the ledger accepted: %s", oversized.Body.String())
+	}
 	saved := request("PUT", "/api/admin/en/plans/"+created.Data.ID.String(), map[string]any{"name": "Creator", "code": "en_creator", "monthly": 15, "yearly": 150, "monthlyPoints": 900, "status": 1})
 	if saved.Code != 200 {
 		t.Fatalf("EN edit failed: %s", saved.Body.String())

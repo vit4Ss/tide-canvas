@@ -98,6 +98,7 @@ export interface CreateOrderDTO {
  *  is the epay cashier URL to redirect the browser to. Status:
  *  0 待支付 / 1 已支付 / 2 已取消 / 3 已退款. */
 export interface OrderVO {
+  currency?: string;
   id: string;
   orderNo: string;
   type: string;

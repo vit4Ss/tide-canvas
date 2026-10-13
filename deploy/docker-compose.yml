@@ -25,6 +25,11 @@ services:
     environment:
       TIDECANVAS_ENV: test        # 选择 configs/config.test.yaml 叠加层
       TIDECANVAS_SERVER_PORT: "8081" # 8080 被同机 relay-backend 占用
+      # English USD checkout. Keep disabled until the Stripe account/webhook are ready.
+      TIDECANVAS_STRIPE_ENABLED: "${TIDECANVAS_STRIPE_ENABLED:-false}"
+      TIDECANVAS_STRIPE_SECRETKEY: "${TIDECANVAS_STRIPE_SECRETKEY:-}"
+      TIDECANVAS_STRIPE_WEBHOOKSECRET: "${TIDECANVAS_STRIPE_WEBHOOKSECRET:-}"
+      TIDECANVAS_STRIPE_SITEURL: "${TIDECANVAS_STRIPE_SITEURL:-https://test-framelyn.tcmzhan.com}"
       TIDECANVAS_MCP_INTERNALURL: "${TIDECANVAS_MCP_INTERNALURL:-http://127.0.0.1:8082}"
       # World Labs Marble 凭据只在运行时注入，不写入镜像或仓库。
       # 可在 deploy/.env 或执行 docker compose 前的宿主机环境中设置。

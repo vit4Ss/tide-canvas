@@ -88,6 +88,7 @@ type capturedFrameDTO struct {
 
 // taskQuery is the query string of GET /api/ai/tasks (AiTaskQuery).
 type taskQuery struct {
+	Keyword        string `form:"keyword" binding:"max=160"`
 	IsAPICall      *bool  `form:"isApiCall"`
 	PageNum        int    `form:"pageNum"`
 	PageSize       int    `form:"pageSize"`

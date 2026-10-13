@@ -44,6 +44,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	// epay delivers the async notify as a GET (query params); accept POST too.
 	b.GET("/notify", h.notify)
 	b.POST("/notify", h.notify)
+	b.POST("/stripe/webhook", h.stripeWebhook)
 
 	// A separate namespace cannot fall back to CNY billing on an older server.
 	en := &handler{svc: h.svc, market: model.BillingMarketEN}
@@ -52,6 +53,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	b.GET("/en/faq", en.getFaq)
 	b.GET("/en/promo", en.getPromo)
 	b.GET("/en/channels", en.listChannels)
+	b.GET("/en/consumer", en.getConsumerInfo)
 	api.POST("/en/orders", middleware.JWTAuth(d), en.createOrder)
 
 	// Authenticated orders. The :id param sits only under the static /orders
@@ -62,6 +64,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	o.GET("", h.listOrders)
 	o.GET("/:id", h.getOrder)
 	o.POST("/:id/cancel", h.cancelOrder)
+	o.POST("/:id/checkout", h.resumeCheckout)
 	// return_url backstop: credit a paid order if the async notify was dropped.
 	o.POST("/:id/verify", h.verify)
 }

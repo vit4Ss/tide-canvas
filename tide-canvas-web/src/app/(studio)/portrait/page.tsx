@@ -1,4 +1,5 @@
 "use client";
+import { orderMoney, paidTotals } from "@/lib/order-money";
 
 /*
  * 当前用户自己的创作画像。数据与后台画像使用同一份聚合接口，但接口由
@@ -168,7 +169,7 @@ function OrdersTable({ rows }: { rows: PortraitOrderVO[] }) {
             <td className="mono">{time(row.time)}</td>
             <td className="mono truncate">{row.orderNo}</td>
             <td>{row.orderType === "plan" ? "套餐" : "积分包"}</td>
-            <td className="right mono">¥{row.amount}</td>
+            <td className="right mono">{orderMoney(row.amount, row.currency)}</td>
             <td><span className={`my-port-order-status s${row.status}`}>{ORDER_STATUS[row.status] || "未知"}</span></td>
           </tr>
         ))}</tbody>
@@ -251,7 +252,7 @@ export default function MyPortraitPage() {
         <div><span className="metric-icon violet"><Coins size={16} /></span><small>积分余额</small><strong>{fmt(points.balance)}</strong><em>累计获得 {fmt(points.totalEarned)}</em></div>
         <div><span className="metric-icon cyan"><Sparkles size={16} /></span><small>生成总数</small><strong>{fmt(generation.total)}</strong><em>成功 {fmt(generation.success)} 次</em></div>
         <div><span className="metric-icon green"><Activity size={16} /></span><small>创作成功率</small><strong>{successRate}</strong><em>失败 {fmt(generation.failed)} 次</em></div>
-        <div><span className="metric-icon amber"><WalletCards size={16} /></span><small>累计付费</small><strong>¥{commerce.paidAmount || "0.00"}</strong><em>{fmt(commerce.paidOrderCount)} 笔订单</em></div>
+        <div><span className="metric-icon amber"><WalletCards size={16} /></span><small>累计付费</small><strong>{paidTotals(commerce.paidAmount, commerce.paidAmountUSD)}</strong><em>{fmt(commerce.paidOrderCount)} 笔订单</em></div>
       </div>
 
       <PortraitSection title="活跃度" note="最近 90 天的创作节奏" icon={Activity}>
@@ -269,7 +270,7 @@ export default function MyPortraitPage() {
           {points.transactions.length ? <><h3 className="my-port-subhead">最近流水</h3><LedgerTable rows={points.transactions} /></> : null}
         </PortraitSection>
         <PortraitSection title="消费与权益" note={hasCommerce ? `兑换 ${fmt(commerce.claimCount)} 次 · 签到 ${fmt(commerce.checkinCount)} 次` : "还没有消费记录"} icon={BadgeDollarSign}>
-          {!hasCommerce ? <div className="my-port-empty"><BadgeDollarSign size={20} /><span>没有订单、兑换与签到记录</span></div> : <><div className="my-port-benefits"><div><small>兑换码</small><b>{fmt(commerce.claimCount)} 次</b><span>+{fmt(commerce.claimPoints)} 分</span></div><div><small>签到</small><b>{fmt(commerce.checkinCount)} 次</b><span>最长 {fmt(commerce.checkinStreak)} 天</span></div><div><small>付费订单</small><b>{fmt(commerce.paidOrderCount)} 笔</b><span>¥{commerce.paidAmount || "0.00"}</span></div></div>{commerce.recentOrders.length ? <><h3 className="my-port-subhead">最近订单</h3><OrdersTable rows={commerce.recentOrders} /></> : null}{commerce.recentClaims.length ? <><h3 className="my-port-subhead">最近兑换</h3><ClaimsTable rows={commerce.recentClaims} /></> : null}</>}
+          {!hasCommerce ? <div className="my-port-empty"><BadgeDollarSign size={20} /><span>没有订单、兑换与签到记录</span></div> : <><div className="my-port-benefits"><div><small>兑换码</small><b>{fmt(commerce.claimCount)} 次</b><span>+{fmt(commerce.claimPoints)} 分</span></div><div><small>签到</small><b>{fmt(commerce.checkinCount)} 次</b><span>最长 {fmt(commerce.checkinStreak)} 天</span></div><div><small>付费订单</small><b>{fmt(commerce.paidOrderCount)} 笔</b><span>{paidTotals(commerce.paidAmount, commerce.paidAmountUSD)}</span></div></div>{commerce.recentOrders.length ? <><h3 className="my-port-subhead">最近订单</h3><OrdersTable rows={commerce.recentOrders} /></> : null}{commerce.recentClaims.length ? <><h3 className="my-port-subhead">最近兑换</h3><ClaimsTable rows={commerce.recentClaims} /></> : null}</>}
         </PortraitSection>
       </div>
 

@@ -183,6 +183,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	authed.GET("/tasks", h.listTasks)
 	authed.GET("/tasks/:id", h.getTask)
 	authed.DELETE("/tasks/:id", h.cancelTask)
+	authed.PUT("/tasks/:id/name", h.renameTask)
 	// Audit logs are administrator-only. User-facing history uses the separate
 	// allowlisted /history contract below.
 	authed.GET("/logs", h.listLogs)

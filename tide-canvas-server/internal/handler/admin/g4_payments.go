@@ -56,6 +56,8 @@ type g4PaymentsHandler struct {
 // g4OrderVO is the admin order-row view. It carries the buyer block so the
 // finance screen can show who paid without a second lookup.
 type g4OrderVO struct {
+	Currency      string        `json:"currency"`
+	Market        string        `json:"market"`
 	ID            idgen.ID      `json:"id"`
 	OrderNo       string        `json:"orderNo"`
 	UserID        idgen.ID      `json:"userId"`
@@ -81,6 +83,7 @@ type g4OrderUserVO struct {
 
 // g4PayChannelVO is the admin payment-channel row view.
 type g4PayChannelVO struct {
+	Currency    string   `json:"currency"`
 	ID          idgen.ID `json:"id"`
 	Name        string   `json:"name"`
 	Type        string   `json:"type"`
@@ -401,6 +404,7 @@ func g4ApplyChannel(row *model.PayChannel, dto *g4PayChannelUpsertDTO, create bo
 func g4ToOrderVO(o *model.Order, u *model.User) g4OrderVO {
 	amount, _ := o.Amount.Float64()
 	vo := g4OrderVO{
+		Currency: model.OrderCurrency(o), Market: model.BillingMarket(o.Market),
 		ID:            o.ID,
 		OrderNo:       o.OrderNo,
 		UserID:        o.UserID,
@@ -432,7 +436,12 @@ func g4ToOrderVO(o *model.Order, u *model.User) g4OrderVO {
 func g4ToPayChannelVO(p *model.PayChannel) g4PayChannelVO {
 	rate, _ := p.Rate.Float64()
 	today, _ := p.TodayAmount.Float64()
+	currency := model.CurrencyCNY
+	if strings.EqualFold(strings.TrimSpace(p.Type), "stripe") {
+		currency = model.CurrencyUSD
+	}
 	return g4PayChannelVO{
+		Currency:    currency,
 		ID:          p.ID,
 		Name:        p.Name,
 		Type:        p.Type,

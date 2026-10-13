@@ -16,6 +16,8 @@ export interface AdminOrderUser {
 
 /** g4OrderVO — admin order-row view (read-only ledger). */
 export interface AdminOrder {
+  currency?: string;
+  market?: string;
   id: string;
   orderNo: string;
   userId: string;
@@ -46,6 +48,7 @@ export interface AdminOrderQuery {
 
 /** g4PayChannelVO — admin payment-channel row view. */
 export interface AdminPayChannel {
+  currency?: string;
   id: string;
   name: string;
   type: string;

@@ -60,6 +60,8 @@ func registerPricingRoutes(g *gin.RouterGroup, h *g4PricingHandler) {
 	// 定价页限时折扣横幅。
 	g.GET("/pricing/promo", h.getPromo)
 	g.PUT("/pricing/promo", h.savePromo)
+	g.GET("/pricing/consumer", h.getConsumerInfo)
+	g.PUT("/pricing/consumer", h.saveConsumerInfo)
 }
 
 type g4PricingHandler struct {
@@ -160,7 +162,7 @@ func (h *g4PricingHandler) createPlan(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
 		return
 	}
-	if !h.validMoney(c, dto.Monthly, dto.Yearly) {
+	if !h.validPoints(c, dto.MonthlyPoints, dto.Yearly > 0) || !h.validMoney(c, dto.Monthly, dto.Yearly) {
 		return
 	}
 	row := model.Plan{Market: model.BillingMarket(h.market), Currency: model.MarketCurrency(model.BillingMarket(h.market))}
@@ -191,7 +193,7 @@ func (h *g4PricingHandler) updatePlan(c *gin.Context) {
 		response.Fail(c, response.CodeBadRequest, "invalid request: "+err.Error())
 		return
 	}
-	if !h.validMoney(c, dto.Monthly, dto.Yearly) {
+	if !h.validPoints(c, dto.MonthlyPoints, dto.Yearly > 0) || !h.validMoney(c, dto.Monthly, dto.Yearly) {
 		return
 	}
 	var row model.Plan
@@ -512,6 +514,15 @@ func (h *g4PricingHandler) failLookup(c *gin.Context, err error, notFoundMsg, fa
 		return
 	}
 	response.Fail(c, response.CodeServerError, fallback)
+}
+
+// Reject grants that exceed the fixed-point balance representation.
+func (h *g4PricingHandler) validPoints(c *gin.Context, monthly int, annual bool) bool {
+	if model.ValidBillingGrant(monthly, annual) {
+		return true
+	}
+	response.Fail(c, response.CodeBadRequest, "积分额度超出系统精度范围，请降低积分额度后重试")
+	return false
 }
 
 // USD plan prices are maintained in cents; reject silent sub-cent rounding.

@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, RefreshCw, Save, Star } from "lucide-react";
+import { ConsumerSettings } from "./consumer-settings";
 import {
   AdminAlert,
   AdminEmptyState,
@@ -148,6 +149,7 @@ function PricingWorkspace({ market, onDirtyChange }: { market: PricingMarket; on
   // ref 镜像给 load() 用，避免静默刷新覆盖未保存的编辑。
   const [cmpRows, setCmpRows] = useState<AdminCompareRow[]>([]);
   const [cmpDirty, setCmpDirty] = useState(false);
+  const [consumerDirty, setConsumerDirty] = useState(false);
   const [cmpSaving, setCmpSaving] = useState(false);
   const cmpDirtyRef = useRef(false);
   const markCmpDirty = () => {
@@ -198,7 +200,7 @@ function PricingWorkspace({ market, onDirtyChange }: { market: PricingMarket; on
   const removePromoDeal = (i: number) =>
     setPromo({ deals: promoForm.deals.filter((_, j) => j !== i) });
 
-  useEffect(() => { onDirtyChange(planOpen || cmpDirty || faqDirty || promoDirty); }, [planOpen, cmpDirty, faqDirty, promoDirty, onDirtyChange]);
+  useEffect(() => { onDirtyChange(planOpen || cmpDirty || faqDirty || promoDirty || consumerDirty); }, [planOpen, cmpDirty, faqDirty, promoDirty, consumerDirty, onDirtyChange]);
 
   // silent：跳过 loading 占位，静默换数据。排序等就地操作用它刷新，
   // 否则表格被「加载中…」卸载重建，行移动的过渡动画会被打断。
@@ -608,9 +610,10 @@ function PricingWorkspace({ market, onDirtyChange }: { market: PricingMarket; on
         </AdminAlert>
       ) : null}
 
-      {market === "en" && <AdminAlert tone="info" title="英文站独立美元定价">套餐名称、文案和权益请填写英文。月价与全年总价独立维护，不做汇率换算；新增套餐默认下架。美元支付渠道接入前，英文站只展示已上架价格，付费购买保持关闭。</AdminAlert>}
+      {market === "en" && <AdminAlert tone="info" title="英文站独立美元定价">套餐名称、文案和权益请填写英文。标准包与 12 倍积分包分别维护一次性总价，不做汇率换算；新增套餐默认下架。支持重复购买补充积分，不降低已有会员等级，不自动续费。后台启用 stripe 且后端配置好对应环境密钥后才能购买；未配置时只展示价格。</AdminAlert>}
 
       {/* 套餐管理 */}
+      {market === "en" && <ConsumerSettings onDirtyChange={setConsumerDirty} />}
       <Panel
         title={market === "en" ? "英文站套餐管理" : "中文站套餐管理"}
         sub={`${currency} 定价与权益 · ${planSummary} · ${market === "en" ? "仅用于 Framelyn 英文站" : "仅用于中文站"}`}
@@ -650,9 +653,9 @@ function PricingWorkspace({ market, onDirtyChange }: { market: PricingMarket; on
                   </span>
                 ),
               },
-              { header: "月价", className: "mono", cell: (r) => formatPrice(r.monthly) },
-              { header: "年付总价", className: "mono", cell: (r) => formatPrice(r.yearly) },
-              { header: "每月积分", className: "mono", cell: (r) => num(r.monthlyPoints) },
+              { header: market === "en" ? "标准包价格" : "月价", className: "mono", cell: (r) => formatPrice(r.monthly) },
+              { header: market === "en" ? "12 倍包总价" : "年付总价", className: "mono", cell: (r) => formatPrice(r.yearly) },
+              { header: market === "en" ? "标准包积分" : "每月积分", className: "mono", cell: (r) => num(r.monthlyPoints) },
               {
                 header: "权益",
                 className: "muted",
@@ -1080,7 +1083,7 @@ function PricingWorkspace({ market, onDirtyChange }: { market: PricingMarket; on
                 onChange={(e) => setPlanForm((f) => ({ ...f, desc: e.target.value }))}
               />
             </Field>
-            <Field label="每月积分" span={2}>
+            <Field label={market === "en" ? "标准包积分" : "每月积分"} span={2}>
               <input
                 type="number"
                 placeholder="如：3000"
@@ -1095,7 +1098,7 @@ function PricingWorkspace({ market, onDirtyChange }: { market: PricingMarket; on
                 onChange={(e) => setPlanForm((f) => ({ ...f, cta: e.target.value }))}
               />
             </Field>
-            <Field label={`月价 (${currency})`} required span={2}>
+            <Field label={`${market === "en" ? "标准包价格" : "月价"} (${currency})`} required span={2}>
               <input
                 type="number"
                 placeholder="如：39"
@@ -1104,10 +1107,10 @@ function PricingWorkspace({ market, onDirtyChange }: { market: PricingMarket; on
               />
             </Field>
             <Field
-              label={`年付总价 (${currency}/年)`}
+              label={market === "en" ? "12 倍积分包总价 (USD)" : `年付总价 (${currency}/年)`}
               required
               span={2}
-              hint={market === "en" ? "填写一整年的美元总价；英文站展示月均价，并在下方标明全年实际金额。" : "一年总价，年付下单收款即此价；前台年付档显示总价/年。"}
+              hint={market === "en" ? "一次付款、一次发放标准包 12 倍积分。填 0 关闭此规格；前台展示实际总价，不再展示月均价。免费档积分不乘 12。" : "一年总价，年付下单收款即此价；前台年付档显示总价/年。"}
             >
               <input
                 type="number"

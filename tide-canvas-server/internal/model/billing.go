@@ -122,6 +122,13 @@ type Order struct {
 	Amount        decimal.Decimal `gorm:"column:amount;type:decimal(10,2);not null;default:0" json:"amount"`
 	PayMethod     string          `gorm:"column:pay_method;type:varchar(32)" json:"payMethod"`
 	TransactionID string          `gorm:"column:transaction_id;type:varchar(128)" json:"transactionId"`
+	// Immutable Stripe purchase snapshot. Nullable unique session IDs preserve legacy orders.
+	CheckoutSessionID *string    `gorm:"type:varchar(255);uniqueIndex" json:"-"`
+	CheckoutURL       string     `gorm:"type:text" json:"-"`
+	CheckoutExpiresAt *time.Time `json:"-"`
+	PaymentEnv        string     `gorm:"type:varchar(8)" json:"-"`
+	PurchaseSnapshot  string     `gorm:"type:text" json:"-"`
+	PaymentProcessing bool       `gorm:"not null;default:false" json:"-"`
 
 	// Status: 0 待支付 / 1 已支付 / 2 已取消 / 3 已退款.
 	Status  int        `gorm:"column:status;type:tinyint;not null;default:0" json:"status"`
