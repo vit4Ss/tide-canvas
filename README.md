@@ -231,3 +231,6 @@ provider-side safety responses and report-based review, not unimplemented screen
 
 
 Public pricing now renders published USD packs and model credit examples in the initial HTML for anonymous visitors, including without JavaScript. The approved initial Creator pack is USD 10 / 600 credits, one-time and without automatic renewal; it is bootstrapped by the shared backend, not a frontend fallback. Later admin edits/removal are preserved. No larger pack is enabled by default. `npm run test:public-pricing` (after `npm run build`) starts an isolated fixture backend and app to test initial HTML, price refresh, unavailable/empty catalogues, mobile layout and safety-policy disclosure.
+
+
+The public footer displays a direct support email in the initial HTML. The backend's published contact is resolved on the server; blank or invalid values fall back to the configured support email and then the approved default. The privacy page identifies Alibaba Cloud OSS (operator-confirmed) and describes actual credential protection, file ownership checks, shareable media links, retention behavior and deletion requests without a placeholder policy card or a fabricated fixed storage term. Operator-written file-retention text still takes precedence. Review this disclosure if storage providers or data-handling practices change.

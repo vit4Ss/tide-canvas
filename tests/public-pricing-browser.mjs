@@ -55,6 +55,12 @@ try {
  state="failed";await page.reload();assert.match(await page.getByRole("alert").innerText(),/could not be loaded/);assert.equal(await page.getByRole("heading",{name:"Credit packs are not on sale yet."}).count(),0);
  await page.goto(base+"/aup");assert.match(await page.locator("article").innerText(),/Server-side prompt screening is enabled/);assert.match(await page.locator("article").innerText(),/independent review[\s\S]*not yet implemented/);
  await page.goto(base+"/privacy");await page.getByRole("heading",{name:"Prompt safety checks"}).waitFor();
+ const privacy=await page.locator("article").innerText();
+ for(const fact of ["Alibaba Cloud Object Storage Service", "How your information is protected", "File retention and deletion", "hashes", "HTTPS", "anyone who obtains it"]) assert.ok(privacy.includes(fact),fact);
+ assert.doesNotMatch(privacy,/Not yet published|Checking published details/);
+ const contact=page.locator('footer a[href^="mailto:"]');
+ assert.equal(await contact.innerText(),"support@example.test");
+ assert.equal(decodeURIComponent((await contact.getAttribute("href")).split("?")[0]),"mailto:support@example.test");
  state="larger";
  const hydrated=await browser.newPage();const errors=[];hydrated.on("pageerror",error=>errors.push(error.message));
  await hydrated.goto(base+"/pricing",{waitUntil:"networkidle"});

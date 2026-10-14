@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { PublicPage } from "./shell";
-import { ConsumerPolicies } from "./consumer-info";
 import { ModelDisclosure } from "./model-disclosure";
 import { getPublicConsumer, getPublicModels, getPublicSafety } from "@/lib/public-info.server";
 import { getServerConfig } from "@/lib/server-config";
@@ -67,14 +66,34 @@ function PublishedConditions({ info }: { info: ConsumerInfo }) {
   return published.length ? <section><h2>Additional published conditions</h2>{published.map(([key,title]) => <div key={key}><h3>{title}</h3><p>{info[key]}</p></div>)}</section> : null;
 }
 
-function PrivacyContent({ screening }: { screening: boolean }) {
+function PrivacyContent({ screening, info }: { screening: boolean; info: ConsumerInfo }) {
   return <>
     <h2>Information used by the service</h2><p>Account information is used to authenticate you and associate your balance, files, tasks, API keys and orders with your account. Prompts, reference files and generation settings are sent to the service and its configured model providers to process the requests you submit.</p>
     <h2>Browser storage</h2><p>The website uses browser storage for your sign-in credentials, unresolved generation references, pending checkout references, saved inspiration and account-scoped studio drafts. Drafts remain in this browser tab for up to seven days and are not shared with other accounts. Generation recovery references help reconnect to the same request after a connection drops. API keys entered in the playground are held in memory for that page and are not saved to browser storage.</p>
-    <h2>Your files and results</h2><p>Uploaded files and generated outputs are stored by the service. Their availability, processing and retention depend on the service and storage configuration. Public media URLs should be treated as shareable links; avoid including sensitive personal information in prompts or uploads.</p>
+    <section id="data-storage">
+      <h2>Where your data is stored</h2>
+      <p>Files uploaded to Framelyn and generation results that we save are stored in Alibaba Cloud Object Storage Service (OSS). File delivery may use a content delivery network (CDN). Our application servers process media for tasks such as validation, conversion and delivery; account, task, credit and order records are kept in the service database.</p>
+      <p>The model providers selected for your requests receive the prompts, settings and reference files needed to generate results. Some results may initially be delivered through a provider-hosted link, which can expire under that provider&apos;s rules. Storage, content delivery and model processing can involve infrastructure outside your country of residence.</p>
+      <h3>File links and sharing</h3>
+      <p>Signing in protects account and file-management actions, but a media URL can be accessed by anyone who obtains it. Treat upload and output links as shareable links. Do not use them to distribute confidential material or assume that a link is restricted to your account.</p>
+    </section>
+    <section id="data-retention">
+      <h2>File retention and deletion</h2>
+      <p>{info.retention}</p>
+      <p>Delete an uploaded file from <Link href="/library">Library → Uploaded files</Link> to remove its library record and request removal of the stored object. Removing a file does not automatically erase related task, billing or security records, or copies already downloaded or cached elsewhere. Removing the library entry does not guarantee that a previously shared URL stops working immediately.</p>
+      <p>For deletion of generated results, account data or a link that remains accessible after removal, email <Contact email={info.supportEmail} reference="Privacy and deletion request" /> with the relevant account email and file or task reference. We may need to verify ownership before acting. Relevant transaction and security records may be retained to account for payments, resolve disputes or investigate misuse.</p>
+    </section>
+    <section id="data-security">
+      <h2>How your information is protected</h2>
+      <ul>
+        <li><strong>Website connection:</strong> the production website uses HTTPS to protect traffic between your browser and the website.</li>
+        <li><strong>Account credentials:</strong> passwords are stored as hashes, rather than readable passwords. Account API keys are encrypted in the service database and checked using a verification digest.</li>
+        <li><strong>Access checks:</strong> account and file-management requests are authenticated and checked for ownership. Administrative operations require the applicable account permissions.</li>
+      </ul>
+      <p>Keep passwords, API keys and shared file links secure. To report suspected unauthorized access or a privacy concern, contact <Contact email={info.supportEmail} reference="Privacy or security concern" />. Do not include passwords or API keys in your message.</p>
+    </section>
     {screening && <><h2>Prompt safety checks</h2><p>For media generation, prompts and supported text instructions are sent to Waffo Pancake to check content safety. Waffo describes the check as stateless and says it does not retain the prompt after returning a verdict. We retain decision receipts, a keyed prompt digest and request references for investigation and appeals. The original generation input remains subject to the task-record handling described above.</p></>}<h2>Payments</h2><p>Payment is completed through the payment methods offered at checkout. The service records the order, payment status and associated credit allowance. The frontend does not collect your payment account password.</p>
     <h2>Managing your information</h2><p>You can update your display name and password, disable or replace your API key, and remove uploaded files through the account and library interfaces. Visit <Link href="/help">Help</Link> for account requests that are not available through these controls.</p>
-    <ConsumerPolicies fields={["retention"]} />
   </>;
 }
 
@@ -86,7 +105,7 @@ export async function Legal({ kind }: { kind: Kind }) {
   return <PublicPage><div className={styles.headerWrap}><header className="public-title"><h1>{titles[kind]}</h1><p>{descriptions[kind]}</p></header></div>
     <article className={`article ${styles.document}`}>
       <nav className={styles.nav} aria-label="Policies"><Link href="/terms">Terms of service</Link><Link href="/refunds">Refunds</Link><Link href="/aup">Acceptable use</Link><Link href="/privacy">Privacy</Link><Link href="/models">Model catalogue</Link></nav>
-      {kind === "privacy" ? <PrivacyContent screening={screening} /> : <>
+      {kind === "privacy" ? <PrivacyContent screening={screening} info={info} /> : <>
         {kind === "terms" && <>
           <section id="account"><h2>Your account and the service</h2><p>These terms cover your use of {publicConfig.name}&apos;s creative tools, uploads, generated outputs and API access. Keep your credentials and API key secure. Account permissions, balances and limits apply to both Studio and API requests. You are responsible for activity authorized with your credentials.</p><p>Outputs are AI-generated, may contain errors and are not guaranteed to be unique or suitable for every use. Review them before publication. Rights to inputs and permitted uses of outputs depend on applicable law and the selected model&apos;s terms; a credit purchase does not grant rights to third-party material.</p></section>
           <section id="models"><h2>Underlying AI models</h2><ModelDisclosure models={models} /><Link href="/models">Browse the complete model catalogue</Link></section>

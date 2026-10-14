@@ -34,6 +34,9 @@ try{
  assert.equal(await page.getByRole("button",{name:"Text",exact:true}).count(),0);
  await page.screenshot({path:dir+"/models-desktop.png",fullPage:true});
  await page.goto(base,{waitUntil:"domcontentloaded"});
+ const footerContact=page.locator('footer a[href^="mailto:"]');
+ assert.ok(await footerContact.count()>0,"Public footer has no direct support contact");
+ assert.match(await footerContact.first().innerText(),/@/);
  const section=page.locator('section[aria-labelledby="home-models-title"]');
  assert.ok(await section.locator("dl a").count()>0,"Homepage model disclosure is missing");
  await section.screenshot({path:dir+"/home-models-desktop.png"});
@@ -42,6 +45,14 @@ try{
  await section.screenshot({path:dir+"/home-models-mobile.png"});
  await page.goto(base+"/privacy",{waitUntil:"domcontentloaded"});
  await page.getByRole("heading",{name:"Your privacy.",exact:true}).waitFor();
+ const privacy=await page.locator("article").innerText();
+ for(const fact of ["Alibaba Cloud Object Storage Service", "Where your data is stored", "File retention and deletion", "How your information is protected", "hashes", "encrypted", "HTTPS"]) assert.ok(privacy.includes(fact),fact);
+ assert.doesNotMatch(privacy,/Not yet published|Checking published details/);
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+ await page.screenshot({path:dir+"/privacy-mobile.png",fullPage:true});
+ await page.setViewportSize({width:1440,height:1000});
+ await page.screenshot({path:dir+"/privacy-desktop.png",fullPage:true});
+ await page.locator("footer").screenshot({path:dir+"/footer-desktop.png"});
  await browser.close();
  console.log("Public policies passed without JavaScript: specific live model names, refund eligibility/timing, six AUP categories, reporting/appeals, honest moderation limits, privacy route, desktop and mobile.");
 }finally{await browser.close();}

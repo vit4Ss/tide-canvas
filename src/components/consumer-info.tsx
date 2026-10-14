@@ -2,24 +2,26 @@
 import Link from "next/link";
 import { createContext, useContext } from "react";
 import { useResource } from "@/lib/use-resource";
-import { consumerDefaults, supportLink, type ConsumerInfo } from "@/lib/consumer";
+import { consumerDefaults, supportEmail, supportLink, type ConsumerInfo } from "@/lib/consumer";
 import type { PlanVO } from "@/types/billing";
 import { isEnglishPlan, planPurchase } from "@/lib/billing";
 import { useRuntimeConfig } from "./runtime-config";
 
-function useCustomerResources() {
+function useCustomerResources(initialInfo?: ConsumerInfo) {
   const config = useRuntimeConfig();
-  const policies = useResource<ConsumerInfo>("/api/billing/en/consumer");
+  const policiesResource = useResource<ConsumerInfo>("/api/billing/en/consumer");
+  const policies = { ...policiesResource, data: policiesResource.data || initialInfo || null, loading: policiesResource.loading && !initialInfo };
   const registrationResource = useResource<{ registerClosed: boolean }>("/api/auth/register-config");
   const registration = { ...registrationResource, error: registrationResource.error || (!registrationResource.loading && typeof registrationResource.data?.registerClosed !== "boolean" ? "Registration availability could not be confirmed." : "") };
   const plansResource = useResource<PlanVO[]>("/api/billing/en/plans");
   const plans = { ...plansResource, data: Array.isArray(plansResource.data) ? plansResource.data : null, error: plansResource.error || (!plansResource.loading && plansResource.data && !Array.isArray(plansResource.data) ? "Credit prices could not be loaded. Please try again." : "") };
-  const info = { ...consumerDefaults, ...policies.data, refundTiming: policies.data?.refundTiming || "For Waffo-processed purchases, refunds follow Waffo Pancake's Buyer Terms. Read our refund policy for eligibility, the request window and processing details.", supportEmail: policies.data?.supportEmail || config.supportEmail || consumerDefaults.supportEmail };
+  const retention = typeof policies.data?.retention === "string" ? policies.data.retention.trim() : "";
+  const info = { ...consumerDefaults, ...policies.data, retention: retention || consumerDefaults.retention, refundTiming: policies.data?.refundTiming || "For Waffo-processed purchases, refunds follow Waffo Pancake's Buyer Terms. Read our refund policy for eligibility, the request window and processing details.", supportEmail: supportEmail(policies.data?.supportEmail, config.supportEmail) };
   return { info, policies, registration, plans };
 }
 const Context = createContext<ReturnType<typeof useCustomerResources> | null>(null);
-export function ConsumerProvider({ children }: { children: React.ReactNode }) {
-  const value = useCustomerResources();
+export function ConsumerProvider({ children, initialInfo }: { children: React.ReactNode; initialInfo?: ConsumerInfo }) {
+  const value = useCustomerResources(initialInfo);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 export function useConsumer() {

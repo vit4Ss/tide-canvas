@@ -2,7 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { getServerConfig } from "./server-config";
 import { publicMediaModels } from "./public-models";
-import { consumerDefaults, type ConsumerInfo } from "./consumer";
+import { consumerDefaults, supportEmail, type ConsumerInfo } from "./consumer";
 import { publicPricingPlans } from "./public-pricing";
 
 async function publicData(path: string): Promise<unknown> {
@@ -34,10 +34,9 @@ export const getPublicConsumer = cache(async (): Promise<ConsumerInfo> => {
   const { publicConfig } = getServerConfig();
   const raw = await publicData("/api/billing/en/consumer");
   const value = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
-  const result = { ...consumerDefaults, supportEmail: publicConfig.supportEmail || consumerDefaults.supportEmail };
+  const result = { ...consumerDefaults, supportEmail: supportEmail(value.supportEmail, publicConfig.supportEmail) };
   for (const key of ["commercialUse", "retention", "creditValidity", "membershipTerms"] as const) {
-    if (typeof value[key] === "string") result[key] = value[key].slice(0,2000);
+    if (typeof value[key] === "string" && value[key].trim()) result[key] = value[key].trim().slice(0,2000);
   }
-  if (typeof value.supportEmail === "string" && /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(value.supportEmail)) result.supportEmail = value.supportEmail;
   return result;
 });

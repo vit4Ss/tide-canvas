@@ -3,6 +3,19 @@ import assert from "node:assert/strict";
 import { parseDraft, writeDraft, readDraft, loginDraft, takeLoginDraft } from "../src/lib/studio-draft.ts";
 import { audioKind, promptIdea } from "../src/lib/model-guidance.ts";
 import { buildGenerationInput } from "../src/lib/studio.ts";
+import { DEFAULT_SUPPORT_EMAIL, supportEmail, supportLink } from "../src/lib/consumer.ts";
+
+test("public contact falls back on missing or invalid settings and keeps the mailto address safe", () => {
+  assert.equal(supportEmail("   ", "help@example.test"), "help@example.test");
+  for (const invalid of [null, {}, "", "not-an-email", "support@example.test\r\nBcc: attacker@example.test", "<support@example.test>"]) {
+    assert.equal(supportEmail(invalid), DEFAULT_SUPPORT_EMAIL);
+    const link = new URL(supportLink(invalid));
+    assert.equal(link.protocol, "mailto:");
+    assert.equal(decodeURIComponent(link.pathname), DEFAULT_SUPPORT_EMAIL);
+    assert.equal(link.searchParams.has("bcc"), false);
+  }
+  assert.equal(supportEmail(" support@example.test "), "support@example.test");
+});
 
 const draft = { media:"video",modelId:"video-model",mode:"text_to_video",prompt:"My saved idea",resolution:"1080p",ratio:"16:9",quality:"",duration:"5",count:1,refs:[],outputFps:"",upscaleModel:"max",voice:"",lyrics:"",instrumental:false,enablePbr:false };
 test("drafts reject corrupt, stale, future and unsafe reference data", () => {

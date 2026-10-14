@@ -61,3 +61,8 @@
 .pricing-examples .table-wrap { margin-block: 24px; }
 .pricing-examples th, .pricing-examples td { text-align: left; padding: 16px; font-size: 13px; }
 .pricing-examples td:last-child { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.footer-contact { display: grid; gap: 8px; margin-top: 24px; }
+.footer-contact > span { color: var(--muted); font-size: 12px; }
+.footer-contact > a { display: inline-flex; align-items: center; gap: 8px; width: fit-content; max-width: 100%; color: var(--accent); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.footer-contact > a:hover { text-decoration: underline; text-underline-offset: 4px; }
+.footer-contact svg { flex-shrink: 0; }
