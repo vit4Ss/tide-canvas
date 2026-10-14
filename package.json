@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.mjs",
     "test:browser": "node tests/browser-smoke.mjs",
+    "test:generation-routing": "node tests/generation-routing-browser.mjs",
     "test:media": "node tests/library-media-browser.mjs",
     "test:consumer": "node tests/consumer-browser.mjs",
     "test:modals": "node tests/modals-browser.mjs",

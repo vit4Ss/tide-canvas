@@ -26,7 +26,7 @@ await context.route("**/api/**", async (route) => {
   else if (path === "/api/ai/optimize-prompt") {
     optimizeCalls++;
     data = await new Promise((resolve) => { releaseOptimization = (prompt) => resolve({ prompt }); });
-  } else if (path === "/api/ai/generate") { generations.push(req.postDataJSON()); data = {}; }
+  } else if (path === "/api/en/ai/generate") { generations.push(req.postDataJSON()); data = {}; }
   else if (path === "/api/ai/tasks") data = { records: [], total: 0, pages: 0 };
   else if (path === "/api/ai/history") {
     const filtered = accountId === "42" ? records.filter((row) => (!url.searchParams.get("mediaType") || row.mediaType === url.searchParams.get("mediaType")) && (!url.searchParams.get("success") || String(row.success) === url.searchParams.get("success")) && (!url.searchParams.get("keyword") || row.prompt.includes(url.searchParams.get("keyword")))) : [];

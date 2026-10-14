@@ -49,7 +49,7 @@ This workspace's ignored `.env.local` currently points to the existing deployed 
 
 ## Shared backend contracts
 
-Browser requests remain on this website's `/api/*` origin and are forwarded by Next.js. Website actions use the existing JWT session routes. Public media generation requests use `/api/open/v1`. Text models, Chat/Responses entry points and text usage reports are not exposed in the English interface. API keys are held in memory in the playground, never persisted there.
+Browser requests remain on this website's `/api/*` origin and are forwarded by Next.js. Website actions use the existing JWT session routes. Public media generation requests use `/api/en/open/v1`. Text models, Chat/Responses entry points and text usage reports are not exposed in the English interface. API keys are held in memory in the playground, never persisted there.
 
 The frontend reuses the existing generation journal and pricing helpers. The journal is namespaced by this frontend and the authenticated account. Image batches use `batchCount`; reference video and audio use `videoReferences` and `audioReferences`, matching the provider adapters. Quotes verify owned video duration before enhancement and reference-video surcharges. Session-bound generation headers prevent an account switch from sending a prepared request under a different account.
 
@@ -234,3 +234,6 @@ Public pricing now renders published USD packs and model credit examples in the 
 
 
 The public footer displays a direct support email in the initial HTML. The backend's published contact is resolved on the server; blank or invalid values fall back to the configured support email and then the approved default. The privacy page identifies Alibaba Cloud OSS (operator-confirmed) and describes actual credential protection, file ownership checks, shareable media links, retention behavior and deletion requests without a placeholder policy card or a fabricated fixed storage term. Operator-written file-retention text still takes precedence. Review this disclosure if storage providers or data-handling practices change.
+
+
+Framelyn generation is isolated under `/api/en/ai/generate` (website JWT) and `/api/en/open/v1` (API keys). Deploy the matching shared backend before this frontend. These routes alone apply the Pancake prompt-screening setting; the original FlowLight site and its `/api/ai/generate` and `/api/open/v1` routes retain their prior behavior. `/api/en/ai/safety-config` supplies the English policy disclosure. Failed or unavailable EN endpoints must not fall back to the old namespace. Accounts, balances, file ownership and task history are still shared. Recover already-accepted pre-upgrade tasks through their task ID/history instead of submitting a new paid request.

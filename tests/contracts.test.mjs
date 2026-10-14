@@ -39,7 +39,7 @@ test("result previews reject executable and data URLs", () => {
   assert.deepEqual(resultUrls({ urls: ["javascript:alert(1)", "data:text/html,hello", "https://storage.example/a.png"] }, "https://storage.example/a.png"), ["https://storage.example/a.png"]);
 });
 test("task identifiers retain string precision", () => {
-  assert.equal(requestPath("task", "9007199254740993123"), "/api/open/v1/tasks/9007199254740993123");
+  assert.equal(requestPath("task", "9007199254740993123"), "/api/en/open/v1/tasks/9007199254740993123");
 });
 test("task lookup without an ID cannot call an invented endpoint", () => assert.throws(() => requestPath("task", ""), /task ID/));
 test("playground builds a compatible handler for every media type", () => {
@@ -47,7 +47,7 @@ test("playground builds a compatible handler for every media type", () => {
   assert.equal("prompt" in requestTemplate("generate", "rh-upscale", "upscale").input, false);
 });
 test("developer namespaces match the shared service routes", () => {
-  assert.equal(ENDPOINTS.generate.path, "/api/open/v1/generations");
+  assert.equal(ENDPOINTS.generate.path, "/api/en/open/v1/generations");
   assert.deepEqual(Object.keys(ENDPOINTS), ["models", "generate", "task"]);
 });
 test("request bodies must be valid JSON objects", () => {
@@ -55,7 +55,7 @@ test("request bodies must be valid JSON objects", () => {
   assert.deepEqual(parseRequestBody('{"modelId":"test"}'), { modelId: "test" });
 });
 test("copied cURL escapes shell quotes and uses an environment variable", () => {
-  const curl = curlExample("https://example.com", "POST", "/api/open/v1/generations", JSON.stringify({ prompt: "a creator's idea $(do-not-execute)" }));
+  const curl = curlExample("https://example.com", "POST", "/api/en/open/v1/generations", JSON.stringify({ prompt: "a creator's idea $(do-not-execute)" }));
   assert.match(curl, /FRAMELYN_API_KEY/); assert.match(curl, /creator'\\''s/);
 });
 test("annual billing is a full annual payment with twelve credit allowances", () => {

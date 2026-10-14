@@ -16,7 +16,7 @@ const fixture = createServer((req,res)=>{
   data=state==="empty"?[]:[{...plan,monthly:state==="changed"?15:10,yearly:state==="larger"?100:0}];
  } else if(path==="/api/billing/en/channels") data=[];
  else if(path==="/api/billing/en/consumer") data={supportEmail:"support@example.test",creditValidity:"Fixture credit validity",membershipTerms:"Fixture account benefits",commercialUse:"Check the selected model terms."};
- else if(path==="/api/ai/safety-config") data={promptScreening:true,outputScreening:false};
+ else if(path==="/api/en/ai/safety-config") data={promptScreening:true,outputScreening:false};
  else if(path==="/api/market/studio-models") data=[{id:"image",name:"Example Image",modelKey:"example-image",type:"image",pointCost:"4",config:{resolutions:["2k"],qualities:["high"],priceMatrix:{high:{"2k":8}}}},{id:"text",name:"Hidden text model",modelKey:"text",type:"text",pointCost:"1"}];
  else if(path==="/api/billing/en/faq") data={items:[]};
  else if(path==="/api/billing/en/compare") data={rows:[]};
@@ -26,7 +26,7 @@ const fixture = createServer((req,res)=>{
 });
 await new Promise(resolve=>fixture.listen(0,"127.0.0.1",resolve));
 const port=Number(process.env.PRICING_TEST_PORT||3211),base=`http://127.0.0.1:${port}`;
-const app=spawn(process.execPath,["node_modules/next/dist/bin/next","start","-H","127.0.0.1","-p",String(port)],{env:{...process.env,NODE_ENV:"production",APP_ENV:"test",BACKEND_URL:`http://127.0.0.1:${fixture.address().port}`,SITE_URL:base},windowsHide:true,stdio:["ignore","pipe","pipe"]});
+const app=spawn(process.execPath,["node_modules/next/dist/bin/next","start","-H","127.0.0.1","-p",String(port)],{env:{...process.env,NODE_ENV:"production",APP_ENV:"test",BACKEND_URL:`http://127.0.0.1:${fixture.address().port}`,SITE_URL:base,GOOGLE_CLIENT_ID:""},windowsHide:true,stdio:["ignore","pipe","pipe"]});
 let output="";app.stdout.on("data",data=>output+=data);app.stderr.on("data",data=>output+=data);
 let browser;
 try {
@@ -36,7 +36,7 @@ try {
  browser=await chromium.launch({headless:true,...(process.platform==="win32"?{executablePath:"C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"}:{channel:"chrome"})});
  const context=await browser.newContext({javaScriptEnabled:false,viewport:{width:1440,height:1000}});
  const page=await context.newPage();
- await page.goto(base+"/pricing");
+ await page.goto(base+"/pricing",{waitUntil:"domcontentloaded"});
  assert.match(await page.locator(".plan-price").innerText(),/\$10/);
  assert.match(await page.locator(".plan-credit").innerText(),/600/);
  assert.equal(await page.getByRole("button",{name:"12× credits",exact:true}).count(),0);
@@ -50,11 +50,11 @@ try {
  await page.setViewportSize({width:390,height:844});
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
  await page.screenshot({path:dir+"/mobile.png",fullPage:true});
- state="changed";await page.reload();assert.match(await page.locator(".plan-price").innerText(),/\$15/);
- state="empty";await page.reload();assert.equal(await page.locator(".pricing-card").count(),0);await page.getByRole("heading",{name:"Credit packs are not on sale yet."}).waitFor();
- state="failed";await page.reload();assert.match(await page.getByRole("alert").innerText(),/could not be loaded/);assert.equal(await page.getByRole("heading",{name:"Credit packs are not on sale yet."}).count(),0);
- await page.goto(base+"/aup");assert.match(await page.locator("article").innerText(),/Server-side prompt screening is enabled/);assert.match(await page.locator("article").innerText(),/independent review[\s\S]*not yet implemented/);
- await page.goto(base+"/privacy");await page.getByRole("heading",{name:"Prompt safety checks"}).waitFor();
+ state="changed";await page.reload({waitUntil:"domcontentloaded"});assert.match(await page.locator(".plan-price").innerText(),/\$15/);
+ state="empty";await page.reload({waitUntil:"domcontentloaded"});assert.equal(await page.locator(".pricing-card").count(),0);await page.getByRole("heading",{name:"Credit packs are not on sale yet."}).waitFor();
+ state="failed";await page.reload({waitUntil:"domcontentloaded"});assert.match(await page.getByRole("alert").innerText(),/could not be loaded/);assert.equal(await page.getByRole("heading",{name:"Credit packs are not on sale yet."}).count(),0);
+ await page.goto(base+"/aup",{waitUntil:"domcontentloaded"});assert.match(await page.locator("article").innerText(),/Server-side prompt screening is enabled/);assert.match(await page.locator("article").innerText(),/independent review[\s\S]*not yet implemented/);
+ await page.goto(base+"/privacy",{waitUntil:"domcontentloaded"});await page.getByRole("heading",{name:"Prompt safety checks"}).waitFor();
  const privacy=await page.locator("article").innerText();
  for(const fact of ["Alibaba Cloud Object Storage Service", "How your information is protected", "File retention and deletion", "hashes", "HTTPS", "anyone who obtains it"]) assert.ok(privacy.includes(fact),fact);
  assert.doesNotMatch(privacy,/Not yet published|Checking published details/);

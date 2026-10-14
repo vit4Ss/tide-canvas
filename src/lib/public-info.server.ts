@@ -27,7 +27,7 @@ export const getPublicPlans = cache(async () => {
   } catch { return null; }
 });
 export const getPublicSafety = cache(async () => {
-  const value = await publicData("/api/ai/safety-config");
+  const value = await publicData("/api/en/ai/safety-config");
   return !!value && typeof value === "object" && "promptScreening" in value && value.promptScreening === true;
 });
 export const getPublicConsumer = cache(async (): Promise<ConsumerInfo> => {

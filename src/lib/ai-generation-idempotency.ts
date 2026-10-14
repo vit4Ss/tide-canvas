@@ -317,7 +317,7 @@ export async function generateAiTaskIdempotent(
   const timeout = setTimeout(() => controller.abort(), 15_000);
   let result: Result<AiTaskVO>;
   try {
-    result = await http.post<AiTaskVO>("/api/ai/generate", dto, { signal: controller.signal, ...(sessionToken ? { headers: { Authorization: `Bearer ${sessionToken}` } } : {}) });
+    result = await http.post<AiTaskVO>("/api/en/ai/generate", dto, { signal: controller.signal, ...(sessionToken ? { headers: { Authorization: `Bearer ${sessionToken}` } } : {}) });
   } finally {
     clearTimeout(timeout);
   }
