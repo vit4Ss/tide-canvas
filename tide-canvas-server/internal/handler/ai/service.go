@@ -37,9 +37,9 @@ const (
 	statusCancelled  = 3
 )
 
-// taskStateTTL is how long transient task state lives in Redis. Keep it beyond
-// the longest provider deadline (video 40m) so long-running tasks retain their
-// fast-poll state through finalization.
+// taskStateTTL is how long optional progress state lives in Redis. The durable
+// task is always read from the DB first; expiry during an hour-long upscale
+// does not fail the task or prevent its result from being returned.
 const taskStateTTL = 50 * time.Minute
 
 // A live worker updates ai_tasks every five seconds. Once that heartbeat has

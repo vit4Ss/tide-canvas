@@ -5,9 +5,24 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"tidecanvas/internal/pkg/relaymedia"
 )
+
+func TestRelayRecoveryDeadlinesPreserveOtherMedia(t *testing.T) {
+	for handler, want := range map[string]time.Duration{
+		"video_upscale": time.Hour,
+		"text_to_video": 40 * time.Minute, "image_to_video": 40 * time.Minute,
+		"start_end_to_video": 40 * time.Minute, "reference_to_video": 40 * time.Minute,
+		"generate_3d": 25 * time.Minute, "text_to_audio": 10 * time.Minute,
+		"text_to_image": 10 * time.Minute, "image_to_image": 10 * time.Minute,
+	} {
+		if got := relayResumeDeadline(handler); got != want {
+			t.Errorf("%s recovery budget=%s, want %s", handler, got, want)
+		}
+	}
+}
 
 func TestInputStringsAcceptsJSONAndServerNativeSlices(t *testing.T) {
 	tests := []struct {

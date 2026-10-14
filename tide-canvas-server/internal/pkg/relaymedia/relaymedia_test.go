@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -76,8 +77,66 @@ func TestMediaPollDeadlines(t *testing.T) {
 	if videoPollDeadline != 40*time.Minute {
 		t.Fatalf("video deadline = %s, want 40m", videoPollDeadline)
 	}
-	if upscalePollDeadline != 20*time.Minute {
-		t.Fatalf("upscale deadline = %s, want unchanged 20m", upscalePollDeadline)
+	if VideoUpscaleTimeout != time.Hour {
+		t.Fatalf("upscale deadline = %s, want 1h", VideoUpscaleTimeout)
+	}
+}
+
+type deadlineTransport func(*http.Request) (*http.Response, error)
+
+func (f deadlineTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestUpscaleSubmissionAndPollingShareOneHourBudget(t *testing.T) {
+	for _, model := range []string{"rh-upscale", "wavespeed-ai/video-upscaler"} {
+		t.Run(model, func(t *testing.T) {
+			client := New("https://relay.example", "test-key")
+			var submissionDeadline time.Time
+			var methods []string
+			client.hc.Transport = deadlineTransport(func(r *http.Request) (*http.Response, error) {
+				deadline, ok := r.Context().Deadline()
+				if !ok {
+					t.Fatal("upscale request has no deadline")
+				}
+				if remaining := time.Until(deadline); remaining < 59*time.Minute || remaining > time.Hour {
+					t.Fatalf("upscale request budget = %v; want approximately one hour", remaining)
+				}
+				methods = append(methods, r.Method)
+				body := `{"id":"task_upscale","status":"processing"}`
+				status := http.StatusAccepted
+				if r.Method == http.MethodPost {
+					submissionDeadline = deadline
+					if r.URL.Path != pathVideoUpscale {
+						t.Fatalf("create path=%s", r.URL.Path)
+					}
+				} else {
+					if r.URL.Path != "/v1/tasks/task_upscale" || !deadline.Equal(submissionDeadline) {
+						t.Fatal("polling changed task or reset the submission deadline")
+					}
+					body = `{"id":"task_upscale","status":"succeeded","output_url":"https://cdn.example/upscaled.mp4"}`
+					status = http.StatusOK
+				}
+				return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})
+			result, err := client.UpscaleVideo(context.Background(), UpscaleParams{Model: model, VideoURL: "https://cdn.example/source.mp4", TargetResolution: "4k"})
+			if err != nil || len(result.URLs) != 1 || strings.Join(methods, ",") != "POST,GET" {
+				t.Fatalf("result=%+v methods=%v err=%v", result, methods, err)
+			}
+		})
+	}
+}
+
+func TestUpscaleStillHonorsCallerCancellation(t *testing.T) {
+	client := New("https://relay.example", "test-key")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client.hc.Transport = deadlineTransport(func(r *http.Request) (*http.Response, error) {
+		cancel()
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})
+	_, err := client.UpscaleVideo(ctx, UpscaleParams{Model: "rh-upscale", VideoURL: "https://cdn.example/source.mp4"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation lost: %v", err)
 	}
 }
 

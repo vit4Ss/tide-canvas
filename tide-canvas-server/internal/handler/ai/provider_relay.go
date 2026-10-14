@@ -137,7 +137,7 @@ func relayResumeDeadline(handler string) time.Duration {
 	case "generate_3d":
 		return 25 * time.Minute
 	case "video_upscale":
-		return 20 * time.Minute
+		return relaymedia.VideoUpscaleTimeout
 	default:
 		return 10 * time.Minute
 	}

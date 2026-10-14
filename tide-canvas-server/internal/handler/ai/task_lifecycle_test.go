@@ -45,6 +45,36 @@ func TestTaskCanExecuteOnlyProcessing(t *testing.T) {
 	}
 }
 
+func TestActiveHourLongUpscaleSurvivesStaleSweepAndMissingRedis(t *testing.T) {
+	db := concurrencyTestDB(t)
+	now := time.Now()
+	active := model.AiTask{ID: 88901, UserID: 1, Handler: "video_upscale", Status: statusProcessing, Progress: 30,
+		CreateTime: now.Add(-55 * time.Minute), UpdateTime: now.Add(-55 * time.Minute)}
+	stale := active
+	stale.ID = 88902
+	for _, task := range []model.AiTask{active, stale} {
+		if err := db.Create(&task).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := &service{repo: newRepo(db)}
+	if !svc.heartbeatProcessingTask(context.Background(), active.ID) {
+		t.Fatal("live upscale heartbeat failed")
+	}
+	n, err := svc.repo.sweepStaleTasks(context.Background(), statusProcessing, statusFailed, now.Add(-staleTaskCutoff), "interrupted")
+	if err != nil || n != 1 {
+		t.Fatalf("swept=%d err=%v; only inactive task should be swept", n, err)
+	}
+	got, err := svc.getTask(context.Background(), 1, active.ID)
+	if err != nil || got.Status != statusProcessing || got.Progress != 30 {
+		t.Fatalf("live task after cache expiry: %+v %v", got, err)
+	}
+	failed, err := svc.repo.getTask(context.Background(), stale.ID)
+	if err != nil || failed.Status != statusFailed {
+		t.Fatal("existing stale-task cleanup behavior changed")
+	}
+}
+
 func TestUpstreamTaskIDIsDurableAndOnlyFirstBatchTaskWins(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:upstream-task-id?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
