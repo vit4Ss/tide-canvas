@@ -447,6 +447,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("stripe.webhookSecret", "")
 	v.SetDefault("stripe.siteUrl", "")
 	v.SetDefault("pancake.enabled", false)
+	v.SetDefault("pancake.promptScreening", false)
 	v.SetDefault("pancake.adapterUrl", "http://127.0.0.1:8083")
 	v.SetDefault("pancake.internalToken", "")
 	v.SetDefault("pancake.storeId", "")

@@ -28,6 +28,10 @@ export function createAdapter(config: Config, provider: Provider) {
       }
       const body = JSON.parse(raw);
       if (body.mode !== config.mode) return send(400, { error: "environment_mismatch" });
+      if (req.url === "/scan-prompt") {
+        if (typeof body.prompt !== "string" || !body.prompt.trim() || body.prompt.length > 10_000) return send(400, { error: "invalid_prompt" });
+        return send(200, await provider.scanPrompt(body.prompt));
+      }
       if (req.url === "/checkout") return send(200, await provider.checkout(body as CheckoutInput));
       if (req.url === "/orders") return send(200, { orders: await provider.orders(body.reference) });
       return send(404, { error: "not_found" });

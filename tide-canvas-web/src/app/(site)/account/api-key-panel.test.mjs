@@ -40,7 +40,7 @@ function setup() {
     },
   });
   vm.runInContext(code, context);
-  const render = () => { cursor = 0; vm.runInContext("ApiKeyPanel({accountId: 'owner-a'})", context); while (scheduled.length) scheduled.shift()(); };
+  const render = (account = "owner-a") => { cursor = 0; context.panelAccount = account; vm.runInContext("ApiKeyPanel({accountId: panelAccount})", context); while (scheduled.length) scheduled.shift()(); };
   const flush = async () => { for (let i = 0; i < 4; i++) await Promise.resolve(); };
   const keyInfo = () => hooks[0].value, secret = () => hooks[1].value, error = () => hooks[2].value;
   render();
@@ -131,4 +131,42 @@ test("every key-management request retains the expected account across auth retr
   await context.api.rotate("account-a", 2); await context.api.setEnabled("account-a", 2, false);
   assert.equal(calls.length, 4);
   for (const call of calls) assert.equal(new URL(call.path, "https://example.test").searchParams.get("accountId"), "account-a");
+});
+
+test("an account prop change rejects the previous account's late metadata", async () => {
+  const h = setup();
+  const previousMetadata = h.metadata.shift();
+  h.render("owner-b");
+  h.metadata.shift()({success:true,data:info}); await h.flush();
+  h.reveals.shift()({success:true,data:{key:"tc_sk_owner_b",revision:1}}); await h.flush();
+  previousMetadata({success:true,data:info}); await h.flush();
+  assert.equal(h.reveals.length,0,"old metadata must not start another secret reveal");
+  assert.equal(h.secret(),"tc_sk_owner_b");
+});
+
+test("a late failed load cannot replace a newer successful refresh", async () => {
+  const h = setup(); const previousMetadata=h.metadata.shift();
+  const retry=h.context.panel.act("reload");
+  h.metadata.shift()({success:true,data:{...info,revision:2}}); await h.flush();
+  h.reveals.shift()({success:true,data:{key:"tc_sk_latest",revision:2}});await retry;
+  previousMetadata({success:false,message:"old failure"});await h.flush();
+  assert.equal(h.error(),"");assert.equal(h.secret(),"tc_sk_latest");assert.equal(h.keyInfo().revision,2);
+});
+
+test("a mismatched reveal revision never enables setup with stale credentials", async () => {
+  const h=setup();
+  h.metadata.shift()({success:true,data:{...info,revision:2}});await h.flush();
+  h.reveals.shift()({success:true,data:{key:"tc_sk_outdated",revision:1}});await h.flush();
+  assert.equal(h.secret(),"");assert.match(h.error(),/状态|重试/);
+});
+
+test("back-forward cache restoration clears the old key until the owner and revision are reloaded", async () => {
+  const h=setup();
+  h.metadata.shift()({success:true,data:info});await h.flush();
+  h.reveals.shift()({success:true,data:{key:"tc_sk_old",revision:1}});await h.flush();
+  h.listeners.get("pageshow")({persisted:true});
+  assert.equal(h.secret(),"");assert.equal(h.keyInfo(),null);
+  h.metadata.shift()({success:true,data:{...info,revision:2}});await h.flush();
+  h.reveals.shift()({success:true,data:{key:"tc_sk_new",revision:2}});await h.flush();
+  assert.equal(h.secret(),"tc_sk_new");
 });

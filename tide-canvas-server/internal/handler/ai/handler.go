@@ -80,6 +80,10 @@ func (h *handler) startGeneration(c *gin.Context, dto generateDTO) {
 		// 用户可自行处理的情形给具体中文提示;其余(DB/内部故障)统一系统异常,
 		// 原始 err 记日志不出站(与 service.go 的 userFacingGenError 同口径)。
 		switch {
+		case func() bool { var screening *promptScreeningError; return errors.As(err, &screening) }():
+			// Definite rejection before billing: do not classify as an ambiguous
+			// generation timeout or make clients recover a nonexistent task.
+			response.Fail(c, response.CodeBadRequest, err.Error())
 		case func() bool { var placement skillPlacementError; return errors.As(err, &placement) }():
 			response.Fail(c, response.CodeBadRequest, err.Error())
 		case errors.Is(err, errNoHandler):

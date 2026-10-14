@@ -107,3 +107,38 @@ test("hosted GraphQL JSON-string metadata preserves exact order ownership", () =
   assert.equal(serialized.metadata.nonce,input.nonce);
   for(const value of [null,[],"not JSON",'"text"','[]','{}',JSON.stringify({...order.metadata,buyer_id:701})]) assert.throws(()=>orderMetadata(value));
 });
+
+
+test("SDK screens before generation using enforce and rejects malformed verdicts", async () => {
+ let result = { action: "allow", reasonCode: "allowed", requestId: "REQ_1" };
+ const provider = createProvider(config, async (url, init) => {
+  assert.match(String(url), /verification\/scan-prompt$/);
+  assert.deepEqual(JSON.parse(init.body), {prompt:"A mountain",locale:"en",semantic:"enforce"});
+  assert.ok(new Headers(init.headers).get("x-signature"));
+  return Response.json({data:result});
+ });
+ assert.equal((await provider.scanPrompt("A mountain")).action,"allow");
+ for (const action of ["block","review"]) {
+  result={action,reasonCode: action === "block" ? "restricted_content" : "review_required",requestId:"REQ_1"};
+  assert.equal((await provider.scanPrompt("A mountain")).action,action);
+ }
+ for (const invalid of [{action:"allow"},{action:"allow",reasonCode:"service_degraded",requestId:"REQ_1"}]) {
+  result=invalid; await assert.rejects(provider.scanPrompt("A mountain"));
+ }
+ for (const prompt of ["", " ", "a".repeat(10001), null]) await assert.rejects(provider.scanPrompt(prompt));
+});
+
+test("screening endpoint is internal, validates environment and never leaks prompts or upstream errors", async t => {
+ let count=0;
+ const server=createAdapter(config,{scanPrompt:async()=>{count++;throw new Error("private prompt and credentials");}});
+ await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));
+ t.after(()=>new Promise(resolve=>server.close(resolve)));
+ const url=`http://127.0.0.1:${server.address().port}/scan-prompt`;
+ assert.equal((await fetch(url,{method:"POST"})).status,401);
+ const send=body=>fetch(url,{method:"POST",headers:{Authorization:`Bearer ${config.token}`},body:JSON.stringify(body)});
+ assert.equal((await send({mode:"prod",prompt:"safe"})).status,400);
+ assert.equal((await send({mode:"test",prompt:""})).status,400);
+ assert.equal(count,0);
+ const response=await send({mode:"test",prompt:"safe"});
+ assert.equal(response.status,502);assert.equal((await response.text()).includes("private"),false);
+});

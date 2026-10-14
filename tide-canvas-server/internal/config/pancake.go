@@ -8,19 +8,20 @@ import (
 
 // The RSA private key lives only in the SDK adapter, never in API responses.
 type PancakeConfig struct {
-	Enabled       bool   `mapstructure:"enabled"`
-	AdapterURL    string `mapstructure:"adapterUrl"`
-	InternalToken string `mapstructure:"internalToken" json:"-"`
-	StoreID       string `mapstructure:"storeId"`
-	ProductID     string `mapstructure:"productId"`
-	SiteURL       string `mapstructure:"siteUrl"`
+	PromptScreening bool   `mapstructure:"promptScreening"`
+	Enabled         bool   `mapstructure:"enabled"`
+	AdapterURL      string `mapstructure:"adapterUrl"`
+	InternalToken   string `mapstructure:"internalToken" json:"-"`
+	StoreID         string `mapstructure:"storeId"`
+	ProductID       string `mapstructure:"productId"`
+	SiteURL         string `mapstructure:"siteUrl"`
 }
 
 func (p PancakeConfig) Configured() bool {
 	return p.AdapterURL != "" && len(p.InternalToken) >= 32 && strings.HasPrefix(p.StoreID, "STO_") && strings.HasPrefix(p.ProductID, "PROD_") && p.SiteURL != ""
 }
 func (p PancakeConfig) Validate(env string) error {
-	if !p.Enabled && !p.Configured() {
+	if !p.Enabled && !p.PromptScreening && !p.Configured() {
 		return nil
 	}
 	if !p.Configured() {

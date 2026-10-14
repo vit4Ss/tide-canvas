@@ -1,0 +1,53 @@
+.key-setup-overlay { position: fixed; inset: 0; z-index: 240; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgb(0 0 0 / 65%); }
+.key-setup-dialog { width: min(840px, 100%); min-width: 0; max-height: calc(100dvh - 48px); display: flex; flex-direction: column; color: var(--text); background: var(--bg); border: 1px solid var(--border-strong); border-radius: 12px; font-family: var(--ui); font-weight: 400; outline: none; }
+.key-setup-heading { display: flex; justify-content: space-between; align-items: center; padding: 20px 24px; border-bottom: 1px solid var(--border); gap: 16px; }
+.key-setup-heading > div { display: flex; align-items: center; gap: 12px; }
+.key-setup-heading h2 { font-size: 20px; font-weight: 600; margin: 0; }
+.key-setup-dialog button { cursor: pointer; font: inherit; transition: background 160ms ease-out, color 160ms ease-out; }
+.key-setup-dialog button:disabled { cursor: not-allowed; opacity: .5; }
+.key-setup-dialog button:focus-visible, .key-setup-dialog a:focus-visible, .key-setup-dialog pre:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.key-setup-heading > button, .key-setup-endpoint button { display: inline-flex; align-items: center; justify-content: center; min-width: 36px; min-height: 36px; border: 0; border-radius: 6px; color: var(--text-muted); background: transparent; }
+.key-setup-heading > button:hover, .key-setup-endpoint button:hover { background: var(--surface); color: var(--text); }
+.key-setup-body { padding: 20px 24px 24px; overflow-y: auto; overscroll-behavior: contain; }
+.key-setup-body > p, .key-setup-help, .key-setup-import p { font-size: 13px; line-height: 1.8; color: var(--text-muted); margin: 0 0 16px; }
+.key-setup-tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--border); margin: 0 0 20px; }
+.key-setup-tabs button { padding: 12px 16px; font-size: 14px; color: var(--text-muted); background: transparent; border: 0; border-bottom: 2px solid transparent; }
+.key-setup-tabs button[aria-selected="true"], .key-setup-tabs button[aria-pressed="true"] { color: var(--text); border-bottom-color: var(--accent); }
+.key-setup-tabs button:hover { color: var(--text); background: var(--surface); }
+.key-setup-tabs.small { margin-top: 24px; gap: 4px; flex-wrap: wrap; }
+.key-setup-tabs.small button { font-size: 12px; padding: 12px; }
+.key-setup-model { display: grid; gap: 8px; margin: 0 0 16px; }
+.key-setup-model > label { font-size: 13px; font-weight: 500; }
+.key-setup-model > p { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; margin: 0; line-height: 1.8; }
+.key-setup-model > p button { background: none; border: 0; text-decoration: underline; text-underline-offset: 3px; color: var(--accent); padding: 4px; }
+.key-setup-endpoint { margin: 0; font-size: 12px; }
+.key-setup-endpoint dt { color: var(--text-muted); margin-bottom: 4px; }
+.key-setup-endpoint dd { display: flex; align-items: center; gap: 8px; margin: 0; }
+.key-setup-endpoint code { overflow-wrap: anywhere; }
+.key-setup-endpoint button { gap: 6px; flex-shrink: 0; white-space: nowrap; font-size: 12px; }
+.key-setup-help { overflow-wrap: anywhere; }
+.key-setup-dialog h3 { font-size: 14px; font-weight: 600; margin: 24px 0 8px; }
+.key-setup-code { margin: 12px 0 24px; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; }
+.key-setup-code header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 16px; font-size: 12px; color: var(--text-muted); background: var(--surface); border-bottom: 1px solid var(--border); }
+.key-setup-code header button { display: inline-flex; gap: 6px; align-items: center; padding: 8px; color: var(--text); border: 0; border-radius: 6px; background: transparent; }
+.key-setup-code header button:hover { background: var(--surface-2, var(--bg)); }
+.key-setup-code pre { margin: 0; padding: 16px; font: 12px/1.8 ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--text); overflow-x: auto; tab-size: 2; white-space: pre; }
+.key-setup-code ::selection { background: var(--accent); color: var(--bg); }
+.key-setup-import { padding-bottom: 8px; }
+.key-setup-import a, .key-setup-footer > a { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); text-underline-offset: 3px; }
+.key-setup-import a:hover, .key-setup-footer > a:hover { color: var(--text); text-decoration: underline; }
+.key-setup-notice, .key-setup-error { border: 1px solid var(--border-strong); background: var(--surface); border-radius: 8px; padding: 12px 16px; font-size: 13px; line-height: 1.8; margin: 16px 0; }
+.key-setup-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding: 16px 24px; border-top: 1px solid var(--border); }
+.key-setup-footer > div { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.key-setup-footer button { display: inline-flex; align-items: center; gap: 8px; padding: 10px 12px; min-height: 40px; background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: 8px; font-size: 12px; }
+.key-setup-footer button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+@media (max-width: 600px) {
+  .key-setup-overlay { padding: 12px; }
+  .key-setup-dialog { max-height: calc(100dvh - 24px); }
+  .key-setup-heading, .key-setup-body { padding: 16px; }
+  .key-setup-heading h2 { font-size: 18px; }
+  .key-setup-footer { padding: 12px 16px; }
+  .key-setup-footer > div { width: 100%; }
+  .key-setup-footer button.primary { flex: 1; justify-content: center; }
+}
+@media (prefers-reduced-motion: reduce) { .key-setup-dialog button { transition: none; } }

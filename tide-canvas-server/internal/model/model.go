@@ -31,6 +31,7 @@ func Models() []any {
 		&AiTool{},
 		&AiTask{},
 		&AiGenerationLog{},
+		&PromptSafetyCheck{},
 		&File{},
 		&FileUploadGrant{},
 

@@ -69,6 +69,7 @@ type service struct {
 	// server-side before any points are charged. Video upscale and optional
 	// reference-video billing share the same verifier. It is injectable in tests.
 	confirmVideoDuration videoDurationConfirmer
+	promptScreening      *promptScreeningClient
 	// docHosts 是启动时存储策略 FetchHosts() 的本站资产 host 列表（CDN/区域/
 	// 加速域名）：画布 AI 助手转发文档附件时只允许抓取这些 host 或
 	// *.aliyuncs.com 的 URL（SSRF 防护，见 pkg/chatattach）。
@@ -86,15 +87,16 @@ const maxConcurrentGenerations = 32
 
 func newService(d *app.Deps) *service {
 	s := &service{
-		repo:         newRepo(d.DB),
-		rdb:          d.RDB,
-		registry:     newHandlerRegistry(),
-		provider:     newProviderClient(d.Cfg.Relay.BaseURL, d.Cfg.Relay.APIKey, d.Cfg.WorldLabs, d.Storage),
-		relay:        relaychat.New(d.Cfg.Relay.BaseURL, d.Cfg.Relay.APIKey),
-		systemPrompt: d.Cfg.LLM.SystemPrompt,
-		storage:      d.Storage,
-		alerts:       d.Alerts,
-		sem:          make(chan struct{}, maxConcurrentGenerations),
+		repo:            newRepo(d.DB),
+		rdb:             d.RDB,
+		registry:        newHandlerRegistry(),
+		provider:        newProviderClient(d.Cfg.Relay.BaseURL, d.Cfg.Relay.APIKey, d.Cfg.WorldLabs, d.Storage),
+		relay:           relaychat.New(d.Cfg.Relay.BaseURL, d.Cfg.Relay.APIKey),
+		systemPrompt:    d.Cfg.LLM.SystemPrompt,
+		promptScreening: newPromptScreeningClient(d.Cfg),
+		storage:         d.Storage,
+		alerts:          d.Alerts,
+		sem:             make(chan struct{}, maxConcurrentGenerations),
 	}
 	if d.Storage != nil {
 		s.docHosts = d.Storage.FetchHosts()
@@ -311,6 +313,11 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	}
 	if requested, configured, allowed := modelVideoDurationAllowed(m, dto.Handler, dto.Input); configured && !allowed {
 		return nil, skillPlacementError{message: fmt.Sprintf("所选模型不支持 %g 秒视频，请选择模型支持的时长", requested)}
+	}
+	// Shared by Studio, public API and internal generation facades. The client
+	// cannot opt out by changing its origin, selected model or request headers.
+	if err := s.prepareScreenedGenerationPrompt(ctx, userID, &dto, m, gh, tool); err != nil {
+		return nil, err
 	}
 
 	now := time.Now()
@@ -720,15 +727,20 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	// 客户端,是为了让落库的 input 保持用户原文——作品标题、日志、「重新编辑」
 	// 读的都是它,客户端先拼好的话它们看到的全是技能模板开头。
 	input := decodeInput(dto.Input)
+	if len(dto.screenedInput) > 0 {
+		input = decodeInput(dto.screenedInput)
+	}
 	clipReshoot, clipReshootErr := s.prepareClipReshootProviderInput(ctx, userID, input)
-	if clipReshootErr == nil && strings.TrimSpace(dto.PinnedSkillPrompt) != "" {
+	if len(dto.screenedInput) == 0 && clipReshootErr == nil && strings.TrimSpace(dto.PinnedSkillPrompt) != "" {
 		delete(input, "skillId")
 		input = applyPromptTemplate(input, strings.TrimSpace(dto.PinnedSkillPrompt))
-	} else if clipReshootErr == nil {
+	} else if len(dto.screenedInput) == 0 && clipReshootErr == nil {
 		input = s.applySkill(input, gh)
 	}
 	// 基础能力型工具(局部重绘)的「只改描述部分 + 画布形状不变」护栏。
-	applyBaseToolPromptGuard(tool, gh, input)
+	if len(dto.screenedInput) == 0 {
+		applyBaseToolPromptGuard(tool, gh, input)
+	}
 	promptErr := validateGenerationPromptSize(input)
 	req := GenerateRequest{
 		Handler:  dto.Handler,

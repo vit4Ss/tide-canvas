@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Copy, KeyRound, Loader2 } from "lucide-react";
+import { Copy, KeyRound, Loader2, Terminal, ArrowUpRight } from "lucide-react";
 import { userApiKeyApi, type UserApiKey } from "@/lib/user-api-key";
 import { toast } from "@/components/shared/toast";
 import "./api-key-panel.css";
+import { ApiKeySetup } from "./api-key-setup";
 
 // The account page is the one place a user reads their own key, so it is shown
 // in full as soon as it loads. Every network reply is checked against the
@@ -16,37 +17,65 @@ export function ApiKeyPanel({ accountId }: { accountId: string }) {
   const [secret, setSecret] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [setupMode, setSetupMode] = useState<"manual" | "ccswitch" | null>(null);
   const locked = useRef(false);
   const alive = useRef(false);
   const sessionVersion = useRef(0);
+  const loadVersion = useRef(0);
+  const invalidateRequests = () => { loadVersion.current++; return ++sessionVersion.current; };
 
-  const load = async (version: number) => {
-    const meta = await userApiKeyApi.get(accountId);
-    if (!alive.current || version !== sessionVersion.current) return;
-    if (!meta.success || !meta.data) { setKeyInfo(null); setError(meta.message || "密钥加载失败，请重试"); return; }
-    setKeyInfo(meta.data);
+  const load = async (version: number, resetBusy = false) => {
+    const request = ++loadVersion.current;
+    const current = () => alive.current && version === sessionVersion.current && request === loadVersion.current;
+    setSecret("");
+    setKeyInfo(null);
     setError("");
-    const revealed = await userApiKeyApi.reveal(accountId, meta.data.revision);
-    if (!alive.current || version !== sessionVersion.current) return;
-    if (revealed.success && revealed.data) setSecret(revealed.data.key);
-    else { setSecret(""); setError(revealed.message || "读取密钥失败，请重试"); }
+    setSetupMode(null);
+    try {
+      const meta = await userApiKeyApi.get(accountId);
+      if (!current()) return;
+      if (!meta.success || !meta.data) { setKeyInfo(null); setError(meta.message || "密钥加载失败，请重试"); return; }
+      setKeyInfo(meta.data);
+      const revealed = await userApiKeyApi.reveal(accountId, meta.data.revision);
+      if (!current()) return;
+      if (revealed.success && revealed.data?.revision === meta.data.revision && typeof revealed.data.key === "string" && /^tc_sk_[A-Za-z0-9_-]+$/.test(revealed.data.key)) setSecret(revealed.data.key);
+      else if (revealed.success) setError("密钥状态已更新或返回值无效，请重试");
+      else setError(revealed.message || "读取密钥失败，请重试");
+    } catch {
+      if (current()) setError("密钥加载失败，请重试");
+    } finally {
+      if (resetBusy && current()) setBusy(false);
+    }
   };
 
   useEffect(() => {
     alive.current = true;
-    void load(sessionVersion.current);
+    locked.current = false;
+    void load(sessionVersion.current, true);
     const sessionChanged = (event: StorageEvent) => {
       if (event.key === null || event.key === "access_token" || event.key === "refresh_token") {
-        sessionVersion.current++;
+        invalidateRequests();
+        locked.current = false;
+        setBusy(false);
         setSecret("");
         setKeyInfo(null);
+        setSetupMode(null);
         setError("登录状态已变化，请刷新页面");
       }
     };
     window.addEventListener("storage", sessionChanged);
+    const restored = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      locked.current = false;
+      setBusy(false);
+      void load(invalidateRequests());
+    };
+    window.addEventListener("pageshow", restored);
     return () => {
       alive.current = false;
+      invalidateRequests();
       window.removeEventListener("storage", sessionChanged);
+      window.removeEventListener("pageshow", restored);
     };
     // load reads accountId from the closure; the effect re-runs when it changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -75,7 +104,7 @@ export function ApiKeyPanel({ accountId }: { accountId: string }) {
       if (!key && keyInfo) {
         const res = await userApiKeyApi.reveal(accountId, keyInfo.revision);
         if (!alive.current || version !== sessionVersion.current) return;
-        if (!res.success || !res.data) { toast.error(res.message || "读取密钥失败"); return; }
+        if (!res.success || !res.data || res.data.revision !== keyInfo.revision) { toast.error(res.message || "密钥状态已变化，请重新读取"); return; }
         key = res.data.key;
         setSecret(key);
       }
@@ -83,10 +112,10 @@ export function ApiKeyPanel({ accountId }: { accountId: string }) {
       await navigator.clipboard.writeText(key);
       if (alive.current && version === sessionVersion.current) toast.success("API Key 已复制");
     } catch {
-      if (alive.current) toast.error(action === "copy" ? "复制失败，请手动选中密钥复制" : "操作失败，请稍后重试");
+      if (alive.current && version === sessionVersion.current) toast.error(action === "copy" ? "复制失败，请手动选中密钥复制" : "操作失败，请稍后重试");
     } finally {
-      locked.current = false;
-      if (alive.current) setBusy(false);
+      if (version === sessionVersion.current) locked.current = false;
+      if (alive.current && version === sessionVersion.current) setBusy(false);
     }
   };
 
@@ -108,6 +137,10 @@ export function ApiKeyPanel({ accountId }: { accountId: string }) {
             <input aria-label="API Key" readOnly value={secret || keyInfo.hint} autoComplete="off" spellCheck={false} onFocus={(event) => secret && event.currentTarget.select()} />
             <button type="button" disabled={busy || !secret} aria-label="复制 API Key" onClick={() => act("copy")}><Copy size={16} /><span>复制</span></button>
           </div>
+          <div className="acc-key-actions">
+            <button type="button" className="pf-btn sec" disabled={busy || !secret || !keyInfo.enabled || !!error} onClick={() => setSetupMode("manual")}><Terminal size={15} />使用密钥</button>
+            <button type="button" className="pf-btn sec" disabled={busy || !secret || !keyInfo.enabled || !!error} onClick={() => setSetupMode("ccswitch")}><ArrowUpRight size={15} />导入到 CC Switch</button>
+          </div>
           <div className="acc-key-footer">
             {error
               ? <span role="status">{error} <button type="button" className="acc-key-retry" disabled={busy} onClick={() => act("reload")}>重试</button></span>
@@ -122,6 +155,7 @@ export function ApiKeyPanel({ accountId }: { accountId: string }) {
           </div>
         </>
       )}
+      {setupMode && secret && keyInfo?.enabled && <ApiKeySetup accountId={accountId} secret={secret} mode={setupMode} onModeChange={setSetupMode} onClose={() => setSetupMode(null)} />}
     </section>
   );
 }

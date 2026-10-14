@@ -13,6 +13,7 @@ import (
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/logger"
+	"tidecanvas/internal/pkg/response"
 )
 
 // staleTaskCutoff bounds how long a task may sit in Processing without an update
@@ -170,6 +171,9 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	g.GET("/models", h.listModels)
 	g.GET("/handlers", h.listHandlers)
 	g.GET("/tools", h.listSiteTools)
+	g.GET("/safety-config", func(c *gin.Context) {
+		response.OK(c, gin.H{"promptScreening": d.Cfg.Pancake.PromptScreening, "outputScreening": false})
+	})
 
 	authed := g.Group("")
 	authed.Use(middleware.JWTAuth(d))

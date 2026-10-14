@@ -39,6 +39,7 @@ type generateDTO struct {
 	RegisterWork      *bool           `json:"-"`
 	PinnedSkillPrompt string          `json:"-"`
 	PublicInput       json.RawMessage `json:"-"` // Safe user input for private server-side skill execution.
+	screenedInput     json.RawMessage // Server-only snapshot of the checked, expanded prompt input.
 }
 
 // upscaleQuoteDTO requests an authoritative pre-submit quote. The service

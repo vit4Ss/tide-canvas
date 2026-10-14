@@ -8,6 +8,7 @@ import (
 func TestPancakeRuntimeEnvironment(t *testing.T) {
 	t.Setenv("TIDECANVAS_ENV", "test")
 	t.Setenv("TIDECANVAS_PANCAKE_ENABLED", "true")
+	t.Setenv("TIDECANVAS_PANCAKE_PROMPTSCREENING", "true")
 	t.Setenv("TIDECANVAS_PANCAKE_INTERNALTOKEN", strings.Repeat("x", 32))
 	t.Setenv("TIDECANVAS_PANCAKE_STOREID", "STO_test")
 	t.Setenv("TIDECANVAS_PANCAKE_PRODUCTID", "PROD_test")
@@ -16,7 +17,7 @@ func TestPancakeRuntimeEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Pancake.Enabled || cfg.Pancake.StoreID != "STO_test" {
+	if !cfg.Pancake.Enabled || !cfg.Pancake.PromptScreening || cfg.Pancake.StoreID != "STO_test" {
 		t.Fatal("environment overrides not loaded")
 	}
 	if cfg.Pancake.Validate("prod") == nil {

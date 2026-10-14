@@ -1,5 +1,18 @@
 # 用户默认 API Key
 
+## 用户自助配置客户端
+
+中文站个人中心 `/account` 的默认 API Key 下提供 **使用密钥** 和 **导入到 CC Switch**：
+
+- 使用密钥：选择网关实际返回的模型，为 Codex CLI / OpenCode 生成配置文件片段，以及 macOS/Linux、PowerShell、Windows CMD 的当前终端环境变量与启动命令。已有配置应合并，不整份覆盖。
+- 导入到 CC Switch：通过官方 `ccswitch://v1/import` 协议传递本站地址、当前账号 Key、所选模型和对应 API 格式。需要安装桌面客户端，并由用户在客户端确认；网页只报告已请求打开，不冒充导入成功。没有桌面客户端时可在同一弹窗切回手动配置。
+- 使用当前访问域名的 `/api/integrations/v1`，模型来自该入口的 `GET /models`。不使用媒体模型市场中的 ID，也不硬编码不存在的模型。Codex 使用 Responses，OpenCode 使用 OpenAI Chat Completions。当前后端未提供 Gemini 原生接口，因此不展示 Gemini CLI 配置。
+- Key 仅用于本站模型列表的 Authorization 请求头、用户主动复制的终端配置，以及用户主动触发的本地 CC Switch 深链接。不将深链接写入浏览器存储或日志，也不提交到外部配置网站。会话变化后禁止复制或导入，停用密钥及模型列表异常时禁用相关操作。
+
+协议依据：[CC Switch 官方接入指南](https://github.com/farion1231/cc-switch/blob/main/docs/guides/deeplink-site-integration-guide-zh.md)、[Codex 配置参考](https://developers.openai.com/codex/config-reference/)、[OpenCode 自定义供应商](https://opencode.ai/docs/providers/#custom-provider)。
+
+## 密钥与鉴权
+
 每个主站用户对应一条 `user_api_key`，用户 ID 是主键。新建账号时在同一数据库事务内生成；覆盖邮箱注册、验证码首次登录、本地注册和后台创建。启动后后台分页补齐存量用户，重复启动或多实例并发不会重新发放、轮换或启用已停用的密钥。
 
 生产环境关闭 GORM 默认事务时，用户创建回调会单独开启事务；已有外层事务则沿用，不会提前提交。Key 写入失败会回滚新账号，其他表的事务策略不变。批量创建中因唯一键冲突被跳过的账号不会产生孤立的 Key。

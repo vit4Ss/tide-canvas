@@ -20,3 +20,7 @@
   .acc-page .acc-key-value button span { display: none; }
 }
 .acc-page .acc-key-retry { padding: 0; margin-left: 4px; color: var(--accent); background: transparent; border: 0; cursor: pointer; font-size: inherit; }
+.acc-page .acc-key-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.acc-page .acc-key-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; }
+.acc-page .acc-key-actions button:disabled { cursor: not-allowed; }
+.acc-page .acc-key-footer > div { flex-wrap: wrap; }

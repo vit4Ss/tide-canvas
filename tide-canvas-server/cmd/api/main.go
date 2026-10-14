@@ -132,6 +132,10 @@ func run() error {
 			logger.L().Warn("seed: billing", zap.Error(err))
 		}
 	}
+	// Publish the explicitly approved one-time USD pack once, including in production.
+	if err := billing.SeedEnglishCreator(gdb); err != nil {
+		logger.L().Warn("seed: English Creator pack", zap.Error(err))
+	}
 	// Supplier-owned catalog entries are seeded only when the credential exists;
 	// this avoids advertising an unusable Marble model on deployments that have
 	// not enabled World Labs. Existing admin edits are preserved.
