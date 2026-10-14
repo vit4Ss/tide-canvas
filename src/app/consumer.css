@@ -55,3 +55,9 @@
 }
 .mobile-credit-label { display: none; }
 @media(max-width:650px) { .mobile-credit-label { display: inline; } }
+.pricing-examples { margin-block: 64px; }
+.pricing-examples h2 { font-size: 28px; margin-bottom: 16px; }
+.pricing-examples > p { max-width: 72ch; font-size: 14px; line-height: 1.8; margin-block: 16px; }
+.pricing-examples .table-wrap { margin-block: 24px; }
+.pricing-examples th, .pricing-examples td { text-align: left; padding: 16px; font-size: 13px; }
+.pricing-examples td:last-child { white-space: nowrap; font-variant-numeric: tabular-nums; }

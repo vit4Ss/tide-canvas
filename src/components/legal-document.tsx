@@ -2,7 +2,7 @@ import Link from "next/link";
 import { PublicPage } from "./shell";
 import { ConsumerPolicies } from "./consumer-info";
 import { ModelDisclosure } from "./model-disclosure";
-import { getPublicConsumer, getPublicModels } from "@/lib/public-info.server";
+import { getPublicConsumer, getPublicModels, getPublicSafety } from "@/lib/public-info.server";
 import { getServerConfig } from "@/lib/server-config";
 import { supportLink, type ConsumerInfo } from "@/lib/consumer";
 import styles from "./legal-document.module.css";
@@ -34,7 +34,7 @@ function RefundPolicy({ email }: { email: string }) {
   </section>;
 }
 
-function AcceptableUse({ email }: { email: string }) {
+function AcceptableUse({ email, screening }: { email: string; screening: boolean }) {
   return <section id="acceptable-use">
     <h2>Acceptable use and content standards</h2>
     <p>This policy covers prompts, uploaded references, generated outputs, API requests and any content you share through the service. You must have the rights and permissions needed for your inputs and intended use of outputs. Changing models or using the API does not exempt you from these rules.</p>
@@ -50,7 +50,7 @@ function AcceptableUse({ email }: { email: string }) {
     <p>Fraud, harassment, privacy violations, bypassing safety restrictions, unauthorized access and abuse of trial or credit systems are also prohibited. Provider-specific restrictions continue to apply to the model you choose.</p>
     <h3 id="moderation">How content is reviewed</h3>
     <p>Model providers may reject prompts, reference files or results under their safety rules. Framelyn records task outcomes and surfaces those rejections to the user. Reports of misuse can be reviewed against the relevant request and account records.</p>
-    <p>At present, the service relies on provider-side safety responses and review of reported issues. Independent platform screening of every prompt and every generated image or video before delivery is not yet implemented. This policy does not represent a guarantee that every output has been pre-approved.</p>
+    {screening ? <p>Server-side prompt screening is enabled for media generation through Studio and the API. User-written prompts and supported text instructions are sent to Waffo Pancake Prompt Sift before generation credits are charged. Only an allow decision proceeds; blocked, review-required or unavailable checks stop the request without starting generation. Decision receipts retain a keyed text digest and a check reference, not a separate copy of the prompt. This checks text only: independent review of uploaded images, videos and every generated result before delivery is not yet implemented.</p> : <p>At present, the service relies on provider-side safety responses and review of reported issues. Independent platform screening of every prompt and every generated image or video before delivery is not yet implemented. This policy does not represent a guarantee that every output has been pre-approved.</p>}
     <h3 id="report">Report content or appeal an action</h3>
     <p>Send a report to <Contact email={email} reference="Content safety report" />. Include the content URL or task ID, the concern, and relevant context or rights information. Use links or identifiers instead of attaching illegal material. Never include passwords, API keys or unnecessary sensitive information.</p>
     <p>Reports are routed to customer support for human review. We may request clarification, examine relevant records and take action based on the findings. For an appeal, email <Contact email={email} reference="Appeal of account or content action" /> with the affected account or task reference and the reason you believe the action was incorrect.</p>
@@ -67,12 +67,12 @@ function PublishedConditions({ info }: { info: ConsumerInfo }) {
   return published.length ? <section><h2>Additional published conditions</h2>{published.map(([key,title]) => <div key={key}><h3>{title}</h3><p>{info[key]}</p></div>)}</section> : null;
 }
 
-function PrivacyContent() {
+function PrivacyContent({ screening }: { screening: boolean }) {
   return <>
     <h2>Information used by the service</h2><p>Account information is used to authenticate you and associate your balance, files, tasks, API keys and orders with your account. Prompts, reference files and generation settings are sent to the service and its configured model providers to process the requests you submit.</p>
     <h2>Browser storage</h2><p>The website uses browser storage for your sign-in credentials, unresolved generation references, pending checkout references, saved inspiration and account-scoped studio drafts. Drafts remain in this browser tab for up to seven days and are not shared with other accounts. Generation recovery references help reconnect to the same request after a connection drops. API keys entered in the playground are held in memory for that page and are not saved to browser storage.</p>
     <h2>Your files and results</h2><p>Uploaded files and generated outputs are stored by the service. Their availability, processing and retention depend on the service and storage configuration. Public media URLs should be treated as shareable links; avoid including sensitive personal information in prompts or uploads.</p>
-    <h2>Payments</h2><p>Payment is completed through the payment methods offered at checkout. The service records the order, payment status and associated credit allowance. The frontend does not collect your payment account password.</p>
+    {screening && <><h2>Prompt safety checks</h2><p>For media generation, prompts and supported text instructions are sent to Waffo Pancake to check content safety. Waffo describes the check as stateless and says it does not retain the prompt after returning a verdict. We retain decision receipts, a keyed prompt digest and request references for investigation and appeals. The original generation input remains subject to the task-record handling described above.</p></>}<h2>Payments</h2><p>Payment is completed through the payment methods offered at checkout. The service records the order, payment status and associated credit allowance. The frontend does not collect your payment account password.</p>
     <h2>Managing your information</h2><p>You can update your display name and password, disable or replace your API key, and remove uploaded files through the account and library interfaces. Visit <Link href="/help">Help</Link> for account requests that are not available through these controls.</p>
     <ConsumerPolicies fields={["retention"]} />
   </>;
@@ -80,23 +80,23 @@ function PrivacyContent() {
 
 export async function Legal({ kind }: { kind: Kind }) {
   const { publicConfig } = getServerConfig();
-  const [info, models] = await Promise.all([getPublicConsumer(), kind === "terms" ? getPublicModels() : Promise.resolve([])]);
+  const [info, models, screening] = await Promise.all([getPublicConsumer(), kind === "terms" ? getPublicModels() : Promise.resolve([]), getPublicSafety()]);
   const titles: Record<Kind,string> = {terms:"Terms of service.",privacy:"Your privacy.",refunds:"Refund policy.",aup:"Acceptable use."};
   const descriptions: Record<Kind,string> = { terms: `The terms, purchase rules and content standards for ${publicConfig.name}.`, privacy: "How information is used when you create and build with this service.", refunds: "Eligibility, request steps and payment refund processing.", aup: "What you may create, how to report concerns and how we respond." };
   return <PublicPage><div className={styles.headerWrap}><header className="public-title"><h1>{titles[kind]}</h1><p>{descriptions[kind]}</p></header></div>
     <article className={`article ${styles.document}`}>
       <nav className={styles.nav} aria-label="Policies"><Link href="/terms">Terms of service</Link><Link href="/refunds">Refunds</Link><Link href="/aup">Acceptable use</Link><Link href="/privacy">Privacy</Link><Link href="/models">Model catalogue</Link></nav>
-      {kind === "privacy" ? <PrivacyContent /> : <>
+      {kind === "privacy" ? <PrivacyContent screening={screening} /> : <>
         {kind === "terms" && <>
           <section id="account"><h2>Your account and the service</h2><p>These terms cover your use of {publicConfig.name}&apos;s creative tools, uploads, generated outputs and API access. Keep your credentials and API key secure. Account permissions, balances and limits apply to both Studio and API requests. You are responsible for activity authorized with your credentials.</p><p>Outputs are AI-generated, may contain errors and are not guaranteed to be unique or suitable for every use. Review them before publication. Rights to inputs and permitted uses of outputs depend on applicable law and the selected model&apos;s terms; a credit purchase does not grant rights to third-party material.</p></section>
           <section id="models"><h2>Underlying AI models</h2><ModelDisclosure models={models} /><Link href="/models">Browse the complete model catalogue</Link></section>
         </>}
         {(kind === "terms" || kind === "refunds") && <RefundPolicy email={info.supportEmail} />}
-        {(kind === "terms" || kind === "aup") && <AcceptableUse email={info.supportEmail} />}
+        {(kind === "terms" || kind === "aup") && <AcceptableUse email={info.supportEmail} screening={screening} />}
         {kind === "terms" && <PublishedConditions info={info} />}
       </>}
       <section id="contact"><h2>Contact</h2><p>For an account request, data request, billing question or content report, contact <Contact email={info.supportEmail} />. Include the relevant account, order or task reference. Download important work promptly, and review the published handling terms before uploading confidential material.</p></section>
-      <p className={styles.updated}>Last updated October 13, 2026. For payment-specific rights, the payment terms accepted for your order and applicable law continue to apply.</p>
+      <p className={styles.updated}>Last updated October 14, 2026. For payment-specific rights, the payment terms accepted for your order and applicable law continue to apply.</p>
     </article>
   </PublicPage>;
 }

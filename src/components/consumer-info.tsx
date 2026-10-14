@@ -34,13 +34,15 @@ export function SupportLink({ reference = "", children = "Contact support", clas
 const policyLabels: Record<Exclude<keyof ConsumerInfo, "supportEmail">, string> = {
   commercialUse: "Commercial use", retention: "File storage & availability", refundTiming: "Refund processing time", creditValidity: "Credit validity", membershipTerms: "Account benefits",
 };
-export function ConsumerPolicies({ fields = Object.keys(policyLabels) as (keyof typeof policyLabels)[] }: { fields?: (keyof typeof policyLabels)[] }) {
-  const { info, policies } = useConsumer();
+export function ConsumerPolicies({ fields = Object.keys(policyLabels) as (keyof typeof policyLabels)[], initialInfo }: { fields?: (keyof typeof policyLabels)[]; initialInfo?: ConsumerInfo }) {
+  const { info: liveInfo, policies } = useConsumer();
+  const info = policies.loading && initialInfo ? { ...liveInfo, ...initialInfo, refundTiming: initialInfo.refundTiming || liveInfo.refundTiming } : liveInfo;
+  const loading = policies.loading && !initialInfo;
   return <section className="consumer-policies" aria-label="Purchase and usage policies">
     <h2>Before you purchase or upload</h2>
     {policies.error && <p className="small muted">The latest policy details could not be loaded. <button className="text-link" onClick={policies.refresh}>Try again</button></p>}
-    <dl>{fields.map((key) => <div key={key}><dt>{policyLabels[key]}</dt><dd>{info[key] || (policies.loading ? "Checking published details…" : "Not yet published.")}{key === "refundTiming" && <> <Link href="/refunds">Read the refund policy</Link>.</>}</dd></div>)}</dl>
-    {!policies.loading && fields.some(key => !info[key]) && <p className="small muted">Some terms have not been published. Ask support to confirm them before purchasing or uploading material that depends on these terms.</p>}
+    <dl>{fields.map((key) => <div key={key}><dt>{policyLabels[key]}</dt><dd>{info[key] || (loading ? "Checking published details…" : "Not yet published.")}{key === "refundTiming" && <> <Link href="/refunds">Read the refund policy</Link>.</>}</dd></div>)}</dl>
+    {!loading && fields.some(key => !info[key]) && <p className="small muted">Some terms have not been published. Ask support to confirm them before purchasing or uploading material that depends on these terms.</p>}
     <SupportLink />
   </section>;
 }

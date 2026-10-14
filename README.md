@@ -228,3 +228,6 @@ No substitute model names are invented when the catalogue is unavailable.
 desktop/mobile sizes; it needs the configured backend's public model catalogue.
 Independent prompt/output moderation is still pending: the public AUP describes
 provider-side safety responses and report-based review, not unimplemented screening.
+
+
+Public pricing now renders published USD packs and model credit examples in the initial HTML for anonymous visitors, including without JavaScript. The approved initial Creator pack is USD 10 / 600 credits, one-time and without automatic renewal; it is bootstrapped by the shared backend, not a frontend fallback. Later admin edits/removal are preserved. No larger pack is enabled by default. `npm run test:public-pricing` (after `npm run build`) starts an isolated fixture backend and app to test initial HTML, price refresh, unavailable/empty catalogues, mobile layout and safety-policy disclosure.
