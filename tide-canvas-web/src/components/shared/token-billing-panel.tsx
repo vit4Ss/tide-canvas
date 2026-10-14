@@ -2,17 +2,20 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { http } from "@/lib/http";
+import { usageDecimal } from "@/lib/chat-usage";
 import type { PageData } from "@/types/api";
 import "./token-billing-panel.css";
 
 interface Bill {
   id: string; userId: string; keyRevision: number; model: string; status: string;
   points: string; reservedPoints: string; inputTokens: number; outputTokens: number;
+  settlementMode?: string; deductedPoints?: string; pendingPointsAfter?: string;
+  refundedPoints?: string; walletRefundedPoints?: string;
   cachedInputTokens: number; reasoningTokens: number; createTime: string; resolution?: string;
   pricing?: { inputPointsPerMillion: string; outputPointsPerMillion: string; cachedInputPointsPerMillion?: string };
 }
 const statuses: Record<string, string> = { pending: "生成中", success: "已结算", partial: "部分回复已结算", billing_pending: "待核对用量", released: "已释放预留", failed: "失败未扣费" };
-const points = (value: string | number) => Number(value).toLocaleString("zh-CN", {maximumFractionDigits: 6});
+const points = (value: string | number) => usageDecimal(String(value));
 
 export default function TokenBillingPanel({ admin = false }: { admin?: boolean }) {
   const [rows, setRows] = useState<Bill[]>([]);
@@ -73,7 +76,7 @@ export default function TokenBillingPanel({ admin = false }: { admin?: boolean }
     finally { setSaving(false); }
   };
   return <section className="token-billing-panel">
-    <header><div><h2>Token 调用账单</h2><p>{admin ? "对话接口按实际 Token 用量计算，费用非零时向上取整为整数积分；上游未返回可信用量时保留预留额度，核对后再结算或释放。" : "按实际 Token 用量计算，费用非零时向上取整为整数积分，扣费同步记入积分明细。"}</p></div><button type="button" onClick={() => void load()} disabled={loading}>刷新</button></header>
+    <header><div><h2>Token 调用账单</h2><p>{admin ? "新调用按实际用量记录六位小数费用，账户累计满 1 积分后扣减整数部分；上游未返回可信用量时保留预留额度，核对后再结算或释放。" : "新调用记录实际小数费用，同一账户累计满 1 积分后扣款并写入积分明细，余下小数继续累计。历史调用保留原计费规则。"}</p></div><button type="button" onClick={() => void load()} disabled={loading}>刷新</button></header>
     <div className="token-billing-filters"><label>账单状态 <select value={status} onChange={e => {setStatus(e.target.value);setPage(1);}}><option value="">全部</option>{Object.entries(statuses).map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select></label>{admin && <form role="search" onSubmit={event => {event.preventDefault();const value = userId.trim();if (value && !/^\d+$/.test(value)) {setError("用户 ID 是纯数字（用户管理里可复制）");return;}setError("");setUserFilter(value);setPage(1);}}><label>用户 ID <input inputMode="numeric" value={userId} onChange={e => setUserId(e.target.value)} placeholder="全部用户" /></label><button type="submit" disabled={loading}>筛选</button></form>}<span>共 {total} 条</span></div>
     {error && <p role="alert" className="token-billing-error">{error}</p>}
     <div className="token-billing-table"><table><thead><tr><th>时间 / 模型</th>{admin && <th>用户</th>}<th>输入 / 输出 Token</th><th>积分</th><th>状态</th></tr></thead><tbody>
@@ -81,7 +84,7 @@ export default function TokenBillingPanel({ admin = false }: { admin?: boolean }
       {rows.map(row => <tr key={row.id}><td><strong>{row.model}</strong><small>{new Date(row.createTime).toLocaleString("zh-CN")}</small><details><summary>计价与调用编号</summary><small>{row.id} · Key 版本 {row.keyRevision}</small><small>输入 {row.pricing?.inputPointsPerMillion ?? "—"} / 输出 {row.pricing?.outputPointsPerMillion ?? "—"} 积分 / 1M Token</small>{row.resolution && <small>核对依据：{row.resolution}</small>}</details></td>
         {admin && <td className="mono">{row.userId}</td>}
         <td>{row.status === "pending" ? "—" : `${row.inputTokens.toLocaleString()} / ${row.outputTokens.toLocaleString()}`}<small>缓存输入 {row.cachedInputTokens.toLocaleString()} · 推理输出 {row.reasoningTokens.toLocaleString()}</small></td>
-        <td><strong>{row.status === "pending" || row.status === "billing_pending" ? "待结算" : points(row.points)}</strong>{(row.status === "pending" || row.status === "billing_pending") && <small>预留 {points(row.reservedPoints)} 积分</small>}</td>
+        <td><strong>{row.status === "pending" || row.status === "billing_pending" ? "待结算" : points(row.points)}</strong>{(row.status === "pending" || row.status === "billing_pending") ? <small>预留 {points(row.reservedPoints)} 积分</small> : row.settlementMode === "accumulated" && <><small>本次扣款 {points(row.deductedPoints ?? "0")} 积分（含累计）</small><small>结算后待累计 {points(row.pendingPointsAfter ?? "0")} 积分</small>{Number(row.refundedPoints ?? 0) > 0 && <small>费用已退 {points(row.refundedPoints!)}，整数到账 {points(row.walletRefundedPoints ?? "0")}</small>}</>}</td>
         <td><span className={row.status === "billing_pending" ? "token-billing-warning" : ""}>{statuses[row.status] || row.status}</span>{admin && row.status === "billing_pending" && <button type="button" onClick={() => {setSelected(row);setReason("");setAction("release");setCounts({inputTokens:row.inputTokens,outputTokens:row.outputTokens,cachedInputTokens:row.cachedInputTokens,reasoningTokens:row.reasoningTokens});}}>核对处理</button>}</td></tr>)}
     </tbody></table></div>
     <footer><button type="button" disabled={loading || page <= 1} onClick={() => setPage(p => p - 1)}>上一页</button><span>第 {page} 页</span><button type="button" disabled={loading || page * 15 >= total} onClick={() => setPage(p => p + 1)}>下一页</button></footer>

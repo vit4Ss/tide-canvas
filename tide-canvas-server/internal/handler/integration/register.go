@@ -152,6 +152,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 		owner := c.MustGet("integration.owner").(*model.User)
 		// A minimal identity/connection check. Do not expose login credentials,
 		// email, admin permissions or upstream API keys to integration clients.
-		c.JSON(http.StatusOK, gin.H{"userId": owner.ID, "points": owner.Points})
+		c.Header("Cache-Control", "private, no-store")
+		c.JSON(http.StatusOK, gin.H{"userId": owner.ID, "points": owner.PointBalance(), "postedPoints": owner.PointTotal(), "pendingTokenPoints": owner.PendingTokenPoints()})
 	})
 }

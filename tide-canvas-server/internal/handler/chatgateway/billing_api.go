@@ -68,7 +68,7 @@ func (s *service) billingList(admin bool) gin.HandlerFunc {
 			r := &rows[i]
 			var pricing any
 			_ = json.Unmarshal([]byte(r.PricingSnapshot), &pricing)
-			items = append(items, gin.H{"id": r.ID, "userId": r.UserID, "keyRevision": r.KeyRevision, "model": r.ModelKey, "status": r.Status, "points": tokenCostLabel(settledTokenMicros(r)), "reservedPoints": tokenCostLabel(r.ReservedMicros), "inputTokens": r.InputTokens, "outputTokens": r.OutputTokens, "cachedInputTokens": r.CachedInputTokens, "reasoningTokens": r.ReasoningTokens, "pricing": pricing, "errorCode": r.ErrorCode, "createTime": r.CreateTime, "resolution": r.BillingResolution})
+			items = append(items, gin.H{"id": r.ID, "userId": r.UserID, "keyRevision": r.KeyRevision, "model": r.ModelKey, "status": r.Status, "points": tokenCostLabel(settledTokenMicros(r)), "reservedPoints": tokenCostLabel(r.ReservedMicros), "settlementMode": r.SettlementMode, "refundedPoints": tokenCostLabel(r.RefundedCostMicros), "walletRefundedPoints": tokenCostLabel(r.WalletRefundMicros), "deductedPoints": tokenCostLabel(settledWalletMicros(r)), "pendingPointsAfter": tokenCostLabel(r.PendingAfterMicros), "inputTokens": r.InputTokens, "outputTokens": r.OutputTokens, "cachedInputTokens": r.CachedInputTokens, "reasoningTokens": r.ReasoningTokens, "pricing": pricing, "errorCode": r.ErrorCode, "createTime": r.CreateTime, "resolution": r.BillingResolution})
 		}
 		response.Page(c, items, count, page, size)
 	}
@@ -148,8 +148,8 @@ func (s *service) resolveBilling(c *gin.Context) {
 			if err != nil {
 				return err
 			}
-			cost, err = pricing.Cost(usage, row.MaxOutputTokens)
-			if err != nil || !tokenbilling.ReservationCovers(row.ReservedMicros, cost) {
+			cost, err = tokenCallCost(&row, pricing, usage)
+			if err != nil || !tokenReservationCovers(&row, cost) {
 				return tokenbilling.ErrLimit
 			}
 			status = "partial"
@@ -160,10 +160,11 @@ func (s *service) resolveBilling(c *gin.Context) {
 		if err := points.HoldMicros(tx, row.UserID, -row.ReservedMicros); err != nil {
 			return err
 		}
-		if err := points.ChangeMicros(tx, row.UserID, -cost, points.ChangeConsume, "Token 用量核对结算："+row.ModelKey, row.ID); err != nil {
+		debit, pending, err := settleTokenWallet(tx, &row, cost)
+		if err != nil {
 			return err
 		}
-		updates := map[string]any{"status": status, "cost_micros": cost, "error_code": "", "billing_resolution": strings.TrimSpace(input.Reason), "billing_resolved_by": middleware.CurrentUserID(c), "billing_resolved_at": time.Now()}
+		updates := map[string]any{"status": status, "cost_micros": cost, "wallet_debit_micros": debit, "pending_after_micros": pending, "error_code": "", "billing_resolution": strings.TrimSpace(input.Reason), "billing_resolved_by": middleware.CurrentUserID(c), "billing_resolved_at": time.Now()}
 		// Releasing a hold does not verify/replace token usage. Ignore the form's
 		// stale count inputs, which are only validated for an actual settlement.
 		if input.Action == "settle" {

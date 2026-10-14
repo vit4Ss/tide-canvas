@@ -10,6 +10,8 @@ import type { PageData } from "@/types/api";
 export interface BalanceVO {
   points: number;
   frozen: number;
+  postedPoints?: number;
+  pendingTokenPoints?: number;
 }
 
 /** PointRecordVO — one ledger row. changeType: recharge / consume / checkin /

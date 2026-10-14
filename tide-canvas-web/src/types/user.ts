@@ -13,6 +13,8 @@ export interface UserVO {
   status: UserStatus;
   apiQuota: number;
   points: number;
+  postedPoints?: number;
+  pendingTokenPoints?: number;
   isAuthor: number;
   storageQuota: number;
   /** 角色授予的前台侧栏菜单键（discover/studio/analysis/three_d/tools/chat/canvas/explore/inspire/assets），

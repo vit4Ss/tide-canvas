@@ -20,6 +20,13 @@ test("pending usage never displays the held or unconfirmed cost as paid", () => 
   assert.equal(usagePoints({status:"partial", points:"7", netPoints:"4"}), "4");
 });
 
+test("fractional call costs remain exact and distinct from accumulated wallet debits", () => {
+  const row = {status:"success", points:"0.224470", deductedPoints:"0", pendingPointsAfter:"0.224470", settlementMode:"accumulated"};
+  assert.equal(usagePoints(row), "0.22447");
+  assert.equal(usageDecimal(row.deductedPoints), "0");
+  assert.equal(usageDecimal("0.192930"), "0.19293");
+});
+
 test("protocol comes from the client route, not the upstream conversion", () => {
   assert.equal(usageProtocol("/api/integrations/v1/responses"), "Responses");
   assert.equal(usageProtocol("/api/integrations/v1/chat/completions"), "Chat Completions");

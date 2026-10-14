@@ -19,6 +19,31 @@ func TestWholePointCeilingKeepsZeroAndExactIntegersStable(t *testing.T) {
 	}
 }
 
+func TestAccruedCostKeepsMicroPrecisionAndLegacyPolicySeparate(t *testing.T) {
+	p, err := Parse(`{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"50","outputPointsPerMillion":"300","cachedInputPointsPerMillion":"5"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := &Usage{Input: 8993, Output: 555, Cached: 8704}
+	actual, err := p.AccruedCost(u, 8192)
+	if err != nil || actual != 224470 {
+		t.Fatalf("exact fee=%d %v", actual, err)
+	}
+	old, err := p.Cost(u, 8192)
+	if err != nil || old != Scale {
+		t.Fatalf("legacy fee=%d %v", old, err)
+	}
+	p.Input, p.Output, p.CachedInput = "0.2", "0", "0.2"
+	actual, err = p.AccruedCost(&Usage{Input: 1, Cached: 1}, 8192)
+	if err != nil || actual != 1 {
+		t.Fatalf("minimum precision=%d %v", actual, err)
+	}
+	actual, err = p.AccruedCost(&Usage{}, 8192)
+	if err != nil || actual != 0 {
+		t.Fatal("zero usage must remain zero")
+	}
+}
+
 func TestTokenPriceUsesCacheAsInputSubsetAndReasoningAsOutputSubset(t *testing.T) {
 	p, err := Parse(`{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"100","outputPointsPerMillion":"300","cachedInputPointsPerMillion":"20","maxInputTokens":1000,"maxOutputTokens":1000}}`)
 	if err != nil {

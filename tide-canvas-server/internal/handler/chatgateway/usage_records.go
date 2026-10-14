@@ -38,7 +38,7 @@ func (s *service) usageRecords(admin bool) gin.HandlerFunc {
 		// Recheck the live account; an old super-admin JWT must not expose all
 		// users after demotion, nor may a disabled account read private history.
 		var owner model.User
-		if err := s.d.DB.WithContext(c.Request.Context()).Select("id", "role", "role_id", "status").First(&owner, "id = ?", uid).Error; err != nil {
+		if err := s.d.DB.WithContext(c.Request.Context()).Select("id", "role", "role_id", "status", "chat_pending_micros").First(&owner, "id = ?", uid).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				response.Fail(c, 403, "当前账号不可用")
 			} else {
@@ -143,13 +143,18 @@ func (s *service) usageRecords(admin bool) gin.HandlerFunc {
 		}
 		// Administrative refunds use the same durable billing reference. Read
 		// their actual ledger values; do not rewrite the original settled cost.
-		const refundAmountSQL = `COALESCE((SELECT SUM(CASE WHEN p.amount_micros IS NOT NULL THEN p.amount_micros ELSE CAST(p.amount AS DECIMAL(30,0))*1000000 END)
+		const legacyRefundSQL = `COALESCE((SELECT SUM(CASE WHEN p.amount_micros IS NOT NULL THEN p.amount_micros ELSE CAST(p.amount AS DECIMAL(30,0))*1000000 END)
 			FROM point_record p WHERE p.ref_id = model_gateway_request.id AND p.user_id = model_gateway_request.user_id AND p.change_type = 'refund'
 			AND (p.amount_micros > 0 OR (p.amount_micros IS NULL AND p.amount > 0))),0)`
+		refundAmountSQL := "CASE WHEN settlement_mode = 'accumulated' THEN refunded_cost_micros ELSE " + legacyRefundSQL + " END"
+		walletRefundSQL := "CASE WHEN settlement_mode = 'accumulated' THEN wallet_refund_micros ELSE " + legacyRefundSQL + " END"
 		netAmountSQL := "CASE WHEN " + refundAmountSQL + " >= cost_micros THEN 0 ELSE cost_micros - " + refundAmountSQL + " END"
-		var totals struct{ Calls, CostMicros, InputTokens, OutputTokens, CachedInputTokens, Pending int64 }
+		walletAmountSQL := "CASE WHEN settlement_mode = 'accumulated' THEN wallet_debit_micros ELSE cost_micros END"
+		var totals struct{ Calls, CostMicros, WalletMicros, WalletRefundMicros, InputTokens, OutputTokens, CachedInputTokens, Pending int64 }
 		err = q.Session(&gorm.Session{}).Select(`COUNT(*) AS calls,
 			COALESCE(SUM(CASE WHEN status IN ('success','partial') THEN ` + netAmountSQL + ` ELSE 0 END),0) AS cost_micros,
+			COALESCE(SUM(CASE WHEN status IN ('success','partial') THEN ` + walletAmountSQL + ` ELSE 0 END),0) AS wallet_micros,
+			COALESCE(SUM(CASE WHEN status IN ('success','partial') THEN ` + walletRefundSQL + ` ELSE 0 END),0) AS wallet_refund_micros,
 			COALESCE(SUM(CASE WHEN usage_known = true THEN input_tokens ELSE 0 END),0) AS input_tokens,
 			COALESCE(SUM(CASE WHEN usage_known = true THEN output_tokens ELSE 0 END),0) AS output_tokens,
 			COALESCE(SUM(CASE WHEN usage_known = true THEN cached_input_tokens ELSE 0 END),0) AS cached_input_tokens,
@@ -191,6 +196,10 @@ func (s *service) usageRecords(admin bool) gin.HandlerFunc {
 		items := make([]gin.H, 0, len(rows))
 		for _, row := range rows {
 			returned := refunds[[2]idgen.ID{row.UserID, row.ID}]
+			walletReturned := returned
+			if row.SettlementMode == model.ChatSettlementAccumulated {
+				returned, walletReturned = row.RefundedCostMicros, row.WalletRefundMicros
+			}
 			charged := settledTokenMicros(&row)
 			var pricing any
 			_ = json.Unmarshal([]byte(row.PricingSnapshot), &pricing)
@@ -200,7 +209,8 @@ func (s *service) usageRecords(admin bool) gin.HandlerFunc {
 				"keyRevision": row.KeyRevision, "keyHint": row.KeyHint,
 				"requestPath": row.RequestPath, "stream": row.Stream, "status": row.Status,
 				"points": tokenCostLabel(charged), "reservedPoints": tokenCostLabel(row.ReservedMicros),
-				"refundedPoints": tokenCostLabel(returned), "netPoints": tokenCostLabel(max(0, charged-returned)),
+				"settlementMode": row.SettlementMode, "deductedPoints": tokenCostLabel(settledWalletMicros(&row)), "pendingPointsAfter": tokenCostLabel(row.PendingAfterMicros),
+				"walletRefundedPoints": tokenCostLabel(walletReturned), "refundedPoints": tokenCostLabel(returned), "netPoints": tokenCostLabel(max(0, charged-returned)),
 				"inputTokens": row.InputTokens, "outputTokens": row.OutputTokens,
 				"cachedInputTokens": row.CachedInputTokens, "reasoningTokens": row.ReasoningTokens,
 				"usageKnown": row.UsageKnown, "durationMs": row.DurationMs, "firstTokenMs": row.FirstTokenMs,
@@ -214,11 +224,16 @@ func (s *service) usageRecords(admin bool) gin.HandlerFunc {
 			}
 			items = append(items, item)
 		}
+		summary := gin.H{
+			"calls": totals.Calls, "points": tokenCostLabel(totals.CostMicros), "inputTokens": totals.InputTokens,
+			"deductedPoints": tokenCostLabel(totals.WalletMicros), "walletRefundedPoints": tokenCostLabel(totals.WalletRefundMicros),
+			"outputTokens": totals.OutputTokens, "cachedInputTokens": totals.CachedInputTokens, "pending": totals.Pending,
+		}
+		if !admin {
+			summary["pendingTokenPoints"] = tokenCostLabel(owner.ChatPendingMicros)
+		}
 		response.OK(c, gin.H{"records": items, "total": totals.Calls, "pageNum": page, "pageSize": size,
-			"pages": (totals.Calls + int64(size) - 1) / int64(size), "summary": gin.H{
-				"calls": totals.Calls, "points": tokenCostLabel(totals.CostMicros), "inputTokens": totals.InputTokens,
-				"outputTokens": totals.OutputTokens, "cachedInputTokens": totals.CachedInputTokens, "pending": totals.Pending,
-			}})
+			"pages": (totals.Calls + int64(size) - 1) / int64(size), "summary": summary})
 	}
 }
 

@@ -553,9 +553,11 @@ type User struct {
 	Points               int64    `gorm:"default:0" json:"points"`
 	PointFraction        int64    `gorm:"not null;default:0" json:"pointFraction"`
 	PointHeldMicros      int64    `gorm:"not null;default:0" json:"pointHeldMicros"`
-	IsAuthor             int      `gorm:"default:0" json:"isAuthor"`
-	StorageQuota         int64    `gorm:"default:0" json:"storageQuota"`
-	StorageUsed          int64    `gorm:"default:0" json:"storageUsed"`
+	// Accrued AI chat fees not yet large enough for a whole-point ledger debit.
+	ChatPendingMicros int64 `gorm:"not null;default:0" json:"-"`
+	IsAuthor          int   `gorm:"default:0" json:"isAuthor"`
+	StorageQuota      int64 `gorm:"default:0" json:"storageQuota"`
+	StorageUsed       int64 `gorm:"default:0" json:"storageUsed"`
 	// Remark 后台运营备注(仅管理端可见可改)。json:"-" 防止随 User 直接序列化
 	// 泄给前台;管理端经 AdminUserVO 显式下发。
 	Remark        string    `gorm:"size:255" json:"-"`

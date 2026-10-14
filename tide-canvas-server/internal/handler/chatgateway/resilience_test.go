@@ -107,6 +107,7 @@ func TestRecoveryRetainsProviderUsageWhenWalletWriteTemporarilyFails(t *testing.
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, okWithUsage) }))
 	defer up.Close()
 	f := setup(t, up.URL)
+	repriceTestModel(t, f, `{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"5000","outputPointsPerMillion":"5000","maxInputTokens":100,"maxOutputTokens":100}}`)
 	const callback = "usage-settlement-ledger-unavailable"
 	if err := f.s.d.DB.Callback().Create().Before("gorm:create").Register(callback, func(tx *gorm.DB) {
 		if tx.Statement.Table == "point_record" {
@@ -163,12 +164,12 @@ func TestRecoveryRetainsProviderUsageWhenWalletWriteTemporarilyFails(t *testing.
 func TestRecoveryOfCheckpointedResultsDoesNotGuessMissingUsage(t *testing.T) {
 	for _, tc := range []struct {
 		name, frames, code, status string
-		points, held               int64
+		points, held, pending      int64
 	}{
-		{"partial charged", strings.ReplaceAll(okWithUsage, `"stop"`, `"length"`), "incomplete_response", "partial", 19, 0},
-		{"visible without usage", "data: {\"choices\":[{\"delta\":{\"content\":\"visible\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", "", "billing_pending", 20, 1_000_000},
-		{"error without output", "data: {\"error\":{\"message\":\"unavailable\"}}\n\n", "upstream_error", "failed", 20, 0},
-		{"checkpointed failure without frames", "", "upstream_error", "failed", 20, 0},
+		{"partial charged", strings.ReplaceAll(okWithUsage, `"stop"`, `"length"`), "incomplete_response", "partial", 20, 0, 40_000},
+		{"visible without usage", "data: {\"choices\":[{\"delta\":{\"content\":\"visible\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", "", "billing_pending", 20, 1_000_000, 0},
+		{"error without output", "data: {\"error\":{\"message\":\"unavailable\"}}\n\n", "upstream_error", "failed", 20, 0, 0},
+		{"checkpointed failure without frames", "", "upstream_error", "failed", 20, 0, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := setup(t, "")
@@ -199,7 +200,7 @@ func TestRecoveryOfCheckpointedResultsDoesNotGuessMissingUsage(t *testing.T) {
 			if err := f.s.d.DB.First(&user, "id = ?", f.user.ID).Error; err != nil {
 				t.Fatal(err)
 			}
-			if bill.Status != tc.status || user.Points != tc.points || user.PointHeldMicros != tc.held {
+			if bill.Status != tc.status || user.Points != tc.points || user.PointHeldMicros != tc.held || user.ChatPendingMicros != tc.pending {
 				t.Fatalf("state=%s points=%d held=%d", bill.Status, user.Points, user.PointHeldMicros)
 			}
 			// An old worker must not replace the finalized result or clear a

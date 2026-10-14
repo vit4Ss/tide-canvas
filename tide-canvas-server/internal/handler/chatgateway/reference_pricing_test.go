@@ -60,15 +60,15 @@ func TestScreenshotPricingCatalogueSettlementAndReplayAgree(t *testing.T) {
 	if err := f.s.d.DB.First(&bill).Error; err != nil {
 		t.Fatal(err)
 	}
-	// (64000*20 + 64000*1 + 8000*100) / 1M = 2.144, rounded once to 3 points.
-	if bill.CostMicros != 3*tokenbilling.Scale || bill.PriceMultiplier != "2" || bill.CachedInputTokens != 64000 || calls.Load() != 1 {
+	// (64000*20 + 64000*1 + 8000*100) / 1M = 2.144, posting 2 whole points and carrying 0.144.
+	if bill.CostMicros != 2_144_000 || bill.WalletDebitMicros != 2*tokenbilling.Scale || bill.PendingAfterMicros != 144_000 || bill.PriceMultiplier != "2" || bill.CachedInputTokens != 64000 || calls.Load() != 1 {
 		t.Fatalf("wrong bill or duplicate request: %+v, calls=%d", bill, calls.Load())
 	}
 	var user model.User
 	if err := f.s.d.DB.First(&user, "id = ?", f.user.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if user.PointBalance() != 17 || user.PointHeldMicros != 0 {
+	if user.PointBalance() != 17.856 || user.Points != 18 || user.ChatPendingMicros != 144_000 || user.PointHeldMicros != 0 {
 		t.Fatalf("wallet after settlement/replay: %v, held=%d", user.PointBalance(), user.PointHeldMicros)
 	}
 }

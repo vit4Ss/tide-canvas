@@ -338,7 +338,7 @@ function ProviderDetail({
     <div className={`cp-detail-body${provider.enabled ? "" : " is-off"}`}>
 
 
-      <div className="cp-billing-banner"><Layers3 size={19} aria-hidden /><div><strong>当前实收：基准单价 × {provider.priceMultiplier.trim() || "1"}</strong><span>计价换算 1 元 = 10 积分 · 有消耗的请求按总费用向上取整到积分</span></div></div>
+      <div className="cp-billing-banner"><Layers3 size={19} aria-hidden /><div><strong>当前单价：基准单价 × {provider.priceMultiplier.trim() || "1"}</strong><span>计价换算 1 元 = 10 积分 · 费用保留六位小数，账户累计满 1 积分再扣款</span></div></div>
       <ModelSection provider={provider} family={family} busy={busy} run={run} />
       <details className="cp-settings"><summary>接入地址与定价设置 <ChevronDown size={16} aria-hidden /></summary>
       <header className="cp-dhead">

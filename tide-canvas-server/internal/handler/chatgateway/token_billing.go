@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"tidecanvas/internal/handler/points"
@@ -82,8 +83,8 @@ func (s *service) settleTokens(parent context.Context, row *model.ModelGatewayRe
 		actual := int64(0)
 		if usageErr == nil && pricingErr == nil {
 			var err error
-			actual, err = pricing.Cost(usage, result.MaxOutputTokens)
-			if err != nil || !tokenbilling.ReservationCovers(result.ReservedMicros, actual) {
+			actual, err = tokenCallCost(&result, pricing, usage)
+			if err != nil || !tokenReservationCovers(&result, actual) {
 				usageErr = tokenbilling.ErrLimit
 			}
 		}
@@ -108,15 +109,18 @@ func (s *service) settleTokens(parent context.Context, row *model.ModelGatewayRe
 				status = "failed"
 			}
 		}
+		var debit, pending int64
 		if status != "billing_pending" {
 			if err := points.HoldMicros(tx, result.UserID, -result.ReservedMicros); err != nil {
 				return err
 			}
-			if err := points.ChangeMicros(tx, result.UserID, -actual, points.ChangeConsume, fmt.Sprintf("AI 聊天 Token 计费：%s", result.ModelKey), result.ID); err != nil {
+			var err error
+			debit, pending, err = settleTokenWallet(tx, &result, actual)
+			if err != nil {
 				return err
 			}
 		}
-		updates := map[string]any{"status": status, "response_body": frames, "error_code": code, "cost_micros": actual, "upstream_state": "finished"}
+		updates := map[string]any{"status": status, "response_body": frames, "error_code": code, "cost_micros": actual, "wallet_debit_micros": debit, "pending_after_micros": pending, "upstream_state": "finished"}
 		// A reconciler has no live timings; never overwrite recorded telemetry
 		// with invented zeros when recovering a process interruption.
 		if row.DurationMs != nil {
@@ -146,10 +150,50 @@ func tokenCostLabel(micros int64) string {
 	if micros%tokenbilling.Scale == 0 {
 		return fmt.Sprint(micros / tokenbilling.Scale)
 	}
-	return fmt.Sprintf("%.6f", float64(micros)/float64(tokenbilling.Scale))
+	return decimal.NewFromInt(micros).Shift(-6).StringFixed(6)
 }
 
-// New gateway charges settle to whole points. Audit the same settled amount,
+func tokenCallCost(row *model.ModelGatewayRequest, pricing *tokenbilling.Pricing, usage *tokenbilling.Usage) (int64, error) {
+	switch row.SettlementMode {
+	case model.ChatSettlementAccumulated:
+		return pricing.AccruedCost(usage, row.MaxOutputTokens)
+	case "":
+		return pricing.Cost(usage, row.MaxOutputTokens)
+	default:
+		return 0, tokenbilling.ErrPricing
+	}
+}
+
+func tokenReservationCovers(row *model.ModelGatewayRequest, cost int64) bool {
+	if row.SettlementMode == model.ChatSettlementAccumulated {
+		return cost >= 0 && cost <= row.ReservedMicros
+	}
+	return tokenbilling.ReservationCovers(row.ReservedMicros, cost)
+}
+
+// Called only inside the bill's transaction, after releasing its reservation.
+func settleTokenWallet(tx *gorm.DB, row *model.ModelGatewayRequest, cost int64) (int64, int64, error) {
+	if row.SettlementMode == model.ChatSettlementAccumulated {
+		return points.AccrueChatCost(tx, row.UserID, cost, "AI 聊天小数累计扣款："+row.ModelKey, row.ID)
+	}
+	if row.SettlementMode != "" {
+		return 0, 0, tokenbilling.ErrPricing
+	}
+	err := points.ChangeMicros(tx, row.UserID, -cost, points.ChangeConsume, "AI 聊天 Token 计费："+row.ModelKey, row.ID)
+	return cost, 0, err
+}
+
+func settledWalletMicros(row *model.ModelGatewayRequest) int64 {
+	if row.Status != "success" && row.Status != "partial" {
+		return 0
+	}
+	if row.SettlementMode == model.ChatSettlementAccumulated {
+		return row.WalletDebitMicros
+	}
+	return row.CostMicros
+}
+
+// Audit the actual wallet debit (which can include earlier accrued fractions),
 // not the legacy per-call field (always zero for token-priced requests), nor
 // an unconfirmed amount retained while usage awaits manual review.
 func gatewayAuditPointCost(row *model.ModelGatewayRequest) int64 {
@@ -159,7 +203,7 @@ func gatewayAuditPointCost(row *model.ModelGatewayRequest) int64 {
 	if row.Status != "success" && row.Status != "partial" {
 		return 0
 	}
-	return row.CostMicros / tokenbilling.Scale
+	return settledWalletMicros(row) / tokenbilling.Scale
 }
 
 func pricingSnapshot(pricing *tokenbilling.Pricing) string {
@@ -168,7 +212,7 @@ func pricingSnapshot(pricing *tokenbilling.Pricing) string {
 }
 
 func billingInfo(row *model.ModelGatewayRequest) map[string]any {
-	return map[string]any{"mode": "token", "status": row.Status, "requestId": row.ID.String(), "points": tokenCostLabel(settledTokenMicros(row)), "reservedPoints": tokenCostLabel(row.ReservedMicros), "inputTokens": row.InputTokens, "outputTokens": row.OutputTokens, "cachedInputTokens": row.CachedInputTokens, "reasoningTokens": row.ReasoningTokens}
+	return map[string]any{"mode": "token", "status": row.Status, "requestId": row.ID.String(), "points": tokenCostLabel(settledTokenMicros(row)), "reservedPoints": tokenCostLabel(row.ReservedMicros), "settlementMode": row.SettlementMode, "refundedPoints": tokenCostLabel(row.RefundedCostMicros), "walletRefundedPoints": tokenCostLabel(row.WalletRefundMicros), "deductedPoints": tokenCostLabel(settledWalletMicros(row)), "pendingPointsAfter": tokenCostLabel(row.PendingAfterMicros), "inputTokens": row.InputTokens, "outputTokens": row.OutputTokens, "cachedInputTokens": row.CachedInputTokens, "reasoningTokens": row.ReasoningTokens}
 }
 
 func settledTokenMicros(row *model.ModelGatewayRequest) int64 {

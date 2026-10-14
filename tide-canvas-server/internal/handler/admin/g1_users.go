@@ -388,7 +388,7 @@ func (h *userHandler) updateUser(c *gin.Context) {
 
 	query := h.db.Model(&model.User{}).Where("id = ?", id)
 	if dto.Points != nil {
-		query = query.Where("point_held_micros <= ?", dto.Points.Mul(decimal.NewFromInt(model.PointScale)).IntPart())
+		query = query.Where("point_held_micros + chat_pending_micros <= ?", dto.Points.Mul(decimal.NewFromInt(model.PointScale)).IntPart())
 	}
 	res := query.Updates(fields)
 	if res.Error != nil {
@@ -397,8 +397,8 @@ func (h *userHandler) updateUser(c *gin.Context) {
 	}
 	if res.RowsAffected == 0 {
 		if dto.Points != nil {
-			if user, err := h.findUser(id); err == nil && decimal.NewFromInt(user.PointHeldMicros).GreaterThan(dto.Points.Mul(decimal.NewFromInt(model.PointScale))) {
-				response.Fail(c, 409, "该用户有预留中的积分，不能将余额调整到预留额度以下")
+			if user, err := h.findUser(id); err == nil && decimal.NewFromInt(user.PointHeldMicros).Add(decimal.NewFromInt(user.ChatPendingMicros)).GreaterThan(dto.Points.Mul(decimal.NewFromInt(model.PointScale))) {
+				response.Fail(c, 409, "该用户有预留积分或待累计的小数费用，不能将余额调整到占用额度以下")
 				return
 			}
 		}

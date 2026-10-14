@@ -468,7 +468,7 @@ function GenerationDetailDrawer({ id, onClose, onRefunded }: { id: string; onClo
     if (!d || refunding || d.refunded || !d.refundable || d.pointCost == null || d.pointCost <= 0 || !canViewRawBodies) return;
     if (!(await confirmDialog({
       title: "确认生成记录退款",
-      message: `确定将这条生成记录退回 ${d.pointCost} 积分给用户「${d.username || d.userId}」？退款后会写入用户积分流水，且不可重复退款。`,
+      message: `确定将这条生成记录退回 ${d.pointCost} 积分给用户「${d.username || d.userId}」？${d.tokenAccrued ? "将按实际小数费用调整累计额，产生整数退款时写入积分流水。" : "退款后会写入用户积分流水。"}不可重复退款。`,
       confirmText: "确认退款",
     }))) return;
     setRefunding(true);
@@ -477,7 +477,7 @@ function GenerationDetailDrawer({ id, onClose, onRefunded }: { id: string; onClo
       if (res.success && res.data) {
         setD(res.data);
         onRefunded(res.data);
-        toast.success(`已退回 ${d.pointCost} 积分，用户积分流水已更新`);
+        toast.success(`已退回 ${d.pointCost} 积分${d.tokenAccrued ? "，累计费用与余额已同步" : "，用户积分流水已更新"}`);
       } else {
         toast.error(res.message || "退款失败");
       }
@@ -535,7 +535,7 @@ function GenerationDetailDrawer({ id, onClose, onRefunded }: { id: string; onClo
             <div className={`genr-refund-bar${d.refunded ? " done" : ""}`}>
               <div>
                 <strong>{d.refunded ? "这条记录已退款" : "管理员操作"}</strong>
-                <span>{d.refunded ? "积分已退回用户账户，用户可在积分流水中查看" : `退回本次生成消耗的 ${d.pointCost} 积分`}</span>
+                <span>{d.refunded ? d.tokenAccrued ? "实际小数费用已退回并调整累计额；整数退款可在积分流水查看" : "积分已退回用户账户，用户可在积分流水中查看" : `退回本次生成消耗的 ${d.pointCost} 积分`}</span>
               </div>
               {canRefund ? (
                 <button type="button" className="adm-btn danger small" disabled={refunding} onClick={() => void refund()}>
@@ -721,7 +721,7 @@ export default function AdminGenerationsPage() {
     if (!isAdministrator || refundingId || row.refunded || !row.refundable || row.pointCost == null || row.pointCost <= 0 || row.userId === "0") return;
     if (!(await confirmDialog({
       title: "确认生成记录退款",
-      message: `确定将这条生成记录退回 ${row.pointCost} 积分给用户「${row.username || row.userId}」？退款后状态会变为“退款”，用户可在积分流水中查看。`,
+      message: `确定将这条生成记录退回 ${row.pointCost} 积分给用户「${row.username || row.userId}」？${row.tokenAccrued ? "将按实际小数费用调整累计额，产生整数退款时写入积分流水。" : "退款后状态会变为“退款”，用户可在积分流水中查看。"}`,
       confirmText: "确认退款",
     }))) return;
     setRefundingId(row.id);
@@ -729,7 +729,7 @@ export default function AdminGenerationsPage() {
       const res = await adminGenerationsApi.refund(row.id);
       if (res.success && res.data) {
         applyRefundedDetail(res.data);
-        toast.success(`已退回 ${row.pointCost} 积分，用户积分流水已更新`);
+        toast.success(`已退回 ${row.pointCost} 积分${row.tokenAccrued ? "，累计费用与余额已同步" : "，用户积分流水已更新"}`);
       } else {
         toast.error(res.message || "退款失败");
       }

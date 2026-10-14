@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+
 	"tidecanvas/internal/handler/points"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
@@ -189,6 +191,7 @@ func TestUsageRefundsTrackTheLedgerWithoutChangingOriginalTokenCharge(t *testing
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, okWithUsage) }))
 	defer up.Close()
 	f := setup(t, up.URL)
+	repriceTestModel(t, f, `{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"5000","outputPointsPerMillion":"5000","maxInputTokens":100,"maxOutputTokens":100}}`)
 	if w := f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, nil); w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
@@ -208,7 +211,10 @@ func TestUsageRefundsTrackTheLedgerWithoutChangingOriginalTokenCharge(t *testing
 		t.Fatal("another user's refund contaminated total")
 	}
 	for i := 0; i < 2; i++ {
-		if _, err := points.AdminRefund(f.s.d.DB, f.user.ID, 1, "operator adjustment", bill.ID); err != nil {
+		if err := f.s.d.DB.Transaction(func(tx *gorm.DB) error {
+			_, _, err := points.RefundAccruedChatBill(tx, f.user.ID, bill.ID, "operator adjustment")
+			return err
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -223,5 +229,49 @@ func TestUsageRefundsTrackTheLedgerWithoutChangingOriginalTokenCharge(t *testing
 	}
 	if user.PointBalance() != 20 {
 		t.Fatalf("refund repeated: %v", user.PointBalance())
+	}
+}
+
+func TestUsageFractionalRefundSeparatesFeeFromCashCredit(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, okWithUsage) }))
+	defer up.Close()
+	f := setup(t, up.URL)
+	repriceTestModel(t, f, `{"tokenPricing":{"enabled":true,"inputPointsPerMillion":"3000","outputPointsPerMillion":"3000","maxInputTokens":100,"maxOutputTokens":100}}`)
+	for i := 0; i < 2; i++ {
+		if w := f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, nil); w.Code != 200 {
+			t.Fatal(w.Body.String())
+		}
+	}
+	var bills []model.ModelGatewayRequest
+	if err := f.s.d.DB.Order("id").Find(&bills).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(bills) != 2 || bills[0].WalletDebitMicros != 0 || bills[1].WalletDebitMicros != 1000000 {
+		t.Fatalf("unexpected bills: %+v", bills)
+	}
+	if err := f.s.d.DB.Transaction(func(tx *gorm.DB) error {
+		_, _, err := points.RefundAccruedChatBill(tx, f.user.ID, bills[0].ID, "partial cumulative refund")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := usageData(t, f, "/api/chat-gateway/usage", f.jwt)
+	summary := d["summary"].(map[string]any)
+	if summary["points"] != "0.600000" || summary["deductedPoints"] != "1" || summary["walletRefundedPoints"] != "1" || summary["pendingTokenPoints"] != "0.600000" {
+		t.Fatalf("fractional refund summary: %v", summary)
+	}
+	found := false
+	for _, raw := range d["records"].([]any) {
+		row := raw.(map[string]any)
+		if row["id"] != bills[0].ID.String() {
+			continue
+		}
+		found = true
+		if row["points"] != "0.600000" || row["refundedPoints"] != "0.600000" || row["deductedPoints"] != "0" || row["walletRefundedPoints"] != "1" || row["netPoints"] != "0" {
+			t.Fatalf("fractional refund row: %v", row)
+		}
+	}
+	if !found {
+		t.Fatal("refunded bill missing")
 	}
 }

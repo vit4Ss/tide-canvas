@@ -57,14 +57,14 @@ func newService(db *gorm.DB, rdb *redis.Client) *service {
 	return &service{repo: newRepo(db), rdb: rdb}
 }
 
-// balance returns the user's current usable points and frozen (held) points.
-// The User model has no frozen column, so frozen is reported as 0.
+// balance separates the posted balance from spendable funds, reservations and
+// accrued token fees that have not yet produced a whole-point debit.
 func (s *service) balance(userID idgen.ID) (*BalanceVO, error) {
-	pts, frozen, err := s.repo.userPoints(userID)
+	u, err := s.repo.userPoints(userID)
 	if err != nil {
 		return nil, err
 	}
-	return &BalanceVO{Points: pts, Frozen: frozen}, nil
+	return &BalanceVO{Points: u.PointBalance(), Frozen: float64(u.PointHeldMicros) / float64(model.PointScale), PostedPoints: u.PointTotal(), PendingTokenPoints: u.PendingTokenPoints()}, nil
 }
 
 // records returns a page of the user's point ledger as VOs.

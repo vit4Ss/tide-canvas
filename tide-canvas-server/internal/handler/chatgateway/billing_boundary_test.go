@@ -89,15 +89,15 @@ func TestResaleTokenBillAndGenerationFlatChargeShareOnlyTheWallet(t *testing.T) 
 	if err := f.s.d.DB.First(&bill).Error; err != nil {
 		t.Fatal(err)
 	}
-	// (80*50000 + 20*10000 + 200*50000) / 1M * .7 = 9.94 -> 10.
+	// (80*50000 + 20*10000 + 200*50000) / 1M * .7 = 9.94 -> 9 posted plus 0.94 pending.
 	// Reasoning is included in output; cache is included in input.
-	if bill.CostMicros != 10_000_000 || bill.PriceMultiplier != "0.7" {
+	if bill.CostMicros != 9_940_000 || bill.WalletDebitMicros != 9_000_000 || bill.PendingAfterMicros != 940_000 || bill.PriceMultiplier != "0.7" {
 		t.Fatalf("wrong token settlement: cost=%d multiplier=%s", bill.CostMicros, bill.PriceMultiplier)
 	}
 	if err := f.s.d.DB.First(&user, "id = ?", f.user.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if user.PointBalance() != 83 || user.PointHeldMicros != 0 {
+	if user.PointBalance() != 83.06 || user.Points != 84 || user.ChatPendingMicros != 940_000 || user.PointHeldMicros != 0 {
 		t.Fatalf("wallet=%v held=%d", user.PointBalance(), user.PointHeldMicros)
 	}
 	if w := f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, header); w.Code != 200 || calls.Load() != 1 {
@@ -111,7 +111,7 @@ func TestResaleTokenBillAndGenerationFlatChargeShareOnlyTheWallet(t *testing.T) 
 	if err := f.s.d.DB.First(&user, "id = ?", f.user.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if user.PointBalance() != 90 {
+	if user.PointBalance() != 90.06 || user.Points != 91 || user.ChatPendingMicros != 940_000 {
 		t.Fatalf("generation refund changed token bill: %v", user.PointBalance())
 	}
 	var ledger []model.PointRecord
@@ -123,11 +123,11 @@ func TestResaleTokenBillAndGenerationFlatChargeShareOnlyTheWallet(t *testing.T) 
 	for _, row := range ledger {
 		net += row.ExactAmount()
 	}
-	if net != -10 {
+	if net != -9 {
 		t.Fatalf("ledger differs from wallet: %v", net)
 	}
 	d := usageData(t, f, "/api/chat-gateway/usage", f.jwt)
-	if d["total"] != float64(1) || d["summary"].(map[string]any)["points"] != "10" {
+	if d["total"] != float64(1) || d["summary"].(map[string]any)["points"] != "9.940000" {
 		t.Fatalf("generation mixed into resale records: %v", d)
 	}
 }

@@ -14,7 +14,7 @@ import { useAuthStore } from "@/stores/use-auth-store";
 import { orderApi, PENDING_ORDER_KEY } from "@/lib/billing-api";
 import { pointsApi, type CheckinStatusVO, type PointRecordVO } from "@/lib/points-api";
 import { toast } from "@/components/shared/toast";
-import { fmt } from "@/lib/utils";
+import { usageDecimal } from "@/lib/chat-usage";
 import type { OrderVO } from "@/types/billing";
 
 /** RFC3339 → "YYYY-MM-DD HH:mm" for compact row metadata. */
@@ -343,6 +343,7 @@ function ActivationCodeModal({
 
 export function PointsPanel({ full = false }: { full?: boolean }) {
   const fetchUser = useAuthStore((s) => s.fetchUser);
+  const pendingTokenPoints = useAuthStore((s) => s.user?.pendingTokenPoints ?? 0);
   const [rows, setRows] = useState<PointRecordVO[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -434,6 +435,12 @@ export function PointsPanel({ full = false }: { full?: boolean }) {
         </span>
       </div>
       <p className="ph-note">充值、签到与生成消耗的积分流水。</p>
+      {pendingTokenPoints > 0 && (
+        <p className="ph-note">
+          另有 {usageDecimal(String(pendingTokenPoints))} 积分待累计，已占用可用余额；累计满 1 积分后扣款并记入流水。
+          {" "}<Link href="/api-usage">查看 Token 用量</Link>
+        </p>
+      )}
 
       {rows.length === 0 && (
         <div className="empty-note">
@@ -451,12 +458,12 @@ export function PointsPanel({ full = false }: { full?: boolean }) {
               </div>
               <div className="lr-meta">
                 {CHANGE_LABEL[r.changeType] || r.changeType} · {fmtTime(r.createTime)} · 余额{" "}
-                {fmt(r.balance)}
+                {usageDecimal(String(r.balance))}
               </div>
             </div>
             <span className={`lr-amt ${gain ? "gain" : "spend"}`}>
               {gain ? "+" : ""}
-              {fmt(r.amount)}
+              {usageDecimal(String(r.amount))}
             </span>
           </div>
         );

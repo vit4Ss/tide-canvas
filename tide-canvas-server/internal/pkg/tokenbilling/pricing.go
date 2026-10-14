@@ -158,14 +158,53 @@ func ParseUsage(value any) (*Usage, error) {
 }
 
 func (p *Pricing) Cost(usage *Usage, maxOutput int64) (int64, error) {
-	if usage.Input > p.MaxInput || usage.Output > maxOutput {
-		return 0, ErrLimit
+	value, err := p.costValue(usage, maxOutput)
+	if err != nil {
+		return 0, err
 	}
-	in, _ := rateMicros(p.Input)
-	out, _ := rateMicros(p.Output)
-	cached, _ := rateMicros(p.CachedInput)
-	value := in.Mul(decimal.NewFromInt(usage.Input - usage.Cached)).Add(cached.Mul(decimal.NewFromInt(usage.Cached))).Add(out.Mul(decimal.NewFromInt(usage.Output))).Div(decimal.NewFromInt(Scale))
 	return wholePointMicros(value)
+}
+
+// AccruedCost retains six decimal places in points. At most one micro-point
+// is rounded up; whole-point rounding belongs to the account accumulator, not
+// individual calls. Cost remains the legacy policy for already-created bills.
+func (p *Pricing) AccruedCost(usage *Usage, maxOutput int64) (int64, error) {
+	value, err := p.costValue(usage, maxOutput)
+	if err != nil {
+		return 0, err
+	}
+	micros := value.Ceil()
+	if micros.IsNegative() || micros.GreaterThan(decimal.NewFromInt(math.MaxInt64)) {
+		return 0, ErrPricing
+	}
+	return micros.IntPart(), nil
+}
+
+func (p *Pricing) costValue(usage *Usage, maxOutput int64) (decimal.Decimal, error) {
+	if usage == nil || usage.Input < 0 || usage.Output < 0 || usage.Cached < 0 || usage.Cached > usage.Input {
+		return decimal.Zero, ErrUsage
+	}
+	if usage.Input > p.MaxInput || usage.Output > maxOutput {
+		return decimal.Zero, ErrLimit
+	}
+	in, err := rateMicros(p.Input)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	out, err := rateMicros(p.Output)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	cacheRate := p.CachedInput
+	if cacheRate == "" {
+		cacheRate = p.Input
+	}
+	cached, err := rateMicros(cacheRate)
+	if err != nil {
+		return decimal.Zero, err
+	}
+	value := in.Mul(decimal.NewFromInt(usage.Input - usage.Cached)).Add(cached.Mul(decimal.NewFromInt(usage.Cached))).Add(out.Mul(decimal.NewFromInt(usage.Output))).Div(decimal.NewFromInt(Scale))
+	return value, nil
 }
 
 // ReservationCovers accepts current whole-point reservations and the smaller

@@ -8,6 +8,10 @@ export interface ChatUsageRow {
   stream: boolean;
   status: string;
   points: string;
+  settlementMode?: string;
+  deductedPoints?: string;
+  pendingPointsAfter?: string;
+  walletRefundedPoints?: string;
   refundedPoints?: string;
   netPoints?: string;
   reservedPoints: string;
@@ -35,7 +39,7 @@ export interface ChatUsagePage {
   total: number;
   pageNum: number;
   pages: number;
-  summary: { calls: number; points: string; inputTokens: number; outputTokens: number; cachedInputTokens: number; pending: number };
+  summary: { calls: number; points: string; deductedPoints?: string; walletRefundedPoints?: string; pendingTokenPoints?: string; inputTokens: number; outputTokens: number; cachedInputTokens: number; pending: number };
 }
 
 export const usageStatuses: Record<string, { label: string; tone: string }> = {

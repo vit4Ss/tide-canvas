@@ -10,12 +10,13 @@ import (
 // vo.go defines response payloads for the points endpoints. Every id field is
 // an idgen.ID (serialized as a quoted decimal string); all JSON is camelCase.
 
-// BalanceVO is the response of GET /api/points/balance. points is the user's
-// current usable balance (User.Points); frozen is reserved/held points. The
-// User model has no frozen column, so it is derived as 0 in the VO.
+// BalanceVO separates available points from the posted wallet, active holds
+// and sub-point token fees waiting to accumulate to a whole point.
 type BalanceVO struct {
-	Points float64 `json:"points"`
-	Frozen float64 `json:"frozen"`
+	Points             float64 `json:"points"`
+	Frozen             float64 `json:"frozen"`
+	PostedPoints       float64 `json:"postedPoints"`
+	PendingTokenPoints float64 `json:"pendingTokenPoints"`
 }
 
 // PointRecordVO is one row of the points ledger (GET /api/points/records).

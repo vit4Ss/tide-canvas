@@ -30,8 +30,8 @@
 | `gpt-5.5` | 50 | 300 | 5 |
 | `codex-auto-review` | 2 | 12 | 0.2 |
 
-上表是每百万 Token 单价；单次调用仍按原账务规则，把输入、输出与缓存费用
-合并后向上取整为积分，零费用保持为零。后台主表同时显示人民币计价参考和
+上表是每百万 Token 单价；新调用把输入、输出与缓存费用合并后保留六位小数，
+按账户累计满 1 积分再扣减整数部分，零费用保持为零。后台主表同时显示人民币计价参考和
 实际积分单价，缓存单价可独立编辑。
 
 部署时通过事务和内部迁移标记 `migration.chatReferencePricing.20261013`
@@ -96,7 +96,7 @@ Responses 请求的转译规则：
 每个模型只有 Token 计价一种模式，单价在「AI 聊天供应商 → 模型」里按每百万 Token 填写（输入 / 输出 / 缓存输入），没填单价的模型不会出现在列表里、也不能调用。
 
 1. 调用开始时按「输入上限 + 输出上限」的最坏成本**预留**积分（`X-Point-Reserved`），写入 `model_gateway_request` 一行，状态 `pending`。积分不足时返回 HTTP 429 `insufficient_quota`，不会碰供应商。
-2. 网关始终以流式向供应商请求并要求 `stream_options.include_usage`。结束后按供应商返回的 `usage` 结算实际费用，费用非零时向上取整为整数积分，未用完的预留释放；结算结果进入积分流水（`AI 聊天 Token 计费：<model_key>`）。
+2. 网关始终以流式向供应商请求并要求 `stream_options.include_usage`。新调用使用 `settlementMode=accumulated`：实际费用精确到 0.000001 积分（不足最小精度的非零部分向上取到一微积分），和账户 `chat_pending_micros` 合并，仅扣减满整部分并写入 `AI 聊天小数累计扣款` 流水，余下小数持久保存，未用完的预留释放。
 3. 非流式响应用 `X-Point-Cost` 头和 `billing` 字段报告实际积分；流式响应在 `[DONE]` 之前多一帧 `{"choices":[],"billing":{…}}`（Chat Completions）或在 `response.completed` 的 `response.billing` 里（Responses）。
 4. 供应商没有返回可信用量时，行状态变为 `billing_pending`，预留不释放，管理员在后台「积分管理 → Token 调用账单」核对后结算或释放。生成失败且没有任何输出时预留全额退回。
    待核对期间实扣金额为 0，不把候选费用当作扣款。人工结算要求明确填写输入、输出 Token（0 合法，缺失或 null 拒绝）；处理时重新检查管理员当前的积分权限。
@@ -106,6 +106,38 @@ Responses 请求的转译规则：
 账单接口：用户 `GET /api/chat-gateway/billing`（JWT），管理员 `GET /api/admin/chat-gateway-billing` 与 `POST /api/admin/chat-gateway-billing/:id/resolve`（需要 `admin.points`）。
 
 `Idempotency-Key` 请求头（或请求 ID）相同且请求体相同时，重放不重复扣费，直接回放已存的结果；请求体不同返回 409 `idempotency_conflict`；原请求仍在生成时返回 409 `request_in_progress`。
+
+### 小数费用与账户扣款
+
+新调用的 `points` / `X-Point-Cost` 是本次实际费用；`deductedPoints` 是本次写入
+账户流水的扣款，可能包含之前累计的小数；`pendingPointsAfter` 是这次结算后的
+账户小数累计额。它们不是同一个数。例如账户原有 20 积分，两次分别消耗 0.6：
+
+| 调用 | 本次费用 | 本次账户扣款 | 账面余额 | 待累计 | 可用额度 |
+|---|---:|---:|---:|---:|---:|
+| 第一次 | 0.6 | 0 | 20 | 0.6 | 19.4 |
+| 第二次 | 0.6 | 1 | 19 | 0.2 | 18.8 |
+
+只有第二次写一条 -1 的积分流水。待累计费用属于已发生但未满整的占用额，
+不能再次被生成、预留或管理员调减余额使用。余额接口的 `postedPoints` 表示
+账面余额，`points` 表示扣除预留和待累计后的可用额度，`pendingTokenPoints`
+单独报告当前累计小数；用户用量页同时展示费用、入账扣款与待累计余额。
+
+结算模式随请求保存：部署前创建的请求（`settlementMode` 为空）保留原规则，
+不会自动重新计费或退款。新请求持久化 `accumulated`，正常结算、故障恢复与
+管理员用量核对共用同一账户锁和事务；重放不重复累计，释放预留不清空之前的
+累计额。账户累计额独立于模型、供应商和 API Key，换 Key 或重启不会丢失。
+
+管理员退款撤销所选调用的实际小数费用，不直接退回该调用触发的整数扣款
+（其中可能含有其他调用的累计费用）。先冲减待累计额，不足部分通过整数退回
+和新的累计余数找平；原始费用不改写，同一账单重复退款不重复入账。
+`refundedPoints` 是退回的实际费用，`walletRefundedPoints` 是钱包实际入账的整数。
+只减少累计额、未产生整数退回时，不新增积分流水，调用账单仍显示退款。
+
+API Key 的身份查询 `GET /api/integrations/identity` 与站内使用同一余额口径：
+`points` 为扣除预留及待累计费用后的可用余额，`postedPoints` 为已入账余额，
+`pendingTokenPoints` 为当前账户尚未满整的累计费用。积分明细页显示已入账流水，
+另行提示待累计费用，并提供 Token 用量入口。
 
 ## 限额与错误
 
@@ -127,16 +159,18 @@ Responses 请求的转译规则：
   名称和价格按调用时快照保存，供应商修改/删除不改变历史。无请求正文、密钥或上游地址输出。
 - 筛选支持 `model`（字面子串）、`status`、`protocol=chat|responses`、`stream=true|false`、
   `startDate/endDate=YYYY-MM-DD`（北京时间含结束日）、`pageNum/pageSize`（最大 100）。
-  列表及统计应用同一筛选，实扣积分不包含冻结额度，并减去同一用户/调用的真实退款流水；原始结算金额仍保留。
+  列表及统计应用同一筛选，消耗积分扣除对应账单实际退款费用；原始结算金额仍保留。
+  `deductedPoints` 统计整数扣款总额，`walletRefundedPoints` 单独统计整数退回总额。
+  整数入账可能包含筛选范围之外的累计费用，不能用它代替范围内的净消耗。
 
 ### 与「我的生成记录」的边界
 
 两套价格独立：`chat_model` 按输入/输出/缓存 Token 单价和供应商倍率计费；
 `market_model` 的文本生成（包括 MCP/Agent Skill 中间步骤）继续按每次模型调用固定积分收费，
 不读取 `chat_model` 的 Token 单价。相同 model key 也不会合并路由或价格。
-每次非零 Token 费用沿用现有向上取整为整数积分规则；按次文本忽略图片的 batchCount、清晰度等残留参数。
+新 Token 费用按账户跨模型、跨 API Key 累计小数，满整扣款；按次文本忽略图片的 batchCount、清晰度等残留参数。
 一套 Skill 若实际执行三次文本模型调用，分别记录三笔按次费用，而不是按工作流入口再扣一笔 Token 费用。
-它们共用用户余额和积分流水；Token 已预留部分不能被同时进行的按次生成花掉。
+它们共用用户余额和积分流水；Token 已预留部分和未满整的待累计费用均不能被同时进行的按次生成花掉。
 
 - 本节的 API 调用记录只查询 `model_gateway_request` 中明确标记的聊天供应商调用。
 - MCP 生成工具和 Agent Skill 工作流仍使用 `ai_tasks` / `ai_generation_logs`。

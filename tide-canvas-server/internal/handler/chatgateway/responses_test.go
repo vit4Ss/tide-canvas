@@ -231,13 +231,13 @@ func TestAResponsesStreamCarriesTextToolCallUsageAndOneCharge(t *testing.T) {
 	}
 
 	// One reservation, settled once, at the chat pricing: a fraction of a
-	// point rounded up to a whole one, hold released.
+	// point accrued without posting a whole point, hold released.
 	var user model.User
 	if err := f.s.d.DB.First(&user, "id = ?", f.user.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if user.PointBalance() != 19 || user.PointHeldMicros != 0 {
-		t.Fatalf("balance=%v held=%d, want one whole point charged and nothing held", user.PointBalance(), user.PointHeldMicros)
+	if user.PointBalance() != 19.9766 || user.Points != 20 || user.ChatPendingMicros != 23_400 || user.PointHeldMicros != 0 {
+		t.Fatalf("balance=%v held=%d, want the fractional cost accrued and nothing held", user.PointBalance(), user.PointHeldMicros)
 	}
 	var rows []model.ModelGatewayRequest
 	f.s.d.DB.Find(&rows)
@@ -352,7 +352,7 @@ func TestAResponsesReplayIsServedFromTheStoredResultWithoutASecondCharge(t *test
 	}
 	var user model.User
 	f.s.d.DB.First(&user, "id = ?", f.user.ID)
-	if user.PointBalance() != 19 || user.PointHeldMicros != 0 {
+	if user.PointBalance() != 19.9766 || user.Points != 20 || user.ChatPendingMicros != 23_400 || user.PointHeldMicros != 0 {
 		t.Fatalf("replay charged again: balance=%v held=%d", user.PointBalance(), user.PointHeldMicros)
 	}
 }

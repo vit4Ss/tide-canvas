@@ -73,6 +73,25 @@ func TestAdminRefundSeesCreditCommittedAfterMySQLSnapshot(t *testing.T) {
 	}
 }
 
+func TestAccountSummaryRetainsMicroPointsWithMySQLDivisionPrecision(t *testing.T) {
+	db := refundMySQLTestDB(t)
+	// Run on one session with explicit division precision. The summary must
+	// preserve six decimals even if the server's default is reduced to zero.
+	if err := db.Connection(func(conn *gorm.DB) error {
+		for _, precision := range []string{"0", "4"} {
+			if err := conn.Exec("SET SESSION div_precision_increment = " + precision).Error; err != nil {
+				return err
+			}
+			t.Run("precision_"+precision, func(t *testing.T) {
+				checkSummaryMicroPoints(t, conn)
+			})
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func testAdminRefundAfterMySQLSnapshot(t *testing.T, legacy bool) {
 	db := refundMySQLTestDB(t)
 	userID, taskID := idgen.Next(), idgen.Next()

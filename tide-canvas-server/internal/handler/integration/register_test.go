@@ -99,6 +99,15 @@ func TestOwnerKeyLifecycleAndAuthenticationBoundaries(t *testing.T) {
 	if w.Code != http.StatusOK || identity["userId"] != u.ID.String() || identity["points"] != float64(57) {
 		t.Fatal("key mapped to wrong user")
 	}
+	// Integration clients must see the same spendable balance as the main site,
+	// including both active reservations and unposted fractional token fees.
+	if err := db.Model(&u).Updates(map[string]any{"point_fraction": 123456, "point_held_micros": 2000000, "chat_pending_micros": 654321}).Error; err != nil {
+		t.Fatal(err)
+	}
+	w, identity = request("GET", "/api/integrations/identity", value, "")
+	if w.Code != http.StatusOK || identity["points"] != 54.469135 || identity["postedPoints"] != 57.123456 || identity["pendingTokenPoints"] != .654321 || w.Header().Get("Cache-Control") != "private, no-store" {
+		t.Fatalf("integration balance ignores occupied fractions: %v", identity)
+	}
 	_, keyCannotManage := request("GET", "/api/auth/api-key", value, "")
 	if keyCannotManage["code"] != float64(401) {
 		t.Fatal("API key was accepted as a login session")

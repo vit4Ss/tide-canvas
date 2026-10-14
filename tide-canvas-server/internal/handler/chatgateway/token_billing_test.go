@@ -60,7 +60,7 @@ func repriceTestModel(t *testing.T, f *fixture, pricing string) {
 	}
 }
 
-func TestTokenGatewayChargesWholePointsAndReplayKeepsPriceSnapshot(t *testing.T) {
+func TestTokenGatewayAccruesFractionalPointsAndReplayKeepsPriceSnapshot(t *testing.T) {
 	var calls atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -75,23 +75,23 @@ func TestTokenGatewayChargesWholePointsAndReplayKeepsPriceSnapshot(t *testing.T)
 	f := setup(t, up.URL)
 	headers := map[string]string{"Idempotency-Key": "token-charge"}
 	w := f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, headers)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"points":"1"`) {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"points":"0.068400"`) {
 		t.Fatal(w.Body.String())
 	}
 	var user model.User
 	f.s.d.DB.First(&user, "id = ?", f.user.ID)
-	if user.PointBalance() != 19 || user.PointHeldMicros != 0 {
+	if user.PointBalance() != 19.9316 || user.Points != 20 || user.ChatPendingMicros != 68_400 || user.PointHeldMicros != 0 {
 		t.Fatalf("wrong actual balance: %+v", user)
 	}
 	repriceTestModel(t, f, strings.ReplaceAll(tokenTestPricing, "300", "900"))
 	w = f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, headers)
-	if w.Code != 200 || calls.Load() != 1 || !strings.Contains(w.Body.String(), `"points":"1"`) {
+	if w.Code != 200 || calls.Load() != 1 || !strings.Contains(w.Body.String(), `"points":"0.068400"`) {
 		t.Fatal("replay repriced or charged again")
 	}
 	var ledger []model.PointRecord
 	f.s.d.DB.Find(&ledger)
-	if len(ledger) != 1 || ledger[0].ExactAmount() != -1 {
-		t.Fatal("token ledger is not whole-point or was duplicated")
+	if len(ledger) != 0 {
+		t.Fatal("sub-point fees must not write a wallet debit yet")
 	}
 }
 
@@ -121,12 +121,12 @@ func TestInputOnlyUsageIsChargedEvenWhenTheProviderReportsFailure(t *testing.T) 
 	defer up.Close()
 	f := setup(t, up.URL)
 	w := f.request("POST", "/api/integrations/v1/chat/completions", testPrompt, f.apiKey, nil)
-	if w.Code != 502 || !strings.Contains(w.Body.String(), `"points":"1"`) {
+	if w.Code != 502 || !strings.Contains(w.Body.String(), `"points":"0.010000"`) {
 		t.Fatal(w.Body.String())
 	}
 	var user model.User
 	f.s.d.DB.First(&user, "id = ?", f.user.ID)
-	if user.PointBalance() != 19 || user.PointHeldMicros != 0 {
+	if user.PointBalance() != 19.99 || user.Points != 20 || user.ChatPendingMicros != 10_000 || user.PointHeldMicros != 0 {
 		t.Fatal("reported consumed input was incorrectly refunded")
 	}
 }
@@ -142,7 +142,7 @@ func TestErrorFrameUsageIsStillCharged(t *testing.T) {
 	var user model.User
 	f.s.d.DB.First(&row)
 	f.s.d.DB.First(&user, "id = ?", f.user.ID)
-	if row.CostMicros != 1_000_000 || row.Status != "partial" || user.PointBalance() != 19 || user.PointHeldMicros != 0 {
+	if row.CostMicros != 10_000 || row.Status != "partial" || user.PointBalance() != 19.99 || user.Points != 20 || user.ChatPendingMicros != 10_000 || user.PointHeldMicros != 0 {
 		t.Fatalf("error-frame usage was refunded: status=%s cost=%d balance=%v held=%d", row.Status, row.CostMicros, user.PointBalance(), user.PointHeldMicros)
 	}
 }

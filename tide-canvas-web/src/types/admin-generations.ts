@@ -34,6 +34,7 @@ export interface GenerationRowVO {
   errorMsg: string;
   /** null = 无计费记录(文本场景/未关联到任务) */
   pointCost: number | null;
+  tokenAccrued?: boolean;
   /** 平台积分是否已被管理员退回。 */
   refunded: boolean;
   /** 是否有可靠计费引用，可执行幂等退款。 */

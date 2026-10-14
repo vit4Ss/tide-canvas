@@ -199,6 +199,7 @@ func (s *service) reserve(ctx context.Context, uid idgen.ID, requestKey, bodyHas
 			Status: "pending", ExpiresAt: time.Now().Add(65 * time.Minute),
 			UpstreamState: "reserved",
 			BillingMode:   "token", ReservedMicros: reserved,
+			SettlementMode:  model.ChatSettlementAccumulated,
 			PricingSnapshot: pricingSnapshot(pricing), MaxOutputTokens: outputCap,
 			ModelName: route.displayNameOnly(), BillingProviderID: route.provider.ID,
 			BillingProviderName: route.provider.Name, PriceMultiplier: route.provider.PriceMultiplier,

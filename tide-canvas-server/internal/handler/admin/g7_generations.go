@@ -697,7 +697,8 @@ type GenerationRowVO struct {
 	Success        int      `json:"success"`
 	HttpStatus     int      `json:"httpStatus"`
 	ErrorMsg       string   `json:"errorMsg"`
-	PointCost      *int64   `json:"pointCost"` // nil = 无计费记录（文本场景/未关联到任务）
+	PointCost      *float64 `json:"pointCost"` // token fees may be fractional; nil means no known fee
+	TokenAccrued   bool     `json:"tokenAccrued,omitempty"`
 	Refunded       bool     `json:"refunded"`
 	Refundable     bool     `json:"refundable"`
 	DurationMs     int64    `json:"durationMs"`
@@ -938,7 +939,46 @@ func generationRefundedForRecord(db *gorm.DB, record *model.ModelCallLog) bool {
 	if err != nil || !reliable {
 		return false
 	}
+	if strings.HasPrefix(record.Endpoint, "/api/integrations/v1/") {
+		var bill model.ModelGatewayRequest
+		if err := db.Where("id = ? AND user_id = ? AND settlement_mode = ?", refID, record.UserID, model.ChatSettlementAccumulated).First(&bill).Error; err == nil {
+			return bill.RefundedCostMicros > 0
+		}
+	}
 	return refundedTaskEvidence(db, []idgen.ID{refID})[refID]
+}
+
+func generationTokenBills(db *gorm.DB, rows []model.ModelCallLog) (map[idgen.ID]model.ModelGatewayRequest, error) {
+	ids := []idgen.ID{}
+	for _, row := range rows {
+		if row.BillingRefID != 0 && strings.HasPrefix(row.Endpoint, "/api/integrations/v1/") {
+			ids = append(ids, row.BillingRefID)
+		}
+	}
+	out := map[idgen.ID]model.ModelGatewayRequest{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var bills []model.ModelGatewayRequest
+	if err := db.Select("id", "user_id", "cost_micros", "refunded_cost_micros", "status").Where("id IN ? AND settlement_mode = ?", ids, model.ChatSettlementAccumulated).Find(&bills).Error; err != nil {
+		return nil, err
+	}
+	for _, bill := range bills {
+		out[bill.ID] = bill
+	}
+	return out, nil
+}
+
+func generationDisplayCost(row *model.ModelCallLog, whole *int64, bills map[idgen.ID]model.ModelGatewayRequest) (*float64, bool, bool) {
+	if bill, ok := bills[row.BillingRefID]; ok && bill.UserID == row.UserID {
+		cost := float64(bill.CostMicros) / float64(model.PointScale)
+		return &cost, true, bill.RefundedCostMicros > 0
+	}
+	if whole == nil {
+		return nil, false, false
+	}
+	cost := float64(*whole)
+	return &cost, false, false
 }
 
 var (
@@ -985,6 +1025,30 @@ func refundGeneration(c *gin.Context, d *app.Deps) {
 		}
 		if !reliable || refID == 0 {
 			return errGenerationRefundUnlinked
+		}
+		if !hasTask && strings.HasPrefix(record.Endpoint, "/api/integrations/v1/") {
+			var bill model.ModelGatewayRequest
+			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND settlement_mode = ?", refID, model.ChatSettlementAccumulated).First(&bill).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			if err == nil {
+				if bill.UserID != record.UserID {
+					return errGenerationRefundCostConflict
+				}
+				if bill.Status == "pending" || bill.Status == "billing_pending" {
+					return errGenerationRefundProcessing
+				}
+				if bill.CostMicros <= 0 {
+					return errGenerationRefundNoCharge
+				}
+				refunded, returned, err := points.RefundAccruedChatBill(tx, record.UserID, refID, "管理员退款：Token 调用 "+record.ID.String())
+				if err != nil {
+					return err
+				}
+				didRefund, refundAmount = refunded, returned/model.PointScale
+				return tx.Model(&record).Update("refunded", true).Error
+			}
 		}
 		amount := record.PointCost
 		if hasTask {
@@ -1113,10 +1177,15 @@ func listGenerations(c *gin.Context, d *app.Deps) {
 	}
 
 	vos := make([]GenerationRowVO, 0, len(rows))
+	bills, err := generationTokenBills(db, rows)
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to load token fees")
+		return
+	}
 	for i := range rows {
 		r := &rows[i]
 		prompt := promptExcerpt(parseRequestBody(r.RequestBody, hosts).Prompt, 200)
-		pointCost := pointCostOf(r, costs)
+		pointCost, tokenAccrued, tokenRefunded := generationDisplayCost(r, pointCostOf(r, costs), bills)
 		_, linkedTask := costs[r.UpstreamTaskID]
 		ledgerRef := r.BillingRefID != 0 && r.BillingRefType != "task"
 		canRefund := r.UserID != 0 && pointCost != nil && *pointCost > 0 && (ledgerRef || linkedTask)
@@ -1125,8 +1194,8 @@ func listGenerations(c *gin.Context, d *app.Deps) {
 			ID:        r.ID, UserID: r.UserID, Username: names[r.UserID], Scene: r.Scene, Model: r.Model,
 			ModelName: modelNames[r.Model],
 			Prompt:    prompt, Success: r.Success, HttpStatus: r.HttpStatus, ErrorMsg: r.ErrorMsg,
-			PointCost: pointCost,
-			Refunded:  refunded[r.ID], Refundable: canRefund, DurationMs: r.DurationMs, UpstreamTaskID: r.UpstreamTaskID, CreateTime: g5FmtTime(r.CreateTime),
+			PointCost: pointCost, TokenAccrued: tokenAccrued,
+			Refunded: refunded[r.ID] || tokenRefunded, Refundable: canRefund, DurationMs: r.DurationMs, UpstreamTaskID: r.UpstreamTaskID, CreateTime: g5FmtTime(r.CreateTime),
 		})
 	}
 	response.Page(c, vos, total, q.PageNum, q.PageSize)
@@ -1152,7 +1221,12 @@ func generationDetail(c *gin.Context, d *app.Deps) {
 	}
 
 	names := resolveUserNames(db, []idgen.ID{r.UserID})
-	pointCost := pointCostOf(&r, resolvePointCosts(db, []string{r.UpstreamTaskID}))
+	bills, err := generationTokenBills(db, []model.ModelCallLog{r})
+	if err != nil {
+		response.Fail(c, response.CodeServerError, "failed to load token fees")
+		return
+	}
+	pointCost, tokenAccrued, tokenRefunded := generationDisplayCost(&r, pointCostOf(&r, resolvePointCosts(db, []string{r.UpstreamTaskID})), bills)
 	_, _, reliableRefundRef, _ := generationRefundRef(db, &r)
 	apiSources, err := resolveGenerationAPISources(db, []model.ModelCallLog{r})
 	if err != nil {
@@ -1165,9 +1239,9 @@ func generationDetail(c *gin.Context, d *app.Deps) {
 			ID:        r.ID, UserID: r.UserID, Username: names[r.UserID], Scene: r.Scene, Model: r.Model,
 			ModelName: resolveModelNames(db, []string{r.Model})[r.Model],
 			Prompt:    req.Prompt, Success: r.Success, HttpStatus: r.HttpStatus, ErrorMsg: r.ErrorMsg,
-			PointCost:      pointCost,
+			PointCost: pointCost, TokenAccrued: tokenAccrued,
 			DurationMs:     r.DurationMs,
-			Refunded:       generationRefundedForRecord(db, &r),
+			Refunded:       tokenRefunded || generationRefundedForRecord(db, &r),
 			Refundable:     r.UserID != 0 && pointCost != nil && *pointCost > 0 && reliableRefundRef,
 			UpstreamTaskID: r.UpstreamTaskID, CreateTime: g5FmtTime(r.CreateTime),
 		},

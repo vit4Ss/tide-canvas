@@ -17,10 +17,10 @@ func BalanceMicros(user *model.User) (int64, error) {
 		return 0, ErrInvalidBalance
 	}
 	total := user.Points*model.PointScale + user.PointFraction
-	if user.PointHeldMicros < 0 || user.PointHeldMicros > total {
+	if user.ChatPendingMicros < 0 || user.ChatPendingMicros >= model.PointScale || user.ChatPendingMicros > total || user.PointHeldMicros < 0 || user.PointHeldMicros > total-user.ChatPendingMicros {
 		return 0, ErrInvalidBalance
 	}
-	return total - user.PointHeldMicros, nil
+	return total - user.PointHeldMicros - user.ChatPendingMicros, nil
 }
 
 // HoldMicros changes only the reservation, not the financial ledger balance.
@@ -85,7 +85,7 @@ func changeMicros(tx *gorm.DB, uid idgen.ID, delta int64, changeType, remark str
 	if delta < -balance {
 		return nil, ErrInsufficient
 	}
-	balance += user.PointHeldMicros
+	balance += user.PointHeldMicros + user.ChatPendingMicros
 	if delta > math.MaxInt64-balance {
 		return nil, ErrInvalidBalance
 	}

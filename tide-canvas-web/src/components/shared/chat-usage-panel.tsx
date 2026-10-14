@@ -130,7 +130,7 @@ function UsageContent({ admin, accountId }: { admin: boolean; accountId: string 
     <UsageOverview data={data} loading={fetching} />
     <details className={styles.usageGuide}>
       <summary><Info size={14} aria-hidden />用量与费用如何计算<ChevronRight size={14} aria-hidden /></summary>
-      <div><p><strong>统计范围</strong>概览汇总当前全部筛选结果，包含其他分页。这里只统计 API Key 对 AI 聊天供应商的调用。</p><p><strong>Token 用量</strong>输入包含缓存，输出包含推理，两者都是总量的一部分。未取得可靠用量时显示「—」。</p><p><strong>实际积分</strong>按每次调用时的单价结算，并扣除退款。预留额度、待结算和待核对费用不计入实扣积分。</p></div>
+      <div><p><strong>统计范围</strong>概览汇总当前全部筛选结果，包含其他分页。这里只统计 API Key 对 AI 聊天供应商的调用；账户待累计小数是当前值，不受列表筛选影响。</p><p><strong>Token 用量</strong>输入包含缓存，输出包含推理，两者都是总量的一部分。未取得可靠用量时显示「—」。</p><p><strong>小数累计</strong>新调用按实际费用保留六位小数，在同一账户下跨模型、API Key 累计。满 1 积分后才扣减整数部分并写入积分流水，余下小数继续累计；待累计费用会占用可用额度。历史调用保留原结算规则。</p></div>
     </details>
 
     <div className={styles.records} ref={recordsRef} id={`${formId}-records`}>
@@ -177,7 +177,7 @@ function UsageContent({ admin, accountId }: { admin: boolean; accountId: string 
             : <div className={styles.tableWrap}>
               <table className={styles.table}>
                 <caption className={styles.srOnly}>API 调用明细，时间为北京时间，费用单位为积分</caption>
-                <thead><tr><th scope="col">模型 / 接口</th>{admin && <th scope="col">用户 / 供应商</th>}<th scope="col" className={styles.numeric}>Token 用量</th><th scope="col" className={styles.numeric}>实扣积分</th><th scope="col" className={styles.numeric}>响应耗时</th><th scope="col" title="按调用时间倒序">调用时间 ↓</th><th scope="col">状态</th><th scope="col"><span className={styles.srOnly}>操作</span></th></tr></thead>
+                <thead><tr><th scope="col">模型 / 接口</th>{admin && <th scope="col">用户 / 供应商</th>}<th scope="col" className={styles.numeric}>Token 用量</th><th scope="col" className={styles.numeric}>消耗积分</th><th scope="col" className={styles.numeric}>响应耗时</th><th scope="col" title="按调用时间倒序">调用时间 ↓</th><th scope="col">状态</th><th scope="col"><span className={styles.srOnly}>操作</span></th></tr></thead>
                 {data.records.map(row => <UsageRows key={row.id} row={row} admin={admin} expanded={expanded === row.id} onToggle={() => setExpanded(expanded === row.id ? null : row.id)} />)}
               </table>
             </div>}

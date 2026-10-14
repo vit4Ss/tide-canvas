@@ -1,11 +1,13 @@
 package points
 
 import (
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 	"strings"
 	"testing"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 	"tidecanvas/internal/model"
+	"tidecanvas/internal/pkg/idgen"
 )
 
 func TestAccountSummaryReconcilesPreciseCreditsAndIsolatesOwners(t *testing.T) {
@@ -41,5 +43,33 @@ func TestAccountSummaryReconcilesPreciseCreditsAndIsolatesOwners(t *testing.T) {
 	}
 	if _, err := newService(db, nil).accountSummary(999); err != ErrNotFound {
 		t.Fatalf("missing owner: %v", err)
+	}
+}
+
+func TestAccountSummaryRetainsEveryMicroPoint(t *testing.T) {
+	db, _ := accrualDB(t, 20)
+	checkSummaryMicroPoints(t, db)
+}
+
+func checkSummaryMicroPoints(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	uid := idgen.Next()
+	debit, credit := int64(-1000001), int64(2)
+	for _, row := range []any{
+		&model.User{ID: uid, Username: "micro-summary-" + uid.String(), Email: uid.String() + "@example.test", Points: 20, PointFraction: 123457, PointHeldMicros: 2234567, ChatPendingMicros: 345679},
+		&model.PointRecord{UserID: uid, ChangeType: ChangeConsume, Amount: -1, AmountMicros: &debit},
+		&model.PointRecord{UserID: uid, ChangeType: ChangeRefund, AmountMicros: &credit},
+		&model.PointRecord{UserID: uid, ChangeType: "recharge", Amount: 5},
+	} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	v, err := newService(db, nil).accountSummary(uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Added != 5.000002 || v.Deducted != 1.000001 || v.Refunded != .000002 || v.Total != 20.123457 || v.Reserved != 2.234567 || v.PendingTokenPoints != .345679 || v.Available != 17.543211 {
+		t.Fatalf("summary lost micro-point precision: %+v", v)
 	}
 }
