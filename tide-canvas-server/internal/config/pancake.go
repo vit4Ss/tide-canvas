@@ -8,7 +8,7 @@ import (
 
 // The RSA private key lives only in the SDK adapter, never in API responses.
 type PancakeConfig struct {
-	PromptScreening bool   `mapstructure:"promptScreening"`
+	PromptScreening bool   `mapstructure:"promptScreening"` // Framelyn /api/en generation routes only.
 	Enabled         bool   `mapstructure:"enabled"`
 	AdapterURL      string `mapstructure:"adapterUrl"`
 	InternalToken   string `mapstructure:"internalToken" json:"-"`

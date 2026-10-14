@@ -163,7 +163,10 @@ func StartTaskReconciler(ctx context.Context, d *app.Deps) {
 //	GET    /api/ai/history       UserHistoryQuery -> PageData<UserGenerationHistoryVO> (auth; caller only)
 //	GET    /api/ai/history/:id   -> UserGenerationHistoryDetailVO (auth; caller only)
 func Register(api *gin.RouterGroup, d *app.Deps) {
-	h := newHandler(d)
+	newHandler(d).registerRoutes(api, d)
+}
+
+func (h *handler) registerRoutes(api *gin.RouterGroup, d *app.Deps) {
 	h.registerOpenAPI(api, d)
 	g := api.Group("/ai")
 
@@ -172,7 +175,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	g.GET("/handlers", h.listHandlers)
 	g.GET("/tools", h.listSiteTools)
 	g.GET("/safety-config", func(c *gin.Context) {
-		response.OK(c, gin.H{"promptScreening": d.Cfg.Pancake.PromptScreening, "outputScreening": false})
+		response.OK(c, gin.H{"promptScreening": false, "outputScreening": false, "market": "cn"})
 	})
 
 	authed := g.Group("")
@@ -194,4 +197,20 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	// Public account history always stays caller-scoped, including for admins.
 	authed.GET("/history", h.listMyHistory)
 	authed.GET("/history/:id", h.getMyHistory)
+
+	// Framelyn shares the account, ledger, provider workers and task ownership,
+	// but its additional safety check cannot interrupt the existing CN routes.
+	h.registerEnglishAPI(api, d)
+}
+
+func (h *handler) registerEnglishAPI(api *gin.RouterGroup, d *app.Deps) {
+	en := &handler{svc: h.svc, billingMarket: model.BillingMarketEN}
+	group := api.Group("/en")
+	en.registerOpenAPI(group, d)
+	g := group.Group("/ai")
+	g.GET("/safety-config", func(c *gin.Context) {
+		response.OK(c, gin.H{"promptScreening": d.Cfg.Pancake.PromptScreening, "outputScreening": false, "market": "en"})
+	})
+	authed := g.Group("", middleware.JWTAuth(d))
+	authed.POST("/generate", en.generate)
 }

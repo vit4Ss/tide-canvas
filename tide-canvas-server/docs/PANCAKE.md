@@ -195,12 +195,12 @@ Sources: [official skill](https://docs.waffo.ai/zh/integrate/skill),
 
 ## Prompt screening and public pricing (2026-10-14)
 
-- Set `TIDECANVAS_PANCAKE_PROMPTSCREENING=true` on the **backend** after updating both the backend and payments images. The Compose overlays pass this variable through. Recreate the containers with the same Compose files/environment arguments used for deployment; a plain restart does not reload environment variables.
+- Set `TIDECANVAS_PANCAKE_PROMPTSCREENING=true` on the **backend** after updating the backend, payments and EN frontend images. Deploy the matching backend before the EN frontend. The Compose overlays pass this variable through. Recreate the containers with the same Compose files/environment arguments used for deployment; a plain restart does not reload environment variables.
 - Screening uses the adapter's existing merchant private key through `@waffo/pancake-ts` `contentSafety.scanPrompt`, with `semantic=enforce`. Backend and adapter environments must match. Payment checkout can remain disabled while prompt screening is enabled. The existing adapter IDs, site URL and internal token must still be configured.
-- This is a shared backend policy for image, video, audio and 3D generation in both websites, media API and generation facades. A browser header or alternate model cannot disable it. Text-only chat is unchanged. User text and supported aliases (including nested lyrics/instructions) are checked before any task or generation debit is created. Only `allow` proceeds. Block, review, malformed response, network error, timeout, rate limiting or failed audit persistence rejects the request without generation charges. The user can retry later; a review result does not promise an automatic review queue.
+- Screening is scoped to Framelyn: JWT submissions at `/api/en/ai/generate` and API-key submissions at `/api/en/open/v1/generations`. Existing FlowLight `/api/ai/generate`, `/api/open/v1/generations`, internal generation facades and text chat do not call Pancake. The route assigns the policy server-side; a request body or Origin/header cannot turn screening off within an EN route. User text and supported aliases (including nested lyrics/instructions) are checked before any task or generation debit is created. Only `allow` proceeds. Block, review, malformed response, network error, timeout, rate limiting or failed audit persistence rejects the request without generation charges. The user can retry later; a review result does not promise an automatic review queue.
 - Maximum combined screened text is 10,000 UTF-16 code units. Text is never silently truncated. Successful idempotent task replays return the existing task instead of generating again.
 - Decision receipts are stored in `prompt_safety_checks`: user/model, action/reason, provider request ID, creation time and keyed HMAC digest. No separate prompt copy or API credential is stored in this table. `PS-<id>` in the rejection message identifies the receipt. Existing task/input retention is unchanged.
-- `GET /api/ai/safety-config` publicly reports whether screening is enabled. The EN terms/AUP/privacy pages use this actual state; a disabled or unavailable configuration never claims screening is active.
+- `GET /api/en/ai/safety-config` publicly reports whether Framelyn screening is enabled. The legacy `/api/ai/safety-config` reports false for FlowLight. The EN terms/AUP/privacy pages use this actual state; a disabled or unavailable configuration never claims screening is active.
 - This integration checks **text only**. It does not screen uploaded media or generated image/video outputs. Those stages remain unimplemented and are disclosed as such; prompt screening alone is not a guarantee of full AIGC review approval.
 - Official reference: https://docs.waffo.ai/api-reference/endpoints/content-safety/scan-prompt . At implementation time the beta is free, with a shared merchant limit of 100 requests per 60 seconds per endpoint. Provider availability and limits can change.
 
@@ -209,3 +209,39 @@ Sources: [official skill](https://docs.waffo.ai/zh/integrate/skill),
 Production `/api/billing/en/plans` returned an empty array during the 2026-10-14 review. The owner then approved **Creator, USD 10, 600 credits, one-time, no automatic renewal**. On first start of the updated backend, `SeedEnglishCreator` inserts and publishes this pack (`en_creator`) and records a durable bootstrap marker in the same transaction. No larger pack or VIP entitlement is enabled. Later edits, renaming, unpublishing or deletion are preserved across restarts; an existing `en_creator` record is not overwritten. This does not enable payment channels. In FlowLight admin `/admin/pricing`, choose **English site / USD**, enter the actual English pack names, standard one-time USD price, standard credits, optional 12x pack total price (0 disables it), and benefits; then set the pack **on sale**. New packs are off sale by default. Publish policies such as credit validity separately; do not substitute test prices or invented promises.
 
 Framelyn `/pricing` now renders on-sale USD packs directly in the initial HTML without authentication or JavaScript, fetches the plan list without caching, and includes current model credit examples with concrete settings. An empty catalogue remains explicitly unpublished; a failed catalogue request is an error, never a free or fabricated pack. Checkout remains unavailable until its payment channel and provider are enabled. Updating frontend code alone cannot publish a plan in the production database; deploy the backend as well to apply the approved initialization.
+
+
+### Diagnose a failed prompt check
+
+`ready:true` in `/healthz` means configuration is present; it is not an upstream connectivity or production-key test. If generation reports `The safety check could not be completed` with a `PS-...` reference, use the following on the server after deploying the updated payments image:
+
+```sh
+docker exec tidecanvas-payments node dist/check-screening.js
+```
+
+This submits one fixed landscape prompt to the safety service without generating content or creating an order. Output is restricted to action, safe reason codes, HTTP status, provider reference and elapsed time. It never prints the private key, internal token, SDK error message or user prompt.
+
+Backend logs now correlate the `PS-...` reference with a sanitized reason and persist it in `prompt_safety_checks.reason`. `adapter_auth_failed` means the two services' internal tokens differ; `adapter_route_missing` can mean the payments image is old; `environment_mismatch` means backend/adapter environments differ. `upstream_unauthorized`/`upstream_forbidden` indicate Waffo authentication/access rejection; `upstream_timeout`, `upstream_dns_error`, `upstream_tls_error` and `upstream_network_error` identify transport problems. `upstream_rate_limited` indicates Waffo throttling; `upstream_invalid_response` indicates an incompatible response. Unknown errors stay `service_unavailable` or `upstream_unavailable` rather than exposing raw details.
+
+These diagnostics do not disable screening, extend payment timeouts or bypass a failed check. The actual cause of an already-issued reference requires server output; it cannot be inferred from the public error alone. Only the dedicated EN generation routes use the screening setting.
+
+For `upstream_unauthorized` (HTTP 401), check the host clock as well as the merchant/private-key configuration. Waffo's [API-key authentication](https://docs.waffo.ai/api-reference/authentication) accepts request timestamps at most five minutes behind or one minute ahead of its server time. A correctly configured key can therefore fail when the host clock runs fast; `ready:true` does not test this. Containers use the host clock.
+
+Keep a network time service enabled on the host. With Chrony, inspect `chronyc tracking`: require a valid reference and `Leap status: Normal`, and check the remaining `System time` correction rather than `Last offset`. An initial all-zero report with `Not synchronised` does not prove the clock is accurate. Prefer gradual correction on an active shared server, then rerun the diagnostic and confirm `allow`; a healthy clock alone does not verify credentials, checkout or webhook settlement.
+
+
+### Isolate Framelyn screening from the existing FlowLight service
+
+If an older deployment is interrupting the Chinese site due to Pancake failures, immediately set `TIDECANVAS_PANCAKE_PROMPTSCREENING=false` and apply only the backend change:
+
+```sh
+docker compose -f docker-compose.yml up -d --no-deps backend
+```
+
+This temporarily disables the older deployment's global check. It does not change payment enablement, credentials, the ledger or model configuration. Applying the setting recreates the backend process; it is not a zero-restart operation.
+
+After deploying the fixed shared backend and the EN frontend together, the same flag controls **only Framelyn's `/api/en/...` generation routes**. Enable it once the production Waffo credential works. The CN frontend, old API namespace, MCP and in-process generation facades remain independent of Pancake. The approved one-hour upscale timeout is unchanged. EN docs and playground now use `/api/en/open/v1`; do not fall back to the legacy CN route on 401/404/503 or safety-check rejection.
+
+The EN API aliases keep the existing JWT/API-key authentication, account balance, task ownership and ledger. This is endpoint-policy isolation, not a separate account or API-key system. The backend includes the trusted EN policy in generation fingerprints, so reusing a CN request ID on EN conflicts instead of replaying an unscreened request as if it were checked; it never creates a duplicate task. For submissions accepted by the older frontend, recover the existing task via its ID/history before making a new request.
+
+No Nginx change is needed when the existing `/api/` location already forwards to the shared backend. Do not add a backend `depends_on: payments` requirement to an existing single Compose deployment: the Chinese service does not need the payments container to start. The supplied overlays do not introduce that dependency.

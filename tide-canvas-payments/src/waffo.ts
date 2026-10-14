@@ -1,5 +1,6 @@
 import { WaffoPancake, TaxCategory, ScanSemanticMode, verifyWebhook } from "@waffo/pancake-ts";
 import type { Config } from "./config.js";
+import { InvalidPromptVerdict } from "./prompt-diagnostics.js";
 
 // Keep every amount in display units on the SDK wire. BigInt is used only for
 // validating sums locally, never for converting the API contract to cents.
@@ -88,10 +89,10 @@ export function createProvider(config: Config, customFetch: typeof fetch = fetch
     async scanPrompt(prompt: unknown) {
       if (typeof prompt !== "string" || !prompt.trim() || prompt.length > 10_000) throw new Error("Invalid prompt");
       const verdict = await required().contentSafety.scanPrompt({ prompt, locale: "en", semantic: ScanSemanticMode.Enforce });
-      if (!["allow", "review", "block"].includes(verdict.action) ||
+      if (!verdict || !["allow", "review", "block"].includes(verdict.action) ||
           typeof verdict.requestId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(verdict.requestId) ||
           !["allowed", "review_required", "restricted_content", "service_degraded"].includes(verdict.reasonCode) ||
-          (verdict.action === "allow" && verdict.reasonCode !== "allowed")) throw new Error("Invalid safety verdict");
+          (verdict.action === "allow" && verdict.reasonCode !== "allowed")) throw new InvalidPromptVerdict("Invalid safety verdict");
       return { action: verdict.action, reasonCode: verdict.reasonCode, requestId: verdict.requestId };
     },
     async checkout(input: CheckoutInput) {

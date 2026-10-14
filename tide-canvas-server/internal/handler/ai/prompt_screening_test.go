@@ -53,6 +53,39 @@ func TestPromptScreeningFailsClosedOnMalformedAndUnavailableResponses(t *testing
 	}
 }
 
+func TestPromptScreeningDiagnosticReasonsAreScopedAndSanitized(t *testing.T) {
+	for _, tc := range []struct {
+		status       int
+		body, reason string
+	}{
+		{401, `{"error":"unauthorized"}`, "adapter_auth_failed"},
+		{404, ``, "adapter_route_missing"},
+		{400, `{"error":"environment_mismatch"}`, "environment_mismatch"},
+		{503, `{"error":"not_configured"}`, "adapter_not_configured"},
+		{429, ``, "adapter_rate_limited"},
+		{502, `{"reasonCode":"upstream_unauthorized","upstreamStatus":401}`, "upstream_unauthorized"},
+		{502, `{"reasonCode":"upstream_timeout"}`, "upstream_timeout"},
+		{502, `{"reasonCode":"upstream_dns_error"}`, "upstream_dns_error"},
+		{502, `{"reasonCode":"PRIVATE_KEY_OR_PROMPT"}`, "service_unavailable"},
+		{502, `{"action":"allow","reasonCode":"allowed","requestId":"REQ_1"}`, "service_unavailable"},
+		{200, `{"action":"allow","reasonCode":"upstream_timeout","requestId":"REQ_1"}`, "adapter_invalid_response"},
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(tc.status)
+			_, _ = w.Write([]byte(tc.body))
+		}))
+		p := &promptScreeningClient{url: server.URL, http: server.Client()}
+		result := p.scan(context.Background(), "private customer prompt")
+		server.Close()
+		if result.Action != "unavailable" || result.Reason != tc.reason || result.RequestID != "" {
+			t.Fatalf("HTTP %d: %+v; want %s", tc.status, result, tc.reason)
+		}
+		if len(result.Reason) > 32 {
+			t.Fatal("reason exceeds audit column")
+		}
+	}
+}
+
 func TestPromptScreeningRunsBeforeTaskAndDebitAndRetainsAudit(t *testing.T) {
 	db := concurrencyTestDB(t)
 	pool, _ := db.DB()
@@ -90,7 +123,7 @@ func TestPromptScreeningRunsBeforeTaskAndDebitAndRetainsAudit(t *testing.T) {
 	}))
 	defer server.Close()
 	s := &service{repo: newRepo(db), registry: newHandlerRegistry(), promptScreening: &promptScreeningClient{url: server.URL, token: "private-internal-token", mode: "test", http: server.Client()}}
-	dto := generateDTO{Handler: "text_to_image", ModelID: "screened-image", Input: json.RawMessage(`{"prompt":"user description"}`)}
+	dto := generateDTO{BillingMarket: model.BillingMarketEN, Handler: "text_to_image", ModelID: "screened-image", Input: json.RawMessage(`{"prompt":"user description"}`)}
 	for _, a := range []string{"block", "review", "unexpected"} {
 		action.Store(a)
 		if _, err := s.generate(context.Background(), 42, dto); err == nil || !strings.Contains(err.Error(), "No generation") && !strings.Contains(err.Error(), "no generation") {
@@ -151,7 +184,7 @@ func TestPromptScreeningFreezesExpandedSkillAndPresetInstructions(t *testing.T) 
 	defer server.Close()
 	s := &service{repo: newRepo(db), promptScreening: &promptScreeningClient{url: server.URL, token: "test", http: server.Client()}}
 	m := &model.AiModel{Type: "image"}
-	dto := generateDTO{Input: json.RawMessage(`{"prompt":"user idea"}`), PinnedSkillPrompt: "Template instruction"}
+	dto := generateDTO{BillingMarket: model.BillingMarketEN, Input: json.RawMessage(`{"prompt":"user idea"}`), PinnedSkillPrompt: "Template instruction"}
 	if err := s.prepareScreenedGenerationPrompt(context.Background(), 42, &dto, m, genHandler{name: "text_to_image"}, nil); err != nil {
 		t.Fatal(err)
 	}

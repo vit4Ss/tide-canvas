@@ -65,6 +65,10 @@ func (h *handler) openListModels(d *app.Deps) gin.HandlerFunc {
 				out = append(out, row)
 			}
 		}
+		if h.billingMarket == "en" {
+			response.OK(c, out)
+			return
+		}
 		// The gateway catalogue is a second store. If it cannot be read, the
 		// generation models are still served rather than the whole list going
 		// dark; the gateway's own GET /models reports the fault.

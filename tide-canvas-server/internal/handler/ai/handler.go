@@ -17,7 +17,8 @@ import (
 
 // handler is the AI domain's HTTP layer.
 type handler struct {
-	svc *service
+	svc           *service
+	billingMarket string
 }
 
 func newHandler(d *app.Deps) *handler {
@@ -74,6 +75,7 @@ func (h *handler) generate(c *gin.Context) {
 
 // Both entry points share validation, billing and the durable task lifecycle.
 func (h *handler) startGeneration(c *gin.Context, dto generateDTO) {
+	dto.BillingMarket = h.billingMarket
 	uid := middleware.CurrentUserID(c)
 	vo, err := h.svc.generate(c.Request.Context(), uid, dto)
 	if err != nil {

@@ -16,10 +16,11 @@ import (
 // selects from AiModelVO.modelId — NOT the AiModel primary key. The service
 // resolves the AiModel by its ModelID column (falling back to the numeric PK).
 type generateDTO struct {
-	Handler   string          `json:"handler"`
-	ModelID   string          `json:"modelId"`
-	ProjectID idgen.ID        `json:"projectId"`
-	Input     json.RawMessage `json:"input"`
+	BillingMarket string          `json:"-"` // Assigned by the route, never by the browser.
+	Handler       string          `json:"handler"`
+	ModelID       string          `json:"modelId"`
+	ProjectID     idgen.ID        `json:"projectId"`
+	Input         json.RawMessage `json:"input"`
 	// Placement is required when input.skillId is present. Legacy HTTP callers
 	// default to the Studio surface and wildcard target.
 	EntryPoint string `json:"entryPoint"`

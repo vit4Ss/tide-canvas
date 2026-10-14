@@ -314,8 +314,8 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	if requested, configured, allowed := modelVideoDurationAllowed(m, dto.Handler, dto.Input); configured && !allowed {
 		return nil, skillPlacementError{message: fmt.Sprintf("所选模型不支持 %g 秒视频，请选择模型支持的时长", requested)}
 	}
-	// Shared by Studio, public API and internal generation facades. The client
-	// cannot opt out by changing its origin, selected model or request headers.
+	// Only Framelyn's explicit EN routes opt into Pancake screening. Existing
+	// FlowLight Studio, API and internal generation facades remain independent.
 	if err := s.prepareScreenedGenerationPrompt(ctx, userID, &dto, m, gh, tool); err != nil {
 		return nil, err
 	}
@@ -478,15 +478,17 @@ func directGenerationFingerprint(dto generateDTO) (string, error) {
 		}
 	}
 	payload := struct {
-		IsAPICall  bool     `json:"isApiCall,omitempty"`
-		Handler    string   `json:"handler"`
-		ModelID    string   `json:"modelId"`
-		ProjectID  idgen.ID `json:"projectId"`
-		Input      any      `json:"input"`
-		EntryPoint string   `json:"entryPoint"`
-		TargetType string   `json:"targetType"`
+		BillingMarket string   `json:"billingMarket,omitempty"`
+		IsAPICall     bool     `json:"isApiCall,omitempty"`
+		Handler       string   `json:"handler"`
+		ModelID       string   `json:"modelId"`
+		ProjectID     idgen.ID `json:"projectId"`
+		Input         any      `json:"input"`
+		EntryPoint    string   `json:"entryPoint"`
+		TargetType    string   `json:"targetType"`
 	}{
-		Handler: strings.TrimSpace(dto.Handler), ModelID: strings.TrimSpace(dto.ModelID), ProjectID: dto.ProjectID,
+		BillingMarket: dto.BillingMarket,
+		Handler:       strings.TrimSpace(dto.Handler), ModelID: strings.TrimSpace(dto.ModelID), ProjectID: dto.ProjectID,
 		IsAPICall: dto.IsAPICall,
 		Input:     input, EntryPoint: strings.ToLower(strings.TrimSpace(dto.EntryPoint)), TargetType: strings.ToLower(strings.TrimSpace(dto.TargetType)),
 	}

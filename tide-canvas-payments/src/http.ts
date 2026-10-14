@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
 import type { Provider, CheckoutInput } from "./waffo.js";
+import { promptDiagnostic } from "./prompt-diagnostics.js";
 
 export function createAdapter(config: Config, provider: Provider) {
   return createServer(async (req, res) => {
@@ -35,9 +36,14 @@ export function createAdapter(config: Config, provider: Provider) {
       if (req.url === "/checkout") return send(200, await provider.checkout(body as CheckoutInput));
       if (req.url === "/orders") return send(200, { orders: await provider.orders(body.reference) });
       return send(404, { error: "not_found" });
-    } catch {
+    } catch (error) {
       // SDK errors may contain customer information or credentials. Never send
       // them to clients or write them to the container log.
+      if (req.url === "/scan-prompt") {
+        const diagnostic = promptDiagnostic(error);
+        console.warn(JSON.stringify({ event: "prompt_screening_failed", ...diagnostic }));
+        return send(502, { error: "provider_unavailable", ...diagnostic });
+      }
       return send(502, { error: "provider_unavailable" });
     }
   });

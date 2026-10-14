@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,9 +16,12 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"go.uber.org/zap"
+
 	"tidecanvas/internal/config"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
+	"tidecanvas/internal/pkg/logger"
 )
 
 type promptScreeningClient struct {
@@ -65,50 +69,87 @@ func (p *promptScreeningClient) scan(ctx context.Context, prompt string) promptV
 	failed := promptVerdict{Action: "unavailable", Reason: "service_unavailable"}
 	body, err := json.Marshal(map[string]string{"mode": p.mode, "prompt": prompt})
 	if err != nil {
-		return failed
+		return promptCheckUnavailable("adapter_request_invalid")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.url, bytes.NewReader(body))
 	if err != nil {
-		return failed
+		return promptCheckUnavailable("adapter_request_invalid")
 	}
 	req.Header.Set("Authorization", "Bearer "+p.token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := p.http.Do(req)
 	if err != nil {
-		return failed
+		if errors.Is(err, context.DeadlineExceeded) {
+			return promptCheckUnavailable("adapter_timeout")
+		}
+		if errors.Is(err, context.Canceled) {
+			return promptCheckUnavailable("request_canceled")
+		}
+		return promptCheckUnavailable("adapter_unreachable")
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return failed
-	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 16385))
 	if err != nil || len(raw) > 16384 {
+		return promptCheckUnavailable("adapter_invalid_response")
+	}
+	if resp.StatusCode != http.StatusOK {
+		var diagnostic struct {
+			Error  string `json:"error"`
+			Reason string `json:"reasonCode"`
+		}
+		_ = json.Unmarshal(raw, &diagnostic)
+		switch resp.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return promptCheckUnavailable("adapter_auth_failed")
+		case http.StatusNotFound:
+			return promptCheckUnavailable("adapter_route_missing")
+		case http.StatusBadRequest:
+			if diagnostic.Error == "environment_mismatch" {
+				return promptCheckUnavailable("environment_mismatch")
+			}
+			return promptCheckUnavailable("adapter_request_invalid")
+		case http.StatusServiceUnavailable:
+			if diagnostic.Error == "not_configured" {
+				return promptCheckUnavailable("adapter_not_configured")
+			}
+		case http.StatusTooManyRequests:
+			return promptCheckUnavailable("adapter_rate_limited")
+		case http.StatusBadGateway:
+			switch diagnostic.Reason {
+			case "upstream_unauthorized", "upstream_forbidden", "upstream_rate_limited", "upstream_timeout", "upstream_request_rejected", "upstream_unavailable", "upstream_invalid_response", "upstream_dns_error", "upstream_tls_error", "upstream_network_error":
+				return promptCheckUnavailable(diagnostic.Reason)
+			}
+		}
 		return failed
 	}
 	var verdict promptVerdict
 	if json.Unmarshal(raw, &verdict) != nil || len(verdict.RequestID) == 0 || len(verdict.RequestID) > 128 {
-		return failed
+		return promptCheckUnavailable("adapter_invalid_response")
 	}
 	for _, c := range verdict.RequestID {
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
-			return failed
+			return promptCheckUnavailable("adapter_invalid_response")
 		}
 	}
 	switch verdict.Reason {
 	case "allowed", "review_required", "restricted_content", "service_degraded":
 	default:
-		return failed
+		return promptCheckUnavailable("adapter_invalid_response")
 	}
 	switch verdict.Action {
 	case "allow":
 		if verdict.Reason != "allowed" {
-			return failed
+			return promptCheckUnavailable("adapter_invalid_response")
 		}
 	case "review", "block":
 	default:
-		return failed
+		return promptCheckUnavailable("adapter_invalid_response")
 	}
 	return verdict
+}
+
+func promptCheckUnavailable(reason string) promptVerdict {
+	return promptVerdict{Action: "unavailable", Reason: reason}
 }
 
 // Include all supported user-written prompt aliases and audio instructions,
@@ -171,7 +212,7 @@ func generationPromptText(raw json.RawMessage) (string, error) {
 }
 
 func (s *service) screenGenerationPrompt(ctx context.Context, userID idgen.ID, dto generateDTO, m *model.AiModel) error {
-	if s.promptScreening == nil {
+	if s.promptScreening == nil || dto.BillingMarket != model.BillingMarketEN {
 		return nil
 	}
 	switch m.Type {
@@ -199,7 +240,11 @@ func (s *service) screenGenerationPrompt(ctx context.Context, userID idgen.ID, d
 		return &promptScreeningError{action: "unavailable"}
 	}
 	if verdict.Action != "allow" {
-		return &promptScreeningError{action: verdict.Action, reference: fmt.Sprintf("PS-%s", receipt.ID.String())}
+		reference := fmt.Sprintf("PS-%s", receipt.ID.String())
+		if verdict.Action == "unavailable" {
+			logger.L().Warn("ai: prompt safety check unavailable", zap.String("reference", reference), zap.String("reason", verdict.Reason))
+		}
+		return &promptScreeningError{action: verdict.Action, reference: reference}
 	}
 	return nil
 }
@@ -208,7 +253,7 @@ func (s *service) screenGenerationPrompt(ctx context.Context, userID idgen.ID, d
 // worker. A template edit while the request is queued must not substitute text
 // that was never screened. Public task/history input remains the user's input.
 func (s *service) prepareScreenedGenerationPrompt(ctx context.Context, userID idgen.ID, dto *generateDTO, m *model.AiModel, gh GenHandler, tool *model.AiTool) error {
-	if s.promptScreening == nil {
+	if s.promptScreening == nil || dto.BillingMarket != model.BillingMarketEN {
 		return nil
 	}
 	switch m.Type {
