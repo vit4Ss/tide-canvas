@@ -56,6 +56,7 @@ import (
 	"tidecanvas/internal/handler/skillrun"
 	"tidecanvas/internal/handler/social"
 	"tidecanvas/internal/handler/stub"
+	"tidecanvas/internal/handler/studiotemplate"
 	"tidecanvas/internal/handler/style"
 )
 
@@ -296,6 +297,10 @@ func run() error {
 	inspiration.Register(api, deps)
 	content.Register(api, deps)
 	style.Register(api, deps)
+	if err := studiotemplate.SeedSamples(deps.DB); err != nil {
+		logger.L().Warn("seed: studio sample templates", zap.Error(err))
+	}
+	studiotemplate.Register(api, deps)
 	skill.Register(api, deps)
 	skillrun.Register(api, deps)
 	social.Register(api, deps)

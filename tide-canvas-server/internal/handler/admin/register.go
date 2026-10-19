@@ -36,6 +36,7 @@ func Register(api *gin.RouterGroup, d *app.Deps) {
 	RegisterUsers(mod("users"), d)
 	RegisterWorks(mod("works"), d)
 	RegisterInspiration(mod("inspiration"), d)
+	RegisterStudioTemplates(mod("inspiration"), d)
 	RegisterGenerations(mod("generations"), d)
 	RegisterSocialRecords(mod("analysis_records"), d)
 	RegisterCoverSync(mod("works"), mod("inspiration"), d)

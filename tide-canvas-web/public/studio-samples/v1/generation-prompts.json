@@ -1,0 +1,46 @@
+{
+  "generator": "built-in image_gen",
+  "processing": "Original PNGs preserved in .runtime/imagegen/studio-samples-v1; full-resolution WebP encoding only, no crop or resize.",
+  "assets": [
+    {
+      "file": "clay-adventure.webp",
+      "kind": "image-example",
+      "prompt": "Generate ONE finished original image for a creative AI studio's style-template cover. Use case: stylized-concept. Portrait orientation 4:5, polished handcrafted stop-motion clay photography, not a UI mockup or a collage. Scene: a tiny orange fox astronaut courier joyfully jumping a rounded retro cream scooter over a little crater on a deep blue miniature moon, a paper bag with an enormous buttery croissant secured behind the saddle, pale peach planetary rings sweeping across a midnight teal sky. The fox leans into motion, expressive sculpted face, paws correctly gripping handlebars, scarf trailing. Tangible plasticine fingerprints, stitched miniature spacesuit, imperfect hand-shaped stars, fine flour on the croissant, studio miniature photography depth of field. Bold diagonal composition, playful but sophisticated craft, warm amber key light versus teal shadows, cinematic low camera, exquisite tactile detail. Single dramatic coherent scene filling the frame, immediately legible as a small thumbnail. No lettering, no logo, no watermark, no panels, no flat corporate stock illustration. Keep hero subject and scooter within central 75% so portrait or square crops work; bottom edge is scene, not a title area."
+    },
+    {
+      "file": "paper-mountains.webp",
+      "kind": "image-example",
+      "prompt": "Generate ONE original portrait 4:5 cover image, a museum-quality handcrafted paper sculpture photographed in a studio, not a UI, not a poster with typography. Use case: stylized-concept. A majestic coral-red origami crane with elegantly curved wings flies above a surreal archipelago of layered ivory and sage-green paper mountains; a narrow ribbon of turquoise paper river curls upward through the landscape as if suspended in air. Tiny gold paper sun between the wings, carefully cut scalloped clouds, minute terraces, folded edges and visible paper fibers. Warm off-white backdrop, directional daylight casting crisp dimensional shadows, restrained palette of ivory, sage, coral and turquoise. Tangible intricate craft, daring airy composition with strong diagonals, selective depth of field, premium contemporary design rather than flat illustration. Show the complete crane and sculptural world in a single coherent scene. Central hero remains recognizable in a square thumbnail crop. No words, no logos, no watermarks, no grid, no multiple panels."
+    },
+    {
+      "file": "rainy-cinema.webp",
+      "kind": "image-example",
+      "prompt": "Generate ONE original photographic cinematic portrait cover in 4:5 portrait orientation. Use case: photorealistic-natural. A stylish adult East Asian woman with short windswept dark hair and natural skin texture steps out of a red vintage tram on a rain-soaked street at night, a silver-gray trench coat catching the light. Her face is sharp in three-quarter view, expression quietly resolute, body turning mid-step, one hand on the tram rail. The open tram glows warm tungsten amber, cool cyan rain and distant blurred streetlights create contrast, droplets and wet asphalt reflections feel real. Foreground rain streaks softly motion-blurred, subtle film grain, cinematic 50mm lens, strong candid composition rather than posed passport portrait. Cropped mid-thigh up with plenty of environment, beautiful reflected color, no smooth plastic skin, no exaggerated glamour. Single moment, visually arresting editorial film still. No legible signs, no writing, no brand marks, no watermark, no collage. Face and main figure inside central 70% for thumbnail crops."
+    },
+    {
+      "file": "celestial-koi.webp",
+      "kind": "image-example",
+      "prompt": "Generate ONE original portrait 4:5 artwork for an imaginative Chinese fantasy style collection. Use case: stylized-concept. A colossal vermilion-and-gold celestial koi curves diagonally through floating malachite-green mountains and ribbons of pale ink-cloud, with tiny tiered pavilions perched on the peaks and a very small traveler in a red cloak crossing a narrow stone bridge below. Rich mineral-pigment blue-green shanshui painting fused with exquisitely fine gongbi linework, subtle silk texture, delicate gold contour highlights, wave forms echoing the koi fins. The fish feels alive and sweeping upward, dramatic asymmetrical composition, deep emerald and lapis against aged ivory mist, carefully limited red accents. Distinct painterly print-like visual language rather than photorealism or generic CGI, sophisticated gallery-level illustration, surprising scale and depth, intricate but readable as a thumbnail. Full coherent scene, no text, no calligraphy, no signatures, no watermark, no panels."
+    },
+    {
+      "file": "starlight-fashion.webp",
+      "kind": "image-example",
+      "prompt": "Generate ONE original high-fashion photographic image, portrait 4:5. Use case: ads-marketing. A confident adult woman of mixed East Asian appearance in a beautifully structured emerald green architectural trench coat and black ankle boots walks toward camera on a mirror-black runway. The coat has exceptional tailoring, wide sculptural lapels, a defined belt and flowing hem lifted by a gentle gust; real woven fabric and clean garment construction. Around her, a few huge translucent curved glass petals suspend in the air, catching pearly white light, with thin warm-white spotlights behind. Fashion editorial shot, full body with shoes visible, energetic mid-stride movement and a compelling gaze, premium realistic skin and hands, sophisticated midnight-green, black and silver palette. Bold futuristic set, strong central silhouette, carefully controlled highlights, not a standard catalog cutout. No brands, no text, no watermark, no collage. The whole figure is within the image with comfortable margins for thumbnail cropping."
+    },
+    {
+      "file": "tidal-product.webp",
+      "kind": "image-example",
+      "prompt": "Generate ONE original imaginative luxury product campaign image, portrait 4:5. Use case: product-mockup. A single elegant clear amber perfume bottle with a brushed silver spherical cap stands inside a giant open pearlescent seashell, suspended above deep turquoise water. A sculptural arc of clear water sweeps diagonally behind and around the bottle, droplets hang in the air, a warm shaft of sunlight enters from the upper left, refracted caustic patterns ripple over the glass and shell. No label text on the bottle. Macro-detail materials: tiny condensation on glass, nacre iridescence, realistic transparent liquid, refined metallic cap. Premium commercial photography, product hero tack-sharp, dramatic movement, sea-green, apricot amber and pearl palette, simple coherent product-first hierarchy with beautiful negative space. No human, no writing, no logo, no watermark, no collage. Bottle clearly identifiable in the center when cropped square."
+    },
+    {
+      "file": "canyon-chase.webp",
+      "kind": "storyboard-still",
+      "prompt": "Generate ONE original widescreen 16:9 cinematic storyboard keyframe, not a video, for a high-energy motion template cover. Use case: stylized-concept. A helmeted rider on a matte-black and acid-yellow futuristic motorcycle banks hard through a vast red sandstone canyon at golden hour. Low tracking-camera angle almost at road level, motorcycle and rider crisp, canyon walls and flying dust have beautiful directional motion blur, a trail of amber dust curls in a large S-curve behind. Strong perspective, restrained lens flare, believable mechanics, elegant aggressive silhouette, wheel contact and anatomy plausible. Premium science-fiction live-action film still with real sand, rubber and metal texture, dramatic warm sandstone versus cool shadow contrast. One powerful moving moment, no crash or injury, no text, no lettering on bike, no brand marks, no watermark, no montage. Keep motorcycle and rider in central 65% for thumbnail crops."
+    },
+    {
+      "file": "cloud-tram.webp",
+      "kind": "storyboard-still",
+      "prompt": "Generate ONE original widescreen 16:9 cinematic fantasy storyboard keyframe, not an animation or a collage. Use case: stylized-concept. A small vermilion-red vintage tram glides along an impossibly graceful elevated rail through a floating cloud forest at sunrise. Huge mossy limestone islands drift in the sky, waterfalls dissolve into mist, a compact glass-and-brass station is built into an ancient tree, distant white birds trace the perspective. Camera is sweeping alongside and slightly above the tram, foreground foliage lightly motion-blurred, warm light in its windows, a sense of a continuous traveling shot and wonder. Sophisticated cinematic environment art with believable miniature-world material detail, jade foliage, pearly mist, vermilion tram and golden morning light. Dramatic diagonal rail leading into depth, surreal but cohesive, not a generic neon city. No readable signage, no words, no logo, no watermark, no panels. Tram and main station readable in a central crop."
+    }
+  ]
+}

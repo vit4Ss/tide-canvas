@@ -65,6 +65,8 @@ import {
 import { createSubmissionGate, type SubmissionGate } from "./submission-gate";
 import { resolvedResultCells } from "./resolved-result-cells";
 import { studioReferenceIssue, uploadedFileUrls } from "./required-reference";
+import type { StudioTemplate } from "@/lib/studio-template-api";
+import { templateModelIssue, templateReferenceIssue } from "@/lib/studio-template";
 import {
   isStudioTaskNewerOrEqual,
   parseStudioTimestamp,
@@ -72,6 +74,7 @@ import {
 } from "./inflight-run-order";
 
 export interface GenerationParams {
+  template?: StudioTemplate | null;
   /* panel state (fresh each render) */
   prompt: string;
   count: number;
@@ -264,6 +267,7 @@ export function useGeneration(p: GenerationParams) {
     durOpts,
     qualOpts,
     skill,
+    template,
     isAudio,
     is3D,
     isSfx,
@@ -298,6 +302,7 @@ export function useGeneration(p: GenerationParams) {
   const mountedRef = useRef(true);
   // 异步量旧素材尺寸期间，模型或素材发生变化就放弃这次提交，不能把旧闭包发出去。
   const generationValidationSignature = JSON.stringify({
+    template,
     prompt,
     count,
     model,
@@ -940,6 +945,13 @@ export function useGeneration(p: GenerationParams) {
     // 图片类 3D 与 prompt 互斥；切换页签后保留在面板 state 里的旧提示词
     // 既不发送，也不写入本轮历史。
     const p = !isWorld3D && (tool === "i2_3d" || tool === "mv2_3d") ? "" : prompt.trim();
+    if (template) {
+      const issue = template.mediaType !== curType || template.mode !== tool
+        ? "模板与当前创作模式不一致，请重新选择模板"
+        : !selectedStudio ? "请先选择一个可用模型"
+        : templateModelIssue(template, selectedStudio) || templateReferenceIssue(template, activeSlots, activeSlotData);
+      if (issue) { toast.error(issue); markRequiredField("#dropFiles"); return; }
+    }
     // 引用类模式的素材校验优先于提示词，两者都为空时优先说明当前
     // 模式必须上传什么；且只检查当前模型真正启用的槽位。
     const referenceIssue = studioReferenceIssue(tool, activeSlotData, activeSlots.length);
@@ -1184,6 +1196,7 @@ export function useGeneration(p: GenerationParams) {
 
     // snapshot the exact settings of this run for 重新编辑 / 再次生成.
     lastRunRef.current = {
+      ...(template ? { template } : {}),
       prompt: p, model: mdl, ...(selectedStudio?.id ? { modelId: selectedStudio.id } : {}),
       tool, curType, ratio: r, imgRes, res, dur: generationDur, quality, count: n,
       ...(presetSkill ? { skill: { id: presetSkill.id, title: presetSkill.title } } : {}),
@@ -1342,7 +1355,7 @@ export function useGeneration(p: GenerationParams) {
       },
     }).finally(releaseSubmissionGate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, recoveringRuns, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, musicMode, sourceClipId, sourceIsUpload, continueAt, lyrics, songStyle, songTitle, instrumental, enablePbr, faceCount, generateType, resultFormat, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration, skill, isAudio, isSfx, is3D, promptRef, releaseSubmissionGate]);
+  }, [busy, recoveringRuns, prompt, count, tool, curType, ratio, model, res, dur, imgRes, quality, musicMode, sourceClipId, sourceIsUpload, continueAt, lyrics, songStyle, songTitle, instrumental, enablePbr, faceCount, generateType, resultFormat, slotData, studioList, ratioOpts, resOpts, durOpts, qualOpts, pushHistory, startGeneration, skill, template, isAudio, isSfx, is3D, promptRef, releaseSubmissionGate]);
 
   // Refresh-resume has two durable layers. ACTIVE_RUN_KEY is the normal pointer;
   // the accepted-create journal closes the response→ACTIVE_RUN_KEY crash window

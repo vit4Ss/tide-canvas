@@ -1,0 +1,98 @@
+[
+  {
+    "slug":"clay-adventure",
+    "template":{
+      "kind":"style","mediaType":"image","title":"黏土奇遇","category":"手作世界",
+      "description":"让熟悉的主角，闯入一个有温度的微缩世界。",
+      "prompt":"将参考图片中的主体转化为精致的定格动画手作角色，保留主体最有辨识度的外形、服装和配色。使用手塑黏土、织物、纸张与微缩道具的真实触感，允许自然的手工痕迹。以充满想象力的微缩场景呈现主体，采用有动势的斜向构图、温暖琥珀色主光与蓝绿色阴影、浅景深微距摄影。画面要有正在发生的故事，而不是静态证件照或多格拼贴。根据用户补充的主体与场景描述创作，不照搬示例中的狐狸和车辆。",
+      "coverUrl":"/studio-samples/v1/clay-adventure.webp","previewUrl":"","authorName":"FlowLight 原创示例",
+      "inputHint":"上传 1 张人物、宠物或物品图片，再补充它要经历的场景。",
+      "mode":"i2i","modelKey":"","requirements":{"images":1,"videos":0,"audio":0},
+      "options":{"aspectRatio":"4:5","resolution":"2K","quality":"high"},"status":1,"sortOrder":10
+    }
+  },
+  {
+    "slug":"paper-mountains",
+    "template":{
+      "kind":"style","mediaType":"image","title":"纸艺山海","category":"材质实验",
+      "description":"用纸张的折痕、层叠与光影，重建你的想象。",
+      "prompt":"将参考主体重新诠释为高级手工纸雕，保留主体的核心轮廓与辨识特征。构建有前后层次的纸艺空间，呈现清晰的折叠边缘、切割纹理、纸张纤维与悬浮结构，融入象牙白、鼠尾草绿、珊瑚红和少量青绿色。用柔和自然侧光投下细腻而清晰的立体阴影，构图轻盈、有流动感，像真实拍摄的微缩纸雕装置，不是扁平滤镜。以用户补充的内容决定主题，不强行添加示例里的纸鹤。",
+      "coverUrl":"/studio-samples/v1/paper-mountains.webp","previewUrl":"","authorName":"FlowLight 原创示例",
+      "inputHint":"上传主体图片，描述你想变成纸艺的场景或空间。",
+      "mode":"i2i","modelKey":"","requirements":{"images":1,"videos":0,"audio":0},
+      "options":{"aspectRatio":"4:5","resolution":"2K","quality":"high"},"status":1,"sortOrder":20
+    }
+  },
+  {
+    "slug":"rainy-cinema",
+    "template":{
+      "kind":"style","mediaType":"image","title":"雨夜电影肖像","category":"电影感",
+      "description":"暖色车窗与冷色雨夜，把一张照片变成电影瞬间。",
+      "prompt":"以参考人物为唯一身份依据，保留面部特征、年龄感与真实肤质，不改变为其他人。将人物置于有叙事感的雨夜城市镜头中，以车窗内的暖钨丝光与街头的冷青色环境光形成层次，加入真实雨滴、湿润路面反射和轻微前景运动模糊。采用自然的转身、行走或回望姿态，50mm 电影摄影、浅景深、克制胶片颗粒，让脸部清晰、环境有动势。具体服装和场景服从用户描述，不磨皮成塑料脸，不生成拼图。",
+      "coverUrl":"/studio-samples/v1/rainy-cinema.webp","previewUrl":"","authorName":"FlowLight 原创示例",
+      "inputHint":"上传 1 张清晰人物照片，可补充服装、城市或人物情绪。",
+      "mode":"i2i","modelKey":"","requirements":{"images":1,"videos":0,"audio":0},
+      "options":{"aspectRatio":"4:5","resolution":"2K","quality":"high"},"status":1,"sortOrder":30
+    }
+  },
+  {
+    "slug":"celestial-koi",
+    "template":{
+      "kind":"style","mediaType":"image","title":"东方幻境","category":"东方美学",
+      "description":"青绿矿物色、细金线与云中山海，画出超现实的东方故事。",
+      "prompt":"以参考主体为创作中心，保留可辨识的外形，将其融入具有东方想象力的青绿山水世界。使用石青、石绿、朱砂与古绢米白，结合工笔线描、细金线、矿物颜料质感和轻微丝绢肌理。通过云、水、山体的曲线形成有动势的构图，运用大小悬殊的尺度营造奇幻感，画面精致但主次清晰。根据用户描述选择建筑、自然意象与故事，不默认复制示例中的锦鲤；不加书法、水印或无关文字。",
+      "coverUrl":"/studio-samples/v1/celestial-koi.webp","previewUrl":"","authorName":"FlowLight 原创示例",
+      "inputHint":"上传人物、物品或场景图片，补充希望出现的东方意象。",
+      "mode":"i2i","modelKey":"","requirements":{"images":1,"videos":0,"audio":0},
+      "options":{"aspectRatio":"4:5","resolution":"2K","quality":"high"},"status":1,"sortOrder":40
+    }
+  },
+  {
+    "slug":"starlight-fashion",
+    "template":{
+      "kind":"inspiration","mediaType":"image","title":"星光秀场换装","category":"人物换装",
+      "description":"让你的服装走进一场悬浮玻璃与镜面光影的未来秀场。",
+      "prompt":"以图片1的人物作为唯一模特身份，以图片2的服装作为唯一服装依据。保留图片1人物的面部特征、体态和年龄感，准确呈现图片2服装的剪裁、颜色、面料与装饰，不将服装替换成示例中的绿色外套。让人物穿着这套服装，自然向镜头行走，展示完整服装和鞋子。场景为镜黑色秀场，少量巨大的半透明玻璃花瓣悬浮在背景，细窄的暖白聚光灯与银色轮廓光交错，地面有优雅倒影。服装清晰、布料有自然运动感，皮肤和手部真实，构图像高级时装大片。无额外标语、水印或拼贴。",
+      "coverUrl":"/studio-samples/v1/starlight-fashion.webp","previewUrl":"","authorName":"FlowLight 原创示例",
+      "inputHint":"图片1上传人物，图片2上传服装。系统沿用你的服装，不要求它与示例同款。",
+      "mode":"i2i","modelKey":"","requirements":{"images":2,"videos":0,"audio":0},
+      "options":{"aspectRatio":"4:5","resolution":"2K","quality":"high"},"status":1,"sortOrder":50
+    }
+  },
+  {
+    "slug":"tidal-product",
+    "template":{
+      "kind":"inspiration","mediaType":"image","title":"潮汐产品大片","category":"产品广告",
+      "description":"把普通产品照，放进珍珠贝壳与悬浮水环组成的广告场景。",
+      "prompt":"使用图片1中的产品作为画面唯一产品主体，严格保留产品的包装形状、品牌标识、颜色、标签和材质，不改成示例里的香水瓶。将产品放置在一枚打开的巨大珍珠贝壳内，悬于深青绿色水面之上；一道透明水弧从产品后方斜向掠过，少量水珠凝固在空气中。左上方暖阳照入，玻璃、水面和贝壳呈现真实折射、焦散与珠光。产品最清晰，背景简洁有层次，形成强烈但克制的动势，采用高端商业静物摄影。主体与水花不要互相遮挡，不添加广告文案和水印。",
+      "coverUrl":"/studio-samples/v1/tidal-product.webp","previewUrl":"","authorName":"FlowLight 原创示例",
+      "inputHint":"上传 1 张清晰产品图，尽量完整展示包装与标签。",
+      "mode":"i2i","modelKey":"","requirements":{"images":1,"videos":0,"audio":0},
+      "options":{"aspectRatio":"4:5","resolution":"2K","quality":"high"},"status":1,"sortOrder":60
+    }
+  },
+  {
+    "slug":"canyon-chase",
+    "template":{
+      "kind":"style","mediaType":"video","title":"高速追光","category":"电影运动",
+      "description":"低机位跟拍、风沙与斜阳，把速度拍成电影。分镜封面示例。",
+      "prompt":"以用户上传画面为首帧和主体依据，保持主体外观、服装或车身设计一致。采用低机位平行跟拍，以稳定的运动方向、前景掠过、自然环境运动模糊和连续的光影变化表现速度。主角保持清晰，背景有纵深，风、衣物或尘土随运动响应。镜头连贯不跳切，不变形、不突然增减部件。根据用户补充的场景和动作安排镜头，不强制替换为示例里的摩托车。",
+      "coverUrl":"/studio-samples/v1/canyon-chase.webp","previewUrl":"","authorName":"FlowLight 原创分镜",
+      "inputHint":"上传 1 张包含主体与环境的图片，补充行进方向和镜头运动。",
+      "mode":"i2v","modelKey":"","requirements":{"images":1,"videos":0,"audio":0},
+      "options":{"aspectRatio":"16:9","resolution":"1080p","duration":5},"status":0,"sortOrder":70
+    }
+  },
+  {
+    "slug":"cloud-tram",
+    "template":{
+      "kind":"inspiration","mediaType":"video","title":"穿越云端车站","category":"奇幻叙事",
+      "description":"一趟从云海驶入森林车站的梦幻旅程。分镜封面示例。",
+      "prompt":"以用户上传画面为视频首帧，保持其中车辆、轨道和场景的视觉一致性。一辆红色复古电车沿悬于云端的优雅轨道前行，穿过覆有苔藓的浮空山体，远处瀑布散入薄雾，晨光照亮玻璃与黄铜构成的树上车站。镜头以轻缓的侧前方跟拍开始，平稳拉开一点距离，带出云海与森林的纵深；前景枝叶轻轻掠过，窗内灯光稳定，薄雾与小鸟运动自然。单镜头连贯推进，不切换场景、不让车辆结构或轨道形状突变。",
+      "coverUrl":"/studio-samples/v1/cloud-tram.webp","previewUrl":"","authorName":"FlowLight 原创分镜",
+      "inputHint":"先准备一张云端车站或列车画面，再按首帧生成视频。",
+      "mode":"i2v","modelKey":"","requirements":{"images":1,"videos":0,"audio":0},
+      "options":{"aspectRatio":"16:9","resolution":"1080p","duration":5},"status":0,"sortOrder":80
+    }
+  }
+]
