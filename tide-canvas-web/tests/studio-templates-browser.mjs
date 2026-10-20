@@ -9,7 +9,7 @@ const browser = await chromium.launch({ headless: true, ...(process.env.BROWSER_
 const catalog = JSON.parse(await readFile(new URL("../../tide-canvas-server/internal/handler/studiotemplate/samples.json", import.meta.url), "utf8"));
 const templates = catalog.map(({ template }, i) => ({ ...template, id: String(i+1), uses: 0, inputHint: i===4 ? "图片1上传人物，图片2上传服装。" : "上传你自己的素材，系统自动完成同款效果。", ...(template.mediaType === "video" ? { status: 1, mode: "ref", requirements: {images:0,videos:1,audio:1}, previewUrl: base+"/fixture.mp4" } : {}) }));
 const publicRow = template => { const row = { ...template }; for (const key of ['prompt','modelKey','status','sortOrder']) delete row[key]; return row; };
-let owner="801", uploaded=0, loseResponse=false, quoteFails=false, catalogueFails=false, failNextTask=false, deletedTask=false, templateHidden=false, uploadFails=false, verifyFilesFails=false, setupFails=false, uploadDelay=0;
+let owner="801", uploaded=0, loseResponse=false, quoteFails=false, catalogueFails=false, adminCatalogueFails=false, failNextTask=false, deletedTask=false, templateHidden=false, uploadFails=false, verifyFilesFails=false, setupFails=false, uploadDelay=0;
 const submits=[], quotes=[], tasks=new Map(), storedFiles=new Map(), errors=[];
 const context=await browser.newContext({viewport:{width:1440,height:1000}});
 await context.addInitScript(()=>localStorage.setItem("access_token","template-fixture"));
@@ -19,6 +19,7 @@ await context.route("**/api/**",async route=>{
  let data={};
  const fail=(message,code=400)=>route.fulfill({status:code,json:{success:false,code,message,data:null}});
  if(path==="/api/auth/me")data={id:owner,username:"reviewer",nickname:"Reviewer",role:9,status:1,points:1000,menus:['discover','studio','inspire','analysis','three_d','tools','chat','canvas','explore','assets'],adminPerms:[]};
+ else if(path.startsWith('/api/admin/dashboard/'))return fail('fixture dashboard unavailable',503);
  else if(path==="/api/market/studio-models")data=[{id:"41",modelKey:"fixture-model",name:"Fixture Model",type:"image",config:{modes:["i2i"],resolutions:["2k"],ratios:["4:5"],qualities:["high"]}}];
  else if(path==="/api/points/balance")data={points:1000,frozen:0};
  else if(path==="/api/ai/optimize-cost")data={cost:0};
@@ -41,6 +42,7 @@ await context.route("**/api/**",async route=>{
   const upload=req.postDataJSON();uploaded++;
   data={existingFile:{id:String(600+uploaded),ownerId:owner,fileUrl:base+`/studio-samples/v1/${upload.filename==='outfit.png'?'starlight-fashion':'rainy-cinema'}.webp`,fileType:upload.contentType.split('/')[0],mimeType:upload.contentType,originalName:upload.filename,fileSize:upload.size}};storedFiles.set(data.existingFile.id,data.existingFile);
  }else if(path==="/api/studio-templates"||path==="/api/admin/studio-templates"){
+  if(adminCatalogueFails&&path.includes('admin'))return fail('模拟后台模板加载失败',503);
   if(catalogueFails && !path.includes("admin"))return fail("fixture catalogue unavailable",503);
   if(req.method()==="POST"){data={...req.postDataJSON(),id:String(10001+templates.length),uses:0};templates.push(data);}
   else {const rows=templates.filter(t=>(!url.searchParams.get('mediaType')||t.mediaType===url.searchParams.get('mediaType'))&&(!url.searchParams.get('category')||t.category===url.searchParams.get('category'))&&(!url.searchParams.get('kind')||t.kind===url.searchParams.get('kind'))&&(!url.searchParams.get('keyword')||t.title.includes(url.searchParams.get('keyword'))));data={records:path.includes('admin')?rows:rows.map(publicRow),categories:[...new Set(rows.map(t=>t.category))],pages:1,total:rows.length,pageNum:1,pageSize:18};}
@@ -68,6 +70,67 @@ page.on('console',message=>{if(message.type()==='error' && message.text().includ
 const imageFile={name:'portrait.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=','base64')};
 const snap=async name=>process.env.CAPTURE_REVIEW==='0'||(process.env.CAPTURE_RESULTS_ONLY==='1'&&!name.startsWith('result-'))?undefined:page.screenshot({path:`${dir}/${name}.png`,fullPage:true,animations:'disabled'});
 try{
+ // Exercise real client navigation: storefront CSS must not decorate admin footers.
+ await page.goto(base+'/terms',{waitUntil:'networkidle'});
+ const siteFooter=page.locator('footer.site-footer');await siteFooter.waitFor();
+ const publicFooter=await siteFooter.evaluate(el=>({after:getComputedStyle(el,'::after').content,padding:parseFloat(getComputedStyle(el).paddingTop)}));
+ assert.ok(publicFooter.after.includes('FLOWING LIGHT')&&publicFooter.padding>=40,'public footer lost its intended styling');
+ await page.evaluate(()=>{window.__templateFooterAudit='same-document';});
+ await page.locator('.acct-trigger').click();await page.getByRole('menuitem',{name:'管理后台',exact:true}).click();
+ await page.getByRole('link',{name:'创作模板',exact:true}).click();await page.getByRole('button',{name:'新建风格',exact:true}).waitFor();
+ assert.equal(await page.evaluate(()=>window.__templateFooterAudit),'same-document','test did not navigate with resident storefront CSS');
+ await page.getByRole('button',{name:/^灵感做同款/}).click();await page.getByRole('heading',{name:'星光秀场换装',exact:true}).waitFor();
+ const adminCards=page.locator('.adm-content article');
+ const footerStyles=await adminCards.locator('footer').evaluateAll(els=>els.map(el=>({after:getComputedStyle(el,'::after').content,background:getComputedStyle(el).backgroundColor,paddingTop:parseFloat(getComputedStyle(el).paddingTop),paddingBottom:parseFloat(getComputedStyle(el).paddingBottom)})));
+ assert.equal(footerStyles.length,2);
+ for(const value of footerStyles){assert.ok(!value.after.includes('FLOWING'),'site watermark leaked into card actions');assert.notEqual(value.background,'rgb(10, 10, 11)','site dark background leaked into admin');assert.ok(value.paddingTop<=16&&value.paddingBottom<24,'site spacing leaked into card actions');}
+ const pager=page.getByRole('navigation',{name:'模板分页',exact:true});
+ assert.equal(await pager.evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(255, 255, 255)');
+ assert.ok((await pager.boundingBox()).height<90,'pager inherited oversized site-footer spacing');
+ for(const card of await adminCards.all()){
+  assert.ok((await card.boundingBox()).width>=340,'few templates remain squeezed into narrow columns');
+  assert.equal(await card.locator('img').first().evaluate(el=>getComputedStyle(el).objectFit),'contain','admin preview crops the original artwork');
+  const bounds=await card.locator('footer button, footer a').evaluateAll(els=>els.map(el=>el.getBoundingClientRect().top));
+  assert.ok(Math.max(...bounds)-Math.min(...bounds)<2,'desktop template actions wrap unnecessarily');
+ }
+ await snap('admin-style-leak-desktop');
+ for(const width of [1920,1024,768,600,481,480,390,320]){
+  await page.setViewportSize({width,height:844});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`admin template overflow at ${width}`);
+  for(const card of await adminCards.all()){
+   const bounds=await card.boundingBox(), available=await card.evaluate(el=>el.parentElement.clientWidth);assert.ok(bounds.width>=Math.min(320,available)-2,`two-card layout squeezes actions at ${width}`);
+   assert.equal(await card.evaluate(el=>el.scrollWidth>el.clientWidth+1),false,`card content overflow at ${width}`);
+  }
+  if(width===390)await snap('admin-style-leak-mobile');
+ }
+ const adminSearch=page.getByRole('textbox',{name:'搜索模板',exact:true});
+ await adminSearch.fill('  星光秀场换装  ');await page.getByRole('button',{name:'查询',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelectorAll('.adm-content article').length===1);
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'single filtered card overflows');
+ await adminSearch.fill('no-template-matches');await page.getByRole('button',{name:'查询',exact:true}).click();
+ await page.getByRole('heading',{name:'没有找到匹配的模板',exact:true}).waitFor();
+ assert.equal(await page.getByRole('button',{name:'创建第一个模板',exact:true}).count(),0,'search miss pretends the catalogue is empty');
+ await page.getByRole('button',{name:'清除筛选',exact:true}).click();await page.getByRole('heading',{name:'星光秀场换装',exact:true}).waitFor();
+ adminCatalogueFails=true;await adminSearch.fill('request-failure');await page.getByRole('button',{name:'查询',exact:true}).click();
+ await page.getByRole('alert').filter({hasText:'模拟后台模板加载失败'}).waitFor();
+ await pager.getByText('列表加载失败',{exact:true}).waitFor();
+ assert.equal(await pager.getByRole('button',{name:'上一页',exact:true}).isDisabled(),true);
+ assert.equal(await pager.getByRole('button',{name:'下一页',exact:true}).isDisabled(),true);
+ adminCatalogueFails=false;await adminSearch.fill('');await page.getByRole('button',{name:'查询',exact:true}).click();
+ await page.getByRole('heading',{name:'星光秀场换装',exact:true}).waitFor();
+ await page.getByRole('button',{name:/^风格主题/}).click();await page.getByRole('heading',{name:'黏土奇遇',exact:true}).waitFor();
+ for(const width of [600,1024]){
+  await page.setViewportSize({width,height:844});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`multi-card layout overflow at ${width}`);
+  for(const card of await adminCards.all())assert.equal(await card.evaluate(el=>el.scrollWidth>el.clientWidth+1),false,'multi-card action overflow');
+ }
+ const longRow=templates.find(t=>t.id==='1'), originalTitle=longRow.title, originalCategory=longRow.category;
+ longRow.title='长标题测试'+('人物场景与服装素材'.repeat(12));longRow.category='较长的分类名称'.repeat(6);
+ await adminSearch.fill('长标题测试');await page.getByRole('button',{name:'查询',exact:true}).click();await page.getByRole('heading',{name:longRow.title,exact:true}).waitFor();
+ await page.setViewportSize({width:320,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'long operator content overflows mobile');
+ assert.equal(await adminCards.first().evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
+ longRow.title=originalTitle;longRow.category=originalCategory;
+ await page.setViewportSize({width:1440,height:1000});
  assert.equal((await fetch(base+'/studio-samples/v1/generation-prompts.json')).status,404,'private artwork provenance is publicly served');
  await page.goto(base+"/templates",{waitUntil:'networkidle'});await page.getByRole('heading',{name:'黏土奇遇',exact:true}).waitFor();
  await page.getByRole('button',{name:'全部模板',exact:true}).click();await page.getByRole('button',{name:'全部风格',exact:true}).click();assert.equal(await page.getByRole('heading',{name:'黏土奇遇',exact:true}).isVisible(),true);

@@ -91,7 +91,7 @@ body:where(.imini){
 .signin:hover{border-color:var(--accent); color:var(--accent); transform:translateY(-1px);}
 
 /* page regions keep their own stacking context above any backdrop tint */
-.hero, section.block, .mq-wrap, footer{position:relative; z-index:1;}
+.hero, section.block, .mq-wrap, .site-footer{position:relative; z-index:1;}
 
 /* ─── GLOBAL CONTINUOUS BACKGROUND（首页流光场，design-ref 原样回植）──── */
 /* one fixed shader field behind the whole page — its hue/flow morph with
@@ -393,7 +393,7 @@ body:where(.imini){
 .cta-secondary:hover{background:rgba(255,255,255,.14);}
 
 /* ─── FOOTER ──────────────────────────────────────────────────────── */
-:where(body.imini) footer{border-top:1px solid var(--border); padding:54px 0 40px; margin-top:clamp(40px,6vw,80px);}
+:where(body.imini) .site-footer{border-top:1px solid var(--border); padding:54px 0 40px; margin-top:clamp(40px,6vw,80px);}
 .foot-grid{display:grid; grid-template-columns:1.6fr 1fr 1fr 1fr; gap:34px;}
 @media(max-width:760px){.foot-grid{grid-template-columns:1fr 1fr;}}
 .foot-brand .brand{font-size:21px; margin-bottom:14px;}

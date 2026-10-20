@@ -78,7 +78,7 @@ export default function SiteFooter() {
   }));
 
   return (
-    <footer>
+    <footer className="site-footer">
       <div className="wrap">
         <div className="foot-grid">
           <div className="foot-brand">

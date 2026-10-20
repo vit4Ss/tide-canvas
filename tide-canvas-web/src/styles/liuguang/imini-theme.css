@@ -124,7 +124,7 @@ body.imini.flux-on #caps-sec,
 body.imini.flux-on #studio-sec,
 body.imini.flux-on #cta-sec,
 body.imini.flux-on .mq-wrap,
-body.imini.flux-on footer{background:transparent;}
+body.imini.flux-on .site-footer{background:transparent;}
 /* .plan 的面/影/位移由文末「定价卡精修」段定稿，此处只保留未被覆盖的边线与圆角 */
 body.imini .plans .plan{border-color:var(--border); border-radius:14px;}
 body.imini .plans .plan.feat,body.imini .plans .plan.feat:hover{color:var(--text); border:1px solid rgba(255,255,255,.35);}
@@ -475,8 +475,8 @@ body.imini .plan-price .orig{font-family:var(--mono); font-size:13.5px;}
 body.imini #cta-sec{background:radial-gradient(56% 46% at 50% 24%, rgba(255,255,255,.04), transparent 70%), #0F0F11;}
 
 /* ── 页脚：近黑 + 白发丝线;水印保留极轻 ─────────────────────────────── */
-body.imini footer{background:#0A0A0B; border-top:1px solid var(--border); margin-top:0;}
-body.imini footer::after{opacity:.14; -webkit-text-stroke:1px rgba(255,255,255,.25);}
+body.imini .site-footer{background:#0A0A0B; border-top:1px solid var(--border); margin-top:0;}
+body.imini .site-footer::after{opacity:.14; -webkit-text-stroke:1px rgba(255,255,255,.25);}
 body.imini .foot-col h4{font-family:inherit; font-size:12.5px; letter-spacing:.02em; text-transform:none; color:var(--text); font-weight:600;}
 body.imini .foot-col a{font-size:13px; color:var(--text-dim);}
 body.imini .foot-col a:hover{color:#fff; text-decoration:underline;}

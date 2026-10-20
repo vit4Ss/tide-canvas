@@ -34,7 +34,10 @@ import {
 import { TemplateMedia } from "@/components/studio/create-studio/template-media";
 import { templateInputs } from "@/lib/studio-template";
 import { copyTemplateDraft, templateCountRange } from "@/lib/template-operator";
-import { templateOutputText, templateUploadSlots } from "@/lib/template-workshop";
+import {
+  templateOutputText,
+  templateUploadSlots,
+} from "@/lib/template-workshop";
 import css from "./page.module.css";
 
 const modeLabels = {
@@ -89,6 +92,7 @@ export default function StudioTemplatesAdmin() {
   const [deleting, setDeleting] = useState("");
   const canImport =
     user?.role === 9 || !!user?.adminPerms?.includes("admin.generations");
+  const hasFilters = !!(query.trim() || status);
   useEffect(() => {
     const controller = new AbortController();
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -151,7 +155,9 @@ export default function StudioTemplatesAdmin() {
       <header className={css.header}>
         <div>
           <h1>创作模板</h1>
-          <p>维护「灵感和模板」的成品效果与生成配方。已有模板可复制为草稿，再调整为新的同款。</p>
+          <p>
+            维护「灵感和模板」的成品效果与生成配方。已有模板可复制为草稿，再调整为新的同款。
+          </p>
         </div>
         <div className={css.actions}>
           {canImport && (
@@ -239,7 +245,7 @@ export default function StudioTemplatesAdmin() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            setQuery(keyword);
+            setQuery(keyword.trim());
             setPage(1);
           }}
         >
@@ -268,22 +274,36 @@ export default function StudioTemplatesAdmin() {
         <div className={css.empty}>
           <Layers3 size={32} />
           <h3>
-            还没有{media === "image" ? "图片" : "视频"}
-            {kind === "style" ? "风格" : "灵感"}
+            {hasFilters
+              ? "没有找到匹配的模板"
+              : `还没有${media === "image" ? "图片" : "视频"}${kind === "style" ? "风格" : "灵感"}`}
           </h3>
-          <p>上传预览、填写提示词和素材要求，检查配置后上架。</p>
+          <p>
+            {hasFilters
+              ? "可以更换关键词或清除筛选。"
+              : "上传预览、填写提示词和素材要求，检查配置后上架。"}
+          </p>
           <button
             className="adm-btn"
-            onClick={() => setDraft(empty(kind, media))}
+            onClick={() => {
+              if (hasFilters) {
+                setStatus("");
+                setKeyword("");
+                setQuery("");
+                setPage(1);
+              } else setDraft(empty(kind, media));
+            }}
           >
-            创建第一个模板
+            {hasFilters ? "清除筛选" : "创建第一个模板"}
           </button>
         </div>
       ) : (
-        <div className={css.grid}>
+        <div className={css.grid} data-count={data.records.length}>
           {data.records.map((row) => (
             <article className={css.card} key={row.id}>
-              <TemplateMedia key={row.coverUrl + row.previewUrl} row={row} />
+              <div className={css.cardMedia}>
+                <TemplateMedia key={row.coverUrl + row.previewUrl} row={row} />
+              </div>
               <div className={css.cardBody}>
                 <span className={row.status === 1 ? css.live : css.draft}>
                   {row.status === 1 ? "已上架" : "草稿 / 已下架"}
@@ -296,54 +316,78 @@ export default function StudioTemplatesAdmin() {
                   <small>
                     排序 {row.sortOrder} · 使用 {row.uses} 次
                   </small>
-                  <button
-                    className="adm-btn ghost small"
-                    aria-label={`编辑${row.title}`}
-                    onClick={() => setDraft(row)}
-                  >
-                    <Edit3 size={14} />
-                    编辑
-                  </button>
-                  <button className="adm-btn ghost small" aria-label={`复制${row.title}`} onClick={() => setDraft(copyTemplateDraft(row))}>
-                    <Copy size={14} />复制
-                  </button>
-                  {row.status === 1 && <a className="adm-btn ghost small" href={`/templates/${row.id}`} target="_blank" rel="noreferrer" aria-label={`查看${row.title}用户页面`}><ExternalLink size={14} />用户页</a>}
-                  <button
-                    className="adm-btn ghost small"
-                    disabled={!!deleting}
-                    aria-label={`删除${row.title}`}
-                    onClick={() => void remove(row)}
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  <div className={css.cardActions}>
+                    <button
+                      className="adm-btn ghost small"
+                      aria-label={`编辑${row.title}`}
+                      onClick={() => setDraft(row)}
+                    >
+                      <Edit3 size={14} />
+                      编辑
+                    </button>
+                    <button
+                      className="adm-btn ghost small"
+                      aria-label={`复制${row.title}`}
+                      onClick={() => setDraft(copyTemplateDraft(row))}
+                    >
+                      <Copy size={14} />
+                      复制
+                    </button>
+                    {row.status === 1 && (
+                      <a
+                        className="adm-btn ghost small"
+                        href={`/templates/${row.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label={`查看${row.title}用户页面`}
+                      >
+                        <ExternalLink size={14} />
+                        用户页
+                      </a>
+                    )}
+                    <button
+                      className="adm-btn ghost small"
+                      disabled={!!deleting}
+                      aria-label={`删除${row.title}`}
+                      onClick={() => void remove(row)}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </footer>
               </div>
             </article>
           ))}
         </div>
       )}
-      <footer className={css.pager}>
-        <span>共 {data?.total ?? 0} 个模板 · 保存后立即生效</span>
+      <nav className={css.pager} aria-label="模板分页">
+        <span>
+          {loading
+            ? "正在加载…"
+            : error
+              ? "列表加载失败"
+              : `共 ${data?.total ?? 0} 个模板`}
+        </span>
         <div>
           <button
             className="adm-btn ghost small"
-            disabled={loading || page <= 1}
+            disabled={loading || !!error || page <= 1}
             onClick={() => setPage((v) => v - 1)}
           >
             上一页
           </button>
           <span>
-            {page} / {Math.max(1, data?.pages || 1)}
+            {error ? "—" : `${page} / ${Math.max(1, data?.pages || 1)}`}
           </span>
           <button
             className="adm-btn ghost small"
-            disabled={loading || page >= (data?.pages || 1)}
+            disabled={loading || !!error || page >= (data?.pages || 1)}
             onClick={() => setPage((v) => v + 1)}
           >
             下一页
           </button>
         </div>
-      </footer>
+      </nav>
       {draft && (
         <TemplateEditor
           key={draft.id || "new"}
@@ -353,7 +397,10 @@ export default function StudioTemplatesAdmin() {
             setDraft(null);
             setKind(row.kind);
             setMedia(row.mediaType);
-            setStatus(""); setKeyword(""); setQuery(""); setPage(1);
+            setStatus("");
+            setKeyword("");
+            setQuery("");
+            setPage(1);
             setVersion((v) => v + 1);
           }}
         />
@@ -390,7 +437,10 @@ function TemplateEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
-  const [checked, setChecked] = useState<{ signature: string; data: TemplateSetup }>();
+  const [checked, setChecked] = useState<{
+    signature: string;
+    data: TemplateSetup;
+  }>();
   const [modelError, setModelError] = useState("");
   const [modelRetry, setModelRetry] = useState(0);
   const [modelsLoading, setModelsLoading] = useState(true);
@@ -401,7 +451,8 @@ function TemplateEditor({
   const saved = useRef(false);
   const signature = JSON.stringify(form);
   const dirty = signature !== JSON.stringify(initial);
-  const currentCheck = checked?.signature === signature ? checked.data : undefined;
+  const currentCheck =
+    checked?.signature === signature ? checked.data : undefined;
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -411,33 +462,46 @@ function TemplateEditor({
   }, []);
   useEffect(() => {
     if (!dirty) return;
-    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
   useEffect(() => {
-    if (error) { errorElement.current?.scrollIntoView({ block: "nearest" }); errorElement.current?.focus({ preventScroll: true }); }
+    if (error) {
+      errorElement.current?.scrollIntoView({ block: "nearest" });
+      errorElement.current?.focus({ preventScroll: true });
+    }
   }, [error]);
-  useEffect(() => { if (checked) checkElement.current?.scrollIntoView({ block: "nearest" }); }, [checked]);
+  useEffect(() => {
+    if (checked) checkElement.current?.scrollIntoView({ block: "nearest" });
+  }, [checked]);
   useEffect(() => {
     let current = true;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setModelsLoading(true);
     setModelError("");
-    marketApi.studioModels(form.mediaType).then((r) => {
-      if (current) {
-        setModels(
-          r.success && r.data
-            ? r.data.filter((m) => m.type === form.mediaType)
-            : [],
-        );
-        if (!r.success) setModelError(r.message || "模型列表读取失败，请重试");
-      }
-    }).catch(() => {
-      if (current) setModelError("模型列表读取失败，请重试");
-    }).finally(() => {
-      if (current) setModelsLoading(false);
-    });
+    marketApi
+      .studioModels(form.mediaType)
+      .then((r) => {
+        if (current) {
+          setModels(
+            r.success && r.data
+              ? r.data.filter((m) => m.type === form.mediaType)
+              : [],
+          );
+          if (!r.success)
+            setModelError(r.message || "模型列表读取失败，请重试");
+        }
+      })
+      .catch(() => {
+        if (current) setModelError("模型列表读取失败，请重试");
+      })
+      .finally(() => {
+        if (current) setModelsLoading(false);
+      });
     return () => {
       current = false;
     };
@@ -446,20 +510,38 @@ function TemplateEditor({
     if (busy.current || closing.current) return;
     closing.current = true;
     try {
-      if (!saved.current && dirty && !(await confirmDialog({ title: "放弃未保存的修改？", message: "关闭后，本次修改将丢失。可以先取消并保存草稿。", confirmText: "放弃修改" }))) return;
+      if (
+        !saved.current &&
+        dirty &&
+        !(await confirmDialog({
+          title: "放弃未保存的修改？",
+          message: "关闭后，本次修改将丢失。可以先取消并保存草稿。",
+          confirmText: "放弃修改",
+        }))
+      )
+        return;
       onClose();
-    } finally { closing.current = false; }
+    } finally {
+      closing.current = false;
+    }
   };
   const check = async () => {
     if (busy.current) return;
-    busy.current = true; setChecking(true); setError(""); setChecked(undefined);
+    busy.current = true;
+    setChecking(true);
+    setError("");
+    setChecked(undefined);
     try {
       const res = await api.check(form);
       if (!alive.current) return;
       if (res.success && res.data) setChecked({ signature, data: res.data });
       else setError(res.message || "配置检查失败，请重试");
-    } catch { if (alive.current) setError("配置检查失败，请重试"); }
-    finally { busy.current = false; if (alive.current) setChecking(false); }
+    } catch {
+      if (alive.current) setError("配置检查失败，请重试");
+    } finally {
+      busy.current = false;
+      if (alive.current) setChecking(false);
+    }
   };
   const change = <K extends keyof StudioTemplateSave>(
     key: K,
@@ -470,8 +552,24 @@ function TemplateEditor({
     key: "coverUrl" | "previewUrl",
   ) => {
     if (!file || busy.current) return;
-    if (file.size > 50 * 1024 * 1024) { setError("预览文件不能超过 50 MB，请压缩后上传"); return; }
-    if (!(key === "coverUrl" ? /^image\/(png|jpeg|webp|gif)$/ : /^video\/(mp4|webm|quicktime)$/).test(file.type)) { setError(key === "coverUrl" ? "封面请选择 PNG、JPG、WebP 或 GIF 图片" : "预览请选择 MP4、WebM 或 MOV 视频"); return; }
+    if (file.size > 50 * 1024 * 1024) {
+      setError("预览文件不能超过 50 MB，请压缩后上传");
+      return;
+    }
+    if (
+      !(
+        key === "coverUrl"
+          ? /^image\/(png|jpeg|webp|gif)$/
+          : /^video\/(mp4|webm|quicktime)$/
+      ).test(file.type)
+    ) {
+      setError(
+        key === "coverUrl"
+          ? "封面请选择 PNG、JPG、WebP 或 GIF 图片"
+          : "预览请选择 MP4、WebM 或 MOV 视频",
+      );
+      return;
+    }
     busy.current = true;
     setUploading(key);
     setError("");
@@ -536,7 +634,10 @@ function TemplateEditor({
           {error}
         </p>
       )}
-      <fieldset className={css.editor} disabled={saving || checking || !!uploading}>
+      <fieldset
+        className={css.editor}
+        disabled={saving || checking || !!uploading}
+      >
         <div>
           <FormCard
             title={
@@ -680,8 +781,21 @@ function TemplateEditor({
               </Field>
             </FormGrid>
             {modelsLoading && <p role="status">正在读取可用模型…</p>}
-            {modelError && <p role="alert">{modelError} <button type="button" className="adm-btn ghost small" onClick={() => setModelRetry(v => v + 1)}>重试读取模型</button></p>}
-            <p className={css.note}>上架会固定选定的模型与输出规格。更新模型后请重新检查并试做，确认效果一致。</p>
+            {modelError && (
+              <p role="alert">
+                {modelError}{" "}
+                <button
+                  type="button"
+                  className="adm-btn ghost small"
+                  onClick={() => setModelRetry((v) => v + 1)}
+                >
+                  重试读取模型
+                </button>
+              </p>
+            )}
+            <p className={css.note}>
+              上架会固定选定的模型与输出规格。更新模型后请重新检查并试做，确认效果一致。
+            </p>
             <div className={css.requirements}>
               {(["images", "videos", "audio"] as const).map((key, i) => (
                 <label key={key}>
@@ -691,12 +805,21 @@ function TemplateEditor({
                     min={templateCountRange(form.mode, key).min}
                     max={templateCountRange(form.mode, key).max}
                     step={1}
-                    disabled={templateCountRange(form.mode, key).min === templateCountRange(form.mode, key).max}
+                    disabled={
+                      templateCountRange(form.mode, key).min ===
+                      templateCountRange(form.mode, key).max
+                    }
                     value={form.requirements[key]}
                     onChange={(e) =>
                       change("requirements", {
                         ...form.requirements,
-                        [key]: Math.min(templateCountRange(form.mode, key).max, Math.max(templateCountRange(form.mode, key).min, Math.trunc(Number(e.target.value) || 0))),
+                        [key]: Math.min(
+                          templateCountRange(form.mode, key).max,
+                          Math.max(
+                            templateCountRange(form.mode, key).min,
+                            Math.trunc(Number(e.target.value) || 0),
+                          ),
+                        ),
                       })
                     }
                   />
@@ -704,20 +827,54 @@ function TemplateEditor({
               ))}
             </div>
           </FormCard>
-          <FormCard
-            title="素材用途名称"
-          >
-            <p>前台将直接显示这些名称，例如「人物照片」「服装图片」。留空时使用素材编号。</p>
+          <FormCard title="素材用途名称">
+            <p>
+              前台将直接显示这些名称，例如「人物照片」「服装图片」。留空时使用素材编号。
+            </p>
             <FormGrid>
-              {(["images", "videos", "audio"] as const).flatMap((kind, kindIndex) =>
-                Array.from({ length: Math.min(kind === "images" ? 4 : 3, Math.max(0, form.requirements[kind] || (form.mode === "ref" && !Object.values(form.requirements).some(Boolean) ? 1 : 0))) }, (_, index) =>
-                  <Field key={`${kind}-${index}`} label={`${["图片", "视频", "音频"][kindIndex]}${index + 1}用途`}>
-                    <input maxLength={40} value={form.inputLabels?.[kind]?.[index] || ""} placeholder={kind === "images" ? "例如 人物照片、服装图片" : "例如 动作参考、背景音频"} onChange={e => {
-                      const labels = [...(form.inputLabels?.[kind] || [])]; labels[index] = e.target.value;
-                      change("inputLabels", { ...form.inputLabels, [kind]: labels });
-                    }} />
-                  </Field>,
-                ),
+              {(["images", "videos", "audio"] as const).flatMap(
+                (kind, kindIndex) =>
+                  Array.from(
+                    {
+                      length: Math.min(
+                        kind === "images" ? 4 : 3,
+                        Math.max(
+                          0,
+                          form.requirements[kind] ||
+                            (form.mode === "ref" &&
+                            !Object.values(form.requirements).some(Boolean)
+                              ? 1
+                              : 0),
+                        ),
+                      ),
+                    },
+                    (_, index) => (
+                      <Field
+                        key={`${kind}-${index}`}
+                        label={`${["图片", "视频", "音频"][kindIndex]}${index + 1}用途`}
+                      >
+                        <input
+                          maxLength={40}
+                          value={form.inputLabels?.[kind]?.[index] || ""}
+                          placeholder={
+                            kind === "images"
+                              ? "例如 人物照片、服装图片"
+                              : "例如 动作参考、背景音频"
+                          }
+                          onChange={(e) => {
+                            const labels = [
+                              ...(form.inputLabels?.[kind] || []),
+                            ];
+                            labels[index] = e.target.value;
+                            change("inputLabels", {
+                              ...form.inputLabels,
+                              [kind]: labels,
+                            });
+                          }}
+                        />
+                      </Field>
+                    ),
+                  ),
               )}
             </FormGrid>
           </FormCard>
@@ -789,13 +946,31 @@ function TemplateEditor({
                 />
               </Field>
             </FormGrid>
-            <button type="button" className="adm-btn ghost" onClick={() => void check()}>{checking ? "正在检查…" : "检查生成配置"}</button>
-            <p className={css.note}>检查不生成、不扣积分。上架时也会校验模型、素材要求和输出参数；实际效果请先在创作台试做。</p>
-            {currentCheck && <div ref={checkElement} className={css.checkResult} role="status">
-              <strong>配置检查通过</strong>
-              <p>{currentCheck.modelName} · {templateOutputText(currentCheck.options)}</p>
-              <p>基础费用 {currentCheck.basePointCost} 积分{currentCheck.referenceVideoBilling ? "，参考视频附加费在上传后核算" : ""}</p>
-            </div>}
+            <button
+              type="button"
+              className="adm-btn ghost"
+              onClick={() => void check()}
+            >
+              {checking ? "正在检查…" : "检查生成配置"}
+            </button>
+            <p className={css.note}>
+              检查不生成、不扣积分。上架时也会校验模型、素材要求和输出参数；实际效果请先在创作台试做。
+            </p>
+            {currentCheck && (
+              <div ref={checkElement} className={css.checkResult} role="status">
+                <strong>配置检查通过</strong>
+                <p>
+                  {currentCheck.modelName} ·{" "}
+                  {templateOutputText(currentCheck.options)}
+                </p>
+                <p>
+                  基础费用 {currentCheck.basePointCost} 积分
+                  {currentCheck.referenceVideoBilling
+                    ? "，参考视频附加费在上传后核算"
+                    : ""}
+                </p>
+              </div>
+            )}
           </FormCard>
         </div>
         <aside className={css.preview}>
@@ -812,7 +987,14 @@ function TemplateEditor({
             {form.description || "上传真实成品预览，让用户一眼看懂创作效果。"}
           </p>
           <p>{templateInputs(form)}</p>
-          <ul className={css.slotPreview}>{templateUploadSlots(form).map(slot => <li key={slot.key}>{slot.label}{slot.optional ? "（选填，至少一种）" : "（必填）"}</li>)}</ul>
+          <ul className={css.slotPreview}>
+            {templateUploadSlots(form).map((slot) => (
+              <li key={slot.key}>
+                {slot.label}
+                {slot.optional ? "（选填，至少一种）" : "（必填）"}
+              </li>
+            ))}
+          </ul>
           {(
             [
               "coverUrl",
