@@ -173,6 +173,7 @@ func (h *handler) registerRoutes(api *gin.RouterGroup, d *app.Deps) {
 	// Public catalog endpoints (no auth — used by anonymous catalog views too).
 	g.GET("/models", h.listModels)
 	g.GET("/handlers", h.listHandlers)
+	g.GET("/template-setup/:id", h.templateSetup)
 	g.GET("/tools", h.listSiteTools)
 	g.GET("/safety-config", func(c *gin.Context) {
 		response.OK(c, gin.H{"promptScreening": false, "outputScreening": false, "market": "cn"})
@@ -181,6 +182,7 @@ func (h *handler) registerRoutes(api *gin.RouterGroup, d *app.Deps) {
 	authed := g.Group("")
 	authed.Use(middleware.JWTAuth(d))
 	authed.POST("/generate", h.generate)
+	authed.POST("/template-quote", h.templateQuote)
 	authed.POST("/upscale-quote", h.upscaleQuote)
 	authed.POST("/reference-video-quote", middleware.RateLimit(d, 60, time.Minute), h.referenceVideoQuote)
 	authed.POST("/optimize-prompt", h.optimizePrompt)

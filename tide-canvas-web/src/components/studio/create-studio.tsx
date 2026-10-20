@@ -35,17 +35,11 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { useRouter } from "next/navigation";
-import { History, Layers3, Sparkles, X } from "lucide-react";
-import { studioTemplateApi, type StudioTemplate } from "@/lib/studio-template-api";
-import { templatePrompt, templateInputs, templateModelIssue, remapTemplateReferences, withoutTemplateStyle, templateOptions } from "@/lib/studio-template";
-import { TemplateLibrary } from "./create-studio/template-library";
-import templateCss from "./create-studio/template-library.module.css";
 import { aiApi } from "@/lib/api";
 import { marketApi } from "@/lib/market-api";
 import { pointsApi } from "@/lib/points-api";
@@ -102,7 +96,7 @@ import type {
   ToolKey,
   UploadFile,
 } from "./create-studio/types";
-import { audioToolOf, histItemsFromTasks, huesFromId, resolutionRank, slotTypeOf, slotMax } from "./create-studio/utils";
+import { audioToolOf, histItemsFromTasks, huesFromId, resolutionRank, slotTypeOf } from "./create-studio/utils";
 import { useStudioModels } from "./create-studio/use-studio-models";
 import { useSourceClip } from "./create-studio/use-source-clip";
 import { useHistory } from "./create-studio/use-history";
@@ -131,7 +125,6 @@ import type { ClipOption } from "@/lib/music-modes";
 const STUDIO_AUTO_UPDATE_DRAFT_KEY = "flowinglight:auto-update:studio-draft";
 
 interface StudioAutoUpdateDraft extends AppUpdateSnapshot {
-  template?: StudioTemplate | null;
   curType: ArtworkType;
   tool: ToolKey;
   model: string;
@@ -191,12 +184,6 @@ function StudioSession() {
   const [tool, setTool] = useState<ToolKey>("t2i");
   const [model, setModel] = useState<string>("GPT Image 2");
   const [prompt, setPrompt] = useState("");
-  const [template, setTemplate] = useState<StudioTemplate | null>(null);
-  const [stageView, setStageView] = useState<"history" | "style" | "inspiration">("style");
-  const templateTargetRef = useRef<HTMLDivElement>(null);
-  const templateSelectionSeq = useRef(0);
-  const flightsRef = useRef(new Set<HTMLElement>());
-  useEffect(() => () => { templateSelectionSeq.current += 1; flightsRef.current.forEach(el => el.remove()); flightsRef.current.clear(); }, []);
   const [ratio, setRatio] = useState<string>(RATIOS[0]);
   const [count, setCount] = useState(1);
   const [imgRes, setImgRes] = useState<string>("2K");
@@ -231,9 +218,6 @@ function StudioSession() {
 
   /* typed reference uploads (per slot key) + preview modal target */
   const [slotData, setSlotData] = useState<SlotData>({});
-  const templateContext = JSON.stringify({curType,tool,model,prompt,slotData});
-  const templateContextRef = useRef(templateContext);
-  useLayoutEffect(() => { templateContextRef.current = templateContext; }, [templateContext]);
   const [preview, setPreview] = useState<{ k: string; i: number } | null>(null);
 
   const [optimizing, setOptimizing] = useState(false);
@@ -493,7 +477,6 @@ function StudioSession() {
     oneClickEdit,
     lastRunRef,
   } = useGeneration({
-    template,
     prompt,
     count: effectiveCount,
     tool,
@@ -533,13 +516,6 @@ function StudioSession() {
     promptRef,
   });
 
-  useEffect(() => {
-    if (submitting) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setStageView("history");
-    }
-  }, [submitting]);
-
   const updateBlocked = submitting || validatingReferences || optimizing || restoringRun || recoveringRuns ||
     referenceVideoQuote.loading || !!assetPick || !!srcMenu || skillPickerOpen ||
     !!clip.clipUploadStage || clip.clipPickOpen ||
@@ -570,7 +546,6 @@ function StudioSession() {
       instrumental,
       slotData,
       skill,
-      template,
       sourceClipId: clip.sourceClipId,
       sourceIsUpload: clip.sourceIsUpload,
       continueAt: clip.continueAt,
@@ -652,7 +627,6 @@ function StudioSession() {
             if (typeof saved.instrumental === "boolean") setInstrumental(saved.instrumental);
             if (saved.slotData && typeof saved.slotData === "object") setSlotData(saved.slotData);
             if (saved.skill && typeof saved.skill === "object") setSkill(saved.skill);
-            if (saved.template?.id && saved.template.requirements) setTemplate(saved.template);
             if (typeof saved.sourceClipId === "string") setSourceClipId(saved.sourceClipId);
             if (typeof saved.sourceIsUpload === "boolean") setSourceIsUpload(saved.sourceIsUpload);
             if (typeof saved.continueAt === "string") setContinueAt(saved.continueAt);
@@ -945,8 +919,6 @@ function StudioSession() {
     if (!nextModel || nextModel === model) return;
     skillRestoreSeqRef.current += 1;
     setSkill(null);
-    templateSelectionSeq.current += 1;
-    setTemplate(null);
     setPreview(null);
     setReferenceLightbox(null);
     setModel(nextModel);
@@ -954,8 +926,6 @@ function StudioSession() {
 
   // setTool clears the typed uploads (create.js setTool → slotData = {}).
   const selectTool = (t: ToolKey) => {
-    templateSelectionSeq.current += 1;
-    setTemplate(null);
     setTool(t);
     setSlotData({});
     setPreview(null);
@@ -988,8 +958,6 @@ function StudioSession() {
   // 选中技能:附着 chip;指定了模型卡则自动切换;默认参数回填画幅/清晰度/时长
   const pickSkill = useCallback(
     (s: SkillVO) => {
-      templateSelectionSeq.current += 1;
-      setTemplate(null);
       skillRestoreSeqRef.current += 1;
       if (skillKindOf(s) !== "preset") {
         toast.info("智能技能请在画布中使用");
@@ -1068,8 +1036,6 @@ function StudioSession() {
   // 重新编辑 / 再次生成: restore the captured run's full settings back into the
   // panel (type/mode/model/ratio/resolution/quality/count + prompt).
   const restoreParams = useCallback((lr: RunParams) => {
-    templateSelectionSeq.current += 1;
-    setTemplate(lr.template ?? null);
     // 无技能的旧轮次也必须显式清空当前 chip，不能把当前技能套进历史生成。
     setSkill(null);
     setCurType(lr.curType);
@@ -1296,6 +1262,7 @@ function StudioSession() {
   // 会重新扣费发起一次全新生成,先二次确认(带积分成本),避免误点白扣。
   const regenRun = async (r: HistRun) => {
     if (busy || restoringRun || historyActionLockRef.current) return;
+    if (r.params?.templateId) { router.push(`/templates/${encodeURIComponent(r.params.templateId)}`); return; }
     historyActionLockRef.current = true;
     const ok = await confirmDialog({
       title: "重新生成",
@@ -1306,9 +1273,6 @@ function StudioSession() {
       historyActionLockRef.current = false;
       return;
     }
-    templateSelectionSeq.current += 1;
-    setTemplate(null);
-    setStageView("history");
     setRestoringRun(true);
     try {
       if (r.params) {
@@ -1357,9 +1321,7 @@ function StudioSession() {
   // the prompt, so the user can tweak parameters before regenerating.
   const editRun = async (r: HistRun) => {
     if (busy || restoringRun || historyActionLockRef.current) return;
-    templateSelectionSeq.current += 1;
-    setTemplate(null);
-    setStageView("history");
+    if (r.params?.templateId) { router.push(`/templates/${encodeURIComponent(r.params.templateId)}`); return; }
     historyActionLockRef.current = true;
     setRestoringRun(true);
     let restored = true;
@@ -1417,60 +1379,6 @@ function StudioSession() {
 
   /* ── render ──────────────────────────────────────────────────────────── */
 
-  const applyTemplate = async (candidate: StudioTemplate, source: DOMRect): Promise<boolean> => {
-    if (submitting || restoringRun || validatingReferences || Object.values(slotData).some(files=>files.some(f=>f.uploading))) {
-      toast.info("请等待当前上传或提交完成后再选择模板"); return false;
-    }
-    const seq = ++templateSelectionSeq.current;
-    const context = templateContextRef.current;
-    try {
-      const result = await studioTemplateApi.get(candidate.id);
-      if (seq !== templateSelectionSeq.current) return false;
-      if (context !== templateContextRef.current) { toast.info("创作输入已变化，请重新选择模板"); return false; }
-      if (!result.success || !result.data) { toast.error(result.message || "模板已下架，请刷新列表"); return false; }
-      const row = result.data;
-      if (row.mediaType !== curType) { toast.info("模板类型已变更，请切换图片/视频后重试"); return false; }
-      const target = row.modelKey ? currentStudioList.find(m=>m.modelKey===row.modelKey) : selModel;
-      if (!target) { toast.error(row.modelKey ? "模板推荐的模型当前未上架，请联系管理员调整模板" : "请先选择可用模型"); return false; }
-      const issue = templateModelIssue(row,target);
-      if (issue) { toast.error(issue); return false; }
-      const nextSlots = (UPLOADS[row.mode] || []).filter(s=>row.mode!=="ref" || supportsOmniReference(target.config,s.type)).map(s=>({...s,max:slotMax(target.config,row.mode,s)}));
-      const capacity = { image: 0, video: 0, audio: 0 };
-      nextSlots.forEach(s=>{capacity[s.type]+=s.max;});
-      if (row.requirements.images>capacity.image || row.requirements.videos>capacity.video || row.requirements.audio>capacity.audio) {
-        toast.error("模板要求的素材数量超过该模型上限，请选择兼容模型或联系管理员调整模板"); return false;
-      }
-      const moved = remapTemplateReferences(slotData,slots || [],nextSlots);
-      const replace = row.kind==="inspiration" && prompt.trim() && prompt.trim()!==row.prompt.trim();
-      if ((moved.discarded || replace) && !(await confirmDialog({title:"应用创作模板",message:[replace?"将用灵感的完整提示词替换当前输入。":"",moved.discarded?`${moved.discarded} 个素材不适用于目标模式，将从本次输入中移除（资产仍保留）。`:""].filter(Boolean).join("\n"),confirmText:"应用模板"}))) return false;
-      if (seq !== templateSelectionSeq.current) return false;
-      if (context !== templateContextRef.current) { toast.info("创作输入已变化，请重新选择模板"); return false; }
-      skillRestoreSeqRef.current += 1;
-      setSkill(null); setPreview(null); setReferenceLightbox(null);
-      setModel(target.name); setTool(row.mode); setSlotData(moved.data);
-      setPrompt(templatePrompt(prompt,row,template)); setTemplate(row);
-      const opts=templateOptions(row,target);
-      if (opts.aspectRatio) setRatio(opts.aspectRatio);
-      if (opts.resolution) { if(row.mediaType==="image")setImgRes(opts.resolution);else setRes(opts.resolution); }
-      if (opts.duration) setDur(opts.duration);
-      if (opts.quality) setQuality(opts.quality);
-      void studioTemplateApi.use(row.id);
-      requestAnimationFrame(()=>{
-        const destination=templateTargetRef.current;
-        if(!destination || seq!==templateSelectionSeq.current)return;
-        if(row.coverUrl && !matchMedia("(prefers-reduced-motion: reduce)").matches && typeof destination.animate==="function") {
-          const rect=destination.getBoundingClientRect();
-          const img=document.createElement("img");img.src=row.coverUrl;img.alt="";img.className=templateCss.flight;
-          Object.assign(img.style,{left:`${source.left}px`,top:`${source.top}px`,width:`${Math.min(source.width,160)}px`,height:"110px"});document.body.append(img);flightsRef.current.add(img);
-          const animation=img.animate([{transform:"translate(0,0) scale(1)",opacity:.9},{transform:`translate(${rect.left-source.left}px,${rect.top-source.top}px) scale(.3)`,opacity:0}],{duration:480,easing:"cubic-bezier(.2,.7,.2,1)"});
-          const cleanup=()=>{img.remove();flightsRef.current.delete(img);};animation.onfinish=cleanup;animation.oncancel=cleanup;
-        }
-        destination.scrollIntoView({block:"nearest",behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});
-      });
-      toast.success(row.kind==="style"?"风格已就位，补充你的主体或素材即可":"提示词已填入，请替换为你自己的参考素材"); return true;
-    } catch { if(seq===templateSelectionSeq.current)toast.error("应用模板失败，请重试"); return false; }
-  };
-
   return (
     <>
       <div
@@ -1500,12 +1408,6 @@ function StudioSession() {
 
             {/* model picker */}
             <ModelPicker model={model} names={modelNames} studioList={currentStudioList} onSelect={selectModel} />
-
-            {template && <div className={templateCss.selection} ref={templateTargetRef}>
-              {template.coverUrl && <img src={template.coverUrl} alt=""/>}
-              <div><span>{template.kind==="style"?"已选风格主题":"正在做同款"}</span><strong>{template.title}</strong><p>{template.inputHint || templateInputs(template)}</p></div>
-              <button type="button" aria-label="移除创作模板" title={template.kind==="style"?"移除风格提示，保留你的描述":"移除模板要求，保留已填提示词"} onClick={()=>{templateSelectionSeq.current+=1;setPrompt(current=>withoutTemplateStyle(current,template));setTemplate(null);}}><X size={15}/></button>
-            </div>}
 
             {/* typed reference uploads (per-tool slots; create.js renderUploads) */}
             <UploadSlots
@@ -1652,13 +1554,7 @@ function StudioSession() {
 
         {/* ── center stage ────────────────────────────────────────────── */}
         {/* 引擎恢复的在飞 3D 任务不在创作台渲染进度卡（展示归 /three-d） */}
-        <div className={templateCss.workspace}>
-        {(curType==="image" || curType==="video") && <div className={templateCss.nav} role="tablist" aria-label="创作内容">
-          <button type="button" role="tab" aria-selected={stageView==="style"} onClick={()=>setStageView("style")}><Layers3 size={16}/>风格主题</button>
-          <button type="button" role="tab" aria-selected={stageView==="inspiration"} onClick={()=>setStageView("inspiration")}><Sparkles size={16}/>灵感做同款</button>
-          <button type="button" role="tab" aria-selected={stageView==="history"} onClick={()=>setStageView("history")}><History size={16}/>生成记录</button>
-        </div>}
-        {(curType==="image" || curType==="video") && stageView!=="history" ? <TemplateLibrary key={`${curType}:${stageView}`} mediaType={curType} kind={stageView} selectedId={template?.id} onApply={applyTemplate}/> : <StageFeed
+        <StageFeed
           busy={busy || restoringRun}
           runs={runs}
           inflightRuns={inflightRuns.filter((r) => r.meta.kind !== "3d")}
@@ -1674,8 +1570,7 @@ function StudioSession() {
           initialLoading={histInitialLoading}
           loadError={histLoadError}
           endReached={!histHasMore && histMultiPage}
-        />}
-        </div>
+        />
       </div>
 
       <PreviewModal

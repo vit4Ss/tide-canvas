@@ -15,13 +15,14 @@ const catalog = JSON.parse(
 const provenance = JSON.parse(
   await readFile(
     new URL(
-      "../public/studio-samples/v1/generation-prompts.json",
+      "../scripts/studio-sample-provenance.json",
       import.meta.url,
     ),
     "utf8",
   ),
 );
 test("all starter recipes point to actual generated full-resolution artwork", async () => {
+	await assert.rejects(stat(new URL("../public/studio-samples/v1/generation-prompts.json", import.meta.url)), { code: "ENOENT" });
   assert.equal(catalog.length, 8);
   assert.equal(provenance.assets.length, 8);
   let total = 0;

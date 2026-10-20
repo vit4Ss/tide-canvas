@@ -41,7 +41,7 @@ export const ADMIN_NAV: AdminNavEntry[] = [
   { label: "用户管理", href: "/admin/users", icon: "users", perm: "users", description: "账号、角色、套餐与积分余额" },
   { label: "作品管理", href: "/admin/works", icon: "works", perm: "works", description: "作品审核、精选与内容处置" },
   { label: "灵感管理", href: "/admin/inspiration", icon: "insp", perm: "inspiration", description: "灵感集合、提示词与推荐内容" },
-  { label: "创作模板", href: "/admin/studio-templates", icon: "style", perm: "inspiration", description: "创作台图片 / 视频风格、灵感做同款与用户作品精选" },
+  { label: "创作模板", href: "/admin/studio-templates", icon: "style", perm: "inspiration", description: "灵感和模板的图片 / 视频配方、素材要求与精选作品" },
   { label: "生成记录", href: "/admin/generations", icon: "history", perm: "generations", description: "每次模型调用的记录、结果与积分审计" },
   { label: "分析记录", href: "/admin/analysis-records", icon: "chart", perm: "analysis_records", description: "内容分析与视频下载的用户活动记录" },
   { label: "日志管理", href: "/admin/logs", icon: "log", perm: "logs", description: "访问、登录、业务与模型调用记录" },

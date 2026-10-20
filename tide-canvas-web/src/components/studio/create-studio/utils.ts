@@ -176,6 +176,7 @@ export function paramsFromTask(handler: string, modelName: string, input: unknow
   });
   return {
     prompt: str(inp.prompt),
+    ...(/^\d+$/.test(str(inp.templateId)) ? { templateId: str(inp.templateId), templateTitle: str(inp.templateTitle) } : {}),
     model: modelName,
     ...(modelId ? { modelId } : {}),
     // 音频共用 text_to_audio handler，音效模型的历史按名称归回音效页签。
@@ -465,9 +466,9 @@ export function histItemsFromTasks(records: AiTaskVO[]): HistItem[] {
       const ex = obj.extras;
       return !!ex && typeof ex === "object" && (ex as Record<string, unknown>).task === "upload";
     })();
-    const title = params.prompt
+    const title = params.templateTitle || (params.prompt
       ? params.prompt.slice(0, 14) + (params.prompt.length > 14 ? "…" : "")
-      : t.modelName || "我的创作";
+      : t.modelName || "我的创作");
     const failed = t.status === AiTaskStatus.FAILED;
     // Studio shows media only. Text records reach the feed neither from the
     // generation surfaces (they have no URL and fall through below) nor from

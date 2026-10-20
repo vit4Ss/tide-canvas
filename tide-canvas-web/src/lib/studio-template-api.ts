@@ -13,6 +13,7 @@ export interface StudioTemplate {
   previewUrl: string;
   authorName: string;
   inputHint: string;
+  inputLabels?: { images?: string[]; videos?: string[]; audio?: string[] };
   mode: "t2i" | "i2i" | "t2v" | "i2v" | "flf" | "ref";
   modelKey: string;
   requirements: { images: number; videos: number; audio: number };
@@ -27,6 +28,11 @@ export interface StudioTemplate {
   uses: number;
 }
 export type StudioTemplateSave = Omit<StudioTemplate, "id" | "uses">;
+export type PublicStudioTemplate = Omit<StudioTemplate, "prompt" | "modelKey" | "status" | "sortOrder">;
+export type PublicTemplatePage = PageData<PublicStudioTemplate> & { categories: string[] };
+export interface TemplateUploads { imageIds: string[]; videoIds: string[]; audioIds: string[] }
+export interface TemplateSetup { modelId: string; modelName: string; handler: string; basePointCost: number; referenceVideoBilling: boolean; options: StudioTemplate["options"]; maxUploadBytes: Record<"image" | "video" | "audio", number> }
+export interface TemplateQuote { templateId: string; modelId: string; modelName: string; handler: string; pointCost: number; quoteToken: string; options: StudioTemplate["options"]; basePointCost: number; referencePointCost: number }
 export type StudioTemplatePage = PageData<StudioTemplate> & {
   categories: string[];
 };
@@ -52,11 +58,14 @@ const base = "/api/studio-templates";
 const admin = "/api/admin/studio-templates";
 export const studioTemplateApi = {
   list: (q: TemplateQuery, signal?: AbortSignal) =>
-    http.get<StudioTemplatePage>(base, toParams(q), { signal }),
-  get: (id: string) => http.get<StudioTemplate>(`${base}/${id}`),
-  use: (id: string) => http.post(`${base}/${id}/use`),
+    http.get<PublicTemplatePage>(base, toParams(q), { signal }),
+  get: (id: string) => http.get<PublicStudioTemplate>(`${base}/${id}`),
+  setup: (id: string, signal?: AbortSignal) => http.get<TemplateSetup>(`/api/ai/template-setup/${id}`, undefined, { signal }),
+  quote: (templateId: string, input: TemplateUploads, signal?: AbortSignal) =>
+    http.post<TemplateQuote>("/api/ai/template-quote", { templateId, input }, { signal }),
 };
 export const adminStudioTemplateApi = {
+  check: (row: StudioTemplateSave) => http.post<TemplateSetup>(`${admin}/check`, row),
   list: (q: TemplateQuery, signal?: AbortSignal) =>
     http.get<StudioTemplatePage>(admin, toParams(q), { signal }),
   save: (row: StudioTemplateSave, id?: string) =>

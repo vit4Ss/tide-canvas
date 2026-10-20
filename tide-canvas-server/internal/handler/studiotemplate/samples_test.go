@@ -64,6 +64,40 @@ func TestSampleSeedPreservesCurationAndKeepsStoryboardsDraft(t *testing.T) {
 	if count != 0 {
 		t.Fatal("deleted sample was resurrected")
 	}
+	legacy := legacySampleInputHints["clay-adventure"]
+	db.Model(&rows[0]).UpdateColumn("input_hint", legacy)
+	db.Model(&rows[2]).UpdateColumn("input_hint", "operator-authored upload instructions")
+	if err := SeedSamples(db); err != nil {
+		t.Fatal(err)
+	}
+	db.First(&edited, "id = ?", rows[0].ID)
+	if edited.InputHint == legacy || edited.Title != "operator edited" {
+		t.Fatal("bundled hint migration failed or overwrote operator title")
+	}
+	var custom model.StudioTemplate
+	db.First(&custom, "id = ?", rows[2].ID)
+	if custom.InputHint != "operator-authored upload instructions" {
+		t.Fatal("operator instructions overwritten")
+	}
+	db.Model(&rows[0]).UpdateColumn("input_labels", nil)
+	db.Model(&rows[2]).UpdateColumn("input_labels", `{"images":["运营自定义人像"]}`)
+	if err := SeedSamples(db); err != nil {
+		t.Fatal(err)
+	}
+	db.First(&edited, "id = ?", rows[0].ID)
+	db.First(&custom, "id = ?", rows[2].ID)
+	if len(edited.InputLabels.Images) == 0 || custom.InputLabels.Images[0] != "运营自定义人像" {
+		t.Fatal("label upgrade lost operator curation")
+	}
+	db.Model(&rows[0]).UpdateColumn("input_labels", "{}")
+	if err := SeedSamples(db); err != nil {
+		t.Fatal(err)
+	}
+	var cleared model.StudioTemplate
+	db.First(&cleared, "id = ?", rows[0].ID)
+	if len(cleared.InputLabels.Images) != 0 {
+		t.Fatal("restart restored intentionally cleared labels")
+	}
 }
 
 func TestBundledMediaPathsCannotEscapeSampleDirectory(t *testing.T) {

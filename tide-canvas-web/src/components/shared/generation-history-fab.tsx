@@ -22,6 +22,8 @@ export function GenerationHistoryFab() {
     || pathname.startsWith("/canvas")
     || pathname === "/generation-history"
     || pathname === "/api-usage"
+    // The template gallery/workshop already exposes history in its header.
+    || pathname === "/templates" || pathname.startsWith("/templates/")
   ) {
     return null;
   }

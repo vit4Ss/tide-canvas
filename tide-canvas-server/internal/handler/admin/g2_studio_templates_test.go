@@ -25,8 +25,16 @@ func TestStudioTemplatesPublicationImportAndPermissions(t *testing.T) {
 	pool, _ := db.DB()
 	pool.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = pool.Close() })
-	if err := db.AutoMigrate(&model.StudioTemplate{}, &model.AiTask{}); err != nil {
+	if err := db.AutoMigrate(&model.StudioTemplate{}, &model.AiTask{}, &model.MarketModel{}); err != nil {
 		t.Fatal(err)
+	}
+	for _, row := range []model.MarketModel{
+		{BaseModel: model.BaseModel{ID: 501}, ModelKey: "image-test", Name: "Image display name", Type: "image", Status: 1, Config: `{"modes":["i2i"],"ratios":["1:1"],"resolutions":["2k"]}`},
+		{BaseModel: model.BaseModel{ID: 502}, ModelKey: "video-test", Name: "Video display name", Type: "video", Status: 1, Config: `{"modes":["omni_ref"],"durations":["5s"]}`},
+	} {
+		if err := db.Create(&row).Error; err != nil {
+			t.Fatal(err)
+		}
 	}
 	r := gin.New()
 	admin := r.Group("/admin", func(c *gin.Context) {
@@ -39,7 +47,6 @@ func TestStudioTemplatesPublicationImportAndPermissions(t *testing.T) {
 	pub := &studiotemplate.Handler{DB: db}
 	r.GET("/public", pub.List(false))
 	r.GET("/public/:id", pub.Get)
-	r.POST("/public/:id/use", pub.Use)
 	call := func(method, path, body string, isAdmin bool) map[string]any {
 		t.Helper()
 		w := httptest.NewRecorder()
@@ -68,19 +75,41 @@ func TestStudioTemplatesPublicationImportAndPermissions(t *testing.T) {
 	if call("GET", "/public/"+id, "", false)["code"] != float64(404) {
 		t.Fatal("draft accessible by id")
 	}
-	if call("POST", "/public/"+id+"/use", "", false)["code"] != float64(404) {
-		t.Fatal("draft use counter accepted")
-	}
 	published := strings.Replace(body, `"status":0`, `"status":1`, 1)
 	if result := call("PUT", "/admin/studio-templates/"+id, published, true); result["success"] != true {
 		t.Fatal(result)
+	}
+	var pinned model.StudioTemplate
+	if err := db.First(&pinned, "id = ?", id).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pinned.ModelKey != "image-test" || pinned.Options.Resolution != "2k" {
+		t.Fatalf("publication did not pin recipe: %+v", pinned)
+	}
+	unsupported := strings.Replace(published, `"aspectRatio":"1:1"`, `"aspectRatio":"16:9"`, 1)
+	if result := call("POST", "/admin/studio-templates", unsupported, true); result["success"] == true {
+		t.Fatal("unsupported recipe published")
+	}
+	if result := call("POST", "/admin/studio-templates/check", body, true); result["success"] != true {
+		t.Fatal(result)
+	}
+	emptyDraft := strings.Replace(body, `"prompt":"clay style"`, `"prompt":""`, 1)
+	if result := call("POST", "/admin/studio-templates", emptyDraft, true); result["success"] != true {
+		t.Fatal("incomplete draft could not be saved", result)
+	}
+	if result := call("POST", "/admin/studio-templates", strings.Replace(emptyDraft, `"status":0`, `"status":1`, 1), true); result["success"] == true {
+		t.Fatal("empty recipe published")
 	}
 	list = call("GET", "/public?kind=style&mediaType=image", "", false)
 	if list["data"].(map[string]any)["total"] != float64(1) {
 		t.Fatal("publication not visible")
 	}
-	if call("POST", "/public/"+id+"/use", "", false)["success"] != true {
-		t.Fatal("use failed")
+	// Actual accepted generation increments uses; admin edits must preserve it.
+	if err := db.Model(&model.StudioTemplate{}).Where("id = ?", id).UpdateColumn("uses", 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, exposed := list["data"].(map[string]any)["records"].([]any)[0].(map[string]any)["prompt"]; exposed {
+		t.Fatal("public template leaked prompt")
 	}
 	// Downlisting must write zero and preserve the real counter.
 	if result := call("PUT", "/admin/studio-templates/"+id, body, true); result["success"] != true {
@@ -104,7 +133,7 @@ func TestStudioTemplatesPublicationImportAndPermissions(t *testing.T) {
 	if call("GET", "/admin/studio-templates/sources", "", false)["code"] != float64(403) {
 		t.Fatal("curator without generation access could read private outputs")
 	}
-	task := model.AiTask{ID: idgen.Next(), UserID: idgen.Next(), Status: 1, Handler: "reference_to_video", Origin: "direct", ModelName: "video-test", ResultUrl: "https://cdn.example.test/movie.mp4", Input: `{"prompt":"cinematic product shot","videoReferences":["https://private.example.test/customer.mp4"],"audioReferences":["https://private.example.test/sound.mp3"],"secret":"private-value","duration":5}`}
+	task := model.AiTask{ID: idgen.Next(), UserID: idgen.Next(), Status: 1, Handler: "reference_to_video", Origin: "direct", ModelID: 502, ModelName: "Video display name", ResultUrl: "https://cdn.example.test/movie.mp4", Input: `{"prompt":"cinematic product shot","videoReferences":["https://private.example.test/customer.mp4"],"audioReferences":["https://private.example.test/sound.mp3"],"secret":"private-value","duration":5}`}
 	if err := db.Create(&task).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -120,6 +149,9 @@ func TestStudioTemplatesPublicationImportAndPermissions(t *testing.T) {
 	row := first["data"].(map[string]any)
 	if row["id"] != second["data"].(map[string]any)["id"] || row["status"] != float64(0) || row["kind"] != "inspiration" || row["mediaType"] != "video" {
 		t.Fatal("import not draft/idempotent")
+	}
+	if row["modelKey"] != "video-test" {
+		t.Fatalf("import used display name as model key: %v", row["modelKey"])
 	}
 	encoded, _ := json.Marshal(row)
 	for _, secret := range []string{"private.example", "private-value", "sourceKey", "userId", "taskId"} {
@@ -148,6 +180,22 @@ func TestStudioTemplatesPublicationImportAndPermissions(t *testing.T) {
 	retryImport := call("POST", "/admin/studio-templates/from-task", importBody, true)
 	if retryImport["data"].(map[string]any)["id"] != reimported["id"] {
 		t.Fatal("reimport retry duplicated the draft")
+	}
+	for _, input := range []string{
+		`{"prompt":"needs all five images","imageUrls":["a","b","c","d","e"]}`,
+		`{"prompt":"needs all four audio tracks","audio_urls":["a","b","c","d"]}`,
+		`{"prompt":"fractional duration","duration":4.5}`,
+	} {
+		source := task
+		source.ID = idgen.Next()
+		source.Input = input
+		if err := db.Create(&source).Error; err != nil {
+			t.Fatal(err)
+		}
+		result := call("POST", "/admin/studio-templates/from-task", `{"taskId":"`+source.ID.String()+`"}`, true)
+		if result["success"] == true {
+			t.Fatalf("import silently changed source recipe: %s", input)
+		}
 	}
 	if result := call("DELETE", "/admin/studio-templates/"+id, "", true); result["success"] != true {
 		t.Fatal(result)

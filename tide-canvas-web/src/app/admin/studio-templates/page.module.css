@@ -233,10 +233,19 @@
   align-items: center;
 }
 .editor {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 280px;
   gap: 24px;
 }
+.cardBody footer { flex-wrap: wrap; }
+.cardBody footer > small { flex-basis: 100%; }
+.checkResult { padding: 16px; border: 1px solid var(--border); border-radius: 8px; }
+.checkResult p { margin: 8px 0 0; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.slotPreview { padding-left: 20px; font-size: 12px; line-height: 1.8; color: var(--adm-dim, var(--text-dim)); overflow-wrap: anywhere; }
 .editor :global(.fcard) {
   display: flex;
   flex-direction: column;
@@ -613,9 +622,11 @@
     font-size: 12px;
   }
   .preview .upload,
-  .preview .note {
+  .preview .note,
+  .preview .slotPreview {
     grid-column: 1 / -1;
   }
+  .editor input, .editor textarea { font-size: 16px !important; }
   .preview .note {
     margin: 12px 0 0;
     font-size: 11px;

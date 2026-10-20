@@ -153,8 +153,8 @@ export const fileApi = {
   /** 已存资产的字节大小：生成结果没有 files 行，大小只能问存储（浏览器跨域读不到）。 */
   assetSize: (url: string) =>
     http.get<{ sizeBytes: number }>("/api/files/asset-size", { url }),
-  get: (id: string) =>
-    http.get<FileVO>(`/api/files/detail/${id}`),
+  get: (id: string, signal?: AbortSignal) =>
+    http.get<FileVO>(`/api/files/detail/${id}`, undefined, { signal }),
   delete: (id: string | number) =>
     http.delete<void>(`/api/files/detail/${id}`),
 };

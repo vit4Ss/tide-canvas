@@ -214,6 +214,11 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 			return existing, err
 		}
 	}
+	if dto.TemplateID != 0 {
+		if err := s.prepareTemplateGeneration(ctx, userID, &dto); err != nil {
+			return nil, err
+		}
+	}
 	gh, ok := s.registry.get(dto.Handler)
 	if !ok {
 		// Also accept a DB-registered handler whose impl isn't built in: treat as
@@ -358,6 +363,9 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 		task.ClientRequestID = &clientRequestID
 		task.ClientRequestHash = requestHash
 	}
+	if dto.templateSnapshot != nil {
+		task.DisplayName = dto.templateSnapshot.Title
+	}
 
 	// Charge the server-computed point cost up front (guarded against concurrent
 	// overspend). The deduction is the authoritative gate — a balance below cost
@@ -369,6 +377,9 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 		return nil, err
 	}
 	task.PointCost = int64(cost)
+	if dto.templateSnapshot != nil && dto.TemplateQuote != templateQuoteToken(userID, dto, m, cost) {
+		return nil, skillPlacementError{message: "模板或价格已更新，请重新确认积分后生成"}
+	}
 	if dto.SkillRunStepID != 0 {
 		key := "skill-run-step:" + dto.SkillRunStepID.String()
 		task.OrchestrationKey = &key
@@ -401,7 +412,14 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 					return err
 				}
 			}
-			return tx.Create(task).Error
+			if err := tx.Create(task).Error; err != nil {
+				return err
+			}
+			if dto.templateSnapshot != nil {
+				return tx.Model(&model.StudioTemplate{}).Where("id = ?", dto.TemplateID).
+					UpdateColumn("uses", gorm.Expr("uses + 1")).Error
+			}
+			return nil
 		})
 		if err != nil {
 			// A concurrent retry can lose the unique-key race after the winning
@@ -478,6 +496,8 @@ func directGenerationFingerprint(dto generateDTO) (string, error) {
 		}
 	}
 	payload := struct {
+		TemplateID    idgen.ID `json:"templateId,omitempty"`
+		TemplateQuote string   `json:"templateQuote,omitempty"`
 		BillingMarket string   `json:"billingMarket,omitempty"`
 		IsAPICall     bool     `json:"isApiCall,omitempty"`
 		Handler       string   `json:"handler"`
@@ -487,6 +507,7 @@ func directGenerationFingerprint(dto generateDTO) (string, error) {
 		EntryPoint    string   `json:"entryPoint"`
 		TargetType    string   `json:"targetType"`
 	}{
+		TemplateID: dto.TemplateID, TemplateQuote: dto.TemplateQuote,
 		BillingMarket: dto.BillingMarket,
 		Handler:       strings.TrimSpace(dto.Handler), ModelID: strings.TrimSpace(dto.ModelID), ProjectID: dto.ProjectID,
 		IsAPICall: dto.IsAPICall,
@@ -799,6 +820,9 @@ func (s *service) runTask(ctx context.Context, taskID idgen.ID, gh GenHandler, m
 	end := time.Now()
 	task.UpdateTime = end
 	task.CompleteTime = &end
+	if task.Origin == "template" {
+		res.Meta = nil
+	}
 	if genErr != nil || (res.ResultURL == "" && !resultHasText(res)) {
 		task.Status = statusFailed
 		task.Progress = 100
@@ -1002,6 +1026,9 @@ func (s *service) resumeOrphanedTask(snapshot model.AiTask) {
 	end := time.Now()
 	current.UpdateTime = end
 	current.CompleteTime = &end
+	if current.Origin == "template" {
+		res.Meta = nil
+	}
 	if genErr != nil || (res.ResultURL == "" && !resultHasText(res)) {
 		current.Status = statusFailed
 		current.Progress = 100

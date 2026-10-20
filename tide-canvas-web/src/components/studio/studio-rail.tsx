@@ -20,6 +20,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Logo } from "@/components/flux/atoms";
 import { usePathname } from "next/navigation";
+import { Menu, X } from "lucide-react";
+import templateNav from "./template-navigation.module.css";
 import NotificationCenter from "@/components/shared/notification-center";
 import { useAuth } from "@/hooks/use-auth";
 
@@ -132,8 +134,8 @@ const NAV_TOP: NavItem[] = [
     ),
   },
   {
-    href: "/inspire",
-    label: "灵感",
+    href: "/templates",
+    label: "灵感和模板",
     key: "inspire",
     icon: (
       <svg viewBox="0 0 24 24">
@@ -169,6 +171,8 @@ const RAIL_COLLAPSED_KEY = "ws_rail_collapsed";
 export default function StudioRail() {
   const pathname = usePathname() ?? "";
   const { user } = useAuth();
+  const templateSurface = pathname === "/templates" || pathname.startsWith("/templates/");
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   // 折叠态：SSR 恒为展开，挂载后从 localStorage 同步（避免 hydration 不一致）。
   const [collapsed, setCollapsed] = useState(false);
@@ -206,15 +210,17 @@ export default function StudioRail() {
 
   return (
     <>
-    <aside className={`ws-rail${collapsed ? " collapsed" : ""}`}>
+    <aside className={`ws-rail${collapsed ? " collapsed" : ""}${templateSurface ? ` ${templateNav.compact} ${mobileOpen ? templateNav.open : ""}` : ""}`} onClick={templateSurface ? e => { if ((e.target as Element).closest("a")) setMobileOpen(false); } : undefined} onKeyDown={templateSurface ? e => { if (e.key === "Escape") { setMobileOpen(false); e.currentTarget.querySelector<HTMLButtonElement>(`.${templateNav.toggle}`)?.focus(); } } : undefined}>
       <Link className="ws-brand" href="/" title="FlowingLight 流光">
         <Logo size={30} />
         <b>FLOWING</b>
       </Link>
 
+      {templateSurface && <button type="button" className={templateNav.toggle} aria-label={mobileOpen ? "收起导航" : "展开导航"} aria-expanded={mobileOpen} aria-controls="studio-rail-navigation" onClick={() => setMobileOpen(v => !v)}>{mobileOpen ? <X size={19} /> : <Menu size={19} />}<span>{mobileOpen ? "收起导航" : "导航"}</span></button>}
+
       <div className="ws-rail-sp" />
 
-      <nav className="ws-nav">
+      <nav className="ws-nav" id="studio-rail-navigation">
         {navTop.map((item) => (
           <Link
             key={item.href}

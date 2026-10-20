@@ -3,7 +3,6 @@
    （@/types/artwork 的 ArtworkType；@/lib/mesh 的 MeshHues，经 artwork 转出口）。 */
 
 import type { ArtworkType, MeshHues } from "@/types/artwork";
-import type { StudioTemplate } from "@/lib/studio-template-api";
 
 export type { ArtworkType, MeshHues };
 
@@ -192,7 +191,9 @@ export interface ActiveRun {
 /** Full panel settings of a generation, captured so 重新编辑 / 再次生成 can restore
  *  or reproduce that exact run rather than whatever the panel currently shows. */
 export interface RunParams {
-  template?: StudioTemplate;
+	/** Template history returns to the workshop instead of replaying an empty prompt. */
+	templateId?: string;
+	templateTitle?: string;
   prompt: string;
   model: string;
   /** Stable catalog row id. Older history may only have the display name. */

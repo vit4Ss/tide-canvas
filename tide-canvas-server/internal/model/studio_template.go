@@ -14,6 +14,7 @@ type StudioTemplate struct {
 	PreviewURL   string                     `gorm:"size:2048" json:"previewUrl"`
 	AuthorName   string                     `gorm:"size:64" json:"authorName"`
 	InputHint    string                     `gorm:"size:1024" json:"inputHint"`
+	InputLabels  StudioTemplateInputLabels  `gorm:"serializer:json;type:text" json:"inputLabels"`
 	Mode         string                     `gorm:"size:16" json:"mode"`
 	ModelKey     string                     `gorm:"size:128" json:"modelKey"`
 	Requirements StudioTemplateRequirements `gorm:"serializer:json;type:text" json:"requirements"`
@@ -31,6 +32,12 @@ type StudioTemplateRequirements struct {
 	Images int `json:"images"`
 	Videos int `json:"videos"`
 	Audio  int `json:"audio"`
+}
+
+type StudioTemplateInputLabels struct {
+	Images []string `json:"images,omitempty"`
+	Videos []string `json:"videos,omitempty"`
+	Audio  []string `json:"audio,omitempty"`
 }
 
 type StudioTemplateOptions struct {

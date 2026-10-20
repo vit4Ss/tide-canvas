@@ -6,12 +6,10 @@ import (
 	"net/url"
 	"path"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"tidecanvas/internal/app"
-	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
 	"tidecanvas/internal/pkg/response"
@@ -19,12 +17,36 @@ import (
 
 type Handler struct{ DB *gorm.DB }
 
+// PublicTemplate deliberately excludes the operator's private recipe.
+type PublicTemplate struct {
+	ID           idgen.ID                         `json:"id"`
+	Kind         string                           `json:"kind"`
+	MediaType    string                           `json:"mediaType"`
+	Title        string                           `json:"title"`
+	Description  string                           `json:"description"`
+	Category     string                           `json:"category"`
+	CoverURL     string                           `json:"coverUrl"`
+	PreviewURL   string                           `json:"previewUrl"`
+	AuthorName   string                           `json:"authorName"`
+	InputHint    string                           `json:"inputHint"`
+	InputLabels  model.StudioTemplateInputLabels  `json:"inputLabels"`
+	Mode         string                           `json:"mode"`
+	Requirements model.StudioTemplateRequirements `json:"requirements"`
+	Options      model.StudioTemplateOptions      `json:"options"`
+	Uses         int64                            `json:"uses"`
+}
+
+func publicTemplate(row model.StudioTemplate) PublicTemplate {
+	return PublicTemplate{ID: row.ID, Kind: row.Kind, MediaType: row.MediaType, Title: row.Title,
+		Description: row.Description, Category: row.Category, CoverURL: row.CoverURL, PreviewURL: row.PreviewURL,
+		AuthorName: row.AuthorName, InputHint: row.InputHint, InputLabels: row.InputLabels, Mode: row.Mode, Requirements: row.Requirements, Options: row.Options, Uses: row.Uses}
+}
+
 func Register(api *gin.RouterGroup, d *app.Deps) {
 	h := &Handler{DB: d.DB}
 	g := api.Group("/studio-templates")
 	g.GET("", h.List(false))
 	g.GET("/:id", h.Get)
-	g.POST("/:id/use", middleware.JWTAuth(d), middleware.RateLimit(d, 30, time.Minute), h.Use)
 }
 
 type Query struct {
@@ -96,7 +118,15 @@ func (h *Handler) List(admin bool) gin.HandlerFunc {
 		if categories == nil {
 			categories = []string{}
 		}
-		response.OK(c, gin.H{"records": rows, "total": total, "pageNum": q.PageNum, "pageSize": q.PageSize, "pages": (total + int64(q.PageSize) - 1) / int64(q.PageSize), "categories": categories})
+		var records any = rows
+		if !admin {
+			public := make([]PublicTemplate, 0, len(rows))
+			for _, row := range rows {
+				public = append(public, publicTemplate(row))
+			}
+			records = public
+		}
+		response.OK(c, gin.H{"records": records, "total": total, "pageNum": q.PageNum, "pageSize": q.PageSize, "pages": (total + int64(q.PageSize) - 1) / int64(q.PageSize), "categories": categories})
 	}
 }
 
@@ -116,25 +146,7 @@ func (h *Handler) Get(c *gin.Context) {
 		}
 		return
 	}
-	response.OK(c, row)
-}
-
-func (h *Handler) Use(c *gin.Context) {
-	id, err := idgen.Parse(c.Param("id"))
-	if err != nil || id == 0 {
-		response.Fail(c, 400, "模板编号无效")
-		return
-	}
-	r := h.DB.WithContext(c.Request.Context()).Model(&model.StudioTemplate{}).Where("id = ? AND status = 1", id).UpdateColumn("uses", gorm.Expr("uses + 1"))
-	if r.Error != nil {
-		response.Fail(c, 500, "记录使用失败")
-		return
-	}
-	if r.RowsAffected == 0 {
-		response.Fail(c, 404, "模板已下架或不存在")
-		return
-	}
-	response.OK(c, gin.H{"ok": true})
+	response.OK(c, publicTemplate(row))
 }
 
 type SaveDTO struct {
@@ -143,11 +155,12 @@ type SaveDTO struct {
 	Title        string                           `json:"title" binding:"required,max=128"`
 	Description  string                           `json:"description" binding:"max=512"`
 	Category     string                           `json:"category" binding:"max=64"`
-	Prompt       string                           `json:"prompt" binding:"required,max=20000"`
+	Prompt       string                           `json:"prompt" binding:"max=20000"`
 	CoverURL     string                           `json:"coverUrl" binding:"max=2048"`
 	PreviewURL   string                           `json:"previewUrl" binding:"max=2048"`
 	AuthorName   string                           `json:"authorName" binding:"max=64"`
 	InputHint    string                           `json:"inputHint" binding:"max=1024"`
+	InputLabels  model.StudioTemplateInputLabels  `json:"inputLabels"`
 	Mode         string                           `json:"mode" binding:"required,oneof=t2i i2i t2v i2v flf ref"`
 	ModelKey     string                           `json:"modelKey" binding:"max=128"`
 	Requirements model.StudioTemplateRequirements `json:"requirements"`
@@ -180,8 +193,25 @@ func (d *SaveDTO) Validate() error {
 	d.CoverURL = strings.TrimSpace(d.CoverURL)
 	d.PreviewURL = strings.TrimSpace(d.PreviewURL)
 	d.ModelKey = strings.TrimSpace(d.ModelKey)
-	if d.Title == "" || d.Prompt == "" {
-		return errors.New("名称和提示词不能为空")
+	d.Options.AspectRatio = strings.TrimSpace(d.Options.AspectRatio)
+	d.Options.Resolution = strings.TrimSpace(d.Options.Resolution)
+	d.Options.Quality = strings.TrimSpace(d.Options.Quality)
+	if d.Title == "" {
+		return errors.New("名称不能为空")
+	}
+	if d.Status == 1 && d.Prompt == "" {
+		return errors.New("上架前请填写完整提示词")
+	}
+	for _, labels := range [][]string{d.InputLabels.Images, d.InputLabels.Videos, d.InputLabels.Audio} {
+		if len(labels) > 16 {
+			return errors.New("素材名称数量过多")
+		}
+		for i, label := range labels {
+			labels[i] = strings.TrimSpace(label)
+			if len([]rune(labels[i])) > 40 {
+				return errors.New("每个素材名称最多40字")
+			}
+		}
 	}
 	if !SafeMediaURL(d.CoverURL) || !SafeMediaURL(d.PreviewURL) {
 		return errors.New("封面和预览需使用有效的 HTTP/HTTPS 媒体地址")
@@ -222,5 +252,5 @@ func (d *SaveDTO) Validate() error {
 }
 
 func (d SaveDTO) Row() model.StudioTemplate {
-	return model.StudioTemplate{Kind: d.Kind, MediaType: d.MediaType, Title: d.Title, Description: d.Description, Category: d.Category, Prompt: d.Prompt, CoverURL: d.CoverURL, PreviewURL: d.PreviewURL, AuthorName: d.AuthorName, InputHint: d.InputHint, Mode: d.Mode, ModelKey: d.ModelKey, Requirements: d.Requirements, Options: d.Options, Status: d.Status, SortOrder: d.SortOrder}
+	return model.StudioTemplate{Kind: d.Kind, MediaType: d.MediaType, Title: d.Title, Description: d.Description, Category: d.Category, Prompt: d.Prompt, CoverURL: d.CoverURL, PreviewURL: d.PreviewURL, AuthorName: d.AuthorName, InputHint: d.InputHint, InputLabels: d.InputLabels, Mode: d.Mode, ModelKey: d.ModelKey, Requirements: d.Requirements, Options: d.Options, Status: d.Status, SortOrder: d.SortOrder}
 }

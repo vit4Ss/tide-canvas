@@ -1,10 +1,11 @@
 "use client";
+/* eslint-disable @next/next/no-img-element -- OSS resizing and signed-media fallbacks are handled by ossDisplayUrl. */
 
 import { useEffect, useRef, useState } from "react";
 import { ImageIcon, Play } from "lucide-react";
 import { ossDisplayUrl, fallbackOssDisplayImage } from "@/lib/oss-display";
 import type { StudioTemplate } from "@/lib/studio-template-api";
-import css from "./template-library.module.css";
+import css from "./template-media.module.css";
 
 export function TemplateMedia({
   row,
@@ -81,7 +82,7 @@ export function TemplateMedia({
         )}
       {row.mediaType === "video" && !controls && (
         <span className={css.play}>
-          <Play size={12} fill="currentColor" /> VIDEO
+          <Play size={12} fill="currentColor" /> 视频
         </span>
       )}
       {broken && controls && (

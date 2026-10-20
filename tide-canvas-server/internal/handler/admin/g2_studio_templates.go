@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"tidecanvas/internal/app"
+	"tidecanvas/internal/handler/ai"
 	"tidecanvas/internal/handler/studiotemplate"
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
@@ -23,6 +24,7 @@ func RegisterStudioTemplates(g *gin.RouterGroup, d *app.Deps) {
 	s := g.Group("/studio-templates")
 	s.GET("", (&studiotemplate.Handler{DB: d.DB}).List(true))
 	s.POST("", h.save)
+	s.POST("/check", h.check)
 	s.PUT("/:id", h.save)
 	s.DELETE("/:id", h.remove)
 	// Access to unpublished user generations also needs the generation module.
@@ -44,6 +46,17 @@ func (h *studioTemplatesHandler) save(c *gin.Context) {
 		return
 	}
 	row := dto.Row()
+	if row.Status == 1 {
+		setup, err := ai.CheckStudioTemplate(c.Request.Context(), h.db, row)
+		if err != nil {
+			response.Fail(c, 400, "暂不能上架："+err.Error())
+			return
+		}
+		// Freeze the selected model and default output settings for a reusable
+		// recipe, rather than allowing catalog ordering to change the effect.
+		row.ModelKey = setup.ModelID
+		row.Options = setup.Options
+	}
 	if c.Param("id") == "" {
 		if err := h.db.Create(&row).Error; err != nil {
 			response.Fail(c, 500, "创建模板失败")
@@ -62,13 +75,35 @@ func (h *studioTemplatesHandler) save(c *gin.Context) {
 		}
 		row.BaseModel = old.BaseModel
 		// Explicit fields include zero values, and never overwrite source/uses.
-		if err := h.db.Model(&old).Select("Kind", "MediaType", "Title", "Description", "Category", "Prompt", "CoverURL", "PreviewURL", "AuthorName", "InputHint", "Mode", "ModelKey", "Requirements", "Options", "Status", "SortOrder").Updates(&row).Error; err != nil {
+		if err := h.db.Model(&old).Select("Kind", "MediaType", "Title", "Description", "Category", "Prompt", "CoverURL", "PreviewURL", "AuthorName", "InputHint", "InputLabels", "Mode", "ModelKey", "Requirements", "Options", "Status", "SortOrder").Updates(&row).Error; err != nil {
 			response.Fail(c, 500, "保存模板失败")
 			return
 		}
 		row.Uses = old.Uses
 	}
 	response.OK(c, row)
+}
+
+func (h *studioTemplatesHandler) check(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 128<<10)
+	var dto studiotemplate.SaveDTO
+	if c.ShouldBindJSON(&dto) != nil {
+		response.Fail(c, 400, "请检查名称、提示词、媒体类型和参数长度")
+		return
+	}
+	// A recipe can be checked before its showcase artwork is ready.
+	dto.Status = 0
+	if err := dto.Validate(); err != nil {
+		response.Fail(c, 400, err.Error())
+		return
+	}
+	setup, err := ai.CheckStudioTemplate(c.Request.Context(), h.db, dto.Row())
+	if err != nil {
+		response.Fail(c, 400, err.Error())
+		return
+	}
+	response.OK(c, setup)
 }
 
 func (h *studioTemplatesHandler) remove(c *gin.Context) {
@@ -197,7 +232,23 @@ func (h *studioTemplatesHandler) fromTask(c *gin.Context) {
 	if in["skillId"] != nil {
 		prompt = ""
 	}
-	row := model.StudioTemplate{Kind: "inspiration", MediaType: "image", Title: "新的创作灵感", Prompt: prompt, Mode: studioTemplateModes[task.Handler], ModelKey: task.ModelName, SourceKey: &key, InputHint: "请上传你自己的参考素材，确认提示词后生成。"}
+	// ModelName is the display label, not the upstream key. Prefer the model
+	// record used by the task; retain an unavailable ID so publication requires
+	// an intentional replacement instead of silently choosing a different model.
+	modelKey := strings.TrimSpace(task.ModelName)
+	if task.ModelID != 0 {
+		modelKey = task.ModelID.String()
+		var sourceModel model.MarketModel
+		if err := h.db.First(&sourceModel, "id = ?", task.ModelID).Error; err == nil {
+			if strings.TrimSpace(sourceModel.ModelKey) != "" {
+				modelKey = sourceModel.ModelKey
+			}
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			response.Fail(c, 500, "读取原任务模型失败")
+			return
+		}
+	}
+	row := model.StudioTemplate{Kind: "inspiration", MediaType: "image", Title: "新的创作灵感", Prompt: prompt, Mode: studioTemplateModes[task.Handler], ModelKey: modelKey, SourceKey: &key, InputHint: "请按要求上传自己的素材，即可生成同款。"}
 	if len([]rune(prompt)) > 20000 {
 		row.Prompt = string([]rune(prompt)[:20000])
 	}
@@ -215,11 +266,15 @@ func (h *studioTemplatesHandler) fromTask(c *gin.Context) {
 		row.Requirements.Images = 1
 	}
 	if row.Mode == "i2i" || row.Mode == "ref" {
-		row.Requirements.Images = min(4, max(row.Requirements.Images, templateSourceRefCount(in, "imageList", "imageUrls", "references")))
+		row.Requirements.Images = max(row.Requirements.Images, templateSourceRefCount(in, "imageList", "imageUrls", "references"))
 	}
 	if row.Mode == "ref" {
-		row.Requirements.Videos = min(3, templateSourceRefCount(in, "videoReferences", "videoUrls"))
-		row.Requirements.Audio = min(3, templateSourceRefCount(in, "audioReferences", "audioUrls"))
+		row.Requirements.Videos = templateSourceRefCount(in, "videoReferences", "videoUrls", "video_urls")
+		row.Requirements.Audio = templateSourceRefCount(in, "audioReferences", "audioUrls", "audio_urls")
+	}
+	if row.Requirements.Images > 4 || row.Requirements.Videos > 3 || row.Requirements.Audio > 3 {
+		response.Fail(c, 400, "原作品素材数量超过模板限制（图片4张、视频和音频各3段），请先在创作台减少素材并验证效果后导入")
+		return
 	}
 	if row.Mode == "flf" {
 		row.Requirements.Images = 2
@@ -230,6 +285,10 @@ func (h *studioTemplatesHandler) fromTask(c *gin.Context) {
 	row.Options.Resolution, _ = in["resolution"].(string)
 	row.Options.Quality, _ = in["quality"].(string)
 	if v, ok := in["duration"].(float64); ok && v > 0 && v <= 600 {
+		if v != float64(int(v)) {
+			response.Fail(c, 400, "此作品使用非整数视频时长，当前模板不支持直接复用，请先调整时长并试做")
+			return
+		}
 		row.Options.Duration = int(v)
 	}
 	if err := h.db.Create(&row).Error; err != nil {

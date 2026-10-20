@@ -16,6 +16,14 @@ const types = load("../../../types/ai.ts");
 const { histItemsFromTasks } = load("./utils.ts", (name) => name === "./constants" ? constants : name === "@/types/ai" ? types : {});
 const { mergeInitialStudioHistory, nextHistoryRequest } = load("./history-merge.ts");
 const convert = (tasks) => JSON.parse(JSON.stringify(histItemsFromTasks(tasks)));
+test("private template history preserves its workshop destination without inventing a prompt", () => {
+  const [row] = convert([{ id: "123", handler: "image_to_image", modelName: "Image", status: 1,
+    input: { templateId: "9007199254740993123", templateTitle: "换装模板", imageUrls: ["https://cdn.test/input.png"] },
+    resultUrl: "https://cdn.test/result.png", resultMeta: {}, createTime: "2026-10-20T00:00:00Z" }]);
+  assert.equal(row.params.templateId, "9007199254740993123");
+  assert.equal(row.title, "换装模板");
+  assert.equal(row.prompt, "");
+});
 const base = { id: "1234567890123456789", handler: "text_to_image", isApiCall: true, modelName: "Test", input: { prompt: "my prompt", n: 2 }, resultMeta: {}, resultUrl: "", createTime: "2026-09-19T01:00:00Z", status: 0, progress: 30 };
 
 test("API processing transitions to multiple results once, preserving UI history", () => {
