@@ -20,7 +20,7 @@ await context.route("**/api/**",async route=>{
  const fail=(message,code=400)=>route.fulfill({status:code,json:{success:false,code,message,data:null}});
  if(path==="/api/auth/me")data={id:owner,username:"reviewer",nickname:"Reviewer",role:9,status:1,points:1000,menus:['discover','studio','inspire','analysis','three_d','tools','chat','canvas','explore','assets'],adminPerms:[]};
  else if(path.startsWith('/api/admin/dashboard/'))return fail('fixture dashboard unavailable',503);
- else if(path==="/api/market/studio-models")data=[{id:"41",modelKey:"fixture-model",name:"Fixture Model",type:"image",config:{modes:["i2i"],resolutions:["2k"],ratios:["4:5"],qualities:["high"]}}];
+ else if(path==="/api/market/studio-models")data=[{id:"41",modelKey:"fixture-model",name:"Fixture Model",type:"image",config:{modes:["i2i"],resolutions:["2k"],ratios:["4:5"],qualities:["high"]}},{id:"42",modelKey:"fixture-square",name:"Square Model",type:"image",config:{modes:["i2i"],resolutions:["1k"],ratios:["1:1"],qualities:["standard"]}}];
  else if(path==="/api/points/balance")data={points:1000,frozen:0};
  else if(path==="/api/ai/optimize-cost")data={cost:0};
  else if(path==="/api/admin/studio-templates/check"){
@@ -178,15 +178,42 @@ try{
  setupFails=true;await page.reload({waitUntil:'networkidle'});await page.getByRole('button',{name:'重新读取规格',exact:true}).waitFor();templates[0].inputLabels={images:['角色照片']};setupFails=false;await page.getByRole('button',{name:'重新读取规格',exact:true}).click();await page.getByLabel('上传角色照片',{exact:true}).waitFor();await page.getByText('模板素材要求已更新，请按新要求重新选择素材。',{exact:true}).waitFor();assert.equal(await page.locator('small').filter({hasText:'已上传'}).count(),0);assert.equal(await page.getByRole('button',{name:'生成同款',exact:true}).isDisabled(),true);
  await page.getByLabel('上传角色照片',{exact:true}).setInputFiles(imageFile);await page.getByText('7 积分',{exact:true}).waitFor();const vanished=quotes.at(-1).input.imageIds[0];storedFiles.delete(vanished);await page.reload({waitUntil:'networkidle'});await page.getByText('此素材已不可用，请重新上传',{exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'生成同款',exact:true}).isDisabled(),true);
  await page.goto(base+'/studio',{waitUntil:'networkidle'});await page.locator('[contenteditable=true]').first().waitFor();assert.equal(await page.getByRole('tab',{name:'风格主题'}).count(),0);
- const beforeOperator=submits.length;await page.goto(base+'/admin/studio-templates',{waitUntil:'networkidle'});await page.getByRole('button',{name:'新建风格',exact:true}).click();const editor=page.getByRole('dialog',{name:'新建创作模板'});await editor.getByLabel(/^名称/).fill('运营测试风格');await editor.getByLabel(/完整提示词/).fill('admin-only-recipe');await editor.getByLabel('图片1用途',{exact:true}).fill('主体照片');await editor.getByRole('button',{name:'保存草稿',exact:true}).click();await page.getByRole('heading',{name:'运营测试风格',exact:true}).waitFor();assert.equal(templates.at(-1).inputLabels.images[0],'主体照片');
+ const beforeOperator=submits.length;await page.goto(base+'/admin/studio-templates',{waitUntil:'networkidle'});await page.getByRole('button',{name:'新建风格',exact:true}).click();const editor=page.getByRole('dialog',{name:'新建创作模板'});await editor.getByLabel(/^名称/).fill('运营测试风格');await editor.getByLabel(/完整提示词/).fill('admin-only-recipe');
+ const imageCount=editor.getByRole('spinbutton',{name:'参考图片数量',exact:true});
+ assert.equal(await editor.getByRole('button',{name:'减少参考图片',exact:true}).isDisabled(),true);
+ await imageCount.fill('4');assert.equal(await editor.getByRole('button',{name:'增加参考图片',exact:true}).isDisabled(),true);
+ await imageCount.fill('2');await editor.getByLabel('图片2用途',{exact:true}).waitFor();
+ assert.equal(await editor.getByRole('spinbutton',{name:'参考视频数量',exact:true}).count(),0,'unsupported video input is shown for image mode');
+ for(const name of ['创作模式','默认生成模型']){
+  const control=await editor.getByRole('button',{name,exact:true}).evaluate(el=>({height:el.getBoundingClientRect().height,border:parseFloat(getComputedStyle(el).borderTopWidth)}));
+  assert.ok(control.height>=40&&control.border>=1,`${name} lacks a visible control frame`);
+ }
+ await editor.getByRole('heading',{name:'提示词与素材',exact:true}).evaluate(el=>el.scrollIntoView({block:'start',behavior:'instant'}));await snap('operator-inputs-desktop');
+ await page.setViewportSize({width:390,height:844});assert.equal(await editor.evaluate(el=>el.scrollWidth>el.clientWidth+1),false);await editor.getByRole('heading',{name:'提示词与素材',exact:true}).evaluate(el=>el.scrollIntoView({block:'start',behavior:'instant'}));await snap('operator-inputs-mobile');await page.setViewportSize({width:1440,height:1000});
+ await editor.getByRole('button',{name:'创作模式',exact:true}).click();await page.getByRole('option',{name:'文生图',exact:true}).click();
+ await editor.getByText('此模式不需要上传参考素材。',{exact:true}).waitFor();assert.equal(await editor.getByRole('spinbutton',{name:'参考图片数量',exact:true}).count(),0);
+ await editor.getByRole('button',{name:'创作模式',exact:true}).click();await page.getByRole('option',{name:'图生图',exact:true}).click();
+ await editor.getByLabel('图片1用途',{exact:true}).fill('主体照片');await editor.getByRole('button',{name:'保存草稿',exact:true}).click();await page.getByRole('heading',{name:'运营测试风格',exact:true}).waitFor();assert.equal(templates.at(-1).inputLabels.images[0],'主体照片');
 
  const operatorRow=templates.at(-1);
  await page.getByRole('button',{name:'编辑运营测试风格',exact:true}).click();const edit=page.getByRole('dialog',{name:'编辑创作模板'});
- await edit.getByLabel('封面图片',{exact:true}).fill(base+'/studio-samples/v1/rainy-cinema.webp');await edit.getByLabel('分辨率',{exact:true}).fill('8k');await edit.getByRole('button',{name:'检查生成配置',exact:true}).click();await edit.getByRole('alert').filter({hasText:'模型不支持'}).waitFor();assert.equal(await edit.getByLabel(/完整提示词/).inputValue(),'admin-only-recipe');
- await edit.getByLabel('分辨率',{exact:true}).fill('2k');await edit.getByRole('button',{name:'检查生成配置',exact:true}).click();await edit.getByText('配置检查通过',{exact:true}).waitFor();assert.equal(submits.length,beforeOperator,'operator preflight generated a task');
+ await edit.getByLabel('封面图片',{exact:true}).fill(base+'/studio-samples/v1/rainy-cinema.webp');await edit.getByLabel('分辨率',{exact:true}).fill('8k');await edit.getByLabel('画面比例',{exact:true}).fill('4:5');
+ await edit.getByRole('button',{name:'默认生成模型',exact:true}).click();await page.getByRole('option',{name:'Square Model',exact:true}).click();
+ const ratioControl=edit.getByRole('button',{name:'画面比例',exact:true});assert.equal(await ratioControl.getAttribute('data-invalid'),'true');assert.ok((await ratioControl.innerText()).includes('4:5'));
+ assert.ok(await ratioControl.getAttribute('aria-describedby'),'unsupported ratio warning is not associated with its control');
+ await edit.getByRole('button',{name:'默认生成模型',exact:true}).click();await page.getByRole('option',{name:'Fixture Model',exact:true}).click();assert.equal(await ratioControl.getAttribute('data-invalid'),null);assert.equal(await ratioControl.innerText(),'4:5','model switch silently changed the existing ratio');
+ await edit.getByRole('button',{name:'检查生成配置',exact:true}).click();await edit.getByRole('alert').filter({hasText:'模型不支持'}).waitFor();assert.equal(await edit.getByLabel(/完整提示词/).inputValue(),'admin-only-recipe');
+ await edit.getByRole('button',{name:'分辨率',exact:true}).click();const specMenu=page.getByRole('listbox',{name:'分辨率',exact:true});
+ assert.equal(await specMenu.evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(255, 255, 255)','admin dropdown inherited the dark site palette');
+ assert.equal(await specMenu.getByRole('option',{name:'8k（不在模型配置中）',exact:true}).getAttribute('aria-disabled'),'true');
+ await specMenu.focus();await page.keyboard.press('Home');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
+ assert.equal(await edit.getByRole('button',{name:'分辨率',exact:true}).innerText(),'2k');
+ await edit.getByRole('button',{name:'检查生成配置',exact:true}).click();await edit.getByText('配置检查通过',{exact:true}).waitFor();assert.equal(submits.length,beforeOperator,'operator preflight generated a task');
  await edit.getByText('配置检查通过',{exact:true}).scrollIntoViewIfNeeded();await snap('operator-check-desktop');await page.setViewportSize({width:390,height:844});await edit.getByText('配置检查通过',{exact:true}).scrollIntoViewIfNeeded();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await snap('operator-check-mobile');await page.setViewportSize({width:1440,height:1000});
- await edit.getByRole('button',{name:'取消',exact:true}).click();await page.getByRole('alertdialog',{name:'放弃未保存的修改？'}).getByRole('button',{name:'取消',exact:true}).click();assert.equal(await edit.getByLabel('分辨率',{exact:true}).inputValue(),'2k');
+ await edit.getByRole('button',{name:'取消',exact:true}).click();await page.getByRole('alertdialog',{name:'放弃未保存的修改？'}).getByRole('button',{name:'取消',exact:true}).click();assert.equal(await edit.getByRole('button',{name:'分辨率',exact:true}).innerText(),'2k');
  await edit.getByRole('button',{name:'展示状态',exact:true}).click();await page.getByRole('option',{name:'上架到灵感和模板',exact:true}).click();await edit.getByRole('button',{name:'保存并上架',exact:true}).click();await page.getByRole('heading',{name:'运营测试风格',exact:true}).waitFor();
+ assert.equal(operatorRow.modelKey,'fixture-model','default generation model was not saved');
+ await page.getByRole('button',{name:'编辑运营测试风格',exact:true}).click();assert.equal(await edit.getByRole('button',{name:'默认生成模型',exact:true}).innerText(),'Fixture Model','saved default model was not restored');await edit.getByRole('button',{name:'取消',exact:true}).click();
  await page.getByRole('button',{name:'复制运营测试风格',exact:true}).click();const clone=page.getByRole('dialog',{name:'新建创作模板'});assert.equal(await clone.getByLabel(/^名称/).inputValue(),'运营测试风格（副本）');assert.equal(await clone.getByLabel(/完整提示词/).inputValue(),'admin-only-recipe');await clone.getByLabel(/^名称/).fill('复制后的新同款');await clone.getByRole('button',{name:'保存草稿',exact:true}).click();await page.getByRole('heading',{name:'复制后的新同款',exact:true}).waitFor();assert.equal(templates.at(-1).status,0);assert.notEqual(templates.at(-1).id,operatorRow.id);assert.equal(operatorRow.title,'运营测试风格');
  await page.goto(base+'/templates/'+operatorRow.id,{waitUntil:'networkidle'});await page.getByLabel('上传主体照片',{exact:true}).setInputFiles(imageFile);await page.getByText('7 积分',{exact:true}).waitFor();await page.getByRole('button',{name:'生成同款',exact:true}).click();await page.getByRole('heading',{name:'你的同款，完成了'}).waitFor();assert.equal(submits.at(-1).templateId,operatorRow.id);assert.equal('prompt' in submits.at(-1).input,false);
  await page.goto(base+'/admin/studio-templates',{waitUntil:'networkidle'});await page.getByRole('button',{name:'新建风格',exact:true}).click();const unfinished=page.getByRole('dialog',{name:'新建创作模板'});await unfinished.getByLabel(/^名称/).fill('尚未填提示词的草稿');await unfinished.getByRole('button',{name:'保存草稿',exact:true}).click();await page.getByRole('heading',{name:'尚未填提示词的草稿',exact:true}).waitFor();

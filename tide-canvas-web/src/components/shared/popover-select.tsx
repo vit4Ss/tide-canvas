@@ -26,6 +26,8 @@ export function PopoverSelect({
   id,
   label,
   ariaDescribedBy,
+  "aria-describedby": describedBy,
+  "aria-invalid": ariaInvalid,
   invalid,
   disabled,
   className,
@@ -41,6 +43,8 @@ export function PopoverSelect({
   /** 无障碍名（触发器无可见文本标签时必传） */
   label?: string;
   ariaDescribedBy?: string;
+  "aria-describedby"?: string;
+  "aria-invalid"?: boolean | "true" | "false";
   invalid?: boolean;
   disabled?: boolean;
   className?: string;
@@ -67,6 +71,7 @@ export function PopoverSelect({
   } | null>(null);
 
   const current = options.find((o) => o.value === value);
+  const effectiveInvalid = invalid ?? (ariaInvalid === true || ariaInvalid === "true");
   const menuOpen = open && !disabled;
   const selectedEnabledIndex = options.findIndex((option) => option.value === value && !option.disabled);
   const effectiveActive = options[active] && !options[active]?.disabled
@@ -254,8 +259,8 @@ export function PopoverSelect({
         type="button"
         disabled={disabled}
         aria-label={label}
-        aria-describedby={ariaDescribedBy}
-        data-invalid={invalid || undefined}
+        aria-describedby={ariaDescribedBy ?? describedBy}
+        data-invalid={effectiveInvalid || undefined}
         aria-haspopup="listbox"
         aria-expanded={menuOpen}
         aria-controls={menuId}
@@ -318,6 +323,7 @@ export function PopoverSelect({
                   role="option"
                   aria-selected={opt.value === value}
                   aria-disabled={opt.disabled}
+                  data-active={i === effectiveActive || undefined}
                   onPointerMove={() => { if (!opt.disabled) setActive(i); }}
                   onClick={() => pick(i)}
                   className={cn(

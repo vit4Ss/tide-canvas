@@ -10,6 +10,7 @@ import {
   Edit3,
   ImageIcon,
   Layers3,
+  Minus,
   Plus,
   Search,
   Sparkles,
@@ -33,7 +34,11 @@ import {
 } from "@/lib/studio-template-api";
 import { TemplateMedia } from "@/components/studio/create-studio/template-media";
 import { templateInputs } from "@/lib/studio-template";
-import { copyTemplateDraft, templateCountRange } from "@/lib/template-operator";
+import {
+  copyTemplateDraft,
+  templateCountRange,
+  templateSpecChoices,
+} from "@/lib/template-operator";
 import {
   templateOutputText,
   templateUploadSlots,
@@ -453,6 +458,34 @@ function TemplateEditor({
   const dirty = signature !== JSON.stringify(initial);
   const currentCheck =
     checked?.signature === signature ? checked.data : undefined;
+  const selectedModel =
+    !modelsLoading && !modelError
+      ? models.find(
+          (model) =>
+            model.type === form.mediaType &&
+            (model.modelKey === form.modelKey || model.id === form.modelKey),
+        )
+      : undefined;
+  const requirementKinds = (["images", "videos", "audio"] as const).filter(
+    (kind) => templateCountRange(form.mode, kind).max > 0,
+  );
+  const specConfigKeys = {
+    aspectRatio: "ratios",
+    resolution: "resolutions",
+    quality: "qualities",
+  } as const;
+  const durationValues = Array.isArray(selectedModel?.config?.durations)
+    ? selectedModel.config.durations.flatMap((value) => {
+        const text = String(value).trim();
+        return /^\d+s?$/i.test(text) && Number(text.replace(/s$/i, "")) > 0
+          ? [text.replace(/s$/i, "")]
+          : [];
+      })
+    : [];
+  const durationChoices = templateSpecChoices(
+    form.options.duration ? String(form.options.duration) : "",
+    durationValues,
+  );
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -546,7 +579,10 @@ function TemplateEditor({
   const change = <K extends keyof StudioTemplateSave>(
     key: K,
     value: StudioTemplateSave[K],
-  ) => setForm((v) => ({ ...v, [key]: value }));
+  ) => {
+    setError("");
+    setForm((v) => ({ ...v, [key]: value }));
+  };
   const upload = async (
     file: File | undefined,
     key: "coverUrl" | "previewUrl",
@@ -611,6 +647,10 @@ function TemplateEditor({
   const modes = (
     form.mediaType === "image" ? ["t2i", "i2i"] : ["t2v", "i2v", "flf", "ref"]
   ) as StudioTemplate["mode"][];
+  const selectProps = {
+    className: css.selectControl,
+    menuClassName: `admin-body ${css.selectMenu}`,
+  };
   return (
     <AdminModal
       open
@@ -639,13 +679,7 @@ function TemplateEditor({
         disabled={saving || checking || !!uploading}
       >
         <div>
-          <FormCard
-            title={
-              <>
-                <span className={css.sectionNumber}>01</span>展示信息
-              </>
-            }
-          >
+          <FormCard title="展示信息">
             <FormGrid>
               <Field label="名称" required>
                 <input
@@ -665,6 +699,7 @@ function TemplateEditor({
               </Field>
               <Field label="媒体类型">
                 <PopoverSelect
+                  {...selectProps}
                   value={form.mediaType}
                   label="媒体类型"
                   options={[
@@ -703,16 +738,15 @@ function TemplateEditor({
               />
             </Field>
           </FormCard>
-          <FormCard
-            title={
-              <>
-                <span className={css.sectionNumber}>02</span>提示词与素材
-              </>
-            }
-          >
-            <Field label="完整提示词" required={form.status === 1}>
+          <FormCard title="提示词与素材">
+            <Field
+              label="完整提示词"
+              required={form.status === 1}
+              hint="仅管理员可见，生成时自动使用。"
+            >
               <textarea
-                rows={7}
+                className={css.promptInput}
+                rows={5}
                 maxLength={20000}
                 value={form.prompt}
                 placeholder={
@@ -732,54 +766,203 @@ function TemplateEditor({
                 onChange={(e) => change("inputHint", e.target.value)}
               />
             </Field>
-            <FormGrid>
-              <Field label="创作模式">
-                <PopoverSelect
-                  label="创作模式"
-                  value={form.mode}
-                  options={modes.map((value) => ({
-                    value,
-                    label: modeLabels[value],
-                  }))}
-                  onChange={(v) =>
-                    setForm((old) => ({
-                      ...old,
-                      mode: v as StudioTemplate["mode"],
-                      inputLabels: {},
-                      requirements: {
-                        images:
-                          v === "t2i" || v === "t2v" ? 0 : v === "flf" ? 2 : 1,
-                        videos: 0,
-                        audio: 0,
+            <Field label="创作模式">
+              <PopoverSelect
+                {...selectProps}
+                label="创作模式"
+                value={form.mode}
+                options={modes.map((value) => ({
+                  value,
+                  label: modeLabels[value],
+                }))}
+                onChange={(v) =>
+                  setForm((old) => ({
+                    ...old,
+                    mode: v as StudioTemplate["mode"],
+                    inputLabels: {},
+                    requirements: {
+                      images:
+                        v === "t2i" || v === "t2v" ? 0 : v === "flf" ? 2 : 1,
+                      videos: 0,
+                      audio: 0,
+                    },
+                  }))
+                }
+              />
+            </Field>
+            {requirementKinds.length ? (
+              <div
+                className={css.requirements}
+                data-count={requirementKinds.length}
+                role="group"
+                aria-label="参考素材数量"
+              >
+                {requirementKinds.map((key) => {
+                  const range = templateCountRange(form.mode, key);
+                  const label = {
+                    images: "参考图片",
+                    videos: "参考视频",
+                    audio: "参考音频",
+                  }[key];
+                  const unit = key === "images" ? "张" : "段";
+                  const update = (value: number) =>
+                    change("requirements", {
+                      ...form.requirements,
+                      [key]: Math.min(
+                        range.max,
+                        Math.max(range.min, Math.trunc(value) || 0),
+                      ),
+                    });
+                  return (
+                    <div className={css.requirementRow} key={key}>
+                      <div>
+                        <strong>{label}</strong>
+                        <small>
+                          {range.min === range.max
+                            ? `固定 ${range.min} ${unit}`
+                            : `${range.min}–${range.max} ${unit}`}
+                        </small>
+                      </div>
+                      {range.min === range.max ? (
+                        <span className={css.fixedCount}>
+                          {range.min} {unit}
+                        </span>
+                      ) : (
+                        <div className={css.stepper}>
+                          <button
+                            type="button"
+                            aria-label={`减少${label}`}
+                            disabled={form.requirements[key] <= range.min}
+                            onClick={() => update(form.requirements[key] - 1)}
+                          >
+                            <Minus size={14} />
+                          </button>
+                          <input
+                            aria-label={`${label}数量`}
+                            type="number"
+                            min={range.min}
+                            max={range.max}
+                            step={1}
+                            value={form.requirements[key]}
+                            onChange={(event) =>
+                              update(Number(event.target.value))
+                            }
+                          />
+                          <button
+                            type="button"
+                            aria-label={`增加${label}`}
+                            disabled={form.requirements[key] >= range.max}
+                            onClick={() => update(form.requirements[key] + 1)}
+                          >
+                            <Plus size={14} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className={css.note}>此模式不需要上传参考素材。</p>
+            )}
+            {form.mode === "ref" &&
+              !Object.values(form.requirements).some(Boolean) && (
+                <p className={css.note}>
+                  数量均为 0 时，用户可按需选择参考素材。
+                </p>
+              )}
+          </FormCard>
+          {requirementKinds.length > 0 && (
+            <FormCard title="素材用途名称">
+              <p>
+                前台将直接显示这些名称，例如「人物照片」「服装图片」。留空时使用素材编号。
+              </p>
+              <FormGrid>
+                {(["images", "videos", "audio"] as const).flatMap(
+                  (kind, kindIndex) =>
+                    Array.from(
+                      {
+                        length: Math.min(
+                          kind === "images" ? 4 : 3,
+                          Math.max(
+                            0,
+                            form.requirements[kind] ||
+                              (form.mode === "ref" &&
+                              !Object.values(form.requirements).some(Boolean)
+                                ? 1
+                                : 0),
+                          ),
+                        ),
                       },
-                    }))
-                  }
-                />
-              </Field>
-              <Field label="生成模型">
-                <PopoverSelect
-                  label="生成模型"
-                  value={form.modelKey}
-                  options={[
-                    { value: "", label: "上架时自动选定兼容模型" },
-                    ...models.map((m) => ({
-                      value: m.modelKey,
-                      label: m.name,
-                    })),
-                    ...(form.modelKey &&
-                    !models.some((m) => m.modelKey === form.modelKey)
-                      ? [
-                          {
-                            value: form.modelKey,
-                            label: `${form.modelKey}（不在当前可用列表）`,
-                          },
-                        ]
-                      : []),
-                  ]}
-                  onChange={(v) => change("modelKey", v)}
-                />
-              </Field>
-            </FormGrid>
+                      (_, index) => (
+                        <Field
+                          key={`${kind}-${index}`}
+                          label={`${["图片", "视频", "音频"][kindIndex]}${index + 1}用途`}
+                        >
+                          <input
+                            maxLength={40}
+                            value={form.inputLabels?.[kind]?.[index] || ""}
+                            placeholder={
+                              kind === "images"
+                                ? "例如 人物照片、服装图片"
+                                : "例如 动作参考、背景音频"
+                            }
+                            onChange={(e) => {
+                              const labels = [
+                                ...(form.inputLabels?.[kind] || []),
+                              ];
+                              labels[index] = e.target.value;
+                              change("inputLabels", {
+                                ...form.inputLabels,
+                                [kind]: labels,
+                              });
+                            }}
+                          />
+                        </Field>
+                      ),
+                    ),
+                )}
+              </FormGrid>
+            </FormCard>
+          )}
+          <FormCard title="输出规格与发布">
+            <Field
+              label="默认生成模型"
+              hint={
+                form.modelKey
+                  ? "用户使用此模板时按所选模型生成，积分按该模型计费。切换模型后请重新检查输出规格。"
+                  : "未指定时，上架会自动选择兼容模型并保存，用户之后使用该模型生成。"
+              }
+              error={
+                form.modelKey && !modelsLoading && !modelError && !selectedModel
+                  ? "原模型不在可用列表，请重新选择并检查配置。"
+                  : undefined
+              }
+            >
+              <PopoverSelect
+                {...selectProps}
+                label="默认生成模型"
+                disabled={modelsLoading || !!modelError}
+                value={selectedModel?.modelKey || form.modelKey}
+                options={[
+                  { value: "", label: "自动选择兼容模型（上架时确定）" },
+                  ...models.map((m) => ({
+                    value: m.modelKey,
+                    label: m.name,
+                  })),
+                  ...(form.modelKey && !selectedModel
+                    ? [
+                        {
+                          value: form.modelKey,
+                          label: `${form.modelKey}（不在当前可用列表）`,
+                          disabled: true,
+                        },
+                      ]
+                    : []),
+                ]}
+                onChange={(v) => change("modelKey", v)}
+              />
+            </Field>
             {modelsLoading && <p role="status">正在读取可用模型…</p>}
             {modelError && (
               <p role="alert">
@@ -793,136 +976,101 @@ function TemplateEditor({
                 </button>
               </p>
             )}
-            <p className={css.note}>
-              上架会固定选定的模型与输出规格。更新模型后请重新检查并试做，确认效果一致。
-            </p>
-            <div className={css.requirements}>
-              {(["images", "videos", "audio"] as const).map((key, i) => (
-                <label key={key}>
-                  所需{["图片", "视频", "音频"][i]}数
-                  <input
-                    type="number"
-                    min={templateCountRange(form.mode, key).min}
-                    max={templateCountRange(form.mode, key).max}
-                    step={1}
-                    disabled={
-                      templateCountRange(form.mode, key).min ===
-                      templateCountRange(form.mode, key).max
-                    }
-                    value={form.requirements[key]}
-                    onChange={(e) =>
-                      change("requirements", {
-                        ...form.requirements,
-                        [key]: Math.min(
-                          templateCountRange(form.mode, key).max,
-                          Math.max(
-                            templateCountRange(form.mode, key).min,
-                            Math.trunc(Number(e.target.value) || 0),
-                          ),
-                        ),
-                      })
-                    }
-                  />
-                </label>
-              ))}
-            </div>
-          </FormCard>
-          <FormCard title="素材用途名称">
-            <p>
-              前台将直接显示这些名称，例如「人物照片」「服装图片」。留空时使用素材编号。
-            </p>
-            <FormGrid>
-              {(["images", "videos", "audio"] as const).flatMap(
-                (kind, kindIndex) =>
-                  Array.from(
-                    {
-                      length: Math.min(
-                        kind === "images" ? 4 : 3,
-                        Math.max(
-                          0,
-                          form.requirements[kind] ||
-                            (form.mode === "ref" &&
-                            !Object.values(form.requirements).some(Boolean)
-                              ? 1
-                              : 0),
-                        ),
-                      ),
-                    },
-                    (_, index) => (
-                      <Field
-                        key={`${kind}-${index}`}
-                        label={`${["图片", "视频", "音频"][kindIndex]}${index + 1}用途`}
-                      >
-                        <input
-                          maxLength={40}
-                          value={form.inputLabels?.[kind]?.[index] || ""}
-                          placeholder={
-                            kind === "images"
-                              ? "例如 人物照片、服装图片"
-                              : "例如 动作参考、背景音频"
-                          }
-                          onChange={(e) => {
-                            const labels = [
-                              ...(form.inputLabels?.[kind] || []),
-                            ];
-                            labels[index] = e.target.value;
-                            change("inputLabels", {
-                              ...form.inputLabels,
-                              [kind]: labels,
-                            });
-                          }}
-                        />
-                      </Field>
-                    ),
-                  ),
-              )}
-            </FormGrid>
-          </FormCard>
-          <FormCard
-            title={
-              <>
-                <span className={css.sectionNumber}>03</span>建议参数与发布
-              </>
-            }
-          >
             <FormGrid>
               {(["aspectRatio", "resolution", "quality"] as const).map(
-                (key, i) => (
-                  <Field key={key} label={["画面比例", "分辨率", "质量"][i]}>
-                    <input
-                      maxLength={32}
-                      value={form.options[key] || ""}
-                      placeholder={
-                        [
-                          "如 16:9，留空使用模型默认值",
-                          "如 1080p / 2K",
-                          "如 high，留空使用模型默认值",
-                        ][i]
+                (key, i) => {
+                  const label = ["画面比例", "分辨率", "质量"][i];
+                  const spec = templateSpecChoices(
+                    form.options[key],
+                    selectedModel?.config?.[specConfigKeys[key]],
+                  );
+                  return (
+                    <Field
+                      key={key}
+                      label={label}
+                      error={
+                        spec.invalid
+                          ? `当前值 ${form.options[key]} 不在该模型的配置中，请重新选择或使用默认值。`
+                          : undefined
                       }
-                      onChange={(e) =>
+                    >
+                      {spec.constrained ? (
+                        <PopoverSelect
+                          {...selectProps}
+                          label={label}
+                          value={spec.value}
+                          options={spec.options}
+                          invalid={spec.invalid}
+                          onChange={(value) =>
+                            change("options", { ...form.options, [key]: value })
+                          }
+                        />
+                      ) : (
+                        <input
+                          maxLength={32}
+                          value={form.options[key] || ""}
+                          placeholder={
+                            [
+                              "如 16:9，留空使用模型默认值",
+                              "如 1080p / 2K",
+                              "如 high，留空使用模型默认值",
+                            ][i]
+                          }
+                          onChange={(e) =>
+                            change("options", {
+                              ...form.options,
+                              [key]: e.target.value,
+                            })
+                          }
+                        />
+                      )}
+                    </Field>
+                  );
+                },
+              )}
+              {form.mediaType === "video" && (
+                <Field
+                  label="视频时长（秒，0 使用模型默认值）"
+                  error={
+                    durationChoices.invalid
+                      ? "当前时长不在该模型的配置中，请重新选择或使用默认值。"
+                      : undefined
+                  }
+                >
+                  {durationChoices.constrained ? (
+                    <PopoverSelect
+                      {...selectProps}
+                      label="视频时长"
+                      value={durationChoices.value}
+                      options={durationChoices.options.map((option) => ({
+                        ...option,
+                        label:
+                          option.value && !option.disabled
+                            ? `${option.value} 秒`
+                            : option.label,
+                      }))}
+                      invalid={durationChoices.invalid}
+                      onChange={(value) =>
                         change("options", {
                           ...form.options,
-                          [key]: e.target.value,
+                          duration: Number(value) || 0,
                         })
                       }
                     />
-                  </Field>
-                ),
-              )}
-              {form.mediaType === "video" && (
-                <Field label="视频时长（秒，0 使用模型默认值）">
-                  <input
-                    type="number"
-                    min={0}
-                    max={600}
-                    value={form.options.duration || 0}
-                    onChange={(e) =>
-                      change("options", {
-                        ...form.options,
-                        duration: Number(e.target.value),
-                      })
-                    }
-                  />
+                  ) : (
+                    <input
+                      type="number"
+                      min={0}
+                      max={600}
+                      value={form.options.duration || 0}
+                      onChange={(e) =>
+                        change("options", {
+                          ...form.options,
+                          duration: Number(e.target.value),
+                        })
+                      }
+                    />
+                  )}
                 </Field>
               )}
               <Field label="排序（越小越靠前）">
@@ -936,6 +1084,7 @@ function TemplateEditor({
               </Field>
               <Field label="展示状态">
                 <PopoverSelect
+                  {...selectProps}
                   label="展示状态"
                   value={String(form.status)}
                   options={[

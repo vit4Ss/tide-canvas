@@ -44,7 +44,6 @@ const NAV: NavItem[] = [
   { k: "home", label: "发现", href: "/", match: ["/"] },
   { k: "explore", label: "作品广场", href: "/explore", match: ["/explore"] },
   { k: "create", label: "创作台", href: "/studio", match: ["/studio"] },
-  { k: "templates", label: "灵感和模板", href: "/templates", match: ["/templates"] },
   { k: "skills", label: "Skill 广场", href: "/skills", match: ["/skills"] },
   { k: "blog", label: "博客", href: "/blog", match: ["/blog"] },
 ];

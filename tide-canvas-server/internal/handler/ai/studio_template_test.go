@@ -122,6 +122,60 @@ func TestOperatorPreflightRejectsUnusableRecipesWithoutGenerating(t *testing.T) 
 	}
 }
 
+func TestTemplateDefaultModelControlsQuoteAndSubmissionWithoutFallback(t *testing.T) {
+	for _, byID := range []bool{false, true} {
+		t.Run(fmt.Sprintf("storedByID=%t", byID), func(t *testing.T) {
+			s, row, provider := templateFixture(t)
+			ctx := context.Background()
+			chosen := model.MarketModel{Name: "Operator chosen model", ModelKey: "chosen-image", Type: "image", Status: 1, Price: decimal.NewFromInt(19), Config: `{"modes":["i2i"],"ratios":["1:1"],"resolutions":["4k"]}`}
+			if err := s.repo.db.Create(&chosen).Error; err != nil {
+				t.Fatal(err)
+			}
+			// The default must win even when a different model is more popular.
+			if err := s.repo.db.Model(&model.MarketModel{}).Where("model_key = ?", "fixture-image").Update("use_count", 1000).Error; err != nil {
+				t.Fatal(err)
+			}
+			row.ModelKey = chosen.ModelKey
+			if byID {
+				row.ModelKey = chosen.ID.String()
+			}
+			if err := s.repo.db.Save(row).Error; err != nil {
+				t.Fatal(err)
+			}
+			setup, err := CheckStudioTemplate(ctx, s.repo.db, *row)
+			if err != nil || setup.ModelID != chosen.ModelKey || setup.Options.Resolution != "4k" || setup.BasePointCost != 19 {
+				t.Fatalf("preflight ignored default model: %+v %v", setup, err)
+			}
+			q := quoteTemplate(t, s, row.ID, `{"imageIds":["91"]}`)
+			if q.ModelID != chosen.ModelKey || q.PointCost != 19 {
+				t.Fatalf("quote ignored default model or its price: %+v", q)
+			}
+			dto := generateDTO{TemplateID: row.ID, TemplateQuote: q.QuoteToken, ModelID: "fixture-image", Input: json.RawMessage(`{"imageIds":["91"]}`)}
+			if err := s.prepareTemplateGeneration(ctx, 42, &dto); err != nil || dto.ModelID != chosen.ModelKey {
+				t.Fatalf("client overrode default model: %s %v", dto.ModelID, err)
+			}
+			if err := s.repo.db.Model(&chosen).Update("status", 2).Error; err != nil {
+				t.Fatal(err)
+			}
+			dto.Input = json.RawMessage(`{"imageIds":["91"]}`)
+			if _, err := s.generate(ctx, 42, dto); err == nil {
+				t.Fatal("unavailable default silently fell back to another model")
+			}
+			var owner model.User
+			if err := s.repo.db.First(&owner, 42).Error; err != nil {
+				t.Fatal(err)
+			}
+			var count int64
+			if err := s.repo.db.Model(&model.AiTask{}).Count(&count).Error; err != nil {
+				t.Fatal(err)
+			}
+			if owner.Points != 100 || count != 0 || len(provider.seen) != 0 {
+				t.Fatal("unavailable default charged or created a generation")
+			}
+		})
+	}
+}
+
 func TestTemplateReferenceVideoQuoteRevalidatesActualDurationBeforeCharging(t *testing.T) {
 	s, row, provider := templateFixture(t)
 	row.MediaType = "video"

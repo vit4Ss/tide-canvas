@@ -3,11 +3,23 @@ import test from "node:test";
 import { readTemplateDraft, saveTemplateDraft, templateDraftSignature } from "./template-draft.ts";
 import { templateFilters, templateListURL, templateReturnURL } from "./template-navigation.ts";
 import { templateUploadSlots, templateOutputText } from "./template-workshop.ts";
-import { copyTemplateDraft, templateCountRange } from "./template-operator.ts";
+import { copyTemplateDraft, templateCountRange, templateSpecChoices } from "./template-operator.ts";
 
 const recipe={mode:"i2i",requirements:{images:2,videos:0,audio:0},inputLabels:{images:["人物照片","服装图片"]}};
 const file={id:"9007199254740993123",ownerId:"7",fileUrl:"https://cdn.test/me.png",originalName:"me.png",fileSize:8,fileType:"image",mimeType:"image/png"};
 const memory=()=>{const data=new Map();return {data,getItem:k=>data.get(k)||null,setItem:(k,v)=>data.set(k,v),removeItem:k=>data.delete(k)};};
+
+test("model spec selectors preserve unsupported values and never invent an allowed list",()=>{
+ const invalid=templateSpecChoices('4:5',['1:1','16:9']);
+ assert.equal(invalid.invalid,true);assert.equal(invalid.value,'4:5');
+ assert.equal(invalid.options.find(item=>item.value==='4:5').disabled,true);
+ assert.equal(templateSpecChoices('', ['1:1']).value,'');
+ const canonical=templateSpecChoices(' HIGH ',['high','HIGH','',null]);
+ assert.equal(canonical.invalid,false);assert.equal(canonical.value,'high');assert.equal(canonical.options.length,2);
+ for(const unknown of [undefined,[],null,'1:1']){
+  const result=templateSpecChoices('4:5',unknown);assert.equal(result.constrained,false);assert.equal(result.invalid,false);assert.equal(result.value,'4:5');
+ }
+});
 
 test("operator clones are isolated unpublished recipes without source identity or counters",()=>{
  const row={...recipe,id:"123",kind:"inspiration",mediaType:"image",title:"同款",status:1,uses:50,prompt:"private",modelKey:"pinned",options:{resolution:"2k"},sourceKey:"task:123"};
