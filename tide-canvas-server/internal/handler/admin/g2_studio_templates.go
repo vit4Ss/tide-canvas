@@ -284,12 +284,17 @@ func (h *studioTemplatesHandler) fromTask(c *gin.Context) {
 	row.Options.AspectRatio, _ = in["aspectRatio"].(string)
 	row.Options.Resolution, _ = in["resolution"].(string)
 	row.Options.Quality, _ = in["quality"].(string)
-	if v, ok := in["duration"].(float64); ok && v > 0 && v <= 600 {
-		if v != float64(int(v)) {
-			response.Fail(c, 400, "此作品使用非整数视频时长，当前模板不支持直接复用，请先调整时长并试做")
-			return
+	if value, ok := in["duration"].(float64); ok && value > 0 && value <= 600 {
+		row.Options.Duration = value
+	} else if value, ok := in["duration"].(string); ok {
+		if seconds, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(value), "s"), 64); err == nil && seconds > 0 && seconds <= 600 {
+			row.Options.Duration = seconds
 		}
-		row.Options.Duration = int(v)
+	}
+	if row.MediaType == "image" {
+		if value, ok := in["batchCount"].(float64); ok && value >= 1 && value <= 4 && value == float64(int(value)) {
+			row.Options.BatchCount = int(value)
+		}
 	}
 	if err := h.db.Create(&row).Error; err != nil {
 		if e := h.db.Where("source_key = ?", key).First(&existing).Error; e == nil {

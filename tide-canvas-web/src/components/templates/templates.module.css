@@ -232,3 +232,7 @@
   .pagination { gap: 16px; }
 }
 @media (prefers-reduced-motion: reduce) { .card, .cardAction svg, .poster > div:first-child > img { transition: none; } .card:hover .cardAction svg, .card:hover .poster > div:first-child > img { transform: none; } .spin { animation: none; } }
+.resultChoices { display: flex; flex-wrap: wrap; gap: 8px; }
+.resultChoices button { min-height: 44px; padding: 8px 16px; border: 1px solid var(--border); border-radius: 8px; color: inherit; background: var(--surface); cursor: pointer; }
+.resultChoices button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.resultChoices button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }

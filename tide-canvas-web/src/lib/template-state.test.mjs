@@ -2,8 +2,43 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readTemplateDraft, saveTemplateDraft, templateDraftSignature } from "./template-draft.ts";
 import { templateFilters, templateListURL, templateReturnURL } from "./template-navigation.ts";
-import { templateUploadSlots, templateOutputText } from "./template-workshop.ts";
-import { copyTemplateDraft, templateCountRange, templateSpecChoices } from "./template-operator.ts";
+import { templateUploadSlots, templateOutputText, templateResultURLs } from "./template-workshop.ts";
+import { copyTemplateDraft, templateCountRange, templateSpecChoices, templateParameterFields, templateOptionsForModel, templateOptionsForRequest } from "./template-operator.ts";
+import { modelGenerationOptions } from "./model-generation-options.mjs";
+
+test("template parameters use Studio configuration with media-specific visibility and defaults",()=>{
+ const image={ratios:['1:1','9:16'],resolutions:['4k','1k','2k'],qualities:['high','low'],durations:['10s','4.5s'],batchOptions:[1,4]};
+ assert.deepEqual(templateParameterFields('image',image).map(f=>f.key),['aspectRatio','resolution','quality','batchCount']);
+ assert.deepEqual(templateParameterFields('video',image).map(f=>f.key),['aspectRatio','resolution','duration']);
+ assert.deepEqual(templateParameterFields('image',{ratios:['1:1'],hideBatchCount:true}).map(f=>f.key),['aspectRatio']);
+ assert.deepEqual(templateParameterFields('video',{}),[]);
+ const shared=modelGenerationOptions(image);assert.deepEqual(shared.resDisplay,['1k','2k','4k']);assert.equal(shared.resolutions[0],'4k');assert.deepEqual(shared.durDisplay,['4.5s','10s']);
+ assert.deepEqual(templateOptionsForModel({aspectRatio:'9:16',resolution:'2k',quality:'high',duration:10,batchCount:4},'image',{ratios:['9:16'],hideBatchCount:true}),{aspectRatio:'9:16'});
+ assert.deepEqual(templateOptionsForModel({aspectRatio:'1:1',resolution:'2K',quality:'high',duration:4.5,batchCount:4},'video',image),{aspectRatio:'1:1',resolution:'2k',duration:4.5});
+});
+
+test("multi-image template results keep every downloadable URL without trusting other metadata",()=>{
+ const main='https://cdn.test/one.png',second='https://cdn.test/two.png';
+ assert.deepEqual(templateResultURLs({resultUrl:main,resultMeta:JSON.stringify({urls:[main,second,'javascript:alert(1)',null],prompt:'private'})}),[main,second]);
+ assert.deepEqual(templateResultURLs({resultUrl:main,resultMeta:'broken'}),[main]);
+ assert.ok(templateOutputText({batchCount:3}).includes('3 张'));
+});
+
+test("operator submits visible defaults explicitly even when API duration ordering differs from storage",()=>{
+ const raw={durations:['10s','4.5s'],resolutions:['1080p','720p'],ratios:['16:9','9:16']};
+ const api={...raw,durations:['4.5s','10s']};
+ assert.deepEqual(templateOptionsForRequest({},'video',api),{aspectRatio:'16:9',resolution:'1080p',duration:4.5});
+ assert.equal(templateOptionsForRequest({duration:10},'video',api).duration,10);
+ assert.equal(templateOptionsForRequest({duration:99},'video',api).duration,99,'keep invalid selection for server validation');
+ assert.deepEqual(templateOptionsForRequest({quality:'high',batchCount:3},'video',api),{aspectRatio:'16:9',resolution:'1080p',duration:4.5});
+ assert.deepEqual(templateOptionsForRequest({},'image',{resolutions:['4k','2k'],qualities:['high'],hideBatchCount:true}),{resolution:'4k',quality:'high'});
+});
+
+test("numeric legacy durations remain selectable and malformed batch config does not crash the page",()=>{
+ assert.deepEqual(modelGenerationOptions({durations:[5,4.5,'10S',null,-1,'broken']}).durDisplay,['4.5s','5s','10S']);
+ assert.deepEqual(templateParameterFields('video',{durations:[5,4.5]}).find(f=>f.key==='duration').values,['5','4.5']);
+ assert.deepEqual(modelGenerationOptions({batchOptions:{},hideBatchCount:'false'}).batchChoices,[1,2,3,4]);
+});
 
 const recipe={mode:"i2i",requirements:{images:2,videos:0,audio:0},inputLabels:{images:["人物照片","服装图片"]}};
 const file={id:"9007199254740993123",ownerId:"7",fileUrl:"https://cdn.test/me.png",originalName:"me.png",fileSize:8,fileType:"image",mimeType:"image/png"};

@@ -242,8 +242,11 @@ func (d *SaveDTO) Validate() error {
 	if d.Mode == "flf" {
 		d.Requirements.Images = 2
 	}
-	if d.Options.Duration < 0 || d.Options.Duration > 600 || len(d.Options.AspectRatio) > 32 || len(d.Options.Resolution) > 32 || len(d.Options.Quality) > 64 {
+	if d.Options.BatchCount < 0 || d.Options.BatchCount > 4 || d.Options.Duration < 0 || d.Options.Duration > 600 || len(d.Options.AspectRatio) > 32 || len(d.Options.Resolution) > 32 || len(d.Options.Quality) > 64 {
 		return errors.New("默认参数无效")
+	}
+	if d.MediaType == "video" && d.Options.BatchCount > 1 {
+		return errors.New("视频模板每次只能生成一个视频")
 	}
 	if d.Status == 1 && (d.CoverURL == "" || d.MediaType == "video" && d.PreviewURL == "") {
 		return errors.New("上架前请补充封面；视频模板还需要成片预览")

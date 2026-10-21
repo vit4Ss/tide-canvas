@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -242,43 +241,73 @@ func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *gen
 			return templateError(fmt.Sprintf("模板所用模型要求单个%s不超过 %g MB，请压缩后重新上传", map[string]string{"image": "图片", "video": "视频", "audio": "音频"}[kind], float64(limit)/(1024*1024)))
 		}
 	}
-	pick := func(value, key, fallback string) string {
+	pick := func(value, key string) (string, error) {
 		options := inputStrings(cfg, key)
 		for _, option := range options {
 			if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(option)) {
-				return option
+				return option, nil
 			}
 		}
 		if len(options) > 0 {
-			return options[0]
+			if strings.TrimSpace(value) != "" {
+				return "", templateError(fmt.Sprintf("模型不再支持模板的%s「%s」，请联系管理员重新配置", map[string]string{"ratios": "画面比例", "resolutions": "分辨率", "qualities": "质量"}[key], value))
+			}
+			return options[0], nil
+		}
+		return "", nil
+	}
+	for _, spec := range []struct{ field, config, value string }{
+		{"aspectRatio", "ratios", row.Options.AspectRatio},
+		{"resolution", "resolutions", row.Options.Resolution},
+	} {
+		value, err := pick(spec.value, spec.config)
+		if err != nil {
+			return err
 		}
 		if value != "" {
-			return value
+			input[spec.field] = value
 		}
-		return fallback
 	}
-	input["aspectRatio"] = pick(row.Options.AspectRatio, "ratios", "1:1")
-	input["resolution"] = pick(row.Options.Resolution, "resolutions", "")
-	input["quality"] = pick(row.Options.Quality, "qualities", "")
+	if row.MediaType == "image" {
+		value, err := pick(row.Options.Quality, "qualities")
+		if err != nil {
+			return err
+		}
+		if value != "" {
+			input["quality"] = value
+		}
+		count := row.Options.BatchCount
+		minCount, maxCount := templateBatchRange(cfg)
+		if count == 0 {
+			count = minCount
+		}
+		if count < minCount || count > maxCount {
+			return templateError(fmt.Sprintf("模板生成数量不受模型支持，请在后台选择 %d～%d 张", minCount, maxCount))
+		}
+		input["batchCount"] = count
+	}
 	if row.MediaType == "video" {
 		duration := row.Options.Duration
-		options := inputStrings(cfg, "durations")
+		options := configDurationValues(cfg["durations"])
 		if len(options) > 0 {
 			found := false
 			for _, value := range options {
-				n, _ := strconv.Atoi(strings.TrimSuffix(value, "s"))
+				n := durationSeconds(value)
 				if n == duration {
 					found = true
 				}
 			}
 			if !found {
-				duration, _ = strconv.Atoi(strings.TrimSuffix(options[0], "s"))
+				if duration > 0 {
+					return templateError(fmt.Sprintf("模型不再支持模板的 %g 秒视频，请联系管理员重新配置", duration))
+				}
+				duration = durationSeconds(options[0])
 			}
+			if duration <= 0 || duration > 600 {
+				return templateError("模板模型的视频时长配置无效")
+			}
+			input["duration"] = duration
 		}
-		if duration <= 0 {
-			duration = 5
-		}
-		input["duration"] = duration
 	}
 	dto.Handler = handler
 	dto.ModelID = selected.ModelID
@@ -300,6 +329,26 @@ func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *gen
 		return err
 	}
 	return nil
+}
+
+func templateBatchRange(cfg map[string]any) (int, int) {
+	if hidden, _ := cfg["hideBatchCount"].(bool); hidden {
+		return 1, 1
+	}
+	low, high := 5, 0
+	if values, ok := cfg["batchOptions"].([]any); ok {
+		for _, value := range values {
+			n, ok := value.(float64)
+			if ok && n >= 1 && n <= 4 && n == float64(int(n)) {
+				low = min(low, int(n))
+				high = max(high, int(n))
+			}
+		}
+	}
+	if high == 0 {
+		return 1, 4
+	}
+	return low, high
 }
 
 func templateUploadLimit(cfg map[string]any, mode, kind string) int64 {
@@ -324,7 +373,11 @@ func templateUploadLimit(cfg map[string]any, mode, kind string) int64 {
 
 func templateOutputOptions(dto generateDTO) model.StudioTemplateOptions {
 	input := decodeInput(dto.Input)
-	return model.StudioTemplateOptions{AspectRatio: inputStr(input, "aspectRatio"), Resolution: inputStr(input, "resolution"), Quality: inputStr(input, "quality"), Duration: inputInt(input, "duration")}
+	count := 0
+	if dto.templateSnapshot != nil && dto.templateSnapshot.MediaType == "image" {
+		count = inputInt(input, "batchCount")
+	}
+	return model.StudioTemplateOptions{AspectRatio: inputStr(input, "aspectRatio"), Resolution: inputStr(input, "resolution"), Quality: inputStr(input, "quality"), Duration: durationSeconds(input["duration"]), BatchCount: count}
 }
 
 func (h *handler) templateSetup(c *gin.Context) {
@@ -391,7 +444,7 @@ func CheckStudioTemplate(ctx context.Context, db *gorm.DB, row model.StudioTempl
 		}
 	}
 	if row.MediaType == "video" && row.Options.Duration > 0 && row.Options.Duration != setup.Options.Duration {
-		return setup, templateError(fmt.Sprintf("模型不支持 %d 秒，请选择支持的时长（默认 %d 秒）或留空", row.Options.Duration, setup.Options.Duration))
+		return setup, templateError(fmt.Sprintf("模型不支持 %g 秒，请选择支持的时长（默认 %g 秒）或留空", row.Options.Duration, setup.Options.Duration))
 	}
 	return setup, nil
 }

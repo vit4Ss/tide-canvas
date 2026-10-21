@@ -24,7 +24,7 @@ test("图片模型默认显示生成数量，管理员可显式隐藏", () => {
 });
 
 test("隐藏生成数量时计价、提交、草稿和模型切换都固定单张", () => {
-  assert.match(studio, /const effectiveCount = hideBatchCount \? 1 : count/);
+  assert.match(studio, /const effectiveCount = hideBatchCount \? 1 : Math\.min/);
   assert.match(studio, /Math\.ceil\(per \* effectiveCount\)/);
   assert.match(studio, /Math\.ceil\(flat \* effectiveCount\)/);
   assert.match(studio, /count: effectiveCount,[\s\S]*?tool,/);

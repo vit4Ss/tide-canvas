@@ -137,7 +137,7 @@ type VideoParams struct {
 	AudioURLs  []string // multi_ref: reference audio
 	Ratio      string   // 16:9 | 9:16 | adaptive …
 	Resolution string   // 480p | 720p | 1080p
-	Duration   int      // whole seconds; omitted when ≤ 0
+	Duration   float64  // seconds; preserve the catalog's precision, omitted when ≤ 0
 }
 
 // AudioParams is a normalized audio request (TTS / 音乐 / 音效共用端点,上游由模型

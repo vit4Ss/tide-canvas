@@ -96,7 +96,7 @@ import type {
   ToolKey,
   UploadFile,
 } from "./create-studio/types";
-import { audioToolOf, histItemsFromTasks, huesFromId, resolutionRank, slotTypeOf } from "./create-studio/utils";
+import { audioToolOf, histItemsFromTasks, huesFromId, slotTypeOf } from "./create-studio/utils";
 import { useStudioModels } from "./create-studio/use-studio-models";
 import { useSourceClip } from "./create-studio/use-source-clip";
 import { useHistory } from "./create-studio/use-history";
@@ -111,6 +111,7 @@ import { MusicSourceFields } from "./create-studio/music-source-fields";
 import { PromptSection } from "./create-studio/prompt-section";
 import { modelPromptCharLimit } from "@/lib/model-prompt-limit";
 import { SongFields, VocalField } from "./create-studio/song-fields";
+import { modelGenerationOptions } from "@/lib/model-generation-options.mjs";
 import { OptionFields } from "./create-studio/option-fields";
 import { ThreeDOptions } from "./create-studio/three-d-options";
 import { StageFeed } from "./create-studio/stage-feed";
@@ -370,29 +371,24 @@ function StudioSession() {
   // dynamic option lists: a model's configured options only; when the backend
   // returned no models at all, fall back to the built-in defaults so the panel
   // is never empty. An empty configured list hides that control entirely.
-  const ratioOpts = mCfg?.ratios?.length ? mCfg.ratios : noBackend ? [...RATIOS] : [];
-  // 展示按数值升序（上游同步的配置顺序常是 720p/480p/1080p 这种乱序）；
-  // 默认选中仍取配置首项（模型收敛 effect 读 mCfg.resolutions[0]，与时长同口径）。
-  const resOpts = (mCfg?.resolutions?.length
-    ? [...mCfg.resolutions]
-    : noBackend
-      ? isVideo
-        ? [...VIDEO_RES]
-        : [...IMG_RES]
-      : []
-  ).sort((a, b) => resolutionRank(a) - resolutionRank(b));
-  const durOpts = (mCfg?.durations?.length ? [...mCfg.durations] : noBackend ? [...VIDEO_DUR] : []).sort(
-    (a, b) => parseFloat(a) - parseFloat(b),
-  );
-  const qualOpts = mCfg?.qualities ?? [];
+  const generationOptions = modelGenerationOptions(noBackend ? {
+    ...mCfg,
+    ratios: mCfg?.ratios?.length ? mCfg.ratios : [...RATIOS],
+    resolutions: mCfg?.resolutions?.length ? mCfg.resolutions : isVideo ? [...VIDEO_RES] : [...IMG_RES],
+    durations: mCfg?.durations?.length ? mCfg.durations : [...VIDEO_DUR],
+  } : mCfg);
+  const ratioOpts = generationOptions.ratios;
+  const resOpts = generationOptions.resDisplay;
+  const durOpts = generationOptions.durDisplay;
+  const qualOpts = generationOptions.qualities;
   const ideaOpts = mCfg?.ideas?.length ? mCfg.ideas : noBackend && !is3D ? [...IDEAS] : [];
   const hideBatchCount = isImage && mCfg?.hideBatchCount === true;
   // 隐藏不只是视觉行为：所有计价、提交和恢复路径都必须固定为单张，不能沿用
   // 用户切换模型前残留的 count=2/3/4。
-  const effectiveCount = hideBatchCount ? 1 : count;
+  const effectiveCount = hideBatchCount ? 1 : Math.min(generationOptions.batchMax, Math.max(generationOptions.batchMin, count));
   const batchOpts = hideBatchCount
     ? [1]
-    : mCfg?.batchOptions && mCfg.batchOptions.length ? mCfg.batchOptions : [1, 2, 3, 4];
+    : generationOptions.batchChoices;
   const batchMin = Math.min(...batchOpts);
   const batchMax = Math.max(...batchOpts);
 
@@ -871,15 +867,15 @@ function StudioSession() {
         setRes((v) => (mCfg.resolutions!.includes(v) ? v : mCfg.resolutions![0]));
       }
     }
-    if (mCfg.durations?.length) setDur((v) => (mCfg.durations!.includes(v) ? v : mCfg.durations![0]));
+    const durations = modelGenerationOptions(mCfg).durations;
+    if (durations.length) setDur((v) => (durations.includes(v) ? v : durations[0]));
     setQuality((v) =>
       mCfg.qualities?.length ? (mCfg.qualities.includes(v) ? v : mCfg.qualities[0]) : "",
     );
     if (isImage && mCfg.hideBatchCount === true) {
       setCount(1);
-    } else if (mCfg.batchOptions?.length) {
-      const mn = Math.min(...mCfg.batchOptions);
-      const mx = Math.max(...mCfg.batchOptions);
+    } else if (isImage) {
+      const { batchMin: mn, batchMax: mx } = modelGenerationOptions(mCfg);
       setCount((c) => Math.min(Math.max(c, mn), mx));
     }
   }, [mCfg, curType, isImage]);

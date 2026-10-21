@@ -254,7 +254,7 @@ func (p *relayProviderClient) videoParams(model, mode string, in map[string]any)
 		// resolution is canonical for new requests; clarity keeps already-persisted
 		// legacy video tasks dispatchable during a rolling deployment.
 		Resolution: strings.ToLower(inputStr(in, "resolution", "clarity")), // 480p/720p/1080p
-		Duration:   inputInt(in, "duration"),
+		Duration:   durationSeconds(in["duration"]),
 	}
 }
 

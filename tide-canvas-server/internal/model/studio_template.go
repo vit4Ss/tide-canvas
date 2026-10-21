@@ -41,8 +41,9 @@ type StudioTemplateInputLabels struct {
 }
 
 type StudioTemplateOptions struct {
-	AspectRatio string `json:"aspectRatio,omitempty"`
-	Resolution  string `json:"resolution,omitempty"`
-	Duration    int    `json:"duration,omitempty"`
-	Quality     string `json:"quality,omitempty"`
+	AspectRatio string  `json:"aspectRatio,omitempty"`
+	Resolution  string  `json:"resolution,omitempty"`
+	Duration    float64 `json:"duration,omitempty"`
+	Quality     string  `json:"quality,omitempty"`
+	BatchCount  int     `json:"batchCount,omitempty"`
 }

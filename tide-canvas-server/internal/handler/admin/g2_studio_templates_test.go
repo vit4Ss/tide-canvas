@@ -184,7 +184,6 @@ func TestStudioTemplatesPublicationImportAndPermissions(t *testing.T) {
 	for _, input := range []string{
 		`{"prompt":"needs all five images","imageUrls":["a","b","c","d","e"]}`,
 		`{"prompt":"needs all four audio tracks","audio_urls":["a","b","c","d"]}`,
-		`{"prompt":"fractional duration","duration":4.5}`,
 	} {
 		source := task
 		source.ID = idgen.Next()
@@ -195,6 +194,22 @@ func TestStudioTemplatesPublicationImportAndPermissions(t *testing.T) {
 		result := call("POST", "/admin/studio-templates/from-task", `{"taskId":"`+source.ID.String()+`"}`, true)
 		if result["success"] == true {
 			t.Fatalf("import silently changed source recipe: %s", input)
+		}
+	}
+	for _, duration := range []string{`4.5`, `"4.5s"`} {
+		source := task
+		source.ID = idgen.Next()
+		source.Input = `{"prompt":"fractional clip","duration":` + duration + `}`
+		if err := db.Create(&source).Error; err != nil {
+			t.Fatal(err)
+		}
+		result := call("POST", "/admin/studio-templates/from-task", `{"taskId":"`+source.ID.String()+`"}`, true)
+		if result["success"] != true {
+			t.Fatal(result)
+		}
+		options := result["data"].(map[string]any)["options"].(map[string]any)
+		if options["duration"] != 4.5 {
+			t.Fatal("import lost actual duration", options)
 		}
 	}
 	if result := call("DELETE", "/admin/studio-templates/"+id, "", true); result["success"] != true {

@@ -24,6 +24,16 @@ func TestRelayRecoveryDeadlinesPreserveOtherMedia(t *testing.T) {
 	}
 }
 
+func TestVideoParamsRetainsCatalogDurationPrecision(t *testing.T) {
+	for _, value := range []any{4.5, "4.5s", "4.5S", 10, "10s", float64(10)} {
+		got := (&relayProviderClient{}).videoParams("video-model", "image_to_video", map[string]any{"duration": value})
+		want := durationSeconds(value)
+		if got.Duration != want {
+			t.Errorf("duration %v became %v, want %v", value, got.Duration, want)
+		}
+	}
+}
+
 func TestInputStringsAcceptsJSONAndServerNativeSlices(t *testing.T) {
 	tests := []struct {
 		name string

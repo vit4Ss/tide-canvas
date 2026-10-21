@@ -22,6 +22,7 @@ import (
 type templateTestProvider struct {
 	seen    chan GenerateRequest
 	failure error
+	urls    []string
 }
 
 func (p *templateTestProvider) Type() string { return "template-test" }
@@ -30,7 +31,185 @@ func (p *templateTestProvider) Generate(_ context.Context, req GenerateRequest) 
 	if p.failure != nil {
 		return GenerateResult{}, p.failure
 	}
-	return GenerateResult{ResultURL: "https://fixture.test/result.png", Meta: map[string]any{"prompt": req.Input["prompt"], "nested": req.Input}}, nil
+	return GenerateResult{ResultURL: "https://fixture.test/result.png", URLs: p.urls, Meta: map[string]any{"prompt": req.Input["prompt"], "nested": req.Input}}, nil
+}
+
+func TestTemplateSelectedParametersReachProviderWithUserReferences(t *testing.T) {
+	for _, media := range []string{"image", "video"} {
+		t.Run(media, func(t *testing.T) {
+			s, row, p := templateFixture(t)
+			row.MediaType = media
+			row.ModelKey = "fixture-" + media
+			if media == "image" {
+				row.Mode = "i2i"
+				row.Options = model.StudioTemplateOptions{AspectRatio: "9:16", Resolution: "4k", Quality: "high", BatchCount: 3}
+				s.repo.db.Model(&model.MarketModel{}).Where("model_key = ?", row.ModelKey).Update("config", `{"modes":["i2i"],"ratios":["1:1","9:16"],"resolutions":["2k","4k"],"qualities":["low","high"],"batchOptions":[1,4],"priceMatrix":{"low":{"2k":2,"4k":3},"high":{"2k":4,"4k":9}}}`)
+				p.urls = []string{"https://fixture.test/result.png", "https://fixture.test/second.png", "https://fixture.test/third.png"}
+			} else {
+				row.Mode = "i2v"
+				row.Options = model.StudioTemplateOptions{AspectRatio: "9:16", Resolution: "1080p", Duration: 4.5}
+				s.repo.db.Model(&model.MarketModel{}).Where("model_key = ?", row.ModelKey).Update("config", `{"modes":["i2v"],"ratios":["16:9","9:16"],"resolutions":["720p","1080p"],"durations":["5s","4.5s"],"priceMatrix":{"5s":{"720p":10,"1080p":12},"4.5s":{"720p":11,"1080p":17}}}`)
+			}
+			if err := s.repo.db.Save(row).Error; err != nil {
+				t.Fatal(err)
+			}
+			setup, err := CheckStudioTemplate(context.Background(), s.repo.db, *row)
+			if err != nil {
+				t.Fatal(err)
+			}
+			q := quoteTemplate(t, s, row.ID, `{"imageIds":["91"]}`)
+			wantCost := 27
+			if media == "video" {
+				wantCost = 17
+			}
+			if q.PointCost != wantCost || q.Options != setup.Options {
+				t.Fatalf("wrong authoritative quote: %+v", q)
+			}
+			register := false
+			dto := generateDTO{TemplateID: row.ID, TemplateQuote: q.QuoteToken, ModelID: q.ModelID, Handler: q.Handler, Input: json.RawMessage(`{"imageIds":["91"]}`), RegisterWork: &register}
+			vo, err := s.generate(context.Background(), 42, dto)
+			if err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case req := <-p.seen:
+				if req.Input["prompt"] != row.Prompt || inputStr(req.Input, "resolution") != row.Options.Resolution || inputStr(req.Input, "aspectRatio") != "9:16" {
+					t.Fatalf("lost saved recipe: %+v", req.Input)
+				}
+				if refs := inputImageURLs(req.Input); len(refs) != 1 || refs[0] != "https://fixture.test/input.png" {
+					t.Fatalf("did not use user reference: %v", refs)
+				}
+				if media == "image" && (batchCount(req.Input) != 3 || req.Input["quality"] != "high") {
+					t.Fatal("lost image quality/count")
+				}
+				if media == "video" && (durationSeconds(req.Input["duration"]) != 4.5 || req.Input["quality"] != nil) {
+					t.Fatal("wrong video settings")
+				}
+			case <-time.After(4 * time.Second):
+				t.Fatal("provider not called")
+			}
+			var task model.AiTask
+			deadline := time.Now().Add(4 * time.Second)
+			for time.Now().Before(deadline) {
+				s.repo.db.First(&task, "id = ?", vo.ID)
+				if task.Status != statusProcessing {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			var owner model.User
+			s.repo.db.First(&owner, 42)
+			if task.Status != statusSuccess || owner.Points != int64(100-wantCost) {
+				t.Fatalf("wrong result/debit: %d %d", task.Status, owner.Points)
+			}
+			if strings.Contains(task.Input, row.Prompt) || strings.Contains(task.ResultMeta, row.Prompt) {
+				t.Fatal("private recipe exposed")
+			}
+			if media == "image" && !strings.Contains(task.ResultMeta, "third.png") {
+				t.Fatal("lost multi-image result")
+			}
+		})
+	}
+}
+
+func TestTemplateVideoSettingsReachActualRelayHTTPWithoutTruncation(t *testing.T) {
+	s, row, _ := templateFixture(t)
+	seen := make(chan map[string]any, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/openapi/v1/generations" {
+			t.Errorf("unexpected upstream path: %s", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			w.WriteHeader(400)
+			return
+		}
+		seen <- body
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"succeeded","output_url":"https://fixture.test/output.mp4"}`)
+	}))
+	defer upstream.Close()
+	s.provider = newRelayProviderClient(upstream.URL, "fixture-key", nil)
+	row.MediaType = "video"
+	row.Mode = "i2v"
+	row.ModelKey = "fixture-video"
+	row.Options = model.StudioTemplateOptions{AspectRatio: "9:16", Resolution: "1080p", Duration: 4.5}
+	s.repo.db.Save(row)
+	s.repo.db.Model(&model.MarketModel{}).Where("model_key = ?", row.ModelKey).Update("config", `{"modes":["i2v"],"ratios":["16:9","9:16"],"resolutions":["720p","1080p"],"durations":["10s","4.5s"],"priceMatrix":{"10s":{"720p":10,"1080p":12},"4.5s":{"720p":11,"1080p":17}}}`)
+	q := quoteTemplate(t, s, row.ID, `{"imageIds":["91"]}`)
+	register := false
+	vo, err := s.generate(context.Background(), 42, generateDTO{TemplateID: row.ID, TemplateQuote: q.QuoteToken, ModelID: q.ModelID, Handler: q.Handler, Input: json.RawMessage(`{"imageIds":["91"]}`), RegisterWork: &register})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case body := <-seen:
+		for key, want := range map[string]any{"duration": 4.5, "ratio": "9:16", "resolution": "1080p", "image_url": "https://fixture.test/input.png", "model": "fixture-video", "mode": "image_to_video", "prompt": row.Prompt} {
+			if body[key] != want {
+				t.Errorf("actual HTTP %s=%v, want %v", key, body[key], want)
+			}
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("relay HTTP was not called")
+	}
+	var task model.AiTask
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		s.repo.db.First(&task, "id = ?", vo.ID)
+		if task.Status != statusProcessing {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	var owner model.User
+	s.repo.db.First(&owner, 42)
+	if task.Status != statusSuccess || task.PointCost != 17 || owner.Points != 83 {
+		t.Fatalf("wrong task or price: status=%d cost=%d balance=%d", task.Status, task.PointCost, owner.Points)
+	}
+}
+
+func TestTemplateUnconfiguredOptionsAreNotSentAndHiddenBatchCannotChargeMultiple(t *testing.T) {
+	s, row, _ := templateFixture(t)
+	row.Options = model.StudioTemplateOptions{AspectRatio: "16:9", Resolution: "4k", Quality: "high", Duration: 10}
+	s.repo.db.Save(row)
+	s.repo.db.Model(&model.MarketModel{}).Where("model_key = ?", row.ModelKey).Update("config", `{"modes":["i2i"],"hideBatchCount":true}`)
+	dto := generateDTO{TemplateID: row.ID, Input: json.RawMessage(`{"imageIds":["91"]}`)}
+	if err := s.prepareTemplateGeneration(context.Background(), 42, &dto); err != nil {
+		t.Fatal(err)
+	}
+	in := decodeInput(dto.Input)
+	for _, key := range []string{"aspectRatio", "resolution", "quality", "duration"} {
+		if _, ok := in[key]; ok {
+			t.Fatalf("hidden %s sent to provider", key)
+		}
+	}
+	if batchCount(in) != 1 {
+		t.Fatal("hidden quantity not one")
+	}
+	row.Options.BatchCount = 3
+	s.repo.db.Save(row)
+	dto.Input = json.RawMessage(`{"imageIds":["91"]}`)
+	if err := s.prepareTemplateGeneration(context.Background(), 42, &dto); err == nil {
+		t.Fatal("hidden batch accepted multiple outputs")
+	}
+}
+
+func TestTemplateModelSpecChangeRejectsSavedSettingBeforeDebit(t *testing.T) {
+	s, row, p := templateFixture(t)
+	row.Options = model.StudioTemplateOptions{Resolution: "2k", AspectRatio: "4:5"}
+	s.repo.db.Save(row)
+	q := quoteTemplate(t, s, row.ID, `{"imageIds":["91"]}`)
+	s.repo.db.Model(&model.MarketModel{}).Where("model_key = ?", row.ModelKey).Update("config", `{"modes":["i2i"],"resolutions":["4k"],"ratios":["1:1"]}`)
+	dto := generateDTO{TemplateID: row.ID, TemplateQuote: q.QuoteToken, ModelID: q.ModelID, Handler: q.Handler, Input: json.RawMessage(`{"imageIds":["91"]}`)}
+	if _, err := s.generate(context.Background(), 42, dto); err == nil {
+		t.Fatal("silently changed saved output settings")
+	}
+	var owner model.User
+	s.repo.db.First(&owner, 42)
+	if owner.Points != 100 || len(p.seen) != 0 {
+		t.Fatal("incompatible recipe charged/generated")
+	}
 }
 
 func TestTemplateFailedGenerationRefundsOnceAndKeepsPrivateRecipeOutOfErrors(t *testing.T) {
@@ -499,7 +678,7 @@ func TestTemplateSameImageLoopPreservesBothFramesAndOtherSlotsRejectDuplicates(t
 
 func TestTemplateSetupDisclosesEffectiveSpecWithoutMintingPaidQuote(t *testing.T) {
 	s, row, _ := templateFixture(t)
-	row.Options = model.StudioTemplateOptions{Resolution: "4k", AspectRatio: "16:9", Quality: "HIGH"}
+	row.Options = model.StudioTemplateOptions{Resolution: "2k", AspectRatio: "4:5", Quality: "HIGH"}
 	s.repo.db.Save(row)
 	engine := gin.New()
 	engine.GET("/setup/:id", (&handler{svc: s}).templateSetup)

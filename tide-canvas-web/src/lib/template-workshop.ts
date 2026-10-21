@@ -24,5 +24,13 @@ export function templateUploadsReady(row: Pick<PublicStudioTemplate, "mode" | "r
 export function templateOutputText(options?: PublicStudioTemplate["options"]): string {
   if (!options) return "规格待确认";
   const quality = options.quality ? ({ high: "高画质", standard: "标准画质", medium: "中等画质", low: "基础画质" }[options.quality] || `画质 ${options.quality}`) : "";
-  return [options.resolution, options.aspectRatio ? `比例 ${options.aspectRatio}` : "", options.duration ? `${options.duration} 秒` : "", quality].filter(Boolean).join(" · ") || "使用模型默认规格";
+  return [options.resolution, options.aspectRatio ? `比例 ${options.aspectRatio}` : "", options.duration ? `${options.duration} 秒` : "", quality, options.batchCount ? `${options.batchCount} 张` : ""].filter(Boolean).join(" · ") || "使用模型默认规格";
+}
+
+export function templateResultURLs(task: { resultUrl?: string; resultMeta?: unknown } | null): string[] {
+  if (!task) return [];
+  let meta = task.resultMeta;
+  if (typeof meta === "string") { try { meta = JSON.parse(meta); } catch { meta = null; } }
+  const urls = meta && typeof meta === "object" && "urls" in meta && Array.isArray(meta.urls) ? meta.urls : [];
+  return [...new Set([task.resultUrl, ...urls].filter((v): v is string => typeof v === "string" && /^(https?:\/\/|\/[^/])/i.test(v)))];
 }

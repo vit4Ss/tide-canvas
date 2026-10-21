@@ -10,7 +10,7 @@ const catalog = JSON.parse(await readFile(new URL("../../tide-canvas-server/inte
 const templates = catalog.map(({ template }, i) => ({ ...template, id: String(i+1), uses: 0, inputHint: i===4 ? "图片1上传人物，图片2上传服装。" : "上传你自己的素材，系统自动完成同款效果。", ...(template.mediaType === "video" ? { status: 1, mode: "ref", requirements: {images:0,videos:1,audio:1}, previewUrl: base+"/fixture.mp4" } : {}) }));
 const publicRow = template => { const row = { ...template }; for (const key of ['prompt','modelKey','status','sortOrder']) delete row[key]; return row; };
 let owner="801", uploaded=0, loseResponse=false, quoteFails=false, catalogueFails=false, adminCatalogueFails=false, failNextTask=false, deletedTask=false, templateHidden=false, uploadFails=false, verifyFilesFails=false, setupFails=false, uploadDelay=0;
-const submits=[], quotes=[], tasks=new Map(), storedFiles=new Map(), errors=[];
+const submits=[], quotes=[], checks=[], tasks=new Map(), storedFiles=new Map(), errors=[];
 const context=await browser.newContext({viewport:{width:1440,height:1000}});
 await context.addInitScript(()=>localStorage.setItem("access_token","template-fixture"));
 await context.route("**/fixture.mp4",route=>route.fulfill({status:404,body:"fixture only"}));
@@ -20,11 +20,11 @@ await context.route("**/api/**",async route=>{
  const fail=(message,code=400)=>route.fulfill({status:code,json:{success:false,code,message,data:null}});
  if(path==="/api/auth/me")data={id:owner,username:"reviewer",nickname:"Reviewer",role:9,status:1,points:1000,menus:['discover','studio','inspire','analysis','three_d','tools','chat','canvas','explore','assets'],adminPerms:[]};
  else if(path.startsWith('/api/admin/dashboard/'))return fail('fixture dashboard unavailable',503);
- else if(path==="/api/market/studio-models")data=[{id:"41",modelKey:"fixture-model",name:"Fixture Model",type:"image",config:{modes:["i2i"],resolutions:["2k"],ratios:["4:5"],qualities:["high"]}},{id:"42",modelKey:"fixture-square",name:"Square Model",type:"image",config:{modes:["i2i"],resolutions:["1k"],ratios:["1:1"],qualities:["standard"]}}];
+ else if(path==="/api/market/studio-models")data=[{id:"41",modelKey:"fixture-model",name:"Fixture Model",type:"image",config:{modes:["i2i"],resolutions:["2k"],ratios:["4:5"],qualities:["high"]}},{id:"42",modelKey:"fixture-square",name:"Square Model",type:"image",config:{modes:["i2i"],resolutions:["1k"],ratios:["1:1"],qualities:["standard"]}},{id:"43",modelKey:"fixture-basic",name:"Basic Image",type:"image",config:{modes:["i2i"],ratios:["1:1"],hideBatchCount:true}},{id:"44",modelKey:"fixture-video",name:"Fixture Video",type:"video",config:{modes:["i2v"],ratios:["16:9","9:16"],resolutions:["1080p","720p"],durations:[10,4.5],qualities:["high"]}}].filter(model=>!url.searchParams.get("type")||model.type===url.searchParams.get("type"));
  else if(path==="/api/points/balance")data={points:1000,frozen:0};
  else if(path==="/api/ai/optimize-cost")data={cost:0};
  else if(path==="/api/admin/studio-templates/check"){
-  const recipe=req.postDataJSON();if(recipe.options.resolution==='8k')return fail('模型不支持所填分辨率「8k」，请改为支持的值（默认 2k）或留空');
+  const recipe=req.postDataJSON();checks.push(recipe);if(recipe.options.resolution==='8k')return fail('模型不支持所填分辨率「8k」，请改为支持的值（默认 2k）或留空');
   data={modelId:"fixture-model",modelName:"Fixture Model",handler:"image_to_image",basePointCost:7,referenceVideoBilling:false,options:{resolution:"2k",aspectRatio:"4:5",quality:"high"},maxUploadBytes:{image:52428800,video:52428800,audio:52428800}};
  }
  else if(/^\/api\/admin\/studio-templates\/\d+$/.test(path)){
@@ -54,7 +54,7 @@ await context.route("**/api/**",async route=>{
  }else if(path==="/api/ai/generate"){
   const body=req.postDataJSON();submits.push(body);assert.ok(body.templateId && body.templateQuote && body.clientRequestId);assert.equal('prompt' in body.input,false);assert.equal('imageUrls' in body.input,false);
   let task=tasks.get(body.clientRequestId);
-  if(!task){task={id:String(5001+tasks.size),handler:body.handler,modelName:"Fixture Model",status:0,progress:30,pointCost:7,resultUrl:base+"/studio-samples/v1/tidal-product.webp",resultMeta:{},input:{templateId:body.templateId,templateTitle:"Fixture Template"},createTime:new Date().toISOString(),fail:failNextTask};tasks.set(body.clientRequestId,task);failNextTask=false;}
+  if(!task){task={id:String(5001+tasks.size),handler:body.handler,modelName:"Fixture Model",status:0,progress:30,pointCost:7,resultUrl:base+"/studio-samples/v1/tidal-product.webp",resultMeta:templates.find(row=>row.id===body.templateId)?.options?.batchCount>1?{urls:[base+"/studio-samples/v1/tidal-product.webp",base+"/studio-samples/v1/rainy-cinema.webp"]}:{},input:{templateId:body.templateId,templateTitle:"Fixture Template"},createTime:new Date().toISOString(),fail:failNextTask};tasks.set(body.clientRequestId,task);failNextTask=false;}
   if(loseResponse){loseResponse=false;return route.abort('failed');}
   data=task;
  }else if(/^\/api\/ai\/tasks\/\d+$/.test(path)){data=[...tasks.values()].find(t=>t.id===path.split('/').at(-1));if(!data||deletedTask)return fail("not found",404);data.status=data.fail?2:1;data.progress=100;if(data.fail)data.errorMsg="生成失败，请稍后重试";}
@@ -178,6 +178,8 @@ try{
  setupFails=true;await page.reload({waitUntil:'networkidle'});await page.getByRole('button',{name:'重新读取规格',exact:true}).waitFor();templates[0].inputLabels={images:['角色照片']};setupFails=false;await page.getByRole('button',{name:'重新读取规格',exact:true}).click();await page.getByLabel('上传角色照片',{exact:true}).waitFor();await page.getByText('模板素材要求已更新，请按新要求重新选择素材。',{exact:true}).waitFor();assert.equal(await page.locator('small').filter({hasText:'已上传'}).count(),0);assert.equal(await page.getByRole('button',{name:'生成同款',exact:true}).isDisabled(),true);
  await page.getByLabel('上传角色照片',{exact:true}).setInputFiles(imageFile);await page.getByText('7 积分',{exact:true}).waitFor();const vanished=quotes.at(-1).input.imageIds[0];storedFiles.delete(vanished);await page.reload({waitUntil:'networkidle'});await page.getByText('此素材已不可用，请重新上传',{exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'生成同款',exact:true}).isDisabled(),true);
  await page.goto(base+'/studio',{waitUntil:'networkidle'});await page.locator('[contenteditable=true]').first().waitFor();assert.equal(await page.getByRole('tab',{name:'风格主题'}).count(),0);
+ await page.locator('#type-tabs').getByRole('button',{name:'视频',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#durPills .on')?.textContent==='10s');await page.locator('#durPills').getByRole('button',{name:'4.5s',exact:true}).click();assert.equal(await page.locator('#durPills .on').innerText(),'4.5s');
+
  const beforeOperator=submits.length;await page.goto(base+'/admin/studio-templates',{waitUntil:'networkidle'});await page.getByRole('button',{name:'新建风格',exact:true}).click();const editor=page.getByRole('dialog',{name:'新建创作模板'});await editor.getByLabel(/^名称/).fill('运营测试风格');await editor.getByLabel(/完整提示词/).fill('admin-only-recipe');
  const imageCount=editor.getByRole('spinbutton',{name:'参考图片数量',exact:true});
  assert.equal(await editor.getByRole('button',{name:'减少参考图片',exact:true}).isDisabled(),true);
@@ -193,30 +195,52 @@ try{
  await editor.getByRole('button',{name:'创作模式',exact:true}).click();await page.getByRole('option',{name:'文生图',exact:true}).click();
  await editor.getByText('此模式不需要上传参考素材。',{exact:true}).waitFor();assert.equal(await editor.getByRole('spinbutton',{name:'参考图片数量',exact:true}).count(),0);
  await editor.getByRole('button',{name:'创作模式',exact:true}).click();await page.getByRole('option',{name:'图生图',exact:true}).click();
- await editor.getByLabel('图片1用途',{exact:true}).fill('主体照片');await editor.getByRole('button',{name:'保存草稿',exact:true}).click();await page.getByRole('heading',{name:'运营测试风格',exact:true}).waitFor();assert.equal(templates.at(-1).inputLabels.images[0],'主体照片');
+ await editor.getByLabel('图片1用途',{exact:true}).fill('主体照片');await editor.getByRole('button',{name:'保存草稿',exact:true}).click();await editor.waitFor({state:'hidden'});await page.getByRole('heading',{name:'运营测试风格',exact:true}).waitFor();assert.equal(templates.at(-1).inputLabels.images[0],'主体照片');
 
- const operatorRow=templates.at(-1);
+ const operatorRow=templates.at(-1);operatorRow.modelKey="fixture-model";operatorRow.options={resolution:"8k",aspectRatio:"4:5"};await page.reload({waitUntil:"networkidle"});
  await page.getByRole('button',{name:'编辑运营测试风格',exact:true}).click();const edit=page.getByRole('dialog',{name:'编辑创作模板'});
- await edit.getByLabel('封面图片',{exact:true}).fill(base+'/studio-samples/v1/rainy-cinema.webp');await edit.getByLabel('分辨率',{exact:true}).fill('8k');await edit.getByLabel('画面比例',{exact:true}).fill('4:5');
- await edit.getByRole('button',{name:'默认生成模型',exact:true}).click();await page.getByRole('option',{name:'Square Model',exact:true}).click();
- const ratioControl=edit.getByRole('button',{name:'画面比例',exact:true});assert.equal(await ratioControl.getAttribute('data-invalid'),'true');assert.ok((await ratioControl.innerText()).includes('4:5'));
- assert.ok(await ratioControl.getAttribute('aria-describedby'),'unsupported ratio warning is not associated with its control');
- await edit.getByRole('button',{name:'默认生成模型',exact:true}).click();await page.getByRole('option',{name:'Fixture Model',exact:true}).click();assert.equal(await ratioControl.getAttribute('data-invalid'),null);assert.equal(await ratioControl.innerText(),'4:5','model switch silently changed the existing ratio');
+ await edit.getByLabel('封面图片',{exact:true}).fill(base+'/studio-samples/v1/rainy-cinema.webp');
+ assert.equal(await edit.getByRole('button',{name:'分辨率',exact:true}).getAttribute('data-invalid'),'true','saved unsupported setting must remain visible until corrected');
  await edit.getByRole('button',{name:'检查生成配置',exact:true}).click();await edit.getByRole('alert').filter({hasText:'模型不支持'}).waitFor();assert.equal(await edit.getByLabel(/完整提示词/).inputValue(),'admin-only-recipe');
  await edit.getByRole('button',{name:'分辨率',exact:true}).click();const specMenu=page.getByRole('listbox',{name:'分辨率',exact:true});
  assert.equal(await specMenu.evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(255, 255, 255)','admin dropdown inherited the dark site palette');
  assert.equal(await specMenu.getByRole('option',{name:'8k（不在模型配置中）',exact:true}).getAttribute('aria-disabled'),'true');
  await specMenu.focus();await page.keyboard.press('Home');await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
- assert.equal(await edit.getByRole('button',{name:'分辨率',exact:true}).innerText(),'2k');
+ assert.equal(await edit.getByRole('button',{name:'分辨率',exact:true}).innerText(),'2K');
+ await edit.getByRole('button',{name:'默认生成模型',exact:true}).click();await page.getByRole('option',{name:'Square Model',exact:true}).click();
+ const ratioControl=edit.getByRole('button',{name:'画面比例',exact:true});assert.equal(await ratioControl.getAttribute('data-invalid'),null);assert.ok((await ratioControl.innerText()).includes('1:1'),'switch retained unsupported ratio');
+ await edit.getByRole('button',{name:'默认生成模型',exact:true}).click();await page.getByRole('option',{name:'Basic Image',exact:true}).click();
+ for(const label of ['分辨率','质量','生成数量','视频时长'])assert.equal(await edit.getByRole('button',{name:label,exact:true}).count(),0,`unconfigured ${label} is visible`);
+ assert.equal(await edit.getByPlaceholder('如 1080p / 2K').count(),0,'free-text fallback still visible');
+ await edit.getByRole('button',{name:'默认生成模型',exact:true}).click();await page.getByRole('option',{name:'Fixture Model',exact:true}).click();
+ await edit.getByRole('button',{name:'分辨率',exact:true}).click();await page.getByRole('option',{name:'2K',exact:true}).click();
+ await edit.getByRole('button',{name:'画面比例',exact:true}).click();await page.getByRole('option',{name:'4:5',exact:true}).click();
+ await edit.getByRole('button',{name:'生成数量',exact:true}).click();await page.getByRole('option',{name:'3 张',exact:true}).click();
+ assert.equal(await edit.getByRole('button',{name:'视频时长',exact:true}).count(),0);
  await edit.getByRole('button',{name:'检查生成配置',exact:true}).click();await edit.getByText('配置检查通过',{exact:true}).waitFor();assert.equal(submits.length,beforeOperator,'operator preflight generated a task');
  await edit.getByText('配置检查通过',{exact:true}).scrollIntoViewIfNeeded();await snap('operator-check-desktop');await page.setViewportSize({width:390,height:844});await edit.getByText('配置检查通过',{exact:true}).scrollIntoViewIfNeeded();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await snap('operator-check-mobile');await page.setViewportSize({width:1440,height:1000});
- await edit.getByRole('button',{name:'取消',exact:true}).click();await page.getByRole('alertdialog',{name:'放弃未保存的修改？'}).getByRole('button',{name:'取消',exact:true}).click();assert.equal(await edit.getByRole('button',{name:'分辨率',exact:true}).innerText(),'2k');
- await edit.getByRole('button',{name:'展示状态',exact:true}).click();await page.getByRole('option',{name:'上架到灵感和模板',exact:true}).click();await edit.getByRole('button',{name:'保存并上架',exact:true}).click();await page.getByRole('heading',{name:'运营测试风格',exact:true}).waitFor();
- assert.equal(operatorRow.modelKey,'fixture-model','default generation model was not saved');
+ await edit.getByRole('button',{name:'取消',exact:true}).click();await page.getByRole('alertdialog',{name:'放弃未保存的修改？'}).getByRole('button',{name:'取消',exact:true}).click();assert.equal(await edit.getByRole('button',{name:'分辨率',exact:true}).innerText(),'2K');
+ await edit.getByRole('button',{name:'展示状态',exact:true}).click();await page.getByRole('option',{name:'上架到灵感和模板',exact:true}).click();await edit.getByRole('button',{name:'保存并上架',exact:true}).click();await edit.waitFor({state:'hidden'});await page.getByRole('heading',{name:'运营测试风格',exact:true}).waitFor();
+ assert.equal(operatorRow.modelKey,'fixture-model','default generation model was not saved');assert.equal(operatorRow.options.quality,'high','visible quality default was omitted from save');assert.equal(checks.at(-1).options.quality,'high');
  await page.getByRole('button',{name:'编辑运营测试风格',exact:true}).click();assert.equal(await edit.getByRole('button',{name:'默认生成模型',exact:true}).innerText(),'Fixture Model','saved default model was not restored');await edit.getByRole('button',{name:'取消',exact:true}).click();
- await page.getByRole('button',{name:'复制运营测试风格',exact:true}).click();const clone=page.getByRole('dialog',{name:'新建创作模板'});assert.equal(await clone.getByLabel(/^名称/).inputValue(),'运营测试风格（副本）');assert.equal(await clone.getByLabel(/完整提示词/).inputValue(),'admin-only-recipe');await clone.getByLabel(/^名称/).fill('复制后的新同款');await clone.getByRole('button',{name:'保存草稿',exact:true}).click();await page.getByRole('heading',{name:'复制后的新同款',exact:true}).waitFor();assert.equal(templates.at(-1).status,0);assert.notEqual(templates.at(-1).id,operatorRow.id);assert.equal(operatorRow.title,'运营测试风格');
+ await page.getByRole('button',{name:'复制运营测试风格',exact:true}).click();const clone=page.getByRole('dialog',{name:'新建创作模板'});assert.equal(await clone.getByLabel(/^名称/).inputValue(),'运营测试风格（副本）');assert.equal(await clone.getByLabel(/完整提示词/).inputValue(),'admin-only-recipe');await clone.getByLabel(/^名称/).fill('复制后的新同款');await clone.getByRole('button',{name:'保存草稿',exact:true}).click();await clone.waitFor({state:'hidden'});await page.getByRole('heading',{name:'复制后的新同款',exact:true}).waitFor();assert.equal(templates.at(-1).status,0);assert.notEqual(templates.at(-1).id,operatorRow.id);assert.equal(operatorRow.title,'运营测试风格');
  await page.goto(base+'/templates/'+operatorRow.id,{waitUntil:'networkidle'});await page.getByLabel('上传主体照片',{exact:true}).setInputFiles(imageFile);await page.getByText('7 积分',{exact:true}).waitFor();await page.getByRole('button',{name:'生成同款',exact:true}).click();await page.getByRole('heading',{name:'你的同款，完成了'}).waitFor();assert.equal(submits.at(-1).templateId,operatorRow.id);assert.equal('prompt' in submits.at(-1).input,false);
- await page.goto(base+'/admin/studio-templates',{waitUntil:'networkidle'});await page.getByRole('button',{name:'新建风格',exact:true}).click();const unfinished=page.getByRole('dialog',{name:'新建创作模板'});await unfinished.getByLabel(/^名称/).fill('尚未填提示词的草稿');await unfinished.getByRole('button',{name:'保存草稿',exact:true}).click();await page.getByRole('heading',{name:'尚未填提示词的草稿',exact:true}).waitFor();
+ assert.equal(operatorRow.options.batchCount,3);await page.getByRole('button',{name:'第 2 张',exact:true}).click();assert.equal(await page.getByRole('img',{name:'生成的同款作品',exact:true}).getAttribute('src'),base+'/studio-samples/v1/rainy-cinema.webp');
+ assert.equal(await page.getByRole('link',{name:'查看原文件',exact:false}).getAttribute('href'),base+'/studio-samples/v1/rainy-cinema.webp');
+ assert.equal(await page.getByRole('link',{name:'打开完整生成结果',exact:true}).getAttribute('href'),base+'/studio-samples/v1/rainy-cinema.webp');
+ await page.getByRole('button',{name:'再次使用这个模板',exact:true}).click();await page.getByText('7 积分',{exact:true}).waitFor();await page.getByRole('button',{name:'生成同款',exact:true}).click();await page.getByRole('heading',{name:'你的同款，完成了'}).waitFor();assert.equal(await page.getByRole('button',{name:'第 1 张',exact:true}).getAttribute('aria-pressed'),'true');
+
+
+ await page.goto(base+'/admin/studio-templates',{waitUntil:'networkidle'});await page.getByRole('button',{name:'新建风格',exact:true}).click();const unfinished=page.getByRole('dialog',{name:'新建创作模板'});await unfinished.getByLabel(/^名称/).fill('尚未填提示词的草稿');await unfinished.getByRole('button',{name:'保存草稿',exact:true}).click();await unfinished.waitFor({state:'hidden'});await page.getByRole('heading',{name:'尚未填提示词的草稿',exact:true}).waitFor();
  await page.getByRole('button',{name:'从用户作品导入',exact:true}).click();await page.getByRole('button',{name:'导入为灵感草稿',exact:true}).click();assert.equal(await page.getByRole('dialog',{name:'编辑创作模板'}).getByLabel(/完整提示词/).inputValue(),'导入的运营提示词');
+
+ const videoEditor=page.getByRole('dialog',{name:'编辑创作模板'});
+ await videoEditor.getByRole('button',{name:'媒体类型',exact:true}).click();await page.getByRole('option',{name:'视频',exact:true}).click();
+ await videoEditor.getByRole('button',{name:'默认生成模型',exact:true}).click();await page.getByRole('option',{name:'Fixture Video',exact:true}).click();
+ for(const label of ['分辨率','质量','生成数量'])assert.equal(await videoEditor.getByRole('button',{name:label,exact:true}).count(),0,`image-only ${label} visible for video`);
+ await videoEditor.getByRole('button',{name:'画面比例',exact:true}).click();await page.getByRole('option',{name:'9:16',exact:true}).click();
+ await videoEditor.getByRole('button',{name:'清晰度',exact:true}).click();await page.getByRole('option',{name:'1080P',exact:true}).click();
+ await videoEditor.getByRole('button',{name:'视频时长',exact:true}).click();await page.getByRole('option',{name:'4.5 秒',exact:true}).click();
+ await videoEditor.getByRole('button',{name:'默认生成模型',exact:true}).scrollIntoViewIfNeeded();await snap('video-model-parameters-desktop');await page.setViewportSize({width:390,height:844});await videoEditor.getByRole('button',{name:'视频时长',exact:true}).scrollIntoViewIfNeeded();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await snap('video-model-parameters-mobile');
  assert.deepEqual(errors,[]);console.log('PASS: prompt-free gallery/workshop and static assets, repeated active filters, owned image/video/audio IDs, quotes, ambiguous retry, refresh/unpublished/deleted-task recovery, account isolation, working Studio, admin edit/import, desktop/mobile.');
 }catch(error){console.log(JSON.stringify({url:page.url(),body:(await page.locator('body').innerText().catch(()=>'')),errors}));throw error;}finally{await browser.close();}

@@ -22,6 +22,7 @@ export interface StudioTemplate {
     resolution?: string;
     duration?: number;
     quality?: string;
+    batchCount?: number;
   };
   status: number;
   sortOrder: number;

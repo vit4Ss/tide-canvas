@@ -38,11 +38,15 @@ import {
   copyTemplateDraft,
   templateCountRange,
   templateSpecChoices,
+  templateParameterFields,
+  templateOptionsForModel,
+  templateOptionsForRequest,
 } from "@/lib/template-operator";
 import {
   templateOutputText,
   templateUploadSlots,
 } from "@/lib/template-workshop";
+import { resolutionRank } from "@/lib/model-generation-options.mjs";
 import css from "./page.module.css";
 
 const modeLabels = {
@@ -469,23 +473,12 @@ function TemplateEditor({
   const requirementKinds = (["images", "videos", "audio"] as const).filter(
     (kind) => templateCountRange(form.mode, kind).max > 0,
   );
-  const specConfigKeys = {
-    aspectRatio: "ratios",
-    resolution: "resolutions",
-    quality: "qualities",
-  } as const;
-  const durationValues = Array.isArray(selectedModel?.config?.durations)
-    ? selectedModel.config.durations.flatMap((value) => {
-        const text = String(value).trim();
-        return /^\d+s?$/i.test(text) && Number(text.replace(/s$/i, "")) > 0
-          ? [text.replace(/s$/i, "")]
-          : [];
-      })
-    : [];
-  const durationChoices = templateSpecChoices(
-    form.options.duration ? String(form.options.duration) : "",
-    durationValues,
-  );
+  const parameterFields = selectedModel ? templateParameterFields(form.mediaType, selectedModel.config) : [];
+  const requestForm = () => {
+    if (!selectedModel) return form;
+    const options = templateOptionsForRequest(form.options, form.mediaType, selectedModel.config);
+    return { ...form, options };
+  };
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -565,9 +558,14 @@ function TemplateEditor({
     setError("");
     setChecked(undefined);
     try {
-      const res = await api.check(form);
+      const res = await api.check(requestForm());
       if (!alive.current) return;
-      if (res.success && res.data) setChecked({ signature, data: res.data });
+      if (res.success && res.data) {
+        if (!form.modelKey) {
+          const resolved = { ...form, modelKey: res.data.modelId, options: res.data.options };
+          setForm(resolved); setChecked({ signature: JSON.stringify(resolved), data: res.data });
+        } else setChecked({ signature, data: res.data });
+      }
       else setError(res.message || "配置检查失败，请重试");
     } catch {
       if (alive.current) setError("配置检查失败，请重试");
@@ -627,7 +625,7 @@ function TemplateEditor({
     setSaving(true);
     setError("");
     try {
-      const res = await api.save(form, form.id);
+      const res = await api.save(requestForm(), form.id);
       if (res.success && res.data) {
         saved.current = true;
         toast.success(form.status ? "模板已上架" : "草稿已保存");
@@ -960,7 +958,10 @@ function TemplateEditor({
                       ]
                     : []),
                 ]}
-                onChange={(v) => change("modelKey", v)}
+                onChange={(v) => {
+                  const chosen = models.find(m => m.modelKey === v);
+                  setForm(old => ({ ...old, modelKey: v, options: chosen ? templateOptionsForModel(old.options, old.mediaType, chosen.config) : {} }));
+                }}
               />
             </Field>
             {modelsLoading && <p role="status">正在读取可用模型…</p>}
@@ -976,103 +977,23 @@ function TemplateEditor({
                 </button>
               </p>
             )}
+            {!selectedModel && !modelsLoading && !modelError && <p className={css.note}>先选择默认生成模型，再配置对应参数；自动模式可点击「检查生成配置」确定模型。</p>}
+            {selectedModel && !parameterFields.length && <p className={css.note}>此模型没有可选的输出参数，将使用模型默认设置。</p>}
             <FormGrid>
-              {(["aspectRatio", "resolution", "quality"] as const).map(
-                (key, i) => {
-                  const label = ["画面比例", "分辨率", "质量"][i];
-                  const spec = templateSpecChoices(
-                    form.options[key],
-                    selectedModel?.config?.[specConfigKeys[key]],
-                  );
-                  return (
-                    <Field
-                      key={key}
-                      label={label}
-                      error={
-                        spec.invalid
-                          ? `当前值 ${form.options[key]} 不在该模型的配置中，请重新选择或使用默认值。`
-                          : undefined
-                      }
-                    >
-                      {spec.constrained ? (
-                        <PopoverSelect
-                          {...selectProps}
-                          label={label}
-                          value={spec.value}
-                          options={spec.options}
-                          invalid={spec.invalid}
-                          onChange={(value) =>
-                            change("options", { ...form.options, [key]: value })
-                          }
-                        />
-                      ) : (
-                        <input
-                          maxLength={32}
-                          value={form.options[key] || ""}
-                          placeholder={
-                            [
-                              "如 16:9，留空使用模型默认值",
-                              "如 1080p / 2K",
-                              "如 high，留空使用模型默认值",
-                            ][i]
-                          }
-                          onChange={(e) =>
-                            change("options", {
-                              ...form.options,
-                              [key]: e.target.value,
-                            })
-                          }
-                        />
-                      )}
-                    </Field>
-                  );
-                },
-              )}
-              {form.mediaType === "video" && (
-                <Field
-                  label="视频时长（秒，0 使用模型默认值）"
-                  error={
-                    durationChoices.invalid
-                      ? "当前时长不在该模型的配置中，请重新选择或使用默认值。"
-                      : undefined
-                  }
-                >
-                  {durationChoices.constrained ? (
-                    <PopoverSelect
-                      {...selectProps}
-                      label="视频时长"
-                      value={durationChoices.value}
-                      options={durationChoices.options.map((option) => ({
-                        ...option,
-                        label:
-                          option.value && !option.disabled
-                            ? `${option.value} 秒`
-                            : option.label,
-                      }))}
-                      invalid={durationChoices.invalid}
-                      onChange={(value) =>
-                        change("options", {
-                          ...form.options,
-                          duration: Number(value) || 0,
-                        })
-                      }
-                    />
-                  ) : (
-                    <input
-                      type="number"
-                      min={0}
-                      max={600}
-                      value={form.options.duration || 0}
-                      onChange={(e) =>
-                        change("options", {
-                          ...form.options,
-                          duration: Number(e.target.value),
-                        })
-                      }
-                    />
-                  )}
-                </Field>
-              )}
+              {parameterFields.map(({ key, label, values, numeric }) => {
+                const raw = form.options[key];
+                const spec = templateSpecChoices(raw ? String(raw) : "", values);
+                const options = spec.options.map(option => ({ ...option, label: !option.value || option.disabled ? option.label :
+                  key === "duration" ? `${option.value} 秒` : key === "batchCount" ? `${option.value} 张` :
+                  option.value === "auto" ? "自适应" : key === "resolution" ? option.value.toUpperCase() :
+                  key === "quality" ? ({low:"低画质",medium:"标准画质",high:"高画质"}[option.value] || option.value) : option.label }));
+                // Keep the default choice first, sort only explicit supported values like Studio.
+                if (key === "resolution" || key === "duration") options.sort((a,b) => !a.value ? -1 : !b.value ? 1 : key === "resolution" ? resolutionRank(a.value)-resolutionRank(b.value) : Number(a.value)-Number(b.value));
+                return <Field key={key} label={label} error={spec.invalid ? `当前值 ${raw} 不在该模型的配置中，请重新选择。` : undefined}>
+                  <PopoverSelect {...selectProps} label={label} value={spec.value} options={options} invalid={spec.invalid}
+                    onChange={value => change("options", { ...form.options, [key]: numeric ? Number(value) || undefined : value })} />
+                </Field>;
+              })}
               <Field label="排序（越小越靠前）">
                 <input
                   type="number"

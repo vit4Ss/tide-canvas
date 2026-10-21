@@ -1,4 +1,42 @@
 import type { StudioTemplate, StudioTemplateSave } from "./studio-template-api";
+import type { ModelConfig } from "../types/admin-models";
+import { modelGenerationOptions } from "./model-generation-options.mjs";
+
+export function templateParameterFields(media: "image" | "video", config?: ModelConfig | null) {
+  const opts = modelGenerationOptions(config);
+  const fields: { key: keyof StudioTemplate["options"]; label: string; values: string[]; numeric?: boolean }[] = [];
+  if (opts.ratios.length) fields.push({ key: "aspectRatio", label: "画面比例", values: opts.ratios });
+  if (opts.resolutions.length) fields.push({ key: "resolution", label: media === "video" ? "清晰度" : "分辨率", values: opts.resolutions });
+  if (media === "image" && opts.qualities.length) fields.push({ key: "quality", label: "质量", values: opts.qualities });
+  if (media === "image" && opts.showCount) fields.push({ key: "batchCount", label: "生成数量", values: opts.batchChoices.map(String), numeric: true });
+  if (media === "video" && opts.durations.length) fields.push({ key: "duration", label: "视频时长", values: opts.durations.map(v => String(parseFloat(v))), numeric: true });
+  return fields;
+}
+
+/** Used on an explicit model switch, never on initial hydration of a saved
+ * recipe. Compatible settings survive; hidden/unsupported values are removed. */
+export function templateOptionsForModel(options: StudioTemplate["options"], media: "image" | "video", config?: ModelConfig | null): StudioTemplate["options"] {
+  const result: StudioTemplate["options"] = {};
+  for (const field of templateParameterFields(media, config)) {
+    const value = String(options[field.key] ?? "").trim();
+    const match = field.values.find(v => v.toLowerCase() === value.toLowerCase());
+    if (match) Object.assign(result, { [field.key]: field.numeric ? Number(match) : match });
+  }
+  return result;
+}
+
+/** Persist the defaults actually shown by the editor. The public model API
+ * sorts duration choices, so its first item need not be first in the raw DB
+ * config. Leaving defaults empty would make quote/generation choose differently. */
+export function templateOptionsForRequest(options: StudioTemplate["options"], media: "image" | "video", config?: ModelConfig | null): StudioTemplate["options"] {
+  const result: StudioTemplate["options"] = {};
+  for (const field of templateParameterFields(media, config)) {
+    const raw = options[field.key];
+    const value = raw === undefined || raw === "" || raw === 0 ? field.values[0] : raw;
+    Object.assign(result, { [field.key]: field.numeric ? Number(value) : String(value) });
+  }
+  return result;
+}
 
 export function copyTemplateDraft(row: StudioTemplate): StudioTemplateSave {
   return {
@@ -42,8 +80,8 @@ export function templateCountRange(
   }
 }
 
-// Preserve an existing unsupported setting so switching models cannot silently
-// change an operator's recipe. Only an explicit selection replaces that value.
+// Preserve a loaded recipe's unsupported value until the operator corrects it.
+// An explicit model switch is handled separately by templateOptionsForModel.
 export function templateSpecChoices(
   value: string | undefined,
   configured: unknown,

@@ -13,7 +13,7 @@ import { templateInputs } from "@/lib/studio-template";
 import { TemplateMedia } from "@/components/studio/create-studio/template-media";
 import type { FileVO } from "@/types/file";
 import { AiTaskStatus, type AiTaskVO } from "@/types/ai";
-import { templateUploadSlots, templateUploadInput, templateUploadsReady, templateOutputText } from "@/lib/template-workshop";
+import { templateUploadSlots, templateUploadInput, templateUploadsReady, templateOutputText, templateResultURLs } from "@/lib/template-workshop";
 import css from "./templates.module.css";
 import { readTemplateDraft, saveTemplateDraft, templateDraftSignature } from "@/lib/template-draft";
 import { downloadTemplateResult } from "@/lib/template-download";
@@ -46,6 +46,9 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
   const [task, setTask] = useState<AiTaskVO | null>(null);
+  const [selectedResult, setSelectedResult] = useState("");
+  const resultURLs = templateResultURLs(task);
+  const resultURL = resultURLs.includes(selectedResult) ? selectedResult : resultURLs[0] || "";
   const [sending, setSending] = useState(false);
   const [recovering, setRecovering] = useState(true);
   const [unresolved, setUnresolved] = useState(false);
@@ -233,7 +236,7 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
     submitLock.current = true;
     try {
       await commitAcceptedAiGeneration(scope, task.id, owner);
-      if (current()) { setTask(null); setQuote(null); setError(""); setPollError(""); setMediaError(false); setShowExample(false); setQuoteRetry(v => v + 1); }
+      if (current()) { setTask(null); setSelectedResult(""); setDownloadError(""); setQuote(null); setError(""); setPollError(""); setMediaError(false); setShowExample(false); setQuoteRetry(v => v + 1); }
     } finally { submitLock.current = false; }
   };
   const clearDeletedTask = async () => {
@@ -246,25 +249,26 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
   };
 
   const download = async () => {
-    if (!task?.resultUrl || downloadLock.current || !current()) return;
+    if (!task || !resultURL || downloadLock.current || !current()) return;
     downloadLock.current = true; setDownloading(true); setDownloadError("");
-    try { await downloadTemplateResult(task.resultUrl, row?.title || `FlowLight-${task.id}`, current); }
+    try { await downloadTemplateResult(resultURL, (row?.title || `FlowLight-${task.id}`) + (resultURLs.length > 1 ? `-${resultURLs.indexOf(resultURL) + 1}` : ""), current); }
     catch { if (current()) setDownloadError("下载未能开始，请重试；也可以打开原文件查看。"); }
     finally { downloadLock.current = false; if (current()) setDownloading(false); }
   };
 
-  const hasResult = task?.status === AiTaskStatus.SUCCESS && !!safeURL(task.resultUrl);
+  const hasResult = task?.status === AiTaskStatus.SUCCESS && !!resultURL;
   const resultMedia = task && (row?.mediaType === "video" || task.handler.includes("video")
-    ? <video className={css.output} src={safeURL(task.resultUrl)} controls playsInline preload="metadata" onError={() => setMediaError(true)} />
-    : <img className={css.output} src={safeURL(task.resultUrl)} alt="生成的同款作品" onError={() => setMediaError(true)} />);
+    ? <video className={css.output} src={resultURL} controls playsInline preload="metadata" onError={() => setMediaError(true)} />
+    : <img className={css.output} src={resultURL} alt="生成的同款作品" onError={() => setMediaError(true)} />);
   const resultView = task && <div className={css.result} aria-live="polite">
     <h2 id="task-result-title">{processing ? "你的作品正在生成" : task.status === AiTaskStatus.SUCCESS ? "你的同款，完成了" : "本次生成未完成"}</h2>
     <p className={css.cost}>本次任务 <strong>{task.pointCost} 积分</strong></p>
     {processing ? <><progress aria-label="生成进度" max={100} value={Math.max(0, Math.min(100, task.progress || 0))} /><p className={css.note}>{task.progress || 0}% · 可以离开页面，稍后从生成记录查看。</p></> : hasResult ? <>
       {(!row || loadError) && resultMedia}
+      {resultURLs.length > 1 && <div className={css.resultChoices} role="group" aria-label="选择生成结果">{resultURLs.map((url, i) => <button key={url} aria-pressed={url === resultURL} onClick={() => { setSelectedResult(url); setMediaError(false); setDownloadError(""); setShowExample(false); }}>第 {i + 1} 张</button>)}</div>}
       {mediaError && <p className={css.note}>预览暂时无法加载，可以打开原文件查看。</p>}
       <button className={css.primary} disabled={downloading} onClick={() => void download()}>{downloading ? <Loader2 className={css.spin} size={16} /> : <Download size={16} />}{downloading ? "准备下载…" : "下载作品"}</button>
-      <a className={css.textLink} href={safeURL(task.resultUrl)} target="_blank" rel="noopener noreferrer">查看原文件 <ArrowUpRight size={16} /></a>
+      <a className={css.textLink} href={resultURL} target="_blank" rel="noopener noreferrer">查看原文件 <ArrowUpRight size={16} /></a>
       {downloadError && <p role="alert" className={css.error}>{downloadError}</p>}
     </> : <p role="alert" className={css.error}>{task.errorMsg || "请在生成记录中查看任务详情。"}</p>}
     {pollError && <p className={css.note} role="status">{pollError}</p>}
@@ -282,7 +286,7 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
         <section className={css.previewPane} data-expanded={expanded} aria-label={hasResult && !showExample ? "生成结果预览" : "效果预览"}>
           <div className={css.previewToolbar}>{hasResult ? <div className={css.previewSwitch} role="group" aria-label="预览内容"><button aria-pressed={!showExample} onClick={() => setShowExample(false)}>我的作品</button><button aria-pressed={showExample} onClick={() => setShowExample(true)}>模板效果</button></div> : <><span className={css.desktopPreviewLabel}>效果预览</span><button className={css.previewExpand} aria-expanded={expanded} aria-controls="template-preview-content" onClick={() => setPreviewExpanded(v => !v)}>{safeURL(row.coverUrl) && <img src={safeURL(row.coverUrl)} alt="" />}<span>{expanded ? "收起示例，继续选素材" : "查看效果示例"}</span><ChevronDown size={18} /></button></>}<span className={css.previewType}>{row.mediaType === "video" ? <Video size={15} /> : <ImagePlus size={15} />}{row.mediaType === "video" ? "视频模板" : "图片模板"}</span></div>
           <div id="template-preview-content" className={css.preview}>{hasResult && !showExample ? resultMedia : <TemplateMedia key={row.id} row={row} controls width={1200} />}</div>
-          <div className={css.previewCaption}><div><strong>{hasResult && !showExample ? "我的同款作品" : row.title}</strong><span>{hasResult && !showExample ? task?.modelName : row.authorName || row.category}</span></div>{safeURL(hasResult && !showExample ? task!.resultUrl : row.previewUrl || row.coverUrl) && <a href={safeURL(hasResult && !showExample ? task!.resultUrl : row.previewUrl || row.coverUrl)} target="_blank" rel="noopener noreferrer" aria-label={hasResult && !showExample ? "打开完整生成结果" : "打开完整效果预览"}><Maximize2 size={16} /></a>}</div>
+          <div className={css.previewCaption}><div><strong>{hasResult && !showExample ? "我的同款作品" : row.title}</strong><span>{hasResult && !showExample ? task?.modelName : row.authorName || row.category}</span></div>{safeURL(hasResult && !showExample ? resultURL : row.previewUrl || row.coverUrl) && <a href={safeURL(hasResult && !showExample ? resultURL : row.previewUrl || row.coverUrl)} target="_blank" rel="noopener noreferrer" aria-label={hasResult && !showExample ? "打开完整生成结果" : "打开完整效果预览"}><Maximize2 size={16} /></a>}</div>
           <p className={css.previewNote}>{hasResult && !showExample ? "可打开原文件查看或下载，也可以切换查看模板效果。" : "预览用于展示效果，实际结果会随你的素材变化。"}</p>
         </section>
         <section className={css.uploadPane} aria-labelledby={task ? "task-result-title" : "materials-title"}>
