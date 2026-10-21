@@ -453,6 +453,7 @@ function TemplateEditor({
   const [modelError, setModelError] = useState("");
   const [modelRetry, setModelRetry] = useState(0);
   const [modelsLoading, setModelsLoading] = useState(true);
+  const modelRequestPending = useRef(false);
   const busy = useRef(false);
   const closing = useRef(false);
   const errorElement = useRef<HTMLParagraphElement>(null);
@@ -462,14 +463,11 @@ function TemplateEditor({
   const dirty = signature !== JSON.stringify(initial);
   const currentCheck =
     checked?.signature === signature ? checked.data : undefined;
-  const selectedModel =
-    !modelsLoading && !modelError
-      ? models.find(
+  const selectedModel = models.find(
           (model) =>
             model.type === form.mediaType &&
             (model.modelKey === form.modelKey || model.id === form.modelKey),
-        )
-      : undefined;
+        );
   const requirementKinds = (["images", "videos", "audio"] as const).filter(
     (kind) => templateCountRange(form.mode, kind).max > 0,
   );
@@ -506,30 +504,39 @@ function TemplateEditor({
   }, [checked]);
   useEffect(() => {
     let current = true;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setModelsLoading(true);
-    setModelError("");
-    marketApi
-      .studioModels(form.mediaType)
-      .then((r) => {
-        if (current) {
-          setModels(
-            r.success && r.data
-              ? r.data.filter((m) => m.type === form.mediaType)
-              : [],
-          );
-          if (!r.success)
-            setModelError(r.message || "模型列表读取失败，请重试");
+    let sequence = 0;
+    const loadModels = async () => {
+      if (busy.current) return;
+      const request = ++sequence;
+      modelRequestPending.current = true;
+      setModelsLoading(true);
+      setModelError("");
+      setChecked(undefined);
+      try {
+        const result = await marketApi.studioModels(form.mediaType);
+        if (!current || request !== sequence) return;
+        if (result.success && Array.isArray(result.data)) {
+          setModels(result.data.filter(model => model.type === form.mediaType));
+        } else setModelError(result.message || "模型列表读取失败，请重试");
+      } catch {
+        if (current && request === sequence) setModelError("模型列表读取失败，请重试");
+      } finally {
+        if (current && request === sequence) {
+          modelRequestPending.current = false;
+          setModelsLoading(false);
         }
-      })
-      .catch(() => {
-        if (current) setModelError("模型列表读取失败，请重试");
-      })
-      .finally(() => {
-        if (current) setModelsLoading(false);
-      });
+      }
+    };
+    const onVisible = () => { if (document.visibilityState === "visible") void loadModels(); };
+    // Match Studio's live catalog refresh without rewriting the selected model key.
+    void loadModels();
+    window.addEventListener("focus", loadModels);
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       current = false;
+      modelRequestPending.current = false;
+      window.removeEventListener("focus", loadModels);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [form.mediaType, modelRetry]);
   const close = async () => {
@@ -552,7 +559,11 @@ function TemplateEditor({
     }
   };
   const check = async () => {
-    if (busy.current) return;
+    if (busy.current || modelsLoading || modelRequestPending.current) return;
+    if (form.modelKey && (modelError || !selectedModel)) {
+      setError("请先重新读取模型列表，确认所选模型可用后再检查配置。");
+      return;
+    }
     busy.current = true;
     setChecking(true);
     setError("");
@@ -620,7 +631,11 @@ function TemplateEditor({
     }
   };
   const save = async () => {
-    if (busy.current) return false;
+    if (busy.current || modelsLoading || modelRequestPending.current) return false;
+    if (form.status === 1 && form.modelKey && (modelError || !selectedModel)) {
+      setError("请先重新读取模型列表，确认所选模型可用后再上架。");
+      return false;
+    }
     busy.current = true;
     setSaving(true);
     setError("");
@@ -663,7 +678,7 @@ function TemplateEditor({
       closeable={!saving && !uploading && !checking}
       showCancel={!saving && !uploading && !checking}
       onSave={save}
-      saveDisabled={!!uploading || saving || checking}
+      saveDisabled={!!uploading || saving || checking || modelsLoading || (form.status === 1 && !!form.modelKey && (!!modelError || !selectedModel))}
       saveLabel={form.status === 1 ? "保存并上架" : "保存草稿"}
       footNote="上架后展示在「灵感和模板」；用户只上传素材，提示词不会公开。"
     >
@@ -964,7 +979,10 @@ function TemplateEditor({
                 }}
               />
             </Field>
-            {modelsLoading && <p role="status">正在读取可用模型…</p>}
+            <div className={css.actions}>
+              <button type="button" className="adm-btn ghost small" disabled={modelsLoading} onClick={() => setModelRetry(v => v + 1)}>{modelsLoading ? "正在读取模型…" : "刷新模型列表"}</button>
+              <span className={css.note}>名称与创作台一致，使用模型管理中维护的名称。</span>
+            </div>
             {modelError && (
               <p role="alert">
                 {modelError}{" "}
@@ -1019,6 +1037,7 @@ function TemplateEditor({
             <button
               type="button"
               className="adm-btn ghost"
+              disabled={modelsLoading || (!!form.modelKey && (!!modelError || !selectedModel))}
               onClick={() => void check()}
             >
               {checking ? "正在检查…" : "检查生成配置"}

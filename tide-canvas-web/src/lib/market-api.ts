@@ -32,7 +32,7 @@ export const marketApi = {
     http.get<ModelCategoryVO[]>("/api/market/categories"),
   /** Studio models of a media type (image|video|audio|text|3d) with per-model config. */
   studioModels: (type?: string) =>
-    http.get<StudioModelVO[]>("/api/market/studio-models", toParams({ type })),
+    http.get<StudioModelVO[]>("/api/market/studio-models", toParams({ type }), { cache: "no-store" }),
   list: (query: MarketModelQuery) =>
     http.get<PageData<MarketModelVO>>("/api/market/models", toParams(query)),
   get: (id: string) =>
