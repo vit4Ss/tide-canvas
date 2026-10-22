@@ -1,15 +1,33 @@
-/* 中文注释：画布底部控制区拆成左下状态栏和居中工具坞，模拟参考站的轻量悬浮控制体验。 */
-.statusBar {
+/* 同一条网格基线：左侧保留内容宽度，右侧为助手留位，中间工具坞按可用空间居中。 */
+.bottomControls {
   position: absolute;
-  left: 18px;
-  bottom: 18px;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   z-index: 30;
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr) max-content minmax(var(--canvas-control-height), 1fr);
+  align-items: end;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.bottomControls[data-popup-open="true"] {
+  z-index: 80;
+}
+
+.statusBar {
+  position: relative;
+  justify-self: start;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+  height: var(--canvas-control-height);
+  padding: 0;
   color: var(--foreground);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1;
+  pointer-events: auto;
 }
 
 .assetButton,
@@ -26,31 +44,37 @@
 
 .assetButton {
   display: inline-flex;
-  height: 32px;
+  height: var(--canvas-control-button-height);
   align-items: center;
   gap: 6px;
-  padding: 0 2px;
+  padding: 0 6px;
+  border-radius: var(--canvas-control-button-radius);
   color: var(--muted-foreground);
-  font-weight: 500;
-  transition: color 160ms ease;
+  font-weight: 400;
+  transition: background-color 160ms ease, color 160ms ease;
 }
+
+:global(.canvas-workspace[data-sidebar-open]) .assetButton { display: none; }
 
 .assetButton:hover,
 .activeTextButton {
+  background: var(--accent);
   color: var(--foreground);
 }
 
 .statusIconButton,
 .zoomStepButton {
   display: inline-flex;
-  height: 30px;
-  width: 30px;
+  height: var(--canvas-control-button-height);
+  width: 28px;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: var(--canvas-control-button-radius);
   color: var(--muted-foreground);
   transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
 }
+
+.statusIconButton { color: var(--foreground); }
 
 .statusIconButton:hover,
 .zoomStepButton:hover:not(:disabled),
@@ -62,29 +86,26 @@
 .statusIcon {
   height: 16px;
   width: 16px;
-  stroke-width: 1.9;
+  stroke-width: var(--canvas-control-icon-stroke);
 }
 
 .zoomCluster {
+  position: relative;
   display: inline-flex;
-  height: 32px;
+  height: var(--canvas-control-button-height);
   align-items: center;
-  gap: 2px;
-  border-radius: 10px;
-  background: var(--popover);
-  padding: 2px;
-  box-shadow: var(--shadow-lg, 0 10px 15px -3px rgb(0 0 0 / 10%), 0 4px 6px -4px rgb(0 0 0 / 10%));
-  backdrop-filter: blur(12px);
+  gap: 0;
 }
 
 .zoomPercentButton {
   min-width: 44px;
-  height: 28px;
-  border-radius: 8px;
-  padding: 0 8px;
+  height: var(--canvas-control-button-height);
+  border-radius: var(--canvas-control-button-radius);
+  padding: 0 6px;
   color: var(--foreground);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
   transition: background-color 160ms ease;
 }
 
@@ -92,41 +113,67 @@
   background: var(--accent);
 }
 
+.statusBar .zoomPercentButton { font-size: 13px; }
+.zoomMenu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 12px);
+  width: 208px;
+  max-height: calc(100dvh - 100px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--popover);
+  color: var(--foreground);
+}
+.zoomForm { padding: 8px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.zoomForm label { display: block; margin-bottom: 8px; color: var(--muted-foreground); font-size: 12px; }
+.zoomInputRow { display: flex; align-items: center; gap: 4px; }
+.zoomInputField { display: flex; flex: 1; min-width: 0; height: 32px; align-items: center; gap: 4px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; }
+.zoomInputField:focus-within { border-color: var(--canvas-input-focus-border); }
+.zoomInputField input { width: 100%; min-width: 0; border: 0; background: transparent; color: var(--foreground); font: inherit; font-variant-numeric: tabular-nums; outline: none; }
+.zoomInputField > span { color: var(--muted-foreground); }
+.zoomForm p { margin: 8px 0 0; color: var(--foreground); font-size: 11px; line-height: 1.5; }
+.zoomPresets { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border); }
+.zoomPresets svg { margin-left: auto; }
+
 .zoomStepButton:disabled {
   cursor: not-allowed;
   opacity: 0.35;
 }
 
 .actionDock {
-  position: absolute;
-  left: 50%;
-  bottom: 18px;
-  z-index: 30;
+  position: relative;
+  grid-column: 2;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px;
+  gap: 2px;
+  height: var(--canvas-control-height);
+  padding: 3px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--canvas-control-radius);
   background: var(--popover);
-  box-shadow: var(--shadow-lg, 0 10px 15px -3px rgb(0 0 0 / 10%), 0 4px 6px -4px rgb(0 0 0 / 10%));
-  transform: translateX(-50%);
-  backdrop-filter: blur(14px);
+  pointer-events: auto;
 }
 
 .addWrapper {
   position: relative;
+  display: flex;
+  align-items: center;
 }
 
 .dockButton {
+  position: relative;
   display: inline-flex;
-  height: 32px;
-  width: 32px;
+  height: var(--canvas-control-button-height);
+  width: 28px;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
-  color: var(--foreground);
-  transition: background-color 160ms ease, color 160ms ease, transform 160ms ease;
+  border-radius: var(--canvas-control-button-radius);
+  color: var(--muted-foreground);
+  transition: background-color 160ms ease, color 160ms ease;
 }
 
 .dockButton:hover:not(:disabled),
@@ -135,33 +182,19 @@
   color: var(--accent-foreground);
 }
 
-.dockButton:active:not(:disabled) {
-  transform: translateY(1px);
-}
-
 .dockButton:disabled {
   cursor: not-allowed;
   opacity: 0.35;
 }
 
-.primaryDockButton {
-  background: var(--primary);
-  color: var(--primary-foreground);
-}
-
-.primaryDockButton:hover:not(:disabled) {
-  background: color-mix(in oklab, var(--primary) 85%, var(--primary-foreground));
-  color: var(--primary-foreground);
-}
-
 .dockIcon {
-  height: 18px;
-  width: 18px;
-  stroke-width: 1.9;
+  height: 16px;
+  width: 16px;
+  stroke-width: var(--canvas-control-icon-stroke);
 }
 
 .divider {
-  height: 20px;
+  height: 18px;
   width: 1px;
   background: var(--border);
 }
@@ -171,7 +204,7 @@
   left: 0;
   bottom: calc(100% + 12px);
   width: 248px;
-  max-height: calc(100vh - 96px);
+  max-height: calc(100dvh - 144px);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -180,7 +213,6 @@
   background: var(--popover);
   padding: 8px;
   box-shadow: var(--shadow-lg, 0 10px 15px -3px rgb(0 0 0 / 10%), 0 4px 6px -4px rgb(0 0 0 / 10%));
-  backdrop-filter: blur(16px);
 }
 
 .addMenuHeader {
@@ -249,9 +281,33 @@
   white-space: nowrap;
 }
 
-/* 画布为浅色主题且不存在 .dark 祖先：原 :global(.dark) 覆写均为死代码，已移除。 */
+.searchField { display: flex; align-items: center; gap: 8px; padding: 8px; margin: 0 0 4px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted-foreground); }
+.searchField input { width: 100%; min-width: 0; border: 0; background: transparent; color: var(--foreground); font-size: 12px; outline: none; }
+.searchField:focus-within { border-color: var(--canvas-input-focus-border); }
+.searchField input::placeholder { color: var(--muted-foreground); }
+.menuList { max-height: min(420px, calc(100dvh - 240px)); overflow-y: auto; }
+.noResults { padding: 12px 8px; font-size: 12px; line-height: 1.6; color: var(--muted-foreground); }
+.helpPanel { position: absolute; bottom: calc(100% + 16px); right: 0; width: 288px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 160px); overflow-y: auto; padding: 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--popover); color: var(--foreground); }
+.helpHeader { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+.helpHeader button { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground); cursor: pointer; }
+.helpHeader button:hover { background: var(--accent); }
+.helpPanel p { margin: 8px 0 16px; color: var(--muted-foreground); font-size: 12px; line-height: 1.7; }
+.helpPanel dl { display: grid; gap: 12px; font-size: 12px; }
+.helpPanel dl > div { display: flex; justify-content: space-between; gap: 16px; }
+.helpPanel dd { margin: 0; color: var(--muted-foreground); }
+.helpPanel kbd { font: inherit; }
+
+.compactControl { display: none; }
+.moreMenu { position: absolute; right: 0; bottom: calc(100% + 12px); width: 248px; padding: 6px; border: 1px solid var(--border); border-radius: 12px; background: var(--popover); color: var(--foreground); overflow-y: auto; overscroll-behavior: contain; }
+.moreZoom { display: flex; align-items: center; gap: 2px; padding: 4px 6px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.moreZoom > span { margin-right: auto; color: var(--muted-foreground); }
+.moreMenuItem { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: var(--foreground); text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
+.moreMenuItem:hover:not(:disabled) { background: var(--accent); }
+.moreMenuItem:disabled { opacity: .35; cursor: not-allowed; }
+.moreMenuState { margin-left: auto; color: var(--muted-foreground); }
 
 @media (hover: none) and (pointer: coarse) {
+  .bottomControls { --canvas-control-height: 48px; --canvas-control-button-height: 40px; }
   .assetButton {
     height: 40px;
   }
@@ -267,38 +323,53 @@
   }
 
   .zoomCluster {
-    height: 44px;
+    height: 40px;
   }
 
   .dockButton {
     height: 40px;
     width: 40px;
   }
+  .moreMenuItem { min-height: 44px; }
+  .zoomInputField { height: 40px; }
+  .zoomInputField input { font-size: 16px; }
 }
 
-@media (max-width: 768px) {
-  .statusBar {
-    left: 12px;
-    bottom: calc(72px + env(safe-area-inset-bottom, 0px));
-    gap: 4px;
+/* 仅在完整操作确实放不下时折叠，避免提前换行或缩小点击区域。 */
+@media (max-width: 600px), (max-width: 900px) and (hover: none) and (pointer: coarse) {
+  .fullControl, .statusControl, .assetButton span { display: none; }
+  .compactControl { display: inline-flex; }
+  .assetButton { width: var(--canvas-control-button-height); justify-content: center; padding: 0; }
+  .addMenu, .helpPanel, .moreMenu, .zoomMenu {
+    position: fixed;
+    left: calc(var(--canvas-sidebar-offset, 0px) + 12px);
+    right: 12px;
+    bottom: calc(var(--canvas-control-height) + 24px + env(safe-area-inset-bottom, 0px));
+    width: auto;
+    max-width: none;
+    max-height: calc(100dvh - var(--canvas-control-height) - 104px);
   }
+}
 
-  .assetButton span {
-    display: none;
+@media (prefers-reduced-motion: reduce) { .dockButton, .statusIconButton, .addMenuItem, .assetButton, .zoomStepButton, .zoomPercentButton { transition: none; } }
+
+/* 展开工作区后按剩余画布宽度折叠工具，避免侧栏挤压底部操作。 */
+@media (max-width: 1040px), (max-width: 1220px) and (hover: none) and (pointer: coarse) {
+  :global(.canvas-workspace[data-sidebar-open]) .fullControl { display: none; }
+  :global(.canvas-workspace[data-sidebar-open]) .compactControl { display: inline-flex; }
+  :global(.canvas-workspace[data-sidebar-open]) .addMenu, :global(.canvas-workspace[data-sidebar-open]) .helpPanel, :global(.canvas-workspace[data-sidebar-open]) .moreMenu {
+    position: fixed; left: calc(var(--canvas-sidebar-offset, 0px) + 12px); right: 12px;
+    bottom: calc(var(--canvas-control-height) + 24px + env(safe-area-inset-bottom, 0px));
+    width: auto; max-width: none; max-height: calc(100dvh - var(--canvas-control-height) - 104px);
   }
+}
 
-  .actionDock {
-    right: auto;
-    left: 50%;
-    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-    max-width: calc(100vw - 24px);
-    gap: 6px;
-    padding: 6px;
-    transform: translateX(-50%);
-  }
-
-  .addMenu {
-    right: 0;
-    left: auto;
+/* 中央工具先折叠；仅在剩余画布过窄时，把左侧次要操作也收入更多菜单。 */
+@media (max-width: 720px), (max-width: 960px) and (hover: none) and (pointer: coarse) {
+  :global(.canvas-workspace[data-sidebar-open]) .statusControl { display: none; }
+  :global(.canvas-workspace[data-sidebar-open]) .zoomMenu {
+    position: fixed; left: calc(var(--canvas-sidebar-offset, 0px) + 12px); right: 12px;
+    bottom: calc(var(--canvas-control-height) + 24px + env(safe-area-inset-bottom, 0px));
+    width: auto; max-height: calc(100dvh - var(--canvas-control-height) - 104px);
   }
 }

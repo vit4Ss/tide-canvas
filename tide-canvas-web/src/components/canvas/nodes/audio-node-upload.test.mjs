@@ -12,7 +12,8 @@ test("audio node exposes local upload in both empty and selected states", () => 
   assert.match(audioNode, /<FolderOpen[^>]*\/>从资产库选择/);
   assert.match(audioNode, /node\.audioSrc \? "替换" : "上传"/);
   assert.match(audioNode, /<AssetPickerModal[\s\S]*kind="audio"[\s\S]*lockKind/);
-  assert.equal(audioNode.match(/h-11 touch-manipulation/g)?.length, 4);
+  assert.equal(audioNode.match(/onClick=\{openFilePicker\}/g)?.length, 2);
+  assert.equal(audioNode.match(/onClick=\{openAssetPicker\}/g)?.length, 2);
 });
 
 test("audio upload shares the media replacement mutex and cannot race generation", () => {

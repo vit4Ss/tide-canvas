@@ -12,6 +12,7 @@ import {
   RATIO_OPTIONS,
   buildQualityRatioSummary,
   getRatioShapeSize,
+  normalizeBatchOptions,
 } from "../utils/quality-ratio";
 
 // 后台画质取值 → 友好名的补充映射（内置 QUALITY_OPTIONS 只有 low/standard/high，
@@ -32,10 +33,12 @@ interface QualityRatioDropdownProps {
   clarities?: readonly string[];
   ratios?: readonly string[];
   batchCount?: number;
+  batchOptions?: readonly number[];
+  onBatchChange?: (value: number) => void;
   compact?: boolean;
 }
 
-// 中文注释：画质、清晰度和尺寸的组合下拉，首页和画布节点共用同一套交互与视觉。
+// 图片节点的画质、清晰度、画面比例与生成张数使用同一个参数面板。
 export function QualityRatioDropdown({
   value,
   onChange,
@@ -45,6 +48,8 @@ export function QualityRatioDropdown({
   clarities,
   ratios,
   batchCount,
+  batchOptions,
+  onBatchChange,
   compact = false,
 }: QualityRatioDropdownProps) {
   // 直接渲染后台配置的取值(与创作台一致)，不再拿死白名单过滤——否则后台配的
@@ -59,12 +64,15 @@ export function QualityRatioDropdown({
   const ratioOptions = ratios
     ? ratios.map((v) => RATIO_OPTIONS.find((o) => o.value === v) ?? { value: v, label: v, w: 14, h: 14 })
     : RATIO_OPTIONS;
+  const countOptions = batchCount != null && onBatchChange && batchOptions?.length
+    ? normalizeBatchOptions(batchOptions)
+    : [];
 
   const dropdownPanel = (
     <div className={styles.panelInner} onMouseDown={(event) => event.stopPropagation()}>
       {qualityOptions.length > 0 && (
-        <ParamSection title="图像质量">
-          <SegmentedRow count={qualityOptions.length}>
+        <ParamSection title="画质">
+          <SegmentedRow count={Math.min(3, qualityOptions.length)}>
             {qualityOptions.map((option) => (
               <SegmentButton key={option.value} active={value.quality === option.value} onClick={() => onChange({ ...value, quality: option.value })}>
                 {option.label}
@@ -87,7 +95,7 @@ export function QualityRatioDropdown({
       )}
 
       {ratioOptions.length > 0 && (
-        <ParamSection title="图片尺寸">
+        <ParamSection title="比例">
           <div className={styles.ratioGrid}>
             {ratioOptions.map((option) => (
               <RatioTile
@@ -100,6 +108,18 @@ export function QualityRatioDropdown({
           </div>
         </ParamSection>
       )}
+
+      {countOptions.length > 0 && (
+        <ParamSection title="生成数量">
+          <SegmentedRow count={countOptions.length}>
+            {countOptions.map((count) => (
+              <SegmentButton key={count} active={batchCount === count} onClick={() => onBatchChange?.(count)}>
+                {count} 张
+              </SegmentButton>
+            ))}
+          </SegmentedRow>
+        </ParamSection>
+      )}
     </div>
   );
 
@@ -107,17 +127,18 @@ export function QualityRatioDropdown({
     <Popover
       opened={open}
       onChange={onOpenChange}
-      width={420}
+      width={344}
       position="bottom-start"
       offset={8}
       withinPortal
       floatingStrategy="fixed"
-      zIndex={90}
-      radius={16}
+      zIndex={110}
+      radius={12}
       shadow="none"
       middlewares={{ flip: true, shift: { padding: 12 }, inline: true }}
-      positionDependencies={[value.quality, value.clarity, value.ratio, qualityOptions.length, clarityOptions.length, ratioOptions.length]}
-      transitionProps={{ duration: 120, transition: "pop" }}
+      clickOutsideEvents={["pointerdown"]}
+      positionDependencies={[value.quality, value.clarity, value.ratio, batchCount, qualityOptions.length, clarityOptions.length, ratioOptions.length, countOptions.length]}
+      transitionProps={{ duration: 100, transition: "fade" }}
     >
       <Popover.Target>
         <button
@@ -130,6 +151,12 @@ export function QualityRatioDropdown({
           aria-haspopup="dialog"
           aria-expanded={open}
           title="选择图片参数"
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && open) {
+              event.stopPropagation();
+              onOpenChange(false);
+            }
+          }}
         >
           {compact ? <RectangleHorizontal className="h-3.5 w-3.5 shrink-0" /> : <SlidersHorizontal className="h-3.5 w-3.5 shrink-0" />}
           <span className={styles.triggerText}>{buildQualityRatioSummary(value, batchCount)}</span>
@@ -163,19 +190,19 @@ function SegmentedRow({ children, count }: { children: ReactNode; count: number 
 
 function SegmentButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
   return (
-    <button type="button" onClick={onClick} className={cn(styles.segmentButton, active && styles.segmentButtonActive)}>
+    <button type="button" aria-pressed={active} onClick={onClick} className={cn(styles.segmentButton, active && styles.segmentButtonActive)}>
       {children}
     </button>
   );
 }
 
 function RatioTile({ option, active, onClick }: { option: RatioOption; active: boolean; onClick: () => void }) {
-  const { width, height } = getRatioShapeSize(option);
+  const { width, height } = getRatioShapeSize(option, 20);
 
   return (
-    <button type="button" onClick={onClick} className={cn(styles.ratioTile, active && styles.ratioTileActive)}>
+    <button type="button" aria-pressed={active} onClick={onClick} className={cn(styles.ratioTile, active && styles.ratioTileActive)}>
       <span className={styles.ratioShapeWrap}>
-        <span className={styles.ratioShape} style={{ width, height } as CSSProperties} />
+        <span className={styles.ratioShape} data-auto={option.value === "auto" || undefined} style={{ width, height } as CSSProperties} />
       </span>
       <span>{option.label}</span>
     </button>

@@ -2,8 +2,9 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Button, Center, Group, Paper, Stack, Text, TextInput, ThemeIcon, UnstyledButton } from "@mantine/core";
+import { Group, Menu, Paper, Text, TextInput, UnstyledButton } from "@mantine/core";
 import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
+import { useAuthStore } from "@/stores/use-auth-store";
 import {
   Image as ImageIcon, Upload, Maximize2, Copy,
   Camera, ArrowUp, ChevronDown, ChevronRight, Zap, Download, X, Minimize2,
@@ -12,10 +13,13 @@ import {
   Grid2x2, Hash, RotateCcw,
   ScanFace, UserRound, Mountain, Package, Film, Contrast, PersonStanding,
   Smile, Crop, RotateCw, Gem, WandSparkles, PenLine,
+  Plus, MoreHorizontal, Info, Undo2,
 } from "lucide-react";
 import { QualityRatioPicker, parseRatio, RATIO_OPTIONS, QUALITY_OPTIONS, CLARITY_OPTIONS, type QualityRatioValue } from "./quality-ratio-picker";
-import { BatchCountDropdown } from "./components/batch-count-dropdown";
 import { ImageStylePicker, DEFAULT_STYLE_PRESET, type ImageStylePreset } from "./image-style-picker";
+import { ImageReferencePicker } from "./image-reference-picker";
+import { ImageComposerAnchor } from "./image-composer-anchor";
+import { copyText } from "@/lib/clipboard";
 import { STYLE_REFERENCE_NODE_TYPE } from "./style-reference-node";
 import { ModelPicker } from "./model-picker";
 import { PromptRefEditor, PromptEditorModal } from "./prompt-ref-editor";
@@ -67,8 +71,6 @@ function isStandardRatio(r?: string | null): r is string {
   return !!r && r !== "auto" && RATIO_OPTIONS.some((o) => o.value === r);
 }
 
-// 提示词面板比图片卡片左右各宽出的总量（仅未生成图片时显示），居中伸出让底部控件更宽松
-const PANEL_EXTRA = 80;
 const STYLE_REFERENCE_WIDTH = 320;
 const STYLE_REFERENCE_HEIGHT = 356;
 const STYLE_REFERENCE_GAP = 92;
@@ -534,7 +536,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     ? "描述角色的外貌、服装、表情与姿态，或上传参考图保持角色一致性"
     : node.type === SCENE_NODE_TYPE
       ? "描述场景的环境、时间、光线与氛围，或上传参考图继续扩展"
-      : "可直接文字生图，或上传图片输入文字指令对图片进行编辑，如：将背景改为雪夜";
+      : "描述想要的画面，或上传图片后描述修改方式…";
   const { generate, isGenerating, generating, showAuxUI } = useNodeRuntime(node, isSelected, isDragging);
   const gridMenuRef = useRef<HTMLDivElement>(null);
   const [gridMenuOpen, setGridMenuOpen] = useState(false);
@@ -596,10 +598,11 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     preferOriginal: showAuxUI, failedUrls: currentCardMedia.failedUrls,
   });
   const [handlerCosts, setHandlerCosts] = useState<Record<string, number>>({});
-  const { models: imageModels, modelId: selectedModelId, setModelId: setSelectedModelId, selectedModel } = useAiModels(
+  const { models: imageModels, modelId: selectedModelId, setModelId: setSelectedModelId, selectedModel, status: modelStatus, reload: reloadModels } = useAiModels(
     AiModelType.IMAGE,
     node.generationConfig?.modelId,
   );
+  const canManageModels = useAuthStore((state) => state.user?.role === 9 || !!state.user?.adminPerms?.includes("admin.models"));
   const formatConfig = useMemo(
     () => parseModelConfig<{ qualities?: string[]; clarities?: string[]; resolutions?: string[]; ratios?: string[]; batchSizes?: number[]; hideBatchCount?: boolean; gridOutput?: boolean; maxRefImages?: number; pricing?: Record<string, Record<string, number>> }>(selectedModel),
     [selectedModel],
@@ -671,11 +674,11 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
     return null;
   });
   const defaultRatio = (isStandardRatio(node.aspectRatio) ? node.aspectRatio : null) ?? upstreamRatio;
-  const [ratioTouched, setRatioTouched] = useState(false);
+  const [ratioTouched, setRatioTouched] = useState(!!node.generationConfig?.aspectRatio);
   const [qualityRatioState, setQualityRatio] = useState<QualityRatioValue>({
     quality: node.generationConfig?.quality ?? "standard",
     clarity: node.generationConfig?.resolution ?? "2K",
-    ratio: defaultRatio ?? "16:9",
+    ratio: node.generationConfig?.aspectRatio ?? defaultRatio ?? "16:9",
   });
   // 默认比例变化（如事后连入全景图）且用户未手动改过 → 渲染期同步跟随（官方「props 变化调整 state」模式）
   const [lastDefaultRatio, setLastDefaultRatio] = useState(defaultRatio);
@@ -701,13 +704,35 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   }, [clarityValues, qualityRatioState, qualityValues, ratioValues]);
   // 一次出图张数（批量）：全部存入本节点 images，组图交互展示
   const [batchCountState, setBatchCount] = useState(node.generationConfig?.batchCount ?? 1);
+  const [parameterRestore, setParameterRestore] = useState<{ modelId: string; value: QualityRatioValue; count: number; ratioTouched: boolean } | null>(null);
   const batchCount = batchOptions.includes(batchCountState) ? batchCountState : batchOptions[0];
-  const [batchOpen, setBatchOpen] = useState(false);
-  useEffect(() => {
-    if (!hideBatchCount || !batchOpen) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- 切换到隐藏数量的模型后关闭失效菜单
-    setBatchOpen(false);
-  }, [batchOpen, hideBatchCount]);
+  const persistImageParameters = (patch: NonNullable<CanvasNode["generationConfig"]>) => {
+    const state = useCanvasStore.getState();
+    const current = state.nodes.find((item) => item.id === node.id);
+    if (current) state.updateNode(node.id, { generationConfig: { ...current.generationConfig, ...patch } });
+  };
+  const restoreGenerationParameters = () => {
+    setParameterRestore({ modelId: selectedModelId, value: { ...qualityRatio }, count: batchCount, ratioTouched });
+    const ratio = ratioValues?.length ? (ratioValues.includes(defaultRatio ?? "16:9") ? defaultRatio ?? "16:9" : ratioValues[0]) : defaultRatio ?? "16:9";
+    const quality = qualityValues.includes("standard") ? "standard" : qualityValues[0] ?? "standard";
+    const clarity = clarityValues.find((value) => value.toLowerCase() === "2k") ?? clarityValues[0] ?? "2K";
+    const count = batchOptions.includes(1) ? 1 : batchOptions[0];
+    setRatioTouched(false);
+    setQualityRatio({ ratio, quality, clarity });
+    setBatchCount(count);
+    persistImageParameters({ quality, resolution: clarity, aspectRatio: ratio, batchCount: count });
+    toast.success("已恢复默认生成参数");
+  };
+  const undoParameterRestore = () => {
+    if (!parameterRestore || parameterRestore.modelId !== selectedModelId) return;
+    const { value, count, ratioTouched: wasTouched } = parameterRestore;
+    setRatioTouched(wasTouched);
+    setQualityRatio(value);
+    setBatchCount(count);
+    persistImageParameters({ quality: value.quality, resolution: value.clarity, aspectRatio: value.ratio, batchCount: count });
+    setParameterRestore(null);
+    toast.success("已撤销参数恢复");
+  };
   // 组图：展示主图+堆叠徽标，点徽标「展开」拆成多个独立图片节点
   const groupImages = node.images && node.images.length > 1 ? node.images : null;
   // 已展开的子节点 id（${node.id}_g{n}），响应式 —— 徽标据此在「展开 / 收起」间切换
@@ -819,7 +844,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   const { w: cardW, h: cardH } = node.storyboardFrame
     ? { w: 280, h: Math.max(120, Math.round(280 / cardAspect)) }
     : fitCardSize(cardAspect, explicitRatio);
-  const promptPanelW = Math.max(640, cardW + PANEL_EXTRA);
   const linkedStyleSig = useCanvasStore((s) =>
     s.connections
       .filter((c) => c.targetId === node.id)
@@ -917,6 +941,9 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
   useSyncContentSize(node, cardW, cardH);
 
   const handleGenerate = useCallback(() => {
+    if (modelStatus !== "ready") { toast.info(modelStatus === "loading" ? "模型正在加载，请稍候" : "模型加载失败，请重试"); return; }
+    if (!selectedModel) { toast.info(canManageModels ? "暂无可用的图片模型，请先在模型管理中配置" : "暂无可用图片模型，请联系管理员"); return; }
+    if (generating || nodeUploading || !hasPromptSource) return;
     const st = useCanvasStore.getState();
     const incomingSources = getIncomingSources(st, node.id);
     const referenceNodes = [
@@ -959,7 +986,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [generate, node, qualityRatio, selectedModelId, selectedModel, refs, batchCount, selectedStyleId, selectedStylePrompt]);
+  }, [generate, generating, nodeUploading, hasPromptSource, node, qualityRatio, selectedModelId, selectedModel, modelStatus, canManageModels, refs, batchCount, selectedStyleId, selectedStylePrompt]);
 
   // 全景：先 AI 生成 360° 全景扩图（新建图片节点并连线），完成后自动打开 360 查看器。
   // 比例跟随源图节点：源图钉死比例 → 当前面板选的比例 → 16:9 托底（16:9 源出 16:9、9:16 源出 9:16）。
@@ -1730,7 +1757,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       setPortraitPanel(null);
       setHdMenuOpen(false);
       setGridGenMenuOpen(false);
-      setBatchOpen(false);
     });
     return () => cancelAnimationFrame(frame);
   }, [showAuxUI]);
@@ -2261,7 +2287,7 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
       {/* 卡片尺寸的定位容器（居中）；外置组件以卡片边缘为锚做恒定大小覆盖层 */}
       <div className="relative mx-auto" style={{ width: cardW }}>
         {/* 标题：恒定大小，吸附卡片左上方 */}
-        {showAuxUI && !node.imageSrc && configuredFeatures.includes("media.replace") && (
+        {!node.imageSrc && (
           <NodeChrome placement="top-left" gap={10}>
             <EditableImageNodeTitle node={node} />
           </NodeChrome>
@@ -2270,34 +2296,6 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
             上传失败后 probe 可能仍晚回填一次 imageDims，用 node.imageSrc 兜底防残留 */}
         {showAuxUI && imageDims && node.imageSrc && (
           <NodeDimsBadge dims={imageDims} />
-        )}
-        {showAuxUI && !node.imageSrc && configuredFeatures.includes("media.replace") && (
-          <NodeChrome placement="top-center" gap={8} zIndex={20}>
-            <div onMouseDown={stop} className="flex items-center gap-0.5 whitespace-nowrap rounded-[18px] border border-neutral-200/80 bg-white px-2 py-1.5 text-sm text-neutral-700 shadow-lg dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
-              <button
-                type="button"
-                onMouseDown={stop}
-                onClick={openFilePicker}
-                disabled={nodeUploading || generating}
-                title={generating ? "生成完成后可上传素材" : "上传图片"}
-                className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800"
-              >
-                {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                上传
-              </button>
-              <button
-                type="button"
-                onMouseDown={stop}
-                onClick={openAssetPicker}
-                disabled={nodeUploading || generating}
-                title={generating ? "生成完成后可选择素材" : "从资产库选择图片"}
-                className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800"
-              >
-                <Images className="h-3.5 w-3.5" />
-                资产库
-              </button>
-            </div>
-          </NodeChrome>
         )}
         {/* 已生成 + 非预览：顶部操作工具栏（恒定大小独立胶囊，吸附卡片左上方）。
             zIndex 抬到端口(默认 10)之上，避免「宫格切分」下拉被端口 + 盖住 */}
@@ -2751,11 +2749,11 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
           component="div"
           radius={10}
           shadow="none"
-          className={`relative overflow-hidden border bg-white transition-[border-color,box-shadow] dark:bg-neutral-950 ${
+          className={`image-node-card relative overflow-hidden border bg-white transition-[border-color,box-shadow] dark:bg-neutral-950 ${
             isConnectTarget
               ? "border-blue-500 shadow-[0_0_0_1px_rgba(59,130,246,0.35)]"
               : isSelected
-                ? "border-neutral-400 shadow-[0_0_0_1px_rgba(115,115,115,0.28)] dark:border-neutral-500"
+                ? "border-neutral-400 dark:border-neutral-500"
                 : "border-neutral-300 dark:border-neutral-700"
           }`}
           style={{ width: cardW, height: cardH }}
@@ -2890,53 +2888,35 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
               />
             )
           ) : (
-            <Center h="100%" p="xl" c="gray.9" className="relative dark:text-neutral-100">
-              <Center style={{ position: "absolute", insetInline: 0, top: "28%" }}>
-                <ThemeIcon variant="transparent" color="gray" size={82} radius="xl">
-                  <ImageIcon size={58} strokeWidth={1.5} />
-                </ThemeIcon>
-              </Center>
-
-              <Stack gap="sm" align="flex-start" style={{ position: "absolute", left: 28, top: "45%" }}>
-                <Text size="sm" c="dimmed">尝试：</Text>
-                <Button
+            <div className="image-node-empty" aria-label="图片预览，生成结果将在这里展示">
+              <svg className="image-node-empty-glyph" viewBox="0 0 64 48" fill="currentColor" aria-hidden="true">
+                <circle cx="45" cy="10" r="5.5" />
+                <path d="M2 42 22 10a2 2 0 0 1 3.4 0l15 23 6.4-10a2 2 0 0 1 3.4 0L62 42a2 2 0 0 1-1.7 3H3.7A2 2 0 0 1 2 42Z" />
+              </svg>
+              <div className="image-node-empty-sources">
+                <span>尝试：</span>
+                <button
+                  type="button"
                   onMouseDown={stop}
                   onClick={openFilePicker}
                   disabled={nodeUploading || generating}
                   title={generating ? "生成完成后可上传素材" : undefined}
-                  variant="subtle"
-                  color="dark"
-                  radius="md"
-                  size="sm"
-                  leftSection={
-                    <ThemeIcon variant="light" color="gray" size={24} radius="md">
-                      {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                    </ThemeIcon>
-                  }
-                  styles={{ root: { paddingLeft: 8, paddingRight: 10 }, label: { fontWeight: 500 } }}
                 >
-                  本地上传
-                </Button>
-                <Button
+                  {nodeUploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                  <span>本地上传</span>
+                </button>
+                <button
+                  type="button"
                   onMouseDown={stop}
                   onClick={openAssetPicker}
                   disabled={nodeUploading || generating}
                   title={generating ? "生成完成后可选择素材" : undefined}
-                  variant="subtle"
-                  color="dark"
-                  radius="md"
-                  size="sm"
-                  leftSection={
-                    <ThemeIcon variant="light" color="gray" size={24} radius="md">
-                      <Images className="h-3.5 w-3.5" />
-                    </ThemeIcon>
-                  }
-                  styles={{ root: { paddingLeft: 8, paddingRight: 10 }, label: { fontWeight: 500 } }}
                 >
-                  从资产库选图
-                </Button>
-              </Stack>
-            </Center>
+                  <Images size={14} />
+                  <span>从资产库选图</span>
+                </button>
+              </div>
+            </div>
           )}
 
         </Paper>
@@ -2952,44 +2932,44 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
         />
 
         {/* 提示词输入面板：恒定大小，吸附卡片正下方居中 */}
-        {showAuxUI && !node.imageSrc && (
-          <NodeChrome placement="bottom-center" gap={18}>
-            <Paper
-              component="div"
-              radius={10}
-              p={12}
-              shadow="sm"
-              withBorder
-              className="relative flex flex-col bg-white shadow-[0_10px_32px_rgba(15,23,42,0.10)] dark:bg-neutral-950 dark:shadow-black/30"
-              style={{ width: promptPanelW, minHeight: 176, boxSizing: "border-box" }}
+        {showAuxUI && !node.is360 && !gridPreview && !angleOpen && !lightOpen && !activePortraitPanel && (
+          <ImageComposerAnchor>
+            <section
+              className="image-node-composer"
+              aria-label="图片创作面板"
+              onMouseDown={stop}
             >
-              {/* 富文本输入框（@ 引用「图片N」内联绑定参考图）：风格作前置工具、展开作后置 */}
-              <PromptRefEditor
+              <div className="image-composer-heading">
+                <div className="image-composer-tools">
+                  {configuredFeatures.includes("media.replace") && <Menu position="bottom-start" offset={8} withinPortal zIndex={110} width={220} shadow="none" radius={10} clickOutsideEvents={["pointerdown"]}>
+                    <Menu.Target><button type="button" className="image-composer-chip" aria-label={node.imageSrc ? "替换底图" : "上传图片"} disabled={nodeUploading || generating}><Plus size={14} />{node.imageSrc ? "替换底图" : "上传"}</button></Menu.Target>
+                    <Menu.Dropdown className="image-composer-menu">
+                      <Menu.Label>{node.imageSrc ? "替换图片，保留提示词与连线" : "选择一张图片作为生成底图"}</Menu.Label>
+                      <Menu.Item className="image-composer-menu-item" leftSection={<Upload size={15} />} onClick={openFilePicker}>本地上传</Menu.Item>
+                      <Menu.Item className="image-composer-menu-item" leftSection={<Images size={15} />} onClick={openAssetPicker}>从资产库选择</Menu.Item>
+                    </Menu.Dropdown>
+                  </Menu>}
+                  <ImageReferencePicker nodeId={node.id} limit={resolveModelReferenceCountLimit(selectedModel, "image", "image_to_image")} disabled={nodeUploading || generating} validate={(id) => validateReferenceFileSizes(useCanvasStore.getState().nodes.filter((item) => item.id === id), selectedModel)} />
+                  {configuredFeatures.includes("image.annotate") && <button type="button" className="image-composer-chip" aria-label="标记当前图片" title={node.imageSrc ? "在图上圈选、手绘标记" : "添加图片后可标记"} disabled={!node.imageSrc || generating || nodeUploading || !!localTransforming} onClick={() => setAnnotateOpen(true)}><PenLine size={14} />标记</button>}
+                  <ImageStylePicker compact value={selectedStyleId} selectedName={selectedStyleName} selectedPrompt={selectedStylePrompt} modelId={selectedModelId} onChange={handleStylePresetChange} />
+                </div>
+                <div className="image-composer-utilities">
+                  <button type="button" className="image-composer-icon" aria-label="展开图片提示词" title="展开编辑" onClick={() => setPromptExpanded(true)}><Maximize2 size={15} /></button>
+                </div>
+              </div>
+              <div className="image-composer-body">
+                <PromptRefEditor
                 refs={refs}
                 value={node.prompt || ""}
                 onChange={handlePromptChange}
-                onSubmit={() => { if (!generating && !nodeUploading && hasPromptSource) handleGenerate(); }}
+                ariaLabel="图片提示词"
+                onSubmit={handleGenerate}
                 placeholder={promptPlaceholder}
-                leading={
-                  <ImageStylePicker
-                    value={selectedStyleId}
-                    selectedName={selectedStyleName}
-                    selectedPrompt={selectedStylePrompt}
-                    modelId={selectedModelId}
-                    onChange={handleStylePresetChange}
-                  />
-                }
-                trailing={
-                  <div className="flex items-center gap-0.5">
-                    <button onMouseDown={stop} onClick={(e) => { stop(e); const t = node.prompt?.trim(); if (t) navigator.clipboard?.writeText(t)?.then(() => toast.success("已复制提示词"), () => toast.error("复制失败")); }} title="复制提示词" className="rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800">
-                      <Copy className="h-4 w-4" />
-                    </button>
-                    <button onMouseDown={stop} onClick={(e) => { stop(e); setPromptExpanded(true); }} title="展开编辑" className="rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800">
-                      <Maximize2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                }
-              />
+                showThumbs={refs.length > 0}
+                editorStyle={{ minHeight: 80, maxHeight: 160 }}
+                editorClassName="image-composer-editor"
+                />
+              </div>
               <PromptEditorModal
                 open={promptExpanded}
                 onClose={() => setPromptExpanded(false)}
@@ -2998,55 +2978,60 @@ export const ImageNode = memo(function ImageNode({ node, isSelected, isDragging 
                 refs={refs}
                 placeholder={promptPlaceholder}
               />
-              <div className="mt-auto flex items-center gap-2 pt-5">
-                <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 text-xs text-neutral-600 dark:text-neutral-400">
-                  <ModelPicker models={imageModels} value={selectedModelId} onChange={setSelectedModelId} />
+              <div className="image-composer-status" data-idle={!!selectedModel && modelStatus === "ready" && !generating && !nodeUploading || undefined} id={`image-composer-status-${node.id}`} role="status">
+                {generating ? <><Loader2 size={14} className="animate-spin" /><span>正在生成图片…</span></>
+                  : nodeUploading ? <><Loader2 size={14} className="animate-spin" /><span>正在上传底图…</span></>
+                  : modelStatus === "loading" ? <><Loader2 size={14} className="animate-spin" /><span>正在加载图片模型…</span></>
+                  : modelStatus === "error" ? <><Info size={14} /><span>图片模型加载失败</span><button type="button" onClick={reloadModels}>重新加载</button></>
+                  : !selectedModel ? <><Info size={14} /><span>{canManageModels ? "暂无可用的图片模型" : "暂无可用图片模型，请联系管理员"}</span>{canManageModels && <a href="/admin/models" target="_blank" rel="noreferrer">配置模型</a>}<button type="button" onClick={reloadModels}>刷新</button></>
+                  : <span>{!hasPromptSource ? "输入画面描述后即可生成" : "Enter 生成 · Shift + Enter 换行"}</span>}
+              </div>
+              <div className="image-composer-footer" data-has-model={!!selectedModel || undefined}>
+                {selectedModel && <div className="image-composer-model">
+                  <ModelPicker models={imageModels} value={selectedModelId} onChange={(modelId) => { setParameterRestore(null); setSelectedModelId(modelId); persistImageParameters({ modelId }); }} />
+                </div>}
+                <div className="image-composer-parameters">
                   <QualityRatioPicker
                     value={qualityRatio}
                     onChange={(v) => {
+                      setParameterRestore(null);
                       // 用户手动改过比例后，不再跟随上游连接节点的默认比例
                       if (v.ratio !== qualityRatio.ratio) setRatioTouched(true);
                       setQualityRatio(v);
+                      persistImageParameters({ quality: v.quality, resolution: v.clarity, aspectRatio: v.ratio });
                     }}
                     qualities={formatConfig.qualities}
                     clarities={formatConfig.clarities ?? formatConfig.resolutions}
                     ratios={formatConfig.ratios}
-                    compact
+                    compact batchCount={hideBatchCount ? undefined : batchCount} batchOptions={batchOptions} onBatchChange={(value) => { setParameterRestore(null); setBatchCount(value); persistImageParameters({ batchCount: value }); }}
                   />
                 </div>
-                <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-neutral-600 dark:text-neutral-400">
-                  {!hideBatchCount && (
-                    <BatchCountDropdown
-                      value={batchCount}
-                      options={batchOptions}
-                      open={batchOpen}
-                      onOpenChange={setBatchOpen}
-                      onChange={setBatchCount}
-                      variant="ghost"
-                      align="right"
-                    />
-                  )}
-                  <span className="flex items-center gap-0.5 text-xs text-neutral-500">
-                    <Zap className="h-3 w-3 text-neutral-900 dark:text-neutral-100" fill="currentColor" />
-                    {Math.ceil(pointCost * batchCount)}
-                  </span>
+                <div className="image-composer-actions">
+                  <Menu position="bottom-end" offset={8} withinPortal zIndex={110} width={200} shadow="none" radius={10} clickOutsideEvents={["pointerdown"]}>
+                    <Menu.Target><button type="button" className="image-composer-icon" aria-label="更多图片创作操作" title="更多操作"><MoreHorizontal size={16} /></button></Menu.Target>
+                    <Menu.Dropdown className="image-composer-menu">
+                      <Menu.Item className="image-composer-menu-item" leftSection={<Copy size={15} />} disabled={!node.prompt?.trim()} onClick={async () => { const text = node.prompt?.trim(); if (text) { if (await copyText(text)) toast.success("已复制提示词"); else toast.error("复制失败，请展开编辑后手动复制"); } }}>复制提示词</Menu.Item>
+                      <Menu.Item className="image-composer-menu-item" leftSection={<RotateCcw size={15} />} disabled={generating || nodeUploading} onClick={restoreGenerationParameters}>恢复生成参数</Menu.Item>
+                      {parameterRestore?.modelId === selectedModelId && <Menu.Item className="image-composer-menu-item" leftSection={<Undo2 size={15} />} disabled={generating || nodeUploading} onClick={undoParameterRestore}>撤销参数恢复</Menu.Item>}
+                    </Menu.Dropdown>
+                  </Menu>
+                  {selectedModel && <span className="image-composer-cost" aria-label={`预计消耗 ${Math.ceil(pointCost * batchCount)} 积分`} title={`预计消耗 ${Math.ceil(pointCost * batchCount)} 积分`}><Zap size={12} />{Math.ceil(pointCost * batchCount)}</span>}
                   <button
                     onMouseDown={stop}
                     onClick={(e) => { stop(e); handleGenerate(); }}
-                    disabled={generating || nodeUploading || !hasPromptSource}
-                    title={generating ? "生成中..." : nodeUploading ? "素材上传中..." : !hasPromptSource ? "先输入提示词" : "开始生成"}
-                    className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                      generating || nodeUploading || !hasPromptSource
-                        ? "bg-neutral-100 text-neutral-400 dark:bg-neutral-800"
-                        : "bg-neutral-800 text-white hover:bg-neutral-950 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-                    }`}
+                    type="button"
+                    disabled={generating || nodeUploading || !hasPromptSource || !selectedModel || modelStatus !== "ready"}
+                    aria-label={generating ? "图片生成中" : "生成图片"}
+                    aria-describedby={`image-composer-status-${node.id}`}
+                    title="生成图片（Enter，Shift + Enter 换行）"
+                    className="image-composer-generate"
                   >
-                    {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
+                    {generating ? <Loader2 size={16} className="animate-spin" /> : <ArrowUp size={18} />}
                   </button>
                 </div>
               </div>
-            </Paper>
-          </NodeChrome>
+            </section>
+          </ImageComposerAnchor>
         )}
       </div>
     </NodeShell>

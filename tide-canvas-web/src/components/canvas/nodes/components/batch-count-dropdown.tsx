@@ -1,7 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { Menu } from "@mantine/core";
 import { Check, ChevronDown, Image as ImageIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import styles from "../styles/parameter-dropdown.module.css";
@@ -17,119 +16,55 @@ interface BatchCountDropdownProps {
   align?: "left" | "right";
 }
 
-const MENU_WIDTH = 144;
-
-// 中文注释：图片张数单独成组件，避免和画质/尺寸设置耦合，后续支持更多批量策略也更清晰。
-// 菜单 portal 到 body + fixed 按触发器 rect 定位（下方空间不足上翻），不被节点溢出/相邻节点裁切；
-// Esc / 外部点击关闭，关闭后焦点回触发器。视觉与交互词汇对齐 PopoverSelect（z 分层：body portal 下拉 = 90）。
+// 与参数面板共用浮层定位，窗口变化或节点移动后仍跟随触发器。
 export function BatchCountDropdown({ value, options, open, onOpenChange, onChange, variant = "default", align = "left" }: BatchCountDropdownProps) {
   const normalizedOptions = normalizeBatchOptions(options);
   const effectiveValue = normalizedOptions.includes(value) ? value : normalizedOptions[0] ?? 1;
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ left: number; top: number; up: boolean } | null>(null);
-
-  const close = useCallback(
-    (refocus = true) => {
-      onOpenChange(false);
-      if (refocus) triggerRef.current?.focus();
-    },
-    [onOpenChange],
-  );
-
-  // 打开时按触发器 rect 计算 fixed 定位（相对视口，脱离画布 transform 层）
-  useEffect(() => {
-    if (!open) return;
-    const rect = triggerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const estHeight = normalizedOptions.length * 34 + 40; // 标题 + 上下 padding 余量
-    const below = window.innerHeight - rect.bottom;
-    const up = below < estHeight && rect.top > below;
-    const left = align === "right" ? rect.right - MENU_WIDTH : rect.left;
-    setPos({
-      left: Math.max(8, Math.min(left, window.innerWidth - MENU_WIDTH - 8)),
-      top: up ? rect.top : rect.bottom,
-      up,
-    });
-  }, [open, align, normalizedOptions.length]);
-
-  // Esc + 外部点击关闭
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
-    const onDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (menuRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
-      close(false);
-    };
-    document.addEventListener("keydown", onKey);
-    document.addEventListener("pointerdown", onDown);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("pointerdown", onDown);
-    };
-  }, [open, close]);
 
   return (
-    <div className="relative shrink-0">
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          onOpenChange(!open);
-        }}
-        className={cn(styles.trigger, variant === "ghost" && styles.triggerGhost, "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring")}
-        title="选择图片张数"
-        aria-haspopup="menu"
-        aria-expanded={open}
-      >
-        <ImageIcon className="h-3.5 w-3.5 shrink-0" />
-        <span>{effectiveValue}张</span>
-        <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
-      </button>
-
-      {open && pos
-        ? createPortal(
-            <div
-              ref={menuRef}
-              role="menu"
-              aria-label="图片张数"
-              className="fixed z-[90] animate-in rounded-2xl border border-border/80 bg-popover/95 p-1.5 text-popover-foreground shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl duration-100 fade-in-0 zoom-in-95 motion-reduce:animate-none"
-              style={{
-                left: pos.left,
-                width: MENU_WIDTH,
-                ...(pos.up ? { bottom: window.innerHeight - pos.top + 4 } : { top: pos.top + 4 }),
-              }}
-            >
-              <div className="flex items-center justify-between px-2.5 pb-1.5 pt-1 text-[11px] font-medium text-muted-foreground">
-                <span>图片张数</span>
-                <span className="font-normal opacity-70">一次生成</span>
-              </div>
-              {normalizedOptions.map((count) => (
-                <button
-                  key={count}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    onChange(count);
-                    close();
-                  }}
-                  className={cn(
-                    "flex h-9 w-full items-center justify-between rounded-xl px-2.5 text-[13px] font-medium transition-colors hover:bg-accent/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40",
-                    effectiveValue === count && "bg-accent/80 text-popover-foreground",
-                  )}
-                >
-                  <span>{count}张</span>
-                  {effectiveValue === count && <Check className="h-3.5 w-3.5 text-blue-500" />}
-                </button>
-              ))}
-            </div>,
-            document.body,
-          )
-        : null}
-    </div>
+    <Menu
+      opened={open}
+      onChange={onOpenChange}
+      width={156}
+      position={align === "right" ? "bottom-end" : "bottom-start"}
+      offset={8}
+      withinPortal
+      floatingStrategy="fixed"
+      zIndex={110}
+      shadow="none"
+      radius={12}
+      returnFocus
+      middlewares={{ flip: true, shift: { padding: 12 } }}
+      transitionProps={{ duration: 100, transition: "fade" }}
+    >
+      <Menu.Target>
+        <button
+          type="button"
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+          className={cn(styles.trigger, variant === "ghost" && styles.triggerGhost)}
+          title="选择图片张数"
+        >
+          <ImageIcon className="h-3.5 w-3.5 shrink-0" />
+          <span>{effectiveValue} 张</span>
+          <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
+        </button>
+      </Menu.Target>
+      <Menu.Dropdown aria-label="图片张数" className={styles.batchPanel} onMouseDown={(event) => event.stopPropagation()}>
+        <Menu.Label className={styles.batchTitle}>图片张数</Menu.Label>
+        {normalizedOptions.map((count) => (
+          <Menu.Item
+            key={count}
+            aria-label={`${count} 张${effectiveValue === count ? "，已选择" : ""}`}
+            data-selected={effectiveValue === count || undefined}
+            className={styles.batchOption}
+            rightSection={effectiveValue === count ? <Check size={14} strokeWidth={1.8} aria-hidden /> : null}
+            onClick={() => onChange(count)}
+          >
+            {count} 张
+          </Menu.Item>
+        ))}
+      </Menu.Dropdown>
+    </Menu>
   );
 }

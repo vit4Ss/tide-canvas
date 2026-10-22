@@ -1,8 +1,8 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useCanvasStore, generateNodeId } from "@/stores/use-canvas-store";
-import { Video, Upload, Camera, Loader2, Play, Pause, Download, Maximize2, Zap, Layers, Sparkles, Copy, Clapperboard, ScanLine } from "lucide-react";
+import { useCanvasStore, generateNodeId, type CanvasNode } from "@/stores/use-canvas-store";
+import { Video, Upload, Camera, Loader2, Play, Pause, Download, Maximize2, Zap, Layers, Sparkles, Clapperboard, ScanLine, ArrowUp, Info } from "lucide-react";
 import { toast } from "@/components/shared/toast";
 import { parseRatio } from "./quality-ratio-picker";
 import { VideoParamPicker, normalizeDurations, type VideoParamValue } from "./video-param-picker";
@@ -26,7 +26,8 @@ import { useFileDownload } from "./shared/use-file-download";
 import { ConfigurableNodeToolbar, type ConfigurableNodeToolbarAction } from "./shared/configurable-node-toolbar";
 import { useCanvasNodeFeatures } from "@/stores/use-canvas-node-config-store";
 import { findRightColumnSpot, getIncomingSources, inlineIncomingTextRefs, parseModelConfig, stopEvent as stop, validateReferenceFileSizes } from "./shared/node-utils";
-import { GenerateSubmitButton, NodeDimsBadge, NodeErrorBadge, NodeGeneratingOverlay, NodeMediaLightbox, NodePanelChrome, NodeShell, NodeUploadingOverlay } from "./shared/node-overlays";
+import { NodeDimsBadge, NodeErrorBadge, NodeGeneratingOverlay, NodeMediaLightbox, NodeShell, NodeUploadingOverlay } from "./shared/node-overlays";
+import { NodeComposer } from "./shared/node-composer";
 import CapturableVideo from "@/components/studio/create-studio/video-result";
 import { useReferenceVideoQuote } from "@/hooks/use-reference-video-quote";
 import { supportsOmniReference } from "@/lib/omni-reference";
@@ -48,6 +49,12 @@ import {
 import { VideoClipReshootTimeline } from "./video-clip-reshoot-timeline";
 import { BREAKDOWN_NODE_HEIGHT, BREAKDOWN_NODE_WIDTH } from "./video-frame-breakdown";
 import { captureVideoFrame, VideoFrameError } from "@/lib/video-frame";
+import { canvasVideoReferences, canvasVideoReferenceKind, type CanvasVideoReferenceKind } from "@/lib/canvas-video-references";
+import { VideoSourceTools } from "./video-source-tools";
+import { VideoPresetPicker } from "./video-preset-picker";
+import { buildVideoCreativePrompt } from "./video-creative-presets";
+import { planVideoGenerationBatch } from "./video-generation-batch";
+import { VideoPromptTools } from "./video-prompt-tools";
 
 // 各模式（Tab）对连接源节点的数量/类型限制：hover 时提示，生成时校验。文生视频无需连接。
 // max 只是没有后台配置时的兜底；模型在「模型管理」里配了参考素材数量时以配置为准
@@ -175,7 +182,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     ratio: node.aspectRatio ?? "16:9",
     resolution: node.generationConfig?.resolution ?? "720P",
     duration: node.generationConfig?.duration ?? 5,
-    audio: true,
+    audio: node.generationConfig?.audio ?? true,
   });
   const { models: videoModels, modelId: selectedModelId, setModelId: setSelectedModelId, selectedModel } = useAiModels(
     AiModelType.VIDEO,
@@ -190,7 +197,23 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     : videoModels;
   const clipReshootModelReady = !isClipReshoot || (!!selectedModel && supportsVideoReference(selectedModel));
   const clipReshootSourceReady = !isClipReshoot || !!clipSourceVideo;
-  const [videoTab, setVideoTab] = useState(isClipReshoot ? "全能参考" : "文生视频");
+  const [videoTab, setVideoTab] = useState(isClipReshoot ? "全能参考" : node.generationConfig?.videoMode ?? "文生视频");
+  const [referenceUploading, setReferenceUploading] = useState(false);
+  const [submittingBatch, setSubmittingBatch] = useState(false);
+  const [promptToolBusy, setPromptToolBusy] = useState(false);
+  const submitLock = useRef(false);
+  const batchCount: 1 | 2 | 4 = node.generationConfig?.batchCount === 2 ? 2 : node.generationConfig?.batchCount === 4 ? 4 : 1;
+  const includeContext = node.generationConfig?.videoIncludeContext !== false;
+  const patchConfig = (patch: Partial<NonNullable<CanvasNode["generationConfig"]>>) => {
+    const current = useCanvasStore.getState().nodes.find((item) => item.id === node.id);
+    if (current) updateNode(node.id, { generationConfig: { ...current.generationConfig, ...patch } }, true);
+  };
+  const changeVideoMode = (mode: string) => { setVideoTab(mode); patchConfig({ videoMode: mode }); };
+  const changeVideoParam = (value: VideoParamValue) => {
+    setVideoParam(value);
+    const current = useCanvasStore.getState().nodes.find((item) => item.id === node.id);
+    if (current) updateNode(node.id, { aspectRatio: value.ratio, generationConfig: { ...current.generationConfig, aspectRatio: value.ratio, resolution: value.resolution, duration: value.duration, audio: value.audio } }, true);
+  };
   const [previewOpen, setPreviewOpen] = useState(false);
   const [clipSourceThumbnail, setClipSourceThumbnail] = useState<{ src: string; thumbnail: string } | null>(null);
   const { promptExpanded, setPromptExpanded, handlePromptChange } = useNodePrompt(node, node.videoSrc);
@@ -293,7 +316,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         : images;
     const visibleVideos = videoTab === "全能参考" && omniVideoSupported ? videos : [];
     const visibleAudios = videoTab === "全能参考" && omniAudioSupported ? audios : [];
-    return [...visibleImages, ...visibleVideos, ...visibleAudios, ...texts];
+    return [...(videoTab === "文生视频" ? [] : visibleImages), ...visibleVideos, ...visibleAudios, ...texts];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clipSourceThumbnail, refsSig, node.id, omniAudioSupported, omniImageSupported, omniVideoSupported, videoTab]);
   const clipSourceRefIndex = refs.find((ref) => ref.kind === "video" && ref.id === clipSourceVideo?.id)?.index ?? 1;
@@ -305,8 +328,8 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     })
   );
   // 入边文本、角色或场景设定会拼进 prompt，所以输入框空着照样有提示词可发。
-  const hasPromptSource = !!node.prompt?.trim() || refs.some((r) => r.kind === "text") || hasConceptPrompt;
-  // 实时统计连接到本节点的「有素材」源节点数（图片/视频），用于按模式启用/禁用 Tab
+  const hasPromptSource = !!node.prompt?.trim() || refs.some((r) => r.kind === "text") || (includeContext && hasConceptPrompt);
+  // 实时统计连接到本节点的「有素材」源节点数，用于说明模式要求及生成前校验。
   const connSig = useCanvasStore((s) => {
     let img = 0;
     let vid = 0;
@@ -344,14 +367,14 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     return null;
   };
   const connectedRefCounts: Record<RefCountKind, number> = { image: imgCount, video: vidCount, audio: audCount };
-  // 模式不可选时的原因提示：被模型配置挡住就说清是哪一类超了，别再显示协议兜底区间
+  // 模式所需的素材说明：超出模型配置时说明是哪一类，而非只显示协议兜底区间。
   const tabHint = (t: string) => {
     const overflow = refCountOverflow(t, connectedRefCounts);
     if (overflow) return `所选模型最多支持 ${overflow.limit} 个${overflow.label}（已连接 ${overflow.count} 个）`;
     return TAB_LIMITS[t]?.hint;
   };
-  // 某模式 Tab 是否可选：连接的合格素材数落在 [min,max] 且不超过模型配置的数量上限
-  //（文生视频无需连接，恒可选）
+  // 当前模式是否可生成：连接的合格素材数落在 [min,max] 且不超过模型配置上限。
+  // 用户可先选择模式再连接素材，文生视频无需连接。
   const tabEnabled = (t: string) => {
     if (t === "图片参考" && !omniImageSupported) return false;
     const lim = TAB_LIMITS[t];
@@ -377,12 +400,78 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
           return true;
         },
       );
+  const allowedReferenceKinds: CanvasVideoReferenceKind[] = ["text"];
+  if (visibleTabs.some((mode) => ["图生视频", "首尾帧"].includes(mode)) || (omniImageSupported && visibleTabs.some((mode) => ["全能参考", "图片参考"].includes(mode)))) allowedReferenceKinds.push("image");
+  if (visibleTabs.includes("全能参考") && omniVideoSupported) allowedReferenceKinds.push("video");
+  if (visibleTabs.includes("全能参考") && omniAudioSupported) allowedReferenceKinds.push("audio");
+
+  const addVideoReference = (source: CanvasNode, isNew = false): boolean => {
+    const state = useCanvasStore.getState();
+    const target = state.nodes.find((item) => item.id === node.id);
+    if (!target || target.status === "generating" || target.pendingGeneration || target.uploading || submitLock.current) return false;
+    const candidates = canvasVideoReferences(isNew ? [...state.nodes, source] : state.nodes, state.connections, node.id, { allowedKinds: allowedReferenceKinds });
+    const candidate = candidates.find((item) => item.node.id === source.id);
+    if (!candidate) { toast.info("这个素材当前无法引用，请选择已就绪的素材"); return false; }
+    const incoming = getIncomingSources(state, node.id);
+    const sourceUrl = source.imageSrc || source.videoSrc || source.audioSrc;
+    if (sourceUrl && incoming.some((item) => (item.imageSrc || item.videoSrc || item.audioSrc) === sourceUrl)) { toast.info("这个素材已经在参考列表中"); return false; }
+    let mode = videoTab;
+    if (candidate.kind !== "text") {
+      const canConsume = (value: string) => TAB_LIMITS[value]?.types.includes(candidate.kind) && refKindEnabled(value, candidate.kind as RefCountKind);
+      if (!canConsume(mode)) mode = visibleTabs.find((value) => value === "全能参考" && canConsume(value))
+        ?? visibleTabs.find(canConsume) ?? "";
+      if (!mode) { toast.error("当前模型没有支持此素材的生成方式"); return false; }
+      const proposed = [...incoming, source];
+      const counts: Record<RefCountKind, number> = { image: 0, video: 0, audio: 0 };
+      for (const item of proposed) { const kind = canvasVideoReferenceKind(item); if (kind && kind !== "text") counts[kind]++; }
+      const overflow = refCountOverflow(mode, counts);
+      if (overflow) { toast.info(`所选模型最多支持 ${overflow.limit} 个${overflow.label}`); return false; }
+      const limit = TAB_LIMITS[mode];
+      const total = REF_COUNT_KINDS.reduce((sum, kind) => sum + (limit.types.includes(kind) && refKindEnabled(mode, kind) ? counts[kind] : 0), 0);
+      if (total > limit.max) { toast.info(`${mode}最多支持 ${limit.max} 个参考素材，请先切换生成方式或移除连线`); return false; }
+      if (!validateReferenceFileSizes([source], selectedModel, TAB_HANDLER[mode])) return false;
+    }
+    const connection = { id: `conn_${source.id}_${node.id}`, sourceId: source.id, targetId: node.id };
+    if (isNew) {
+      const x = target.x - 400;
+      const occupied = state.nodes.filter((item) => item.x < x + source.width && item.x + (item.contentW ?? item.width) > x);
+      const y = occupied.length ? Math.max(target.y, ...occupied.map((item) => item.y + (item.contentH ?? item.height) + 32)) : target.y;
+      state.addNodesAndConnections([{ ...source, x, y }], [connection], node.id);
+    } else state.addConnection(connection);
+    if (mode !== videoTab) changeVideoMode(mode);
+    if (candidate.kind === "text" && !includeContext) patchConfig({ videoIncludeContext: true });
+    return true;
+  };
+
   // 时长在后台存成带单位、可能乱序的字符串("4s")；规整成升序秒数供选择器/校正/生成
   // 统一按数字处理。durations 显式为空数组时保持"无此维度"语义(不回退默认档)。
   const formatConfig = {
     ...rawConfig,
     durations: rawConfig.durations ? normalizeDurations(rawConfig.durations) : undefined,
   };
+  // Undo/redo and restored documents must drive the same controls that generation reads.
+  useEffect(() => {
+    const saved = node.generationConfig;
+    const ratio = node.aspectRatio ?? saved?.aspectRatio ?? "16:9";
+    const resolution = saved?.resolution ?? "720P";
+    const duration = saved?.duration ?? 5;
+    setVideoParam({
+      ratio: formatConfig.ratios?.length && !formatConfig.ratios.includes(ratio) ? formatConfig.ratios[0] : ratio,
+      resolution: formatConfig.resolutions?.length && !formatConfig.resolutions.some((item) => item.toLowerCase() === resolution.toLowerCase()) ? formatConfig.resolutions[0] : resolution,
+      duration: formatConfig.durations?.length && !formatConfig.durations.includes(duration) ? formatConfig.durations[0] : duration,
+      audio: formatConfig.audio === false ? false : saved?.audio ?? true,
+    });
+    // Model options are refreshed with selectedModelId; config objects are derived every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [node.aspectRatio, node.generationConfig?.aspectRatio, node.generationConfig?.resolution, node.generationConfig?.duration, node.generationConfig?.audio, selectedModelId]);
+  useEffect(() => {
+    setVideoTab(isClipReshoot ? "全能参考" : node.generationConfig?.videoMode ?? "文生视频");
+  }, [isClipReshoot, node.generationConfig?.videoMode]);
+  useEffect(() => {
+    const saved = node.generationConfig?.modelId ?? videoModels[0]?.modelId;
+    const model = videoModels.find((item) => item.modelId === saved);
+    if (model && (!isClipReshoot || supportsVideoReference(model))) setSelectedModelId(model.modelId);
+  }, [isClipReshoot, node.generationConfig?.modelId, setSelectedModelId, videoModels]);
   const clipTimelineVisible = isClipReshoot && !!clipSourceVideo?.videoSrc;
   // 逐级回退必须过"正数"闸:播放器 duration 在元数据加载前是 0,mediaDuration
   // 也可能存到 0——0 不是 nullish,裸 ?? 链会在 0 处停住,把后面的真实时长全部
@@ -512,38 +601,20 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     if (hovering && resolved && videoRef.current) playVideo(videoRef.current);
   }, [hovering, resolved, srcToUse]);
 
-  // 当前模式因连接变化而不再满足条件时，回退到无连接要求的模式。
-  // 回退目标必须在 visibleTabs 内:否则与下面「模式不被模型支持 → 回退」的
-  // effect 互相打架(A 设「文生视频」→ B 发现不可见设回 → A 再设……),
-  // 在仅支持 i2v 的模型 + 无连接素材时会进入 setState 死循环卡死页面。
+  // 允许先选参考模式再连素材，以明确的缺失素材提示代替自动跳回文生视频。
+  // 片段重拍仍固定使用全能参考。
   useEffect(() => {
-    if (isClipReshoot) {
-      if (videoTab !== "全能参考") setVideoTab("全能参考");
-      return;
-    }
-    const lim = TAB_LIMITS[videoTab];
-    if (!lim) return;
-    let m = 0;
-    if (lim.types.includes("image") && (videoTab !== "全能参考" || omniImageSupported)) m += imgCount;
-    if (lim.types.includes("video") && (videoTab !== "全能参考" || omniVideoSupported)) m += vidCount;
-    if (lim.types.includes("audio") && (videoTab !== "全能参考" || omniAudioSupported)) m += audCount;
-    if (m < lim.min || m > lim.max || refCountOverflow(videoTab, connectedRefCounts)) {
-      const fallback = visibleTabs.find((t) => !TAB_LIMITS[t]);
-      // 该模型没有任何无门槛模式时保持现状,仅靠发送按钮禁用挡住提交
-      if (fallback && fallback !== videoTab) setVideoTab(fallback);
-    }
-    // visibleTabs 由 selectedModelId 派生(数组引用每次渲染变化),不列入依赖
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audCount, imgCount, isClipReshoot, modelCapabilitySignature, omniAudioSupported, omniImageSupported, omniVideoSupported, vidCount, videoTab]);
+    if (isClipReshoot && videoTab !== "全能参考") setVideoTab("全能参考");
+  }, [isClipReshoot, videoTab]);
 
   // 切换模型后当前模式不被该模型支持 → 回退到其第一个可用模式
   useEffect(() => {
-    if (!visibleTabs.includes(videoTab)) {
+    if (!isClipReshoot && !visibleTabs.includes(videoTab)) {
       setVideoTab(visibleTabs[0] ?? "文生视频");
     }
     // visibleTabs 由 selectedModelId 派生，避免数组引用作为依赖反复触发
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelCapabilitySignature, videoTab]);
+  }, [isClipReshoot, modelCapabilitySignature, videoTab]);
 
   // 上升沿自动升级：从「无连接素材」变为「有素材」时，若仍停留在默认的「文生视频」，自动切到
   // 「全能参考」——否则 text_to_video 不会把连上的参考图喂给上游，参考图形同虚设。仅在 0→有 的
@@ -758,7 +829,9 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     toast.info("已创建逐帧拉片节点，可选择密度后开始拉片");
   }, [cardW, generating, node, nodeUploading]);
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
+    const current = useCanvasStore.getState().nodes.find((item) => item.id === node.id);
+    if (!current || submitLock.current || current.pendingGeneration || current.status === "generating" || current.uploading || referenceUploading || promptToolBusy || !selectedModel || !hasPromptSource) return;
     if (!clipReshootModelReady) {
       toast.error("当前没有支持视频参考的模型，暂时无法片段重拍");
       return;
@@ -804,7 +877,10 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       : undefined;
     // 文本节点没有独立下发通道，正文只能落进 prompt——顺序与 refs 的「文本N」编号同源。
     // 先内联文本引用再做时间码处理,连进来的文本节点里写的时间码同样被覆盖。
-    let userPrompt = inlineIncomingTextRefs(node.prompt || "", sources);
+    let userPrompt = inlineIncomingTextRefs(node.prompt || "", includeContext ? sources : sources.filter((source) => !isConceptCanvasNodeType(source.type)));
+    userPrompt = buildVideoCreativePrompt(userPrompt, node.generationConfig?.videoEffectId, node.generationConfig?.videoCameraId);
+    const excluded = node.generationConfig?.videoExcludeText?.trim();
+    if (excluded) userPrompt = `${userPrompt}\n避免出现：${excluded}`;
     if (isClipReshoot && !nativeClipReshoot) {
       // ffmpeg 裁拼路径:模型看到的是裁剪后的短片,用户按原片时间轴写的时间码
       // 必须重映射到裁剪时间轴;落在未选中区间的时间码直接拦下。
@@ -900,47 +976,21 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
       };
     }
 
-    // 非破坏性「重新发送」：本节点已出过结果或失败过 → 克隆一模一样的新节点（同提示词、同入边参考、同画幅），
-    // 在新节点生成新视频，原节点结果原样保留；首次生成则原地进行。
-    let targetNodeId = node.id;
-    const isRegen = !!node.videoSrc || node.status === "error";
-    if (isRegen) {
-      const newId = generateNodeId();
-      st.addNode({
-        id: newId,
-        type: "video",
-        x: node.x,
-        y: node.y + (node.contentH ?? node.height) + 80,
-        width: node.width,
-        height: node.height,
-        contentW: node.contentW,
-        contentH: node.contentH,
-        title: node.title || "视频节点",
-        prompt: node.prompt,
-        aspectRatio: node.aspectRatio,
-        generationConfig: {
-          ...node.generationConfig,
-          modelId: selectedModelId || node.generationConfig?.modelId,
-          resolution: videoParam.resolution,
-          duration: generationDuration,
-        },
-        videoOperation: node.videoOperation,
-        clipReshootSourceId: node.clipReshootSourceId,
-        clipReshootRanges: node.clipReshootRanges,
-        status: "idle",
-      }, true);
-      // 克隆入边连线，使新节点拥有与原节点完全相同的参考输入
-      for (const c of incoming) {
-        st.addConnection({ id: `conn_${c.sourceId}_${newId}`, sourceId: c.sourceId, targetId: newId }, false);
-      }
-      st.selectNode(newId);
-      targetNodeId = newId;
-      if (node.status === "error") {
-        updateNode(node.id, { status: node.videoSrc ? "success" : "idle" });
-      }
+    // Each output has its own durable request/task identity and reference graph.
+    // A failed item can be retried without recharging successful siblings.
+    submitLock.current = true;
+    setSubmittingBatch(true);
+    try {
+      const config = { ...node.generationConfig, modelId: selectedModelId, aspectRatio: videoParam.ratio,
+        resolution: videoParam.resolution, duration: generationDuration, audio: videoParam.audio, videoMode: effectiveVideoTab };
+      const plan = planVideoGenerationBatch({ ...current, aspectRatio: videoParam.ratio, contentW: cardW, contentH: mediaContentHeight }, st.nodes, incoming, batchCount, config, generateNodeId);
+      if (plan.newNodes.length) st.addNodesAndConnections(plan.newNodes, plan.newConnections, plan.targetIds[0]);
+      if (plan.targetIds.includes(node.id)) updateNode(node.id, { aspectRatio: videoParam.ratio, generationConfig: { ...config, batchCount: 1 } });
+      await Promise.allSettled(plan.targetIds.map((targetId) => generate({ nodeId: targetId, handler, modelId: selectedModelId, input })));
+    } finally {
+      submitLock.current = false;
+      if (mountedRef.current) setSubmittingBatch(false);
     }
-
-    generate({ nodeId: targetNodeId, handler, modelId: selectedModelId || "default", input });
   };
 
   const topToolbarActions: ConfigurableNodeToolbarAction[] = [
@@ -1018,13 +1068,23 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
     },
   ];
 
+  const modeReady = isClipReshoot || (visibleTabs.includes(videoTab) && tabEnabled(videoTab));
+  const generationIssue = !selectedModel ? "暂无可用的视频模型"
+    : !clipReshootModelReady ? "没有支持视频参考的模型"
+      : !clipReshootSourceReady ? "片段重拍的来源视频已断开，请重新连接"
+        : !modeReady ? tabHint(videoTab) || "请连接当前生成模式所需的素材" : "";
+  const composerBusy = generating || nodeUploading || referenceUploading || submittingBatch || promptToolBusy;
+  const generationDisabled = !!generationIssue || !hasPromptSource || composerBusy || referenceVideoQuote.loading || referenceVideoQuote.failed;
+  const generationHint = generating ? "生成中..." : nodeUploading ? "素材上传中..."
+    : referenceVideoQuote.loading ? "正在核验参考视频时长..." : generationIssue || (!hasPromptSource ? "先输入提示词" : "生成视频");
+
   return (
     <NodeShell node={node} isSelected={isSelected} isDragging={isDragging} onNodeMouseDown={onNodeMouseDown}>
       <div className="relative mx-auto" style={{ width: cardW }}>
         <div
-          className={`relative overflow-hidden rounded-2xl bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
-            isConnectTarget ? "ring-2 ring-blue-500/70" :
-            isSelected ? "ring-2 ring-neutral-400 dark:ring-neutral-600" : "ring-neutral-200 hover:ring-neutral-300 dark:ring-neutral-800 dark:hover:ring-neutral-700"
+          className={`relative overflow-hidden rounded-xl border bg-popover ${
+            isConnectTarget ? "border-[var(--canvas-input-focus-border)] ring-1 ring-[var(--canvas-input-focus-border)]" :
+            isSelected ? "border-[var(--canvas-input-focus-border)]" : "border-border"
           }`}
           style={{ width: cardW, height: cardHeight }}
         >
@@ -1103,40 +1163,24 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
               </div>
             </div>
           ) : (
-            <div className="flex h-full flex-col">
-              <div className="flex flex-1 items-center justify-center p-6">
-                {(() => {
-                  const r = parseRatio(videoParam.ratio);
-                  const MAX_W = 280, MAX_H = 220;
-                  let w = MAX_W, h = MAX_H;
-                  if (r) {
-                    const aspect = r.w / r.h;
-                    if (aspect >= MAX_W / MAX_H) { w = MAX_W; h = MAX_W / aspect; }
-                    else { h = MAX_H; w = MAX_H * aspect; }
-                  }
-                  return (
-                    <div className="flex items-center justify-center" style={{ width: w, height: h }}>
-                      <Play className="h-12 w-12 text-neutral-300 dark:text-neutral-600" fill="currentColor" />
-                    </div>
-                  );
-                })()}
-              </div>
-              <div className="px-6 pb-5">
-                <p className="mb-2 text-sm text-neutral-500">尝试：</p>
-                <div className="flex flex-col items-start gap-1">
-                  <button onMouseDown={stop} className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                    <span className="flex h-6 w-6 items-center justify-center rounded-md bg-neutral-100 dark:bg-neutral-800">
-                      <Layers className="h-3.5 w-3.5" />
-                    </span>
-                    首尾帧生成视频
+            <div className="image-node-empty">
+              <Play className="image-node-empty-glyph" fill="currentColor" strokeWidth={0} aria-hidden />
+              <div className="image-node-empty-sources">
+                <span>{isClipReshoot ? "连接来源视频后选择重拍片段" : "尝试："}</span>
+                {!isClipReshoot && <>
+                  <button type="button" onMouseDown={stop}
+                    disabled={!visibleTabs.includes("首尾帧") || generating || nodeUploading}
+                    title={visibleTabs.includes("首尾帧") ? TAB_LIMITS["首尾帧"].hint : "当前模型不支持首尾帧生成"}
+                    onClick={() => { useCanvasStore.getState().selectNode(node.id); setVideoTab("首尾帧"); }}>
+                    <Layers size={14} aria-hidden />首尾帧生成视频
                   </button>
-                  <button onMouseDown={stop} className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                    <span className="flex h-6 w-6 items-center justify-center rounded-md bg-neutral-100 dark:bg-neutral-800">
-                      <Sparkles className="h-3.5 w-3.5" />
-                    </span>
-                    首帧生成视频
+                  <button type="button" onMouseDown={stop}
+                    disabled={!visibleTabs.includes("图生视频") || generating || nodeUploading}
+                    title={visibleTabs.includes("图生视频") ? TAB_LIMITS["图生视频"].hint : "当前模型不支持首帧生成"}
+                    onClick={() => { useCanvasStore.getState().selectNode(node.id); setVideoTab("图生视频"); }}>
+                    <Sparkles size={14} aria-hidden />首帧生成视频
                   </button>
-                </div>
+                </>}
               </div>
             </div>
           )}
@@ -1173,17 +1217,6 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         {showAuxUI && videoDims && playerVideoSrc && (
           <NodeDimsBadge dims={videoDims} />
         )}
-        {showAuxUI && !node.videoSrc && !isClipReshoot && configuredFeatures.includes("media.replace") && (
-          <NodeChrome placement="top-center" gap={8} zIndex={20}>
-            <div onMouseDown={stop} className="flex items-center gap-0.5 whitespace-nowrap rounded-[18px] border border-neutral-200/80 bg-white px-2 py-1.5 text-sm text-neutral-700 shadow-lg dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
-              <button onMouseDown={stop} onClick={openFilePicker} disabled={nodeUploading || generating}
-                title={generating ? "生成完成后可上传素材" : "上传视频"}
-                className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 hover:bg-neutral-100 disabled:opacity-60 dark:hover:bg-neutral-800">
-                {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} 上传
-              </button>
-            </div>
-          </NodeChrome>
-        )}
         {/* 已生成：顶部操作工具栏（恒定大小胶囊，与图片节点一致风格） */}
         {showAuxUI && node.videoSrc && configuredFeatures.length > 0 && (
           <NodeChrome placement="top-center" gap={10}>
@@ -1199,15 +1232,57 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
         <input ref={fileInputRef} type="file" accept="video/*" className="hidden" onChange={handleFileUpload} />
 
         {showAuxUI && (
-          <NodePanelChrome width={promptPanelW} height={250}>
-              {/* 富文本输入（@ 引用「图片N」内联绑定参考图，与图片节点统一）。
-                  模式选择收进底栏下拉(对齐参考产品),不再占顶部一行 Tab */}
+          <NodeComposer label="视频生成设置" onExpand={() => setPromptExpanded(true)}
+            tools={<>
+              <VideoSourceTools nodeId={node.id} allowedKinds={allowedReferenceKinds} model={selectedModel}
+                disabled={generating || nodeUploading || submittingBatch || promptToolBusy} onPick={addVideoReference} onUploadingChange={setReferenceUploading} />
+              <VideoPresetPicker kind="effect" value={node.generationConfig?.videoEffectId} disabled={composerBusy}
+                onChange={(videoEffectId) => patchConfig({ videoEffectId })} />
+              <VideoPresetPicker kind="camera" value={node.generationConfig?.videoCameraId} disabled={composerBusy}
+                onChange={(videoCameraId) => patchConfig({ videoCameraId })} />
+              {isClipReshoot && <span className="px-2 text-xs text-muted-foreground">片段重拍</span>}
+            </>}
+            status={generationIssue ? <div className="image-composer-status" role="status"><Info size={13} /><span>{generationIssue}</span></div> : undefined}
+            footer={<>
+                <div className="image-composer-model video-composer-model">
+                  <ModelPicker models={selectableVideoModels} value={selectedModelId} onChange={(modelId) => { if (!composerBusy) { setSelectedModelId(modelId); patchConfig({ modelId }); } }} />
+                </div>
+                <div className="image-composer-parameters">
+                  {!isClipReshoot && <VideoModeDropdown
+                    tabs={visibleTabs} value={videoTab} onChange={changeVideoMode}
+                    enabledOf={() => !composerBusy} hintOf={tabHint} />}
+                  <VideoParamPicker
+                    value={isClipReshoot ? { ...videoParam, duration: generationDuration } : videoParam}
+                    onChange={changeVideoParam} resolutions={formatConfig.resolutions} ratios={formatConfig.ratios}
+                    count={batchCount} onCountChange={(batchCount) => patchConfig({ batchCount })} disabled={composerBusy}
+                    durations={isClipReshoot ? [generationDuration] : formatConfig.durations} allowAudio={formatConfig.audio}
+                    audioReadOnly audioHint="声音按模型默认生成；当前接口不支持单独切换。" />
+                </div>
+                <div className="image-composer-actions">
+                  <VideoPromptTools nodeId={node.id} prompt={node.prompt || ""} disabled={generating || nodeUploading || referenceUploading || submittingBatch}
+                    onChange={handlePromptChange} onBusyChange={setPromptToolBusy} onCopy={() => { void copyPrompt(); }}
+                    includeContext={includeContext} onIncludeContextChange={(videoIncludeContext) => patchConfig({ videoIncludeContext })}
+                    excludeText={node.generationConfig?.videoExcludeText || ""} onExcludeTextChange={(videoExcludeText) => patchConfig({ videoExcludeText })} />
+                  <span className="image-composer-cost" aria-label="本次生成消耗积分"
+                    title={`${batchCount} 个视频，预计共 ${Math.ceil(pointCost) * batchCount} 积分${referenceVideoQuote.quote.pointCost > 0 ? `（每个含参考视频附加 ${referenceVideoQuote.quote.pointCost} 积分）` : ""}`}>
+                    <Zap size={13} fill="currentColor" aria-hidden />
+                    {!selectedModel ? "—" : referenceVideoQuote.loading ? "…" : referenceVideoQuote.failed ? "待核验" : Math.ceil(pointCost) * batchCount}
+                  </span>
+                  <button type="button" className="image-composer-generate" disabled={generationDisabled}
+                    title={generationHint} aria-label={generationHint}
+                    onClick={() => { if (!generationDisabled) handleGenerate(); }}>
+                    {generating ? <Loader2 size={16} className="animate-spin" /> : <ArrowUp size={16} />}
+                  </button>
+                </div>
+            </>}>
               <PromptRefEditor
-                fill
+                ariaLabel="视频描述"
+                editorClassName="image-composer-editor"
+                editorStyle={{ minHeight: 80, maxHeight: 160, fontSize: 14, lineHeight: "1.8" }}
                 refs={refs}
                 value={node.prompt || ""}
                 onChange={handlePromptChange}
-                onSubmit={() => { if (hasPromptSource && clipReshootModelReady && clipReshootSourceReady && !generating && !nodeUploading && !referenceVideoQuote.loading) handleGenerate(); }}
+                onSubmit={() => { if (!generationDisabled) handleGenerate(); }}
                 editorContext={isClipReshoot && clipSourceVideo ? (
                   <div className="flex min-h-7 flex-wrap items-center gap-1.5 text-sm text-neutral-600 dark:text-neutral-300">
                     <span>把</span>
@@ -1260,65 +1335,7 @@ export const VideoNode = memo(function VideoNode({ node, isSelected, isDragging 
                   ? "描述选中片段里需要改变的画面，例如：把瞳孔改成红色，并逐渐变为蓝色"
                   : "描述你想要生成的画面内容，@ 引用已连接素材（图片1/文本1…）"}
               />
-              {/* 底部栏(对齐参考产品):左 = 模型 · 模式 · 参数摘要;右 = 复制/展开 · 积分 · 发送 */}
-              <div className="mt-2 flex items-center justify-between gap-2">
-                <div className="flex min-w-0 flex-nowrap items-center gap-0.5 text-xs text-neutral-600 dark:text-neutral-400">
-                  <ModelPicker models={selectableVideoModels} value={selectedModelId} onChange={setSelectedModelId} />
-                  {/* 片段重拍的模式是节点固有属性(强制全能参考,538 行 effect 吸回),
-                      展示一个"点了会弹回"的下拉是撒谎 UI——直接隐藏。 */}
-                  {!isClipReshoot && (
-                    <VideoModeDropdown
-                      tabs={visibleTabs}
-                      value={videoTab}
-                      onChange={setVideoTab}
-                      enabledOf={tabEnabled}
-                      hintOf={tabHint}
-                    />
-                  )}
-                  <VideoParamPicker
-                    value={isClipReshoot ? { ...videoParam, duration: generationDuration } : videoParam}
-                    onChange={setVideoParam}
-                    resolutions={formatConfig.resolutions}
-                    ratios={formatConfig.ratios}
-                    durations={isClipReshoot ? [generationDuration] : formatConfig.durations}
-                    allowAudio={formatConfig.audio}
-                  />
-                </div>
-                <div className="flex shrink-0 items-center gap-1 text-xs text-neutral-500">
-                  <button
-                    onMouseDown={stop}
-                    onClick={(e) => { stop(e); void copyPrompt(); }}
-                    title="复制提示词"
-                    className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800"
-                  >
-                    <Copy className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    onMouseDown={stop}
-                    onClick={(e) => { stop(e); setPromptExpanded(true); }}
-                    title="展开编辑"
-                    className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800"
-                  >
-                    <Maximize2 className="h-3.5 w-3.5" />
-                  </button>
-                  <span
-                    className="flex items-center gap-0.5 px-0.5"
-                    title={referenceVideoQuote.quote.pointCost > 0
-                      ? `含参考视频 ${referenceVideoQuote.quote.videoCount} 个，共 ${referenceVideoQuote.quote.durationSeconds.toFixed(1)} 秒，额外 ${referenceVideoQuote.quote.pointCost} 积分`
-                      : undefined}
-                  >
-                    <Zap className="h-3 w-3 text-neutral-900 dark:text-neutral-100" fill="currentColor" />
-                    {referenceVideoQuote.loading ? "…" : referenceVideoQuote.failed ? "待核验" : Math.ceil(pointCost)}
-                  </span>
-                  <GenerateSubmitButton
-                    disabled={!hasPromptSource || !clipReshootModelReady || !clipReshootSourceReady || generating || nodeUploading || referenceVideoQuote.loading}
-                    generating={generating}
-                    title={generating ? "生成中..." : nodeUploading ? "素材上传中..." : referenceVideoQuote.loading ? "正在核验参考视频时长..." : !clipReshootModelReady ? "没有支持视频参考的模型" : !clipReshootSourceReady ? "片段重拍的来源视频已断开" : !hasPromptSource ? "先输入提示词" : "开始生成"}
-                    onClick={() => { if (hasPromptSource && clipReshootModelReady && clipReshootSourceReady && !generating && !nodeUploading && !referenceVideoQuote.loading) handleGenerate(); }}
-                  />
-                </div>
-              </div>
-          </NodePanelChrome>
+          </NodeComposer>
         )}
 
         {/* 查看大图：全屏 lightbox（Portal 到 body，脱离画布缩放层） */}

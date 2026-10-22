@@ -11,7 +11,7 @@ test("empty canvas image nodes expose local upload and asset library sources", (
   assert.match(imageNode, /<AssetPickerModal[\s\S]*?kind="image"[\s\S]*?lockKind/);
   assert.match(imageNode, /node\.type === CHARACTER_NODE_TYPE[\s\S]*?\? "character"/);
   assert.match(imageNode, />\s*本地上传\s*</);
-  assert.match(imageNode, />\s*资产库\s*</);
+  assert.match(imageNode, />\s*从资产库选择\s*</);
   assert.match(imageNode, />\s*从资产库选图\s*</);
   assert.doesNotMatch(imageNode, /图片高清功能即将上线/);
   assert.match(imageNode, /createPortal\([\s\S]*?<AssetPickerModal[\s\S]*?document\.body/);

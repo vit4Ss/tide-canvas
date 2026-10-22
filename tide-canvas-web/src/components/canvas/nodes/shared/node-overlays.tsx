@@ -109,20 +109,24 @@ export function NodeMediaLightbox({ onClose, title, children }: { onClose: () =>
   );
 }
 
-/** 提示词面板右下的圆形发送按钮（视频/音频一致；图片是另一套圆角矩形，自行渲染） */
-export function GenerateSubmitButton({ disabled, generating, title, onClick }: {
+/** Compact editors share the same square submit affordance as image nodes. */
+export function GenerateSubmitButton({ disabled, generating, title, onClick, compact = false }: {
   disabled: boolean;
   generating: boolean;
   title: string;
   onClick: () => void;
+  compact?: boolean;
 }) {
   return (
     <button
+      type="button"
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => { e.stopPropagation(); onClick(); }}
       disabled={disabled}
       title={title}
-      className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${disabled ? "bg-neutral-100 text-neutral-400 dark:bg-neutral-800" : "bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"}`}
+      aria-label={title}
+      aria-busy={generating}
+      className={compact ? "image-composer-generate" : `flex h-8 w-8 items-center justify-center rounded-full transition-colors ${disabled ? "bg-neutral-100 text-neutral-400 dark:bg-neutral-800" : "bg-neutral-900 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"}`}
     >
       {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
     </button>

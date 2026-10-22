@@ -2,7 +2,6 @@
 
 import { useState, type MouseEvent as ReactMouseEvent } from "react";
 import { QualityRatioDropdown } from "./components/quality-ratio-dropdown";
-import { BatchCountDropdown } from "./components/batch-count-dropdown";
 import type { QualityRatioValue } from "./types/quality-ratio";
 export type { ImageClarity, ImageQuality, QualityRatioValue } from "./types/quality-ratio";
 export { CLARITY_OPTIONS, QUALITY_OPTIONS, RATIO_OPTIONS, parseRatio } from "./utils/quality-ratio";
@@ -20,17 +19,10 @@ interface Props {
 }
 
 
-// 中文注释：保留旧入口，内部改为调用组件化后的两个下拉，画布内使用 Mantine Popover 让浮层跟随触发按钮定位。
+// 图片参数与生成张数共用一个入口，浮层跟随参数摘要定位。
 export function QualityRatioPicker({ value, onChange, qualities, clarities, ratios, compact = false, batchCount, batchOptions, onBatchChange }: Props) {
   const [qualityOpen, setQualityOpen] = useState(false);
-  const [batchOpen, setBatchOpen] = useState(false);
   const showBatch = batchCount != null && (batchOptions?.length ?? 0) > 0 && !!onBatchChange;
-
-
-  const handleOpenQuality = (open: boolean) => {
-    setQualityOpen(open);
-    if (open) setBatchOpen(false);
-  };
 
   const stop = (event: ReactMouseEvent) => event.stopPropagation();
 
@@ -40,25 +32,15 @@ export function QualityRatioPicker({ value, onChange, qualities, clarities, rati
         value={value}
         onChange={onChange}
         open={qualityOpen}
-        onOpenChange={handleOpenQuality}
+        onOpenChange={setQualityOpen}
         qualities={qualities}
         clarities={clarities}
         ratios={ratios}
         compact={compact}
+        batchCount={showBatch ? batchCount : undefined}
+        batchOptions={showBatch ? batchOptions : undefined}
+        onBatchChange={showBatch ? onBatchChange : undefined}
       />
-
-      {showBatch && (
-        <BatchCountDropdown
-          value={batchCount}
-          options={batchOptions}
-          open={batchOpen}
-          onOpenChange={(open) => {
-            setBatchOpen(open);
-            if (open) setQualityOpen(false);
-          }}
-          onChange={(next) => onBatchChange?.(next)}
-        />
-      )}
     </div>
   );
 }

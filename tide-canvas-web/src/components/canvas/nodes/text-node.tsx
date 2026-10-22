@@ -7,7 +7,6 @@ import { AiModelType, type AiModelVO } from "@/types/ai";
 import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import {
   AlignLeft,
-  ArrowUp,
   Image as ImageIcon,
   Loader2,
   Music2,
@@ -17,7 +16,9 @@ import {
 } from "lucide-react";
 import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
-import { NodeChrome } from "./base/node-chrome";
+import { NodeComposer } from "./shared/node-composer";
+import { GenerateSubmitButton } from "./shared/node-overlays";
+import { PromptEditorModal } from "./prompt-ref-editor";
 import { ModelPicker } from "./model-picker";
 
 interface Props {
@@ -31,7 +32,6 @@ interface Props {
 
 const TEXT_CARD_WIDTH = 440;
 const TEXT_CARD_HEIGHT = 440;
-const PANEL_WIDTH = 560;
 
 const SUGGESTIONS = [
   { label: "自己编写内容", icon: Text, prompt: "" },
@@ -54,6 +54,7 @@ export const TextNode = memo(function TextNode({
 
   const [models, setModels] = useState<AiModelVO[]>([]);
   const [modelId, setModelId] = useState("");
+  const [promptExpanded, setPromptExpanded] = useState(false);
   const { generate, isGenerating } = useAiGeneration();
   const generating = node.status === "generating" || isGenerating(node.id);
 
@@ -109,8 +110,9 @@ export const TextNode = memo(function TextNode({
   }, [hasContent, showAuxUI]);
 
   const handleSuggestion = (value: string) => {
-    if (!value) return;
-    updateNode(node.id, { prompt: value }, false);
+    useCanvasStore.getState().selectNode(node.id);
+    if (value) updateNode(node.id, { prompt: value }, false);
+    requestAnimationFrame(() => promptTaRef.current?.focus());
   };
 
   // 与 AI 助手面板同一条链路：assistant_chat handler + relay 文本模型，结果经
@@ -134,14 +136,9 @@ export const TextNode = memo(function TextNode({
     >
       <div className="relative">
         <div
-          className={`relative overflow-hidden rounded-[18px] bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
-            isConnectTarget ? "ring-2 ring-blue-500/70" :
-            isSelected ? "ring-2 ring-neutral-400 dark:ring-neutral-600" : "ring-neutral-200 hover:ring-neutral-300 dark:ring-neutral-800 dark:hover:ring-neutral-700"
-          }`}
-          style={{ height: cardHeight }}
+          className="relative overflow-hidden rounded-xl border bg-[var(--popover)] text-[var(--foreground)] transition-colors"
+          style={{ height: cardHeight, borderColor: isConnectTarget ? "var(--ring)" : isSelected ? "var(--canvas-input-focus-border)" : "var(--border)" }}
         >
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_8%,rgba(0,0,0,0.025),transparent_34%)] dark:bg-[radial-gradient(circle_at_50%_8%,rgba(255,255,255,0.04),transparent_34%)]" />
-
           {node.content ? (
             // 已选中时内容可划选复制（mousedown 不再进入节点拖拽）；未选中时首次点击仍是选中/拖动节点。
             // 拖动已选中的节点用标题栏或卡片边缘。
@@ -155,36 +152,22 @@ export const TextNode = memo(function TextNode({
               <p className="whitespace-pre-wrap break-words text-sm leading-7">{node.content}</p>
             </div>
           ) : (
-          <div className="relative flex h-full flex-col items-center px-7 pb-8 pt-12 text-neutral-900 dark:text-neutral-100">
-            <div className="flex h-20 items-center justify-center text-neutral-400 dark:text-neutral-600" aria-hidden="true">
-              <div className="space-y-2">
-                <div className="h-2 w-[70px] rounded-sm bg-current" />
-                <div className="h-2 w-[70px] rounded-sm bg-current" />
-                <div className="h-2 w-[70px] rounded-sm bg-current" />
-                <div className="h-2 w-10 rounded-sm bg-current" />
-              </div>
-            </div>
-
-            <div className="mt-8 w-full max-w-[310px] self-start">
-              <p className="mb-4 text-base text-neutral-800 dark:text-neutral-200">尝试：</p>
-              <div className="space-y-4">
+            <div className="image-node-empty">
+              <AlignLeft className="image-node-empty-glyph" aria-hidden />
+              <div className="image-node-empty-sources">
+                <span>尝试：</span>
                 {SUGGESTIONS.map((item) => {
                   const Icon = item.icon;
                   return (
-                    <button
-                      key={item.label}
-                      onMouseDown={stop}
-                      onClick={(e) => { stop(e); handleSuggestion(item.prompt); }}
-                      className="flex items-center gap-3 rounded-lg px-2.5 py-1.5 text-left text-[18px] leading-none text-neutral-950 transition-colors hover:bg-neutral-100 dark:text-neutral-100 dark:hover:bg-neutral-900"
-                    >
-                      <Icon className="h-[18px] w-[18px] shrink-0 fill-neutral-950 stroke-neutral-950 dark:fill-neutral-100 dark:stroke-neutral-100" />
+                    <button key={item.label} type="button" onMouseDown={stop}
+                      onClick={(e) => { stop(e); handleSuggestion(item.prompt); }}>
+                      <Icon className="h-3.5 w-3.5" aria-hidden />
                       <span>{item.label}</span>
                     </button>
                   );
                 })}
               </div>
             </div>
-          </div>
           )}
 
           {generating && (
@@ -198,64 +181,31 @@ export const TextNode = memo(function TextNode({
         <NodeHeader icon={AlignLeft} title={node.title || "文本节点"} visible={showAuxUI} overlay />
         <NodePorts nodeId={node.id} visible={showAuxUI} overlay onPortMouseDown={onPortMouseDown} />
         {showAuxUI && (
-          <NodeChrome placement="bottom-center" gap={18} damp={0.6}>
-            <div
-              onMouseDown={stop}
-              className="flex flex-col rounded-xl border border-neutral-200 bg-white p-3 shadow-xl shadow-neutral-900/10 dark:border-neutral-800 dark:bg-neutral-950 dark:shadow-black/30"
-              style={{ width: PANEL_WIDTH, boxSizing: "border-box" }}
-            >
-              <textarea
-                ref={promptTaRef}
-                value={prompt}
-                onChange={(e) => updateNode(node.id, { prompt: e.target.value })}
-                onMouseDown={stop}
-                placeholder="写下你想讲的故事、场景或角色设定。例如：一个来自未来的机器人，在城市屋顶看星星。"
-                rows={3}
-                className="block w-full select-text resize-none border-0 bg-transparent text-sm leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus:outline-none focus-visible:outline-none focus:ring-0 dark:text-neutral-100"
-                style={{
-                  cursor: "text",
-                  outline: "none",
-                  boxShadow: "none",
-                  minHeight: 60,
-                  maxHeight: 96,
-                  overflowY: "auto",
-                  overflowX: "hidden",
-                  wordBreak: "break-word",
-                  overflowWrap: "anywhere",
-                  whiteSpace: "pre-wrap",
-                  boxSizing: "border-box",
-                }}
-              />
-
-              <div className="mt-4 flex items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <ModelPicker models={models} value={selectedModel?.modelId || ""} onChange={setModelId} />
-                </div>
-
-                <div className="flex shrink-0 items-center gap-1.5 text-xs text-neutral-500">
-                  <span className="flex h-8 items-center gap-1 rounded-full px-2 text-sm font-semibold text-neutral-900 dark:text-neutral-100" title="本次生成消耗积分">
-                    <Zap className="h-3.5 w-3.5 fill-current text-neutral-900 dark:text-neutral-100" />
-                    {pointCost}
-                  </span>
-                  <button
-                    onMouseDown={stop}
-                    onClick={(e) => { stop(e); handleGenerate(); }}
-                    disabled={!canSubmit || generating}
-                    title={generating ? "生成中..." : !canSubmit ? "先输入提示词" : "生成文本"}
-                    className={"flex h-8 w-8 items-center justify-center rounded-full transition-colors " + (
-                      canSubmit && !generating
-                        ? "bg-neutral-950 text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-200"
-                        : "cursor-not-allowed bg-neutral-100 text-neutral-400 dark:bg-neutral-800 dark:text-neutral-500"
-                    )}
-                  >
-                    {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-3.5 w-3.5" />}
-                  </button>
-                </div>
+          <NodeComposer label="文本创作" onExpand={() => setPromptExpanded(true)}
+            footer={<>
+              <div className="image-composer-model">
+                <ModelPicker models={models} value={selectedModel?.modelId || ""} onChange={setModelId} />
               </div>
-            </div>
-          </NodeChrome>
+              <div className="image-composer-actions">
+                <span className="image-composer-cost" title="本次生成消耗积分">
+                  <Zap className="h-3.5 w-3.5" aria-hidden />{pointCost}
+                </span>
+                <GenerateSubmitButton compact disabled={!canSubmit || generating} generating={generating}
+                  title={generating ? "生成中..." : !canSubmit ? "先输入提示词" : "生成文本"} onClick={handleGenerate} />
+              </div>
+            </>}>
+            <textarea ref={promptTaRef} value={prompt}
+              onChange={(e) => updateNode(node.id, { prompt: e.target.value })}
+              onMouseDown={stop} aria-label="文本提示词"
+              placeholder="写下你想讲的故事、场景或角色设定…"
+              rows={3} className="image-composer-editor resize-none select-text outline-none"
+              style={{ minHeight: 80, maxHeight: 160, outline: "none", boxShadow: "none" }} />
+          </NodeComposer>
         )}
       </div>
+      <PromptEditorModal open={promptExpanded} onClose={() => setPromptExpanded(false)}
+        value={prompt} onChange={(value) => updateNode(node.id, { prompt: value })} refs={[]}
+        placeholder="写下你想讲的故事、场景或角色设定…" />
     </div>
   );
 });

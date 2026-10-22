@@ -26,6 +26,7 @@ export function AssetPickerModal({
   onPick,
   onClose,
   lockKind = false,
+  allowedFilters,
   remaining = 1,
   existingUrls,
 }: {
@@ -39,11 +40,16 @@ export function AssetPickerModal({
   /** 只允许选 kind 这一种素材(智能工具:图片工具只收图、视频工具只收视频)。
       创作台的槽位选取不设限，保持原行为。 */
   lockKind?: boolean;
+  /** Limit to exact asset categories, for example a character-only library. Overrides lockKind. */
+  allowedFilters?: readonly AssetFilterKey[];
   /** 本次最多还能选几个（槽位上限 − 已有数量）。≤1 时退回单选直接添加。 */
   remaining?: number;
   /** 槽位里已有的素材 URL：置灰，避免重复添加同一张。 */
   existingUrls?: readonly string[];
 }) {
+  const filters = allowedFilters ?? (lockKind ? ALLOWED_BY_KIND[kind] : undefined);
+  const requestedFilter = defaultFilter ?? kind;
+  const initialFilter = filters?.length && !filters.includes(requestedFilter) ? filters[0] : requestedFilter;
   const multi = remaining > 1;
   const existing = useMemo(() => new Set((existingUrls ?? []).filter(Boolean)), [existingUrls]);
   const [selected, setSelected] = useState<Map<string, PickedAsset>>(() => new Map());
@@ -103,9 +109,9 @@ export function AssetPickerModal({
             onPick={toggleAsset}
             pickedUrls={multi ? pickedUrls : undefined}
             disabledPickUrls={existing}
-            defaultFilter={defaultFilter ?? kind}
-            defaultTab={(defaultFilter ?? kind) === "audio" ? "upload" : "hist"}
-            allowedFilters={lockKind ? ALLOWED_BY_KIND[kind] : undefined}
+            defaultFilter={initialFilter}
+            defaultTab={initialFilter === "audio" ? "upload" : "hist"}
+            allowedFilters={filters}
           />
         </div>
         {multi ? (

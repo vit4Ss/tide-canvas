@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useAuthStore } from "@/stores/use-auth-store";
+import { CanvasThemeProvider } from "@/components/canvas/canvas-theme";
 // The canvas asset picker reuses AssetsBrowser. Its styles are fully scoped to
 // studio/asset class names, so loading them here does not alter canvas nodes.
 import "@/styles/liuguang/studio.css";
@@ -59,5 +60,5 @@ export default function CanvasLayout({ children }: { children: React.ReactNode }
     );
   }
 
-  return <div className="canvas-app h-screen w-screen overflow-hidden">{children}</div>;
+  return <CanvasThemeProvider><div className="canvas-app h-screen w-screen overflow-hidden">{children}</div></CanvasThemeProvider>;
 }

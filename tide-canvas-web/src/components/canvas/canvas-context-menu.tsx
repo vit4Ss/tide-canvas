@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
-  Upload as UploadIcon, History,
-  ChevronLeft, Trash2, Copy, Group,
+  Upload as UploadIcon, History, ChevronLeft, ChevronRight,
+  Trash2, Copy, Group, Bookmark, Plus, Undo2, Redo2, Clipboard,
 } from "lucide-react";
 import { canvasNodeIcon } from "@/lib/canvas-node-config";
+import { resolveContextMenuLayout } from "@/lib/canvas-context-menu-layout";
 import { useCanvasNodeConfigStore } from "@/stores/use-canvas-node-config-store";
+import styles from "./styles/canvas-context-menu.module.css";
 
 export interface ContextMenuState {
   x: number;
@@ -47,243 +49,211 @@ export function CanvasContextMenu({
   onUpload, onOpenHistory, onSaveAsset, onUndo, onRedo, onPaste,
 }: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const lastView = useRef<"main" | "nodes">("main");
+  const keyboardNavigationRef = useRef(false);
+  const [keyboardNavigation, setKeyboardNavigation] = useState(false);
   const nodeTypes = useCanvasNodeConfigStore((state) => state.nodeTypes);
   const enabledNodeTypes = nodeTypes.filter((item) => item.enabled);
-  // 两级视图：主菜单 / 添加节点目录（点击下钻替换，而非并排子菜单）
   const [view, setView] = useState<"main" | "nodes">("main");
-
-  // 每次菜单(重新)打开都回到主视图：用 React 推荐的「渲染期对比上次值重置」替代 effect 内 setState
   const [prevMenu, setPrevMenu] = useState(menu);
   if (menu !== prevMenu) {
     setPrevMenu(menu);
     setView("main");
+    setKeyboardNavigation(false);
   }
 
   useEffect(() => {
-    const onMouseDown = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        onClose();
-      }
+    if (!menu) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) onClose();
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-        return;
-      }
-      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
-      const items = Array.from(
-        menuRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [],
-      );
-      if (!items.length) return;
-      e.preventDefault();
-      const current = items.indexOf(document.activeElement as HTMLButtonElement);
-      const next = e.key === "Home"
-        ? 0
-        : e.key === "End"
-          ? items.length - 1
-          : e.key === "ArrowUp"
-            ? (current <= 0 ? items.length - 1 : current - 1)
-            : (current + 1) % items.length;
-      items[next]?.focus();
-    };
-    if (menu) {
-      document.addEventListener("mousedown", onMouseDown);
-      document.addEventListener("keydown", onKey);
-      return () => {
-        document.removeEventListener("mousedown", onMouseDown);
-        document.removeEventListener("keydown", onKey);
-      };
-    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [menu, onClose]);
 
-  // 视口夹取:靠屏幕右缘/下缘右键时菜单不能渲染出屏(下方选项点不到)。
-  // 菜单高度随视图/类型变化,先隐藏渲染、绘制前实测尺寸后直写定位——
-  // useLayoutEffect 在绘制前执行不闪帧,直接改 DOM 避免多一轮 setState 渲染。
+  // Preserve the opening position between views. Longer content scrolls inside
+  // that anchor; only a real viewport resize can move the menu again.
   useLayoutEffect(() => {
-    const el = menuRef.current;
-    if (!menu || !el) return;
-    el.style.left = `${Math.max(8, Math.min(menu.x, window.innerWidth - el.offsetWidth - 8))}px`;
-    el.style.top = `${Math.max(8, Math.min(menu.y, window.innerHeight - el.offsetHeight - 8))}px`;
-    el.style.visibility = "visible";
-    el.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+    const element = menuRef.current;
+    if (!menu || !element) return;
+    keyboardNavigationRef.current = false;
+    element.style.maxHeight = "";
+    let previous: { left: number; top: number } | undefined;
+    const position = () => {
+      const layout = resolveContextMenuLayout({
+        anchor: menu,
+        menu: { width: element.offsetWidth, height: element.offsetHeight },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        previous,
+      });
+      previous = layout;
+      element.style.left = `${layout.left}px`;
+      element.style.top = `${layout.top}px`;
+      element.style.maxHeight = `${layout.maxHeight}px`;
+      element.style.visibility = "visible";
+    };
+    position();
+    window.addEventListener("resize", position);
+    return () => window.removeEventListener("resize", position);
+  }, [menu]);
+
+  useLayoutEffect(() => {
+    if (!menu) return;
+    if (listRef.current) listRef.current.scrollTop = 0;
+    const selector = view === "main" && lastView.current === "nodes"
+      ? "[data-add-node]" : "button:not(:disabled)";
+    // Pointer interaction focuses the menu itself, without selecting an action.
+    // Keyboard drill-in starts at the first node; going back restores its trigger.
+    const target = !keyboardNavigationRef.current ? menuRef.current
+      : view === "nodes" ? listRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)") ?? menuRef.current
+        : menuRef.current?.querySelector<HTMLButtonElement>(selector)
+          ?? menuRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)");
+    target?.focus({ preventScroll: true });
+    lastView.current = view;
   }, [menu, view]);
 
   if (!menu) return null;
 
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+  const shortcut = (key: string, shift = false) => isMac
+    ? `⌘${shift ? "⇧" : ""}${key}` : `Ctrl+${shift ? "Shift+" : ""}${key}`;
   const handleAddNode = (type: string) => {
     onAddNode(type, menu.worldX, menu.worldY);
     onClose();
   };
-
-  const itemClass = "mx-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-xl px-3.5 py-3 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800";
-  const disabledClass = "mx-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-xl px-3.5 py-3 text-sm text-neutral-300 dark:text-neutral-600 cursor-not-allowed";
+  const setNavigationMode = (keyboard: boolean) => {
+    keyboardNavigationRef.current = keyboard;
+    setKeyboardNavigation(keyboard);
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape" || event.key === "Tab") {
+      if (event.key === "Escape") event.preventDefault();
+      event.stopPropagation();
+      onClose();
+      return;
+    }
+    if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End", "Enter", " "].includes(event.key)) {
+      setNavigationMode(true);
+    }
+    if (event.key === "ArrowLeft" && view === "nodes") {
+      event.preventDefault();
+      setView("main");
+      return;
+    }
+    if (event.key === "ArrowRight" && event.target instanceof HTMLElement && event.target.hasAttribute("data-add-node")) {
+      event.preventDefault();
+      setView("nodes");
+      return;
+    }
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? []);
+    if (!items.length) return;
+    event.preventDefault();
+    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
+      : event.key === "ArrowUp" ? (current <= 0 ? items.length - 1 : current - 1) : (current + 1) % items.length;
+    const item = items[next];
+    item?.focus({ preventScroll: true });
+    const list = listRef.current;
+    if (!item || !list || !list.contains(item)) return;
+    const row = item.getBoundingClientRect();
+    const bounds = list.getBoundingClientRect();
+    if (row.top < bounds.top) list.scrollTop -= bounds.top - row.top;
+    else if (row.bottom > bounds.bottom) list.scrollTop += row.bottom - bounds.bottom;
+  };
 
   return (
-    <div
-      ref={menuRef}
-      role="menu"
-      aria-label={menu.type === "canvas" ? "画布菜单" : "节点菜单"}
-      className="fixed z-50 max-h-[calc(100vh-16px)] w-64 overflow-y-auto rounded-2xl border border-neutral-200 bg-white py-2.5 shadow-2xl dark:border-neutral-800 dark:bg-neutral-900"
-      style={{ left: menu.x, top: menu.y, visibility: "hidden" }}
-    >
-      {menu.type === "canvas" ? (
-        view === "nodes" ? (
-          <>
-            {/* 返回主菜单 */}
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => setView("main")}
-              className="flex w-full items-center gap-1 px-4 pb-2 pt-1 text-xs text-neutral-400 transition-colors hover:text-neutral-600 dark:hover:text-neutral-300"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-              添加节点
-            </button>
+    <div ref={menuRef} role="menu" tabIndex={-1} data-keyboard-navigation={keyboardNavigation}
+      aria-label={menu.type === "node" ? "节点菜单" : view === "nodes" ? "添加节点" : "画布菜单"}
+      className={styles.menu} style={{ left: menu.x, top: menu.y, visibility: "hidden" }}
+      onKeyDown={onKeyDown}
+      onPointerDownCapture={() => setNavigationMode(false)}
+      onPointerMove={(event) => {
+        if (keyboardNavigationRef.current && (event.movementX !== 0 || event.movementY !== 0)) {
+          setNavigationMode(false);
+          menuRef.current?.focus({ preventScroll: true });
+        }
+      }}
+      onContextMenu={(event) => event.preventDefault()}>
+      {menu.type === "canvas" && view === "nodes" ? (
+        <>
+          <button type="button" role="menuitem" aria-label="返回画布菜单" onClick={() => setView("main")} className={styles.back}>
+            <ChevronLeft aria-hidden /><span>添加节点</span>
+          </button>
+          <div ref={listRef} className={styles.list}>
             {enabledNodeTypes.map((item) => {
               const Icon = canvasNodeIcon(item.key);
               return (
-                <button
-                  key={item.key}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => handleAddNode(item.key)}
-                  className="group mx-2 flex w-[calc(100%-1rem)] items-center gap-3 rounded-xl px-2.5 py-2 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                >
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600 transition-colors group-hover:bg-neutral-900 group-hover:text-white dark:bg-neutral-800 dark:text-neutral-300 dark:group-hover:bg-white dark:group-hover:text-neutral-900">
-                    <Icon className="h-4 w-4" />
-                  </span>
-                  <span className="min-w-0 flex-1 text-left">
-                    <span className="block font-medium">{item.title}</span>
-                    <span className="block max-h-0 truncate text-xs leading-4 text-neutral-400 opacity-0 transition-all duration-200 group-hover:max-h-4 group-hover:opacity-100">{item.description}</span>
+                <button key={item.key} type="button" role="menuitem" onClick={() => handleAddNode(item.key)} className={styles.nodeItem}>
+                  <span className={styles.nodeIcon}><Icon aria-hidden /></span>
+                  <span className={styles.nodeText}>
+                    <span className={styles.nodeTitle}>{item.title}</span>
+                    <span className={styles.description}>{item.description}</span>
                   </span>
                 </button>
               );
             })}
-
-            <div className="mt-2 px-4 pb-2 pt-2 text-xs text-neutral-400">添加资源</div>
+            <div className={styles.section}>添加资源</div>
             {RESOURCE_TYPES.map((item) => (
-              <button
-                key={item.type}
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  onClose();
-                  if (item.type === "upload") onUpload?.();
-                  else onOpenHistory?.();
-                }}
-                className="group mx-2 flex w-[calc(100%-1rem)] items-center gap-3 rounded-xl px-2.5 py-2 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800"
-              >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600 transition-colors group-hover:bg-neutral-900 group-hover:text-white dark:bg-neutral-800 dark:text-neutral-300 dark:group-hover:bg-white dark:group-hover:text-neutral-900">
-                  <item.icon className="h-4 w-4" />
-                </span>
-                <span className="min-w-0 flex-1 text-left">
-                  <span className="block font-medium">{item.label}</span>
-                  <span className="block max-h-0 truncate text-xs leading-4 text-neutral-400 opacity-0 transition-all duration-200 group-hover:max-h-4 group-hover:opacity-100">{item.desc}</span>
+              <button key={item.type} type="button" role="menuitem" disabled={item.type === "upload" ? !onUpload : !onOpenHistory}
+                onClick={() => { onClose(); if (item.type === "upload") onUpload?.(); else onOpenHistory?.(); }} className={styles.nodeItem}>
+                <span className={styles.nodeIcon}><item.icon aria-hidden /></span>
+                <span className={styles.nodeText}>
+                  <span className={styles.nodeTitle}>{item.label}</span>
+                  <span className={styles.description}>{item.desc}</span>
                 </span>
               </button>
             ))}
-          </>
-        ) : (
-          <>
-            <button type="button" role="menuitem" onClick={() => { onUpload?.(); onClose(); }} className={`${itemClass} font-medium`}>
-              <span>上传</span>
-            </button>
-            {/* 画布空白处没有可保存的媒体,真禁用(此前无 disabled 属性,点击无反应
-                菜单也不关,键盘焦点还能落上去,像坏掉的按钮) */}
-            <button type="button" role="menuitem" disabled className={disabledClass}>
-              <span>保存到我的素材</span>
-            </button>
-            <button type="button" role="menuitem" onClick={() => setView("nodes")} className={`${itemClass} font-medium`}>
-              <span>添加节点</span>
-            </button>
-
-            <div className="my-2 mx-3 border-t border-neutral-100 dark:border-neutral-800" />
-
-            <button
-              type="button"
-              role="menuitem"
-              disabled={!canUndo}
-              onClick={() => { onUndo?.(); onClose(); }}
-              className={canUndo ? itemClass : disabledClass}
-            >
-              <span>撤销</span>
-              <kbd className="text-xs">⌘Z</kbd>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              disabled={!canRedo}
-              onClick={() => { onRedo?.(); onClose(); }}
-              className={canRedo ? itemClass : disabledClass}
-            >
-              <span>重做</span>
-              <kbd className="text-xs">⌘⇧Z</kbd>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              disabled={!canPaste}
-              onClick={() => { onPaste?.(menu.worldX, menu.worldY); onClose(); }}
-              className={canPaste ? `${itemClass} font-medium` : disabledClass}
-            >
-              <span className={canPaste ? "font-medium" : ""}>粘贴</span>
-              <kbd className="text-xs">⌘V</kbd>
-            </button>
-          </>
-        )
+          </div>
+        </>
       ) : (
-        <>
-          {selectedCount >= 2 && (
+        <div ref={listRef} className={styles.list}>
+          {menu.type === "canvas" ? (
             <>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => { onCreateGroup?.(); onClose(); }}
-                className={itemClass}
-              >
-                <span className="flex items-center gap-2">
-                  <Group className="h-4 w-4 text-neutral-500" />
-                  创建分组
-                </span>
-                <kbd className="text-xs text-neutral-400">⌘G</kbd>
+              <button type="button" role="menuitem" disabled={!onUpload} onClick={() => { onUpload?.(); onClose(); }} className={styles.item}>
+                <UploadIcon aria-hidden /><span>上传</span>
               </button>
-              <div className="my-2 mx-3 border-t border-neutral-100 dark:border-neutral-800" />
+              <button type="button" role="menuitem" disabled className={styles.item}>
+                <Bookmark aria-hidden /><span>保存到我的素材</span>
+              </button>
+              <button type="button" role="menuitem" data-add-node onClick={() => setView("nodes")} className={styles.item}>
+                <Plus aria-hidden /><span>添加节点</span><ChevronRight className={styles.trailing} aria-hidden />
+              </button>
+              <div role="separator" className={styles.separator} />
+              <button type="button" role="menuitem" disabled={!canUndo} onClick={() => { onUndo?.(); onClose(); }} className={styles.item}>
+                <Undo2 aria-hidden /><span>撤销</span><kbd>{shortcut("Z")}</kbd>
+              </button>
+              <button type="button" role="menuitem" disabled={!canRedo} onClick={() => { onRedo?.(); onClose(); }} className={styles.item}>
+                <Redo2 aria-hidden /><span>重做</span><kbd>{shortcut("Z", true)}</kbd>
+              </button>
+              <button type="button" role="menuitem" disabled={!canPaste} onClick={() => { onPaste?.(menu.worldX, menu.worldY); onClose(); }} className={styles.item}>
+                <Clipboard aria-hidden /><span>粘贴</span><kbd>{shortcut("V")}</kbd>
+              </button>
+            </>
+          ) : (
+            <>
+              {selectedCount >= 2 && (
+                <>
+                  <button type="button" role="menuitem" onClick={() => { onCreateGroup?.(); onClose(); }} className={styles.item}>
+                    <Group aria-hidden /><span>创建分组</span><kbd>{shortcut("G")}</kbd>
+                  </button>
+                  <div role="separator" className={styles.separator} />
+                </>
+              )}
+              <button type="button" role="menuitem" onClick={() => { if (menu.nodeId) onCopyNode(menu.nodeId); onClose(); }} className={styles.item}>
+                <Copy aria-hidden /><span>复制节点</span><kbd>{shortcut("C")}</kbd>
+              </button>
+              <button type="button" role="menuitem" onClick={() => { onSaveAsset?.(); onClose(); }} className={styles.item}>
+                <Bookmark aria-hidden /><span>保存到我的素材</span>
+              </button>
+              <div role="separator" className={styles.separator} />
+              <button type="button" role="menuitem" onClick={() => { if (menu.nodeId) onDeleteNode(menu.nodeId); onClose(); }} className={`${styles.item} ${styles.danger}`}>
+                <Trash2 aria-hidden /><span>删除节点</span><kbd>Del</kbd>
+              </button>
             </>
           )}
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => { if (menu.nodeId) onCopyNode(menu.nodeId); onClose(); }}
-            className={itemClass}
-          >
-            <span className="flex items-center gap-2">
-              <Copy className="h-4 w-4 text-neutral-500" />
-              复制节点
-            </span>
-            <kbd className="text-xs text-neutral-400">⌘C</kbd>
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => { onSaveAsset?.(); onClose(); }}
-            className={itemClass}
-          >
-            <span>保存到我的素材</span>
-          </button>
-          <div className="my-2 mx-3 border-t border-neutral-100 dark:border-neutral-800" />
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => { if (menu.nodeId) onDeleteNode(menu.nodeId); onClose(); }}
-            className="mx-2 flex w-[calc(100%-1rem)] items-center justify-between rounded-xl px-3.5 py-3 text-sm text-red-600 transition-colors hover:bg-red-50 dark:hover:bg-red-950/30"
-          >
-            <span className="flex items-center gap-2">
-              <Trash2 className="h-4 w-4" />
-              删除节点
-            </span>
-            <kbd className="text-xs">Del</kbd>
-          </button>
-        </>
+        </div>
       )}
     </div>
   );

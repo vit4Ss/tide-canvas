@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useEffect, useMemo, useState } from "react";
-import { Box, Download, Image as ImageIcon, Layers3, Zap } from "lucide-react";
+import { Box, ChevronDown, Download, Image as ImageIcon, Layers3, SlidersHorizontal, Zap } from "lucide-react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import { AiModelType } from "@/types/ai";
 import type {
@@ -29,9 +29,9 @@ import {
   GenerateSubmitButton,
   NodeErrorBadge,
   NodeGeneratingOverlay,
-  NodePanelChrome,
   NodeShell,
 } from "./shared/node-overlays";
+import { NodeComposer } from "./shared/node-composer";
 import { useFileDownload } from "./shared/use-file-download";
 import { useAiModels, useNodeRuntime } from "./shared/use-node-runtime";
 import { getIncomingSources, parseModelConfig, stopEvent as stop } from "./shared/node-utils";
@@ -219,14 +219,14 @@ export const ThreeDNode = memo(function ThreeDNode({
     <NodeShell node={node} isSelected={isSelected} isDragging={isDragging} onNodeMouseDown={onNodeMouseDown}>
       <NodeHeader icon={Box} title={node.title || (isWorldModel ? "3D 场景节点" : "3D 节点")} visible={showAuxUI} overlay />
       <div
-        className={`relative overflow-hidden rounded-2xl border bg-[#16181d] transition-all ${
+        className={`relative overflow-hidden rounded-xl border transition-colors ${
           isConnectTarget
             ? "border-blue-500 ring-2 ring-blue-500/40"
             : isSelected
-              ? "border-neutral-400 dark:border-neutral-600"
-              : "border-neutral-300 hover:border-neutral-400 dark:border-neutral-800 dark:hover:border-neutral-700"
+              ? "border-[var(--canvas-input-focus-border)]"
+              : "border-[var(--border)] hover:border-[var(--canvas-input-focus-border)]"
         }`}
-        style={{ height: cardHeight }}
+        style={{ height: cardHeight, background: node.modelSrc ? "#16181d" : "var(--popover)" }}
       >
         {node.modelSrc ? (
           glbUrl && isSelected ? (
@@ -252,10 +252,10 @@ export const ThreeDNode = memo(function ThreeDNode({
             </div>
           )
         ) : (
-          <div className="flex h-full flex-col items-center justify-center gap-3 text-white/45">
-            <Box className="h-12 w-12" />
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-[var(--muted-foreground)]">
+            <Box className="h-10 w-10 opacity-60" strokeWidth={1.5} />
             <div className="text-center">
-              <p className="text-sm font-medium text-white/75">{isWorldModel ? "生成可漫游 3D 场景" : "生成 3D 模型"}</p>
+              <p className="text-sm font-medium text-[var(--foreground)]">{isWorldModel ? "生成可漫游 3D 场景" : "生成 3D 模型"}</p>
               <p className="mt-1 text-xs">支持文生、图生和多视图</p>
             </div>
           </div>
@@ -300,84 +300,90 @@ export const ThreeDNode = memo(function ThreeDNode({
       />
 
       {showAuxUI && (
-        <NodePanelChrome width={700} height={330}>
-          <div className="flex items-center gap-1 rounded-lg bg-neutral-100 p-1 dark:bg-neutral-900">
-            {MODE_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                onMouseDown={stop}
-                onClick={(event) => { stop(event); setMode(option.value); }}
-                className={`h-8 flex-1 rounded-md text-xs font-medium transition-colors ${mode === option.value ? "bg-white text-neutral-950 shadow-sm dark:bg-neutral-800 dark:text-white" : "text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"}`}
-              >
-                {isWorldModel ? option.label.replace("3D", "3D 场景") : option.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-3 grid min-h-0 flex-1 grid-cols-[1fr_260px] gap-4">
-            <div className="flex min-h-0 flex-col">
-              {mode !== "t2_3d" && (
-                <div className="mb-2 flex min-h-8 items-center gap-2 rounded-lg bg-neutral-50 px-3 text-xs text-neutral-500 dark:bg-neutral-900/70 dark:text-neutral-400">
-                  <ImageIcon className="h-3.5 w-3.5" />
-                  {referenceImages.length > 0 ? (
-                    <span className="min-w-0 truncate">
-                      已连接 {referenceImages.length} 张参考图
-                      {mode === "mv2_3d" ? ` · ${referenceImages.map((_, index) => VIEW_LABELS[index]).join(" / ")}` : ""}
-                    </span>
-                  ) : (
-                    <span>从图片节点连线到此节点作为参考</span>
-                  )}
-                  {mode === "i2_3d" && isWorldModel && referenceImages.length > 0 && (
-                    <label
-                      className="ml-auto flex shrink-0 cursor-pointer items-center gap-1.5 text-neutral-600 dark:text-neutral-300"
-                      onMouseDown={stop}
-                      title="360° 全景图（宽高比约 2:1）按全景模式重建；普通照片请保持关闭"
-                    >
-                      <input
-                        type="checkbox"
-                        className="h-3.5 w-3.5 accent-neutral-800 dark:accent-neutral-200"
-                        checked={singleImageIsPanorama}
-                        onChange={(event) => setPanoOverride(event.target.checked)}
-                      />
-                      360° 全景图
-                    </label>
-                  )}
-                </div>
-              )}
-              {mode !== "i2_3d" ? (
-                <textarea
-                  value={node.prompt || ""}
-                  onChange={(event) => updateNode(node.id, { prompt: event.target.value })}
-                  onMouseDown={stop}
-                  placeholder={mode === "mv2_3d" ? "可选：补充材质、风格或结构要求" : "描述你想生成的 3D 资产..."}
-                  className="min-h-0 flex-1 resize-none rounded-lg border border-neutral-200 bg-transparent p-3 text-sm leading-6 text-neutral-800 outline-none placeholder:text-neutral-400 focus:border-neutral-400 dark:border-neutral-800 dark:text-neutral-200 dark:focus:border-neutral-600"
-                />
-              ) : (
-                <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-neutral-200 text-center text-xs leading-5 text-neutral-400 dark:border-neutral-800">
-                  图生 3D 只使用连接的单张图片，<br />不同时提交提示词
-                </div>
+        <NodeComposer
+          label="3D 生成设置"
+          tools={MODE_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              aria-pressed={mode === option.value}
+              onClick={() => setMode(option.value)}
+              className="image-composer-chip"
+              style={mode === option.value ? { background: "var(--accent)", color: "var(--foreground)" } : undefined}
+            >
+              {isWorldModel ? option.label.replace("3D", "3D 场景") : option.label}
+            </button>
+          ))}
+          footer={<>
+            <div className="image-composer-model"><ModelPicker models={models} value={modelId} onChange={setModelId} /></div>
+            <span className="px-2 text-xs text-[var(--muted-foreground)]">{isWorldModel ? "3D 场景" : resultFormat || "OBJ + GLB"}</span>
+            <div className="image-composer-actions">
+              <span className="image-composer-cost" title="本次生成消耗积分"><Zap className="h-3 w-3" fill="currentColor" />{cost}</span>
+              <GenerateSubmitButton
+                compact
+                disabled={generating || uploading || !modelId}
+                generating={generating}
+                title={uploading ? "GLB 上传中..." : generating ? "生成中..." : "开始生成 3D"}
+                onClick={handleGenerate}
+              />
+            </div>
+          </>}
+        >
+          {mode !== "t2_3d" && (
+            <div className="mb-2 flex min-h-8 flex-wrap items-center gap-2 rounded-lg bg-[var(--canvas-menu-hover)] px-3 py-1 text-xs text-[var(--muted-foreground)]">
+              <ImageIcon className="h-3.5 w-3.5 shrink-0" />
+              {referenceImages.length > 0 ? (
+                <span className="min-w-0 truncate">
+                  已连接 {referenceImages.length} 张参考图
+                  {mode === "mv2_3d" ? ` · ${referenceImages.map((_, index) => VIEW_LABELS[index]).join(" / ")}` : ""}
+                </span>
+              ) : <span>从图片节点连线到此节点作为参考</span>}
+              {mode === "i2_3d" && isWorldModel && referenceImages.length > 0 && (
+                <label className="ml-auto flex shrink-0 cursor-pointer items-center gap-1.5" title="360° 全景图（宽高比约 2:1）按全景模式重建；普通照片请保持关闭">
+                  <input type="checkbox" className="h-3.5 w-3.5 accent-[var(--foreground)]"
+                    checked={singleImageIsPanorama} onChange={(event) => setPanoOverride(event.target.checked)} />
+                  360° 全景图
+                </label>
               )}
             </div>
-
-            <div className="space-y-3 text-xs">
+          )}
+          {mode !== "i2_3d" ? (
+            <textarea
+              aria-label="3D 生成描述"
+              value={node.prompt || ""}
+              onChange={(event) => updateNode(node.id, { prompt: event.target.value })}
+              placeholder={mode === "mv2_3d" ? "可选：补充材质、风格或结构要求" : "描述你想生成的 3D 资产..."}
+              className="w-full resize-none border-0 bg-transparent text-sm leading-6 text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
+              style={{ height: 80, maxHeight: 160, outline: "none", boxShadow: "none" }}
+            />
+          ) : (
+            <div className="flex min-h-20 items-center text-xs leading-5 text-[var(--muted-foreground)]">
+              图生 3D 使用已连接的单张图片，无需填写描述。
+            </div>
+          )}
+          <details className="group/three-d-settings mt-1 rounded-lg text-xs text-[var(--muted-foreground)]">
+            <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md px-1 py-1.5 hover:bg-[var(--canvas-menu-hover)]">
+              <SlidersHorizontal className="h-3.5 w-3.5" />模型设置<ChevronDown className="h-3 w-3 group-open/three-d-settings:rotate-180" />
+            </summary>
+            <div className="mt-2 space-y-3 rounded-lg border border-[var(--border)] p-3">
               {isWorldModel ? (
-                <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-3 leading-5 text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900/70 dark:text-neutral-400">
-                  <div className="font-medium text-neutral-800 dark:text-neutral-200">Marble 世界输出</div>
+                <div className="leading-5 text-[var(--muted-foreground)]">
+                  <div className="font-medium text-[var(--foreground)]">Marble 世界输出</div>
                   <p className="mt-1">生成碰撞 GLB 白膜、SPZ、全景图和缩略图。导演台只连接 GLB 白膜，SPZ 仅作为附加文件下载。</p>
-                  <p className="mt-2 text-[10px] text-neutral-400">场景质量由所选 Marble 模型决定，无需设置面数、PBR 或导出格式。</p>
+                  <p className="mt-2 text-[10px] text-[var(--muted-foreground)]">场景质量由所选 Marble 模型决定，无需设置面数、PBR 或导出格式。</p>
                 </div>
               ) : <>
               <div>
-                <div className="mb-1.5 text-neutral-500">生成类型</div>
-                <div className="grid grid-cols-2 gap-1 rounded-lg bg-neutral-100 p-1 dark:bg-neutral-900">
+                <div className="mb-1.5 text-[var(--muted-foreground)]">生成类型</div>
+                <div className="grid grid-cols-2 gap-1 rounded-lg bg-[var(--canvas-menu-hover)] p-1">
                   {(["Normal", "Geometry"] as CanvasThreeDGenerateType[]).map((value) => (
                     <button
                       key={value}
                       type="button"
+                      aria-pressed={generateType === value}
                       onMouseDown={stop}
                       onClick={(event) => { stop(event); setGenerateType(value); }}
-                      className={`h-7 rounded-md transition-colors ${generateType === value ? "bg-white text-neutral-950 shadow-sm dark:bg-neutral-800 dark:text-white" : "text-neutral-500"}`}
+                      className={`h-7 rounded-md transition-colors ${generateType === value ? "bg-[var(--popover)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)]"}`}
                     >
                       {value === "Normal" ? "标准模型" : "纯几何"}
                     </button>
@@ -385,7 +391,7 @@ export const ThreeDNode = memo(function ThreeDNode({
                 </div>
               </div>
               <label className="block">
-                <span className="mb-1.5 flex justify-between text-neutral-500"><span>模型面数</span><output>{faceCount.toLocaleString()}</output></span>
+                <span className="mb-1.5 flex justify-between text-[var(--muted-foreground)]"><span>模型面数</span><output>{faceCount.toLocaleString()}</output></span>
                 <input
                   type="range"
                   min={3_000}
@@ -394,11 +400,11 @@ export const ThreeDNode = memo(function ThreeDNode({
                   value={faceCount}
                   onMouseDown={stop}
                   onChange={(event) => setFaceCount(clampFaceCount(Number(event.target.value)))}
-                  className="w-full accent-neutral-900 dark:accent-white"
+                  className="w-full accent-[var(--foreground)]"
                 />
               </label>
               <div className="flex items-center justify-between gap-3">
-                <span className="text-neutral-500">输出格式</span>
+                <span className="text-[var(--muted-foreground)]">输出格式</span>
                 <PopoverSelect
                   value={resultFormat}
                   options={FORMAT_OPTIONS}
@@ -413,35 +419,23 @@ export const ThreeDNode = memo(function ThreeDNode({
                 </p>
               )}
               <div className="flex items-center justify-between">
-                <span><strong className="font-medium text-neutral-700 dark:text-neutral-200">PBR 材质</strong><small className="ml-1.5 text-neutral-400">物理渲染贴图</small></span>
+                <span><strong className="font-medium text-[var(--foreground)]">PBR 材质</strong><small className="ml-1.5 text-[var(--muted-foreground)]">物理渲染贴图</small></span>
                 <button
                   type="button"
                   role="switch"
+                  aria-label="PBR 材质"
                   aria-checked={enablePbr}
                   onMouseDown={stop}
                   onClick={(event) => { stop(event); setEnablePbr((value) => !value); }}
-                  className={`relative h-5 w-9 rounded-full transition-colors ${enablePbr ? "bg-neutral-900 dark:bg-white" : "bg-neutral-200 dark:bg-neutral-700"}`}
+                  className={`relative h-5 w-9 rounded-full transition-colors ${enablePbr ? "bg-[var(--foreground)]" : "bg-[var(--border)]"}`}
                 >
-                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all dark:bg-neutral-950 ${enablePbr ? "left-[18px]" : "left-0.5"}`} />
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-[var(--popover)] shadow ${enablePbr ? "left-[18px]" : "left-0.5"}`} />
                 </button>
               </div>
               </>}
             </div>
-          </div>
-
-          <div className="mt-3 flex items-center justify-between border-t border-neutral-100 pt-2 dark:border-neutral-900">
-            <ModelPicker models={models} value={modelId} onChange={setModelId} />
-            <div className="flex items-center gap-2 text-xs text-neutral-500">
-              <span className="flex items-center gap-1 tabular-nums"><Zap className="h-3 w-3" fill="currentColor" />{cost}</span>
-              <GenerateSubmitButton
-                disabled={generating || uploading || !modelId}
-                generating={generating}
-                title={uploading ? "GLB 上传中..." : generating ? "生成中..." : "开始生成 3D"}
-                onClick={handleGenerate}
-              />
-            </div>
-          </div>
-        </NodePanelChrome>
+          </details>
+        </NodeComposer>
       )}
     </NodeShell>
   );

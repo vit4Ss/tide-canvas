@@ -556,11 +556,16 @@ export function PromptEditorModal({
       <div
         className="flex w-[680px] max-w-[92vw] flex-col rounded-2xl border border-neutral-200 bg-white p-4 shadow-2xl dark:border-neutral-800 dark:bg-neutral-900"
         style={{ height: 520, maxHeight: "85vh" }}
+        role="dialog"
+        aria-modal="true"
+        aria-label="编辑提示词"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between">
           <span className="text-sm font-medium text-neutral-700 dark:text-neutral-200">编辑提示词</span>
           <button
+            type="button"
+            aria-label="关闭提示词编辑"
             onClick={onClose}
             className="rounded-md p-1 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-600 dark:hover:bg-neutral-800"
           >

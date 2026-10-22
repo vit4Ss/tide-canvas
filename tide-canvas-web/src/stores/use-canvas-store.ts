@@ -98,10 +98,17 @@ export interface CanvasNode {
    */
   generationConfig?: {
     modelId?: string;
+    aspectRatio?: string;
     quality?: string;
     resolution?: string;
     duration?: number;
     batchCount?: number;
+    videoMode?: string;
+    audio?: boolean;
+    videoEffectId?: string;
+    videoCameraId?: string;
+    videoExcludeText?: string;
+    videoIncludeContext?: boolean;
     threeDMode?: CanvasThreeDMode;
     enablePbr?: boolean;
     faceCount?: number;

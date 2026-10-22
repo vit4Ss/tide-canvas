@@ -1,160 +1,133 @@
-/* 中文注释：画布节点和首页创作框共用的参数下拉样式。浮层用微透的令牌色、
-   克制的描边和两段式阴影建立层次，选项以留白和轻状态区分，避免大块灰底的塑料感。 */
-.panel {
-  width: min(420px, calc(100vw - 24px));
+/* 图片节点参数浮层：统一灰阶、实色表面与轻量选择状态。 */
+:global(body[data-canvas-theme]) .panel,
+:global(body[data-canvas-theme]) .batchPanel {
   max-width: calc(100vw - 24px);
-  border-radius: 16px;
-  border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
-  background: color-mix(in oklab, var(--popover) 96%, transparent);
-  color: var(--popover-foreground);
-  padding: 14px;
-  text-align: left;
-  box-shadow: 0 24px 64px -28px rgb(15 23 42 / 0.42), 0 8px 24px -16px rgb(15 23 42 / 0.22);
-  backdrop-filter: blur(18px) saturate(1.12);
-  -webkit-backdrop-filter: blur(18px) saturate(1.12);
-}
-
-.panelInner {
-  width: 100%;
-}
-
-.section + .section {
-  margin-top: 16px;
-}
-
-.sectionTitle {
-  margin-bottom: 7px;
-  padding-left: 2px;
-  color: var(--muted-foreground);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 18px;
-}
-
-.segmentedRow {
-  display: grid;
-  gap: 3px;
-  border: 1px solid color-mix(in oklab, var(--border) 72%, transparent);
-  border-radius: 11px;
-  background: color-mix(in oklab, var(--muted) 48%, transparent);
-  padding: 3px;
-}
-
-.segmentButton {
-  display: flex;
-  height: 34px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  padding: 0 10px;
-  color: var(--muted-foreground);
-  font-size: 13px;
-  font-weight: 500;
-  transition: color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
-}
-
-.segmentButton:hover {
-  background: color-mix(in oklab, var(--popover) 62%, transparent);
-  color: var(--popover-foreground);
-}
-
-.segmentButtonActive {
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  border: 0;
+  border-radius: 12px;
   background: var(--popover);
   color: var(--popover-foreground);
-  box-shadow: 0 1px 2px rgb(15 23 42 / 0.08), 0 0 0 1px color-mix(in oklab, var(--border) 58%, transparent);
+  text-align: left;
+  box-shadow: 0 6px 24px rgb(15 23 42 / 0.12);
+  scrollbar-width: thin;
 }
-
+:global(body[data-canvas-theme]) .panel { width: 344px; padding: 14px; }
+.panelInner { width: 100%; }
+.section + .section { margin-top: 20px; }
+.sectionTitle {
+  margin-bottom: 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+.segmentedRow {
+  display: grid;
+  gap: 8px;
+}
+.segmentButton {
+  display: flex;
+  min-width: 0;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 8px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
+}
+.segmentButton:hover { color: var(--foreground); background: var(--canvas-menu-hover, var(--muted)); }
+.segmentButtonActive {
+  border-color: var(--canvas-input-focus-border);
+  background: var(--canvas-menu-hover, var(--muted));
+  color: var(--popover-foreground);
+  font-weight: 500;
+}
 .ratioGrid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 5px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
 }
-
 .ratioTile {
   display: flex;
-  height: 58px;
+  min-width: 0;
+  height: 62px;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  border: 1px solid transparent;
-  border-radius: 10px;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
   color: var(--muted-foreground);
   font-size: 12px;
-  font-weight: 500;
-  line-height: 15px;
-  transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+  font-weight: 400;
+  line-height: 16px;
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
 }
-
-.ratioTile:hover {
-  border-color: color-mix(in oklab, var(--border) 68%, transparent);
-  background: color-mix(in oklab, var(--muted) 52%, transparent);
-  color: var(--popover-foreground);
-}
-
-.ratioTileActive {
-  border-color: color-mix(in oklab, var(--ring) 40%, var(--border));
-  background: color-mix(in oklab, var(--accent) 78%, transparent);
-  color: var(--popover-foreground);
-  box-shadow: 0 1px 2px rgb(15 23 42 / 0.06);
-}
-
-.ratioShapeWrap {
-  display: flex;
-  height: 24px;
-  align-items: center;
-  justify-content: center;
-}
-
-.ratioShape {
-  display: block;
-  border: 1px solid currentColor;
-  border-radius: 3px;
-}
-
+.ratioTile:hover { background: var(--canvas-menu-hover, var(--muted)); color: var(--foreground); }
+.ratioTileActive,
+.ratioTileActive:hover { border-color: var(--canvas-input-focus-border); background: var(--canvas-menu-hover, var(--muted)); color: var(--foreground); font-weight: 500; }
+.ratioShapeWrap { display: flex; height: 22px; align-items: center; justify-content: center; }
+.ratioShape { display: block; border: 1px solid currentColor; border-radius: 2px; }
+.ratioShape[data-auto] { border-style: dashed; }
 .trigger {
-  display: flex;
+  display: inline-flex;
+  flex-shrink: 0;
   height: 32px;
   max-width: 280px;
   align-items: center;
-  gap: 8px;
-  border-radius: 10px;
-  border: 1px solid color-mix(in oklab, var(--border) 78%, transparent);
-  background: color-mix(in oklab, var(--popover) 92%, transparent);
-  padding: 0 10px;
+  gap: 6px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--popover-foreground);
   font-size: 12px;
   font-weight: 400;
-  box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
-  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  box-shadow: none;
+  transition: background-color 120ms ease, color 120ms ease;
 }
-
-.trigger:hover {
-  border-color: color-mix(in oklab, var(--border) 100%, var(--foreground) 14%);
-  background: color-mix(in oklab, var(--accent) 58%, var(--popover));
-  box-shadow: 0 2px 6px rgb(15 23 42 / 0.06);
+.trigger:hover,
+.trigger[aria-expanded="true"] {
+  border: 0;
+  background: var(--canvas-menu-hover, var(--muted));
+  box-shadow: none;
 }
-
-.triggerCompact {
-  height: 28px;
-  border-color: transparent;
-  padding: 0 8px;
-  font-size: 12px;
-  font-weight: 400;
-}
-
-
-.triggerGhost {
-  height: 28px;
-  border-color: transparent;
+.triggerCompact,
+.triggerGhost { height: 32px; }
+.triggerText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:global(body[data-canvas-theme]) .batchPanel { padding: 6px; }
+:global(body[data-canvas-theme]) .batchTitle { padding: 6px 8px 8px; color: var(--muted-foreground); font-size: 12px; font-weight: 400; line-height: 18px; }
+:global(body[data-canvas-theme]) .batchOption {
+  min-height: 36px;
+  padding: 8px;
+  border-radius: 6px;
   background: transparent;
-  padding: 0 8px;
-  font-size: 12px;
+  color: var(--popover-foreground);
+  font-size: 13px;
   font-weight: 400;
+  line-height: 20px;
 }
-.triggerText {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+:global(body[data-canvas-theme]) .batchOption[data-selected] { font-weight: 500; }
+:global(body[data-canvas-theme]) .batchOption:is(:hover, [data-hovered]) { background: var(--canvas-menu-hover, var(--muted)); }
+:global(body[data-canvas-theme]) :is(.trigger, .segmentButton, .ratioTile, .batchOption):focus-visible {
+  outline: 1px solid var(--canvas-input-focus-border);
+  outline-offset: -2px;
+  box-shadow: none;
+}
+:global(body[data-canvas-theme="dark"]) :is(.panel, .batchPanel) { box-shadow: 0 6px 24px rgb(0 0 0 / 0.32); }
+@media (prefers-reduced-motion: reduce) {
+  .trigger, .segmentButton, .ratioTile { transition: none; }
 }

@@ -4,14 +4,19 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter, useSearchParams, notFound } from "next/navigation";
 import { projectApi } from "@/lib/api";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
+import { useCanvasViewStore } from "@/stores/use-canvas-view-store";
+import { CanvasWorkspaceControls } from "@/components/canvas/canvas-workspace-controls";
+import { CanvasProjectMenu } from "@/components/canvas/canvas-project-menu";
+import { confirmDialog } from "@/components/shared/confirm";
+import { useCanvasSkillRunStore } from "@/components/canvas/skill-run/use-skill-runs";
+import { isSkillRunActive } from "@/types/skill-run";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { resumeGeneration, stopAllGeneration } from "@/hooks/canvas/use-ai-generation";
 import { CanvasView } from "@/components/canvas/canvas-view";
-import { ArrowLeft, Loader2, Check, Pencil, TriangleAlert, RefreshCw } from "lucide-react";
-import Link from "next/link";
+import { Loader2, Check, TriangleAlert, RefreshCw } from "lucide-react";
 import { toast } from "@/components/shared/toast";
 import { isImageCanvasNodeType } from "@/lib/canvas-node-types";
-import { CANVAS_SAVE_NOW_EVENT, type CanvasSaveRequestDetail } from "@/lib/canvas-save";
+import { CANVAS_SAVE_NOW_EVENT, requestCanvasSave, type CanvasSaveRequestDetail } from "@/lib/canvas-save";
 import {
   isTransientCanvasSaveCode,
   nextCanvasSaveFollowUp,
@@ -25,7 +30,7 @@ import {
   readCanvasLaunchJournal,
   type CanvasLaunchJournal,
 } from "@/lib/canvas-launch";
-import { parseCanvasDocument } from "@/lib/canvas-document";
+import { initialCanvasWorkspace, parseCanvasWorkspace, captureWorkspaceCanvas, serializeCanvasWorkspace, createWorkspaceCanvasId, renameWorkspaceCanvas, copyWorkspaceCanvas, deleteWorkspaceCanvas, workspaceCanvasHref, type CanvasViewMode } from "@/lib/canvas-document";
 import { useAppUpdateGuard } from "@/hooks/use-app-update-guard";
 import { persistableProjectThumbnail } from "@/lib/canvas-thumbnail";
 
@@ -33,6 +38,7 @@ const AUTOSAVE_DELAY = 3000; // 3 秒无变化触发自动保存
 
 /** blob: 是本地临时预览地址(上传中/切图中),刷新即失效,持久化等于把内容变成死链 */
 const isBlobUrl = (u?: string): boolean => !!u && u.startsWith("blob:");
+const hasPendingCanvasWork = (nodes: CanvasNode[]) => nodes.some((node) => node.uploading || node.status === "generating" || node.pendingGeneration || isBlobUrl(node.imageSrc) || isBlobUrl(node.videoSrc) || isBlobUrl(node.audioSrc) || node.images?.some(isBlobUrl) || node.audioTracks?.some((track) => isBlobUrl(track.url)));
 
 /** 序列化前剥掉节点上的 blob: 地址:上传常超过自动保存的 3s 防抖窗口,
  *  原样落盘会在"上传完成前关页"时把死链写进 canvasData,重开后内容永久丢失。
@@ -64,6 +70,9 @@ export default function CanvasEditorPage() {
   // URL 里的 [id] 实为不透明 url token，真实数值ID不在地址栏暴露
   const token = params.id as string;
   const handoffId = searchParams.get("handoff") || "";
+  const requestedCanvasId = searchParams.get("canvas") || "";
+  const requestedCanvasIdRef = useRef(requestedCanvasId);
+  useEffect(() => { requestedCanvasIdRef.current = requestedCanvasId; }, [requestedCanvasId]);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
   const [projectName, setProjectName] = useState("加载中...");
@@ -72,6 +81,19 @@ export default function CanvasEditorPage() {
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const workspaceRef = useRef(initialCanvasWorkspace());
+  const [canvasList, setCanvasList] = useState(() => initialCanvasWorkspace().canvases.map(({ id, name }) => ({ id, name })));
+  const [activeCanvasId, setActiveCanvasId] = useState("canvas-1");
+  const [viewMode, setViewMode] = useState<CanvasViewMode>("workflow");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const viewModeRef = useRef<CanvasViewMode>("workflow");
+  const [workspaceVersion, setWorkspaceVersion] = useState(0);
+  const [switchingCanvas, setSwitchingCanvas] = useState(false);
+  const [projectActionBusy, setProjectActionBusy] = useState(false);
+  const projectActionRef = useRef(false);
+  const switchingCanvasRef = useRef(false);
+  const assistantBusyRef = useRef(false);
+  const handleAssistantBusy = useCallback((busy: boolean) => { assistantBusyRef.current = busy; }, []);
   const [thumbnail, setThumbnail] = useState<string | null>(null);
   const [saveConflict, setSaveConflict] = useState(false);
   const [loadFailure, setLoadFailure] = useState(false);
@@ -143,12 +165,21 @@ export default function CanvasEditorPage() {
           : 0;
         if (res.data.canvasData && res.data.canvasData !== "{}") {
           try {
-            const data = parseCanvasDocument(res.data.canvasData);
+            const workspace = parseCanvasWorkspace(res.data.canvasData);
+            const persistedActive = workspace.canvases.find((canvas) => canvas.id === workspace.activeCanvasId)!;
+            const active = workspace.canvases.find((canvas) => canvas.id === requestedCanvasIdRef.current) || persistedActive;
+            workspaceRef.current = { ...workspace, activeCanvasId: active.id };
+            setCanvasList(workspace.canvases.map(({ id, name }) => ({ id, name })));
+            setActiveCanvasId(active.id);
+            setViewMode(active.viewMode);
+            viewModeRef.current = active.viewMode;
+            useCanvasViewStore.getState().setTransform(active.viewport);
+            const data = active.document;
             loadCanvas(
               data.nodes,
               data.connections,
               data.groups,
-              data.skillRuns,
+              persistedActive.document.skillRuns,
             );
             // 上次会话遗留的生成中节点（带 taskId）：任务仍在后端执行，按任务号续轮回填结果
             resumeGeneration();
@@ -165,6 +196,12 @@ export default function CanvasEditorPage() {
           // 空项目必须显式清空:store 是全局单例,不清则上一个项目的节点残留在此项目里
           // 显示,且随后自动保存会把上个项目的画布写进本项目(数据串档)。
           loadCanvas([], []);
+          workspaceRef.current = initialCanvasWorkspace();
+          setCanvasList([{ id: "canvas-1", name: "画布 1" }]);
+          setActiveCanvasId("canvas-1");
+          setViewMode("workflow");
+          viewModeRef.current = "workflow";
+          useCanvasViewStore.getState().setTransform({ x: 0, y: 0, k: 1 });
         }
 
         if (requestedHandoffId && !useAuthStore.getState().user) {
@@ -288,15 +325,16 @@ export default function CanvasEditorPage() {
       // 保存触发可能来自卸载 flush；此时 React 闭包未必已经跟上最后一次 store 更新。
       // 直接读取 store 快照，确保刚物化的节点和 artifact 消费标记一起落盘。
       const canvasSnapshot = useCanvasStore.getState();
-      const canvasData = JSON.stringify({
-        nodes: canvasSnapshot.nodes.map(sanitizeForSave),
+      workspaceRef.current = captureWorkspaceCanvas(workspaceRef.current, {
+        nodes: canvasSnapshot.nodes,
         connections: canvasSnapshot.connections,
         groups: canvasSnapshot.groups,
         skillRuns: {
           trackedRunIds: canvasSnapshot.trackedSkillRunIds,
           materializedArtifactIds: canvasSnapshot.materializedArtifactIds,
         },
-      });
+      }, useCanvasViewStore.getState().transform, viewModeRef.current);
+      const canvasData = serializeCanvasWorkspace(workspaceRef.current, sanitizeForSave);
       // 封面兜底：未手动设封面时，自动用画布中第一张图片。
       // 仅取可持久化的 http(s) 地址——data:base64 会超出后端 thumbnail(VARCHAR 512) 导致保存 500，
       // blob: 本地地址刷新即失效（如刚切分尚未上传完成的切片），都不能当封面。
@@ -407,7 +445,7 @@ export default function CanvasEditorPage() {
     saveRef.current = save;
   }, [save]);
 
-  useAppUpdateGuard(!loaded || saveConflict || editingName, () => {
+  useAppUpdateGuard(!loaded || saveConflict || editingName || switchingCanvas || projectActionBusy, () => {
     const timerPending = !!autosaveTimerRef.current;
     const savePending = savingRef.current || pendingSaveRef.current;
     if (autosaveTimerRef.current) {
@@ -498,7 +536,145 @@ export default function CanvasEditorPage() {
     return () => {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
-  }, [nodes, connections, groups, trackedSkillRunIds, materializedArtifactIds, loaded, save, saveConflict]);
+  }, [nodes, connections, groups, trackedSkillRunIds, materializedArtifactIds, loaded, save, saveConflict, workspaceVersion]);
+
+  const handleViewChange = useCallback((mode: CanvasViewMode) => {
+    if (viewModeRef.current === mode) return;
+    viewModeRef.current = mode;
+    setViewMode(mode);
+    setWorkspaceVersion((value) => value + 1);
+  }, []);
+
+  const handleCanvasSwitch = async (targetId?: string, action?: { type: "copy" | "delete"; id: string }) => {
+    if (!projectId || !loaded || switchingCanvasRef.current || projectActionRef.current || saveConflictRef.current || launchJournal) return;
+    const snapshot = useCanvasStore.getState();
+    const skillState = useCanvasSkillRunStore.getState();
+    if (assistantBusyRef.current || hasPendingCanvasWork(snapshot.nodes) || Object.values(skillState.runs).some((run) => isSkillRunActive(run.status))) {
+      toast.info("当前画布有任务执行中，请等待完成后切换画布");
+      return;
+    }
+    switchingCanvasRef.current = true;
+    setSwitchingCanvas(true);
+    try {
+      if (!await requestCanvasSave(projectId)) { toast.error("当前画布尚未保存成功，请稍后重试切换"); return; }
+      if (useCanvasStore.getState().currentProjectId !== projectId) return;
+      const current = useCanvasStore.getState();
+      if (assistantBusyRef.current || hasPendingCanvasWork(current.nodes)) { toast.info("素材或任务仍在处理中，请完成后再切换画布"); return; }
+      const skillRuns = { trackedRunIds: current.trackedSkillRunIds, materializedArtifactIds: current.materializedArtifactIds };
+      let workspace = captureWorkspaceCanvas(workspaceRef.current, { nodes: current.nodes, connections: current.connections, groups: current.groups, skillRuns }, useCanvasViewStore.getState().transform, viewModeRef.current);
+      if (action) {
+        workspace = action.type === "copy" ? copyWorkspaceCanvas(workspace, action.id, createWorkspaceCanvasId()) : deleteWorkspaceCanvas(workspace, action.id);
+        targetId = workspace.activeCanvasId;
+      } else if (!targetId) {
+        targetId = createWorkspaceCanvasId();
+        let number = workspace.canvases.length + 1;
+        while (workspace.canvases.some((canvas) => canvas.name === `画布 ${number}`)) number += 1;
+        workspace = { ...workspace, canvases: [...workspace.canvases, { id: targetId, name: `画布 ${number}`, document: { nodes: [], connections: [], groups: [], skillRuns }, viewport: { x: 0, y: 0, k: 1 }, viewMode: "workflow" }] };
+      }
+      const target = workspace.canvases.find((canvas) => canvas.id === targetId);
+      if (!target) return;
+      const activeChanged = workspaceRef.current.activeCanvasId !== target.id;
+      workspaceRef.current = { ...workspace, activeCanvasId: target.id };
+      if (activeChanged) {
+        stopAllGeneration();
+        // Skill artifacts are consumed once per project across all its canvases.
+        loadCanvas(target.document.nodes, target.document.connections, target.document.groups, skillRuns);
+        useCanvasViewStore.getState().setTransform(target.viewport);
+        viewModeRef.current = target.viewMode;
+        setViewMode(target.viewMode);
+        setActiveCanvasId(target.id);
+        resumeGeneration();
+      }
+      setCanvasList(workspace.canvases.map(({ id, name }) => ({ id, name })));
+      setWorkspaceVersion((value) => value + 1);
+      router.replace(workspaceCanvasHref(token, target.id));
+      if (!await requestCanvasSave(projectId)) toast.error("画布已在本地切换，网络恢复后将自动重试保存，请暂勿关闭页面");
+    } catch {
+      toast.error("画布操作失败，当前内容已保留，请重试");
+    } finally {
+      switchingCanvasRef.current = false;
+      setSwitchingCanvas(false);
+    }
+  };
+
+  const handleCanvasRename = async (id: string, name: string): Promise<boolean> => {
+    if (!projectId || projectActionRef.current || switchingCanvasRef.current || saveConflictRef.current) return false;
+    projectActionRef.current = true;
+    setProjectActionBusy(true);
+    try {
+      if (!await requestCanvasSave(projectId)) { toast.error("画布尚未保存成功，请稍后重试"); return false; }
+      if (useCanvasStore.getState().currentProjectId !== projectId) return false;
+      workspaceRef.current = renameWorkspaceCanvas(workspaceRef.current, id, name);
+      setCanvasList(workspaceRef.current.canvases.map(({ id, name }) => ({ id, name })));
+      setWorkspaceVersion((value) => value + 1);
+      if (!await requestCanvasSave(projectId)) { toast.error("名称已在本地更新，网络恢复后将重试保存，请暂勿关闭页面"); return false; }
+      return true;
+    } catch { toast.error("重命名失败，请重试"); return false; }
+    finally { projectActionRef.current = false; setProjectActionBusy(false); }
+  };
+
+  const handleCanvasDelete = async (id: string) => {
+    const canvas = workspaceRef.current.canvases.find((item) => item.id === id);
+    if (!canvas || workspaceRef.current.canvases.length <= 1 || projectActionRef.current || switchingCanvasRef.current) return;
+    if (!await confirmDialog({ title: "删除画布", message: `确定删除「${canvas.name}」吗？画布中的节点、连线和分组将一并删除，此操作不可撤销。`, confirmText: "删除画布", danger: true })) return;
+    await handleCanvasSwitch(undefined, { type: "delete", id });
+  };
+
+  const handleCanvasOpen = async (id: string) => {
+    if (!projectId || projectActionRef.current || switchingCanvasRef.current || saveConflictRef.current || !workspaceRef.current.canvases.some((canvas) => canvas.id === id)) return;
+    if (assistantBusyRef.current || hasPendingCanvasWork(useCanvasStore.getState().nodes) || Object.values(useCanvasSkillRunStore.getState().runs).some((run) => isSkillRunActive(run.status))) {
+      toast.info("当前画布有任务执行中，请等待完成后在新窗口打开");
+      return;
+    }
+    // Reserve the window inside the click event so browsers do not block it
+    // after the asynchronous save. Detach its opener before loading the project.
+    const opened = window.open("about:blank", "_blank");
+    if (!opened) { toast.info("新窗口被浏览器拦截，请允许弹出窗口后重试"); return; }
+    opened.opener = null;
+    projectActionRef.current = true;
+    setProjectActionBusy(true);
+    try {
+      if (!await requestCanvasSave(projectId)) { opened.close(); toast.error("画布尚未保存成功，请稍后重试"); return; }
+      if (useCanvasStore.getState().currentProjectId !== projectId) { opened.close(); return; }
+      opened.location.href = `${window.location.origin}${workspaceCanvasHref(token, id)}`;
+    } catch { opened.close(); toast.error("打开画布失败，请重试"); }
+    finally { projectActionRef.current = false; setProjectActionBusy(false); }
+  };
+
+  const handleProjectNavigate = async (path: string) => {
+    if (projectActionRef.current || switchingCanvasRef.current) return;
+    projectActionRef.current = true;
+    setProjectActionBusy(true);
+    try {
+      if (projectId && !saveConflictRef.current && !await requestCanvasSave(projectId)) {
+        toast.error("画布尚未保存成功，请稍后重试");
+        return;
+      }
+      router.push(path);
+    } finally { projectActionRef.current = false; setProjectActionBusy(false); }
+  };
+
+  const handleDeleteProject = async () => {
+    if (!projectId || projectActionRef.current || switchingCanvasRef.current) return;
+    if (!await confirmDialog({ title: "删除项目", message: `确定删除「${projectName}」吗？项目中的所有画布将一并删除，此操作不可撤销。`, confirmText: "删除项目", danger: true })) return;
+    if (useCanvasStore.getState().currentProjectId !== projectId) return;
+    projectActionRef.current = true;
+    setProjectActionBusy(true);
+    const previousConflict = saveConflictRef.current;
+    try {
+      if (!previousConflict && !await requestCanvasSave(projectId)) { toast.error("项目正在保存，请稍后重试删除"); return; }
+      saveConflictRef.current = true;
+      if (autosaveTimerRef.current) { clearTimeout(autosaveTimerRef.current); autosaveTimerRef.current = null; }
+      const result = await projectApi.delete(projectId);
+      if (result.success) {
+        stopAllGeneration();
+        setCurrentProjectId(null);
+        toast.success("项目已删除");
+        router.replace("/projects");
+      } else { saveConflictRef.current = previousConflict; toast.error(result.message || "删除失败，请重试"); }
+    } catch { saveConflictRef.current = previousConflict; toast.error("删除失败，请重试"); }
+    finally { projectActionRef.current = false; setProjectActionBusy(false); }
+  };
 
   const handleStartEditName = () => {
     setEditingNameValue(projectName);
@@ -544,9 +720,14 @@ export default function CanvasEditorPage() {
   if (missing) notFound();
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden">
+    <div className="canvas-page relative h-screen w-screen overflow-hidden" data-sidebar-open={sidebarOpen || undefined}>
       {loaded ? (
         <CanvasView
+          sidebarOpen={sidebarOpen}
+          onSidebarOpenChange={setSidebarOpen}
+          viewMode={viewMode}
+          onViewChange={handleViewChange}
+          onAssistantBusyChange={handleAssistantBusy}
           launchJournal={launchJournal}
           persistenceReady={persistenceReadyProjectId === projectId}
           onLaunchConsumed={handleLaunchConsumed}
@@ -558,18 +739,15 @@ export default function CanvasEditorPage() {
       )}
 
       {/* 左上浮层：返回 + 项目名（点按重命名） + 保存状态 */}
-      <div className="absolute left-4 top-4 z-20 flex items-center gap-2">
-        <Link
-          href="/projects"
-          title="返回项目列表"
-          className="flex h-9 w-9 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-500 shadow-sm transition-colors hover:bg-neutral-100 hover:text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </Link>
-        <div className="flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 py-2 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+      <nav className="canvas-project-header" aria-label="画布项目导航">
+        <CanvasProjectMenu disabled={!loaded || switchingCanvas || projectActionBusy} onNavigate={(path) => { void handleProjectNavigate(path); }} onDelete={() => { void handleDeleteProject(); }} />
+        <div className="canvas-project-name">
           {editingName ? (
             <input
               autoFocus
+              aria-label="项目名称"
+              maxLength={100}
+              onFocus={(event) => event.currentTarget.select()}
               value={editingNameValue}
               onChange={(e) => setEditingNameValue(e.target.value)}
               onBlur={handleConfirmName}
@@ -577,13 +755,10 @@ export default function CanvasEditorPage() {
                 if (e.key === "Enter") handleConfirmName();
                 if (e.key === "Escape") setEditingName(false);
               }}
-              className="w-44 rounded-md border border-neutral-300 px-2 py-0.5 text-sm outline-none focus:border-neutral-900 dark:border-neutral-700 dark:bg-neutral-800"
+              className="canvas-project-name-input"
             />
           ) : (
-            <button onClick={handleStartEditName} title="点击重命名" className="group flex items-center gap-1.5">
-              <span className="max-w-[220px] truncate text-sm font-medium">{projectName}</span>
-              <Pencil className="h-3 w-3 shrink-0 text-neutral-400 opacity-0 transition-opacity group-hover:opacity-100" />
-            </button>
+            <button type="button" className="canvas-project-title" onClick={handleStartEditName} title="点击重命名项目" disabled={projectActionBusy}><span>{projectName}</span></button>
           )}
           {saving ? (
             <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-neutral-400" />
@@ -593,7 +768,10 @@ export default function CanvasEditorPage() {
             </span>
           ) : null}
         </div>
-      </div>
+        <CanvasWorkspaceControls canvases={canvasList} activeId={activeCanvasId} viewMode={viewMode} busy={!loaded || switchingCanvas || projectActionBusy || saveConflict || !!launchJournal} onSwitch={(id) => { void handleCanvasSwitch(id); }} onCreate={() => { void handleCanvasSwitch(); }} onOpen={(id) => { void handleCanvasOpen(id); }} onRename={handleCanvasRename} onCopy={(id) => { void handleCanvasSwitch(undefined, { type: "copy", id }); }} onDelete={(id) => { void handleCanvasDelete(id); }} onViewChange={handleViewChange} />
+      </nav>
+
+      {(switchingCanvas || projectActionBusy) && <div className="canvas-switching-overlay" role="status" aria-live="polite"><Loader2 size={18} className="animate-spin" />{switchingCanvas ? "保存并切换画布…" : "正在处理项目…"}</div>}
 
       {saveConflict && (
         <div

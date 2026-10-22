@@ -151,13 +151,17 @@ export function useCanvasPanZoom({ containerRef }: UsePanZoomOptions) {
 
   const zoomIn = useCallback(() => zoomAtCenter(1.2), [zoomAtCenter]);
   const zoomOut = useCallback(() => zoomAtCenter(1 / 1.2), [zoomAtCenter]);
+  const zoomTo = useCallback((scale: number) => {
+    if (!Number.isFinite(scale)) return;
+    zoomAtCenter(scale / currentTransform().k);
+  }, [zoomAtCenter, currentTransform]);
   const zoomReset = useCallback(() => {
     cancelPendingTransform();
     setTransform({ x: 0, y: 0, k: 1 });
   }, [setTransform, cancelPendingTransform]);
 
   // 缩放到适应全部节点（无节点时回到原点）
-  const fitView = useCallback(() => {
+  const fitView = useCallback((insets?: { top?: number; bottom?: number }) => {
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
     cancelPendingTransform();
@@ -178,13 +182,16 @@ export function useCanvasPanZoom({ containerRef }: UsePanZoomOptions) {
     const contentW = Math.max(1, maxX - minX);
     const contentH = Math.max(1, maxY - minY);
     const margin = 100;
+    const topInset = insets?.top ?? margin / 2;
+    const bottomInset = insets?.bottom ?? margin / 2;
+    const availableHeight = Math.max(1, rect.height - topInset - bottomInset);
     const k = Math.min(
-      Math.max(Math.min((rect.width - margin) / contentW, (rect.height - margin) / contentH), 0.1),
+      Math.max(Math.min((rect.width - margin) / contentW, availableHeight / contentH), 0.1),
       1.5
     );
     setTransform({
       x: (rect.width - contentW * k) / 2 - minX * k,
-      y: (rect.height - contentH * k) / 2 - minY * k,
+      y: topInset + (availableHeight - contentH * k) / 2 - minY * k,
       k,
     });
   }, [containerRef, setTransform, cancelPendingTransform]);
@@ -202,6 +209,6 @@ export function useCanvasPanZoom({ containerRef }: UsePanZoomOptions) {
     isPanning,
     screenToWorld,
     handleMouseDown,
-    zoomIn, zoomOut, zoomReset, fitView, centerOn,
+    zoomIn, zoomOut, zoomTo, zoomReset, fitView, centerOn,
   };
 }

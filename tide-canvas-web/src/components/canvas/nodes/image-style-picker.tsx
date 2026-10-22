@@ -30,6 +30,7 @@ export const DEFAULT_STYLE_PRESET: ImageStylePreset = {
 };
 
 interface Props {
+  compact?: boolean;
   value?: string;
   selectedName?: string;
   selectedPrompt?: string;
@@ -99,7 +100,7 @@ function coverFallback(seed: string) {
   return colors[index];
 }
 
-export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId, onChange }: Props) {
+export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId, onChange, compact = false }: Props) {
   const [open, setOpen] = useState(false);
   const [source, setSource] = useState<StylePresetSource>("gallery");
   const [category, setCategory] = useState("推荐");
@@ -294,15 +295,17 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
         aria-expanded={open}
         aria-haspopup="dialog"
         title={hasStyle ? activeStyle.name : "选择风格"}
+        aria-label={hasStyle ? `风格：${activeStyle.name}` : "选择图片风格"}
         onClick={(event) => { stop(event); setOpen(true); }}
-        className={`flex h-12 w-12 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg border text-[11px] leading-tight transition-colors ${
+        className={compact ? "image-composer-chip" : `flex h-12 w-12 shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg border text-[11px] leading-tight transition-colors ${
           hasStyle
             ? "border-neutral-950 bg-neutral-950 text-white shadow-sm dark:border-white dark:bg-white dark:text-neutral-950"
             : "border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
         }`}
+        data-active={hasStyle || undefined}
       >
         <Box className="h-3.5 w-3.5" />
-        <span className="max-w-9 truncate text-[10px] leading-none">{activeStyle.shortName || "风格"}</span>
+        <span className={compact ? "image-composer-style-name" : "max-w-9 truncate text-[10px] leading-none"}>{activeStyle.shortName || "风格"}</span>
       </button>
 
       {open && typeof document !== "undefined" && createPortal(
@@ -311,7 +314,7 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
             role="dialog"
             aria-modal="true"
             aria-label="选择风格"
-            className="flex h-[min(820px,calc(100vh-56px))] w-[min(1440px,calc(100vw-72px))] flex-col overflow-hidden rounded-xl bg-white shadow-2xl shadow-black/25"
+            className="canvas-image-style-dialog flex h-[min(820px,calc(100vh-56px))] w-[min(1440px,calc(100vw-72px))] flex-col overflow-hidden rounded-xl bg-white shadow-2xl shadow-black/25"
             onMouseDown={stop}
           >
             <header className="flex items-center gap-4 border-b border-neutral-100 px-5 py-3">
@@ -343,7 +346,7 @@ export function ImageStylePicker({ value, selectedName, selectedPrompt, modelId,
               <button type="button" onClick={() => setCreateOpen((v) => !v)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-neutral-200 px-3 text-sm text-neutral-800 hover:bg-neutral-50">
                 <Plus className="h-4 w-4" /> 自定义
               </button>
-              <button type="button" onClick={() => setOpen(false)} className="rounded-lg p-2 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900">
+              <button type="button" aria-label="关闭风格选择" onClick={() => setOpen(false)} className="rounded-lg p-2 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900">
                 <X className="h-5 w-5" />
               </button>
             </header>

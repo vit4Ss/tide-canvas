@@ -106,6 +106,8 @@ interface AssistantStoredSessionsPayload {
 }
 
 interface CanvasAssistantPanelProps {
+  docked?: boolean;
+  onBusyChange?: (busy: boolean) => void;
   launchJournal?: CanvasLaunchJournal | null;
   persistenceReady?: boolean;
   onLaunchConsumed?: () => void;
@@ -536,6 +538,8 @@ function parseTaskResult(task: AiTaskVO) {
 }
 
 export function CanvasAssistantPanel({
+  docked = false,
+  onBusyChange,
   launchJournal,
   persistenceReady = false,
   onLaunchConsumed,
@@ -610,6 +614,9 @@ export function CanvasAssistantPanel({
     return [...new Set(idsByPriority.reverse())].reverse().slice(-MAX_RECOVERY_RUNS);
   }, [messages, projectId, trackedSkillRunIds]);
   const { runs, loading: runsLoading, actionBusy, createRun, performAction } = useSkillRuns(projectId, recoveryRunIds);
+  useEffect(() => {
+    onBusyChange?.(sending || uploading || runsLoading || runs.some((run) => isSkillRunActive(run.status)));
+  }, [onBusyChange, sending, uploading, runsLoading, runs]);
 
   useLayoutEffect(() => {
     if (assistantRecoveryScopeRef.current === assistantScope) return;
@@ -1712,16 +1719,17 @@ export function CanvasAssistantPanel({
     && !sending
     && !uploading;
 
-  if (!open) {
+  if (!open && !docked) {
     return (
       <button
         ref={assistantLauncherRef}
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 z-[70] flex h-12 w-12 items-center justify-center rounded-full bg-neutral-950 text-white shadow-xl shadow-neutral-900/25 transition-transform hover:scale-105 hover:bg-neutral-800 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-200"
+        className="canvas-assistant-trigger"
         title="AI 小助手"
+        aria-label="AI 小助手"
       >
-        <Bot className="h-5 w-5" />
+        <Bot aria-hidden />
       </button>
     );
   }
@@ -1730,8 +1738,8 @@ export function CanvasAssistantPanel({
     <>
     <aside
       ref={assistantPanelRef}
-      className="fixed bottom-4 right-4 z-[70] flex h-[calc(100vh-32px)] flex-col overflow-hidden rounded-2xl border border-neutral-200/70 bg-neutral-50 text-neutral-950 shadow-none outline-none ring-0 dark:border-white/10 dark:bg-[#18191d] dark:text-white"
-      style={{ width: displayWidth }}
+      className={`${docked ? "canvas-assistant-docked" : ""} fixed bottom-4 right-4 z-[70] flex h-[calc(100vh-32px)] flex-col overflow-hidden rounded-2xl border border-neutral-200/70 bg-neutral-50 text-neutral-950 shadow-none outline-none ring-0 dark:border-white/10 dark:bg-[#18191d] dark:text-white`}
+      style={{ width: docked ? undefined : displayWidth }}
     >
       <div
         className="absolute left-0 top-0 z-20 h-full w-4 cursor-ew-resize bg-transparent"
@@ -1849,7 +1857,7 @@ export function CanvasAssistantPanel({
       <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 sm:px-4">
         <div className={(messages.length ? "justify-start" : "justify-center pb-8") + " flex min-h-0 flex-1 flex-col"}>
           {messages.length === 0 ? (
-            <div className="mx-auto w-full max-w-[330px]">
+            <div className="canvas-assistant-intro mx-auto w-full max-w-[330px]">
               <div className="mb-5 flex h-10 w-10 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-700 dark:border-white/10 dark:bg-white/6 dark:text-neutral-200">
                 {selectedSkill ? <Wand2 className="h-[18px] w-[18px]" /> : <Sparkles className="h-[18px] w-[18px]" />}
               </div>

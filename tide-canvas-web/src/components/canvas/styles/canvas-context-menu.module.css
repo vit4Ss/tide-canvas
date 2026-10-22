@@ -1,0 +1,75 @@
+.menu {
+  position: fixed;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 256px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow: hidden;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: 0 6px 20px rgb(0 0 0 / .12);
+  font-size: 13px;
+  line-height: 20px;
+  user-select: none;
+}
+.list {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.item, .nodeItem, .back {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  gap: 10px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+.item { height: 36px; }
+.item > svg, .back > svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--muted-foreground); stroke-width: 1.75; }
+.item > span { min-width: 0; }
+.item kbd, .trailing { margin-left: auto; flex-shrink: 0; color: var(--muted-foreground); }
+.item kbd { font-family: inherit; font-size: 11px; line-height: 16px; white-space: nowrap; }
+.menu[data-keyboard-navigation="false"] :is(.item, .nodeItem, .back):hover:not(:disabled) { background: var(--canvas-menu-hover); }
+/* Chromium can retain :focus-visible after a secondary click. Use the menu's
+   actual input mode, and suppress only this menu's automatic focus outline. */
+.menu[data-keyboard-navigation]:focus,
+.menu[data-keyboard-navigation] :is(.item, .nodeItem, .back):focus { outline: none; }
+.menu[data-keyboard-navigation="true"] :is(.item, .nodeItem, .back):focus { outline: 1px solid var(--canvas-input-focus-border); outline-offset: -1px; background: var(--canvas-menu-hover); }
+.item:disabled, .nodeItem:disabled { opacity: .4; cursor: default; }
+.separator { height: 1px; margin: 6px 4px; background: var(--border); opacity: .65; }
+.back { flex-shrink: 0; gap: 6px; height: 34px; margin-bottom: 4px; color: var(--muted-foreground); font-size: 12px; }
+.menu[data-keyboard-navigation="false"] .back:hover { color: var(--foreground); }
+/* Descriptions always occupy a line. Hover never changes row geometry. */
+.nodeItem { height: 48px; gap: 10px; padding: 0 8px; }
+.nodeIcon { display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; border-radius: 8px; background: var(--canvas-menu-hover); color: var(--muted-foreground); }
+.nodeIcon > svg { width: 16px; height: 16px; stroke-width: 1.75; }
+.menu[data-keyboard-navigation="false"] .nodeItem:hover .nodeIcon,
+.menu[data-keyboard-navigation="true"] .nodeItem:focus .nodeIcon { background: var(--accent); color: var(--foreground); }
+.nodeText { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.nodeTitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 20px; font-weight: 500; }
+.description { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; height: 16px; font-size: 11px; line-height: 16px; color: var(--muted-foreground); }
+.section { padding: 10px 8px 4px; margin-top: 6px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 11px; line-height: 16px; }
+.danger { color: var(--destructive, #dc2626); }
+.danger > svg, .danger kbd { color: inherit; }
+.menu[data-keyboard-navigation="false"] .danger:hover:not(:disabled) { background: color-mix(in srgb, var(--destructive, #dc2626) 8%, transparent); }
+@media (prefers-reduced-motion: reduce) {
+  .item, .nodeItem, .back { transition: none; }
+}

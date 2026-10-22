@@ -155,7 +155,7 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
 
   useEffect(() => {
     if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
+    const onOutsideInteraction = (event: PointerEvent | WheelEvent) => {
       const target = event.target;
       if (
         target instanceof Node &&
@@ -163,8 +163,13 @@ export function ModelPicker({ models, value, onChange, triggerLabel, showType = 
       ) return;
       setOpen(false);
     };
-    document.addEventListener("pointerdown", onPointerDown, true);
-    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("pointerdown", onOutsideInteraction, true);
+    // 画布平移只改变 transform，不触发 DOM scroll；滚动画布时关闭旧位置的浮层。
+    document.addEventListener("wheel", onOutsideInteraction, { capture: true, passive: true });
+    return () => {
+      document.removeEventListener("pointerdown", onOutsideInteraction, true);
+      document.removeEventListener("wheel", onOutsideInteraction, true);
+    };
   }, [open]);
 
   useEffect(() => {

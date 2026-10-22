@@ -1,10 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { aiApi } from "@/lib/api";
 import { useAiGeneration } from "@/hooks/canvas/use-ai-generation";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
-import type { AiModelType, AiModelVO } from "@/types/ai";
+import type { AiModelType } from "@/types/ai";
+import { createCanvasModelCatalog, resolveCanvasModelId } from "@/lib/canvas-model-catalog";
+
+const canvasModelCatalog = createCanvasModelCatalog(aiApi.listModels);
 
 /** 卸载守卫:异步探测/上传回调完成时若节点已卸载,不再 setState。
  *  挂载时须重新置 true:StrictMode 会 mount→unmount→remount,只在 cleanup
@@ -52,39 +55,33 @@ export function useMediaErrorRecovery(node: CanvasNode, mediaSrc: string | undef
 
 /** 拉取指定类型的可用模型（后台配置，含图标与支持的格式），默认选第一个 */
 export function useAiModels(type: AiModelType, preferredModelId?: string) {
-  const [models, setModels] = useState<AiModelVO[]>([]);
+  const catalog = useSyncExternalStore(canvasModelCatalog.subscribe, canvasModelCatalog.getSnapshot, canvasModelCatalog.getServerSnapshot);
+  const models = useMemo(() => catalog.models.filter((model) => model.type === type), [catalog.models, type]);
   const [modelId, setModelId] = useState(preferredModelId ?? "");
+  const requestRevision = useRef(0);
   useEffect(() => {
-    let active = true;
-    aiApi.listModels().then((res) => {
-      if (active && res.success) {
-        const filtered = res.data.filter((m) => m.type === type);
-        setModels(filtered);
-        if (filtered.length > 0) {
-          setModelId((prev) => {
-            if (prev && filtered.some((model) => model.modelId === prev)) return prev;
-            if (preferredModelId && filtered.some((model) => model.modelId === preferredModelId)) {
-              return preferredModelId;
-            }
-            // 全局图片生成主模型优先于列表首个（仅图片类目会配置该标记）
-            const primary = filtered.find((model) => {
-              try {
-                return (JSON.parse(model.config || "{}") as { imagePrimary?: boolean }).imagePrimary === true;
-              } catch {
-                return false;
-              }
-            });
-            return (primary ?? filtered[0]).modelId;
-          });
-        } else {
-          setModelId("");
-        }
+    const request = ++requestRevision.current;
+    void canvasModelCatalog.load().then((result) => {
+      if (request === requestRevision.current && result.status === "ready") {
+        const filtered = result.models.filter((model) => model.type === type);
+        setModelId((current) => resolveCanvasModelId(filtered, current, preferredModelId));
       }
-    }).catch(() => {});
-    return () => { active = false; };
+    });
+    return () => { requestRevision.current += 1; };
   }, [preferredModelId, type]);
-  const selectedModel = models.find((m) => m.modelId === modelId);
-  return { models, modelId, setModelId, selectedModel };
+
+  const reload = useCallback(() => {
+    const request = ++requestRevision.current;
+    void canvasModelCatalog.reload().then((result) => {
+      if (request === requestRevision.current && result.status === "ready") {
+        const filtered = result.models.filter((model) => model.type === type);
+        setModelId((current) => resolveCanvasModelId(filtered, current, preferredModelId));
+      }
+    });
+  }, [preferredModelId, type]);
+  const resolvedModelId = resolveCanvasModelId(models, modelId, preferredModelId);
+  const selectedModel = models.find((model) => model.modelId === resolvedModelId);
+  return { models, modelId: resolvedModelId, setModelId, selectedModel, status: catalog.status, error: catalog.error, reload };
 }
 
 /** 提示词编辑态：富文本展开弹窗开关 + 写回 store。

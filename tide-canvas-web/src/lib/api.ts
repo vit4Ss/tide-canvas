@@ -88,8 +88,8 @@ export const aiApi = {
     scope: string,
     options?: AiGenerationJournalOptions,
   ) => generateAiTaskIdempotent(data, scope, options),
-  optimizePrompt: (prompt: string) =>
-    http.post<{ prompt: string }>("/api/ai/optimize-prompt", { prompt }),
+  optimizePrompt: (prompt: string, options?: { action: "optimize" } | { action: "translate"; targetLanguage: "en" | "zh" }) =>
+    http.post<{ prompt: string }>("/api/ai/optimize-prompt", { prompt, ...options }),
   // 「AI 优化」单次实扣积分（含团队倍率，后端为准）；未配置文本模型时为 0
   optimizeCost: () =>
     http.get<{ cost: number }>("/api/ai/optimize-cost"),

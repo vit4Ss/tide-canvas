@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { useState, type CSSProperties, type ReactNode } from "react";
+import { Popover } from "@mantine/core";
+import styles from "./styles/parameter-dropdown.module.css";
 import { ChevronDown, Monitor, Volume2, VolumeX } from "lucide-react";
 
 export interface VideoParamValue {
@@ -23,6 +24,8 @@ export const VIDEO_RATIOS = [
 
 export const RESOLUTIONS = ["480P", "720P", "1080P"];
 export const DURATION_OPTIONS = [5, 10];
+export type VideoGenerationCount = 1 | 2 | 4;
+const GENERATION_COUNTS: readonly VideoGenerationCount[] = [1, 2, 4];
 
 interface RatioOption {
   value: string;
@@ -39,9 +42,12 @@ interface Props {
   // 后台把时长存成带单位的字符串("4s")，甚至乱序；这里容错接收 string|number。
   durations?: (string | number)[];
   allowAudio?: boolean;
+  audioReadOnly?: boolean;
+  audioHint?: string;
+  count?: VideoGenerationCount;
+  onCountChange?: (count: VideoGenerationCount) => void;
+  disabled?: boolean;
 }
-
-const PANEL_WIDTH = 372;
 
 // 把后台时长(可能是 "4s"/"15s" 字符串且乱序)规整为去重、升序的秒数数组。
 // 不规整会渲染成 "4ss"（{n}s 又拼一个 s）且顺序错乱、选中态对不上（数字比字符串）。
@@ -53,34 +59,12 @@ export function normalizeDurations(raw?: (string | number)[]): number[] {
   return Array.from(new Set(nums)).sort((a, b) => a - b);
 }
 
-export function VideoParamPicker({ value, onChange, resolutions, ratios, durations, allowAudio }: Props) {
+export function VideoParamPicker({
+  value, onChange, resolutions, ratios, durations, allowAudio,
+  count, onCountChange, disabled = false, audioReadOnly = false, audioHint,
+}: Props) {
   const [open, setOpen] = useState(false);
-  const [openUp, setOpenUp] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const [panelPos, setPanelPos] = useState({ left: 0, top: 0 });
-
-  useEffect(() => {
-    if (!open) return;
-    const onMouseDown = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (containerRef.current?.contains(target) || panelRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setOpen(false);
-      requestAnimationFrame(() => triggerRef.current?.focus());
-    };
-    document.addEventListener("mousedown", onMouseDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onMouseDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
-
+  const menuOpen = open && !disabled;
   // 后台配置的取值以配置为准,内置表仅提供显示样式:配了白名单外的值(如 "2:1"/"2K")
   // 时不能整段过滤消失——节点校正 effect 已把参数设成该值、摘要也显示它,
   // 选项一旦被滤掉用户就无处更改。白名单外的比例按数值推导缩略图形状。
@@ -110,53 +94,40 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
   if (ratioOpts.length) summaryParts.push(value.ratio === "auto" ? "智能比例" : value.ratio);
   if (resolutionOpts.length) summaryParts.push(value.resolution.toUpperCase());
   if (durationOpts.length) summaryParts.push(`${value.duration}s`);
+  if (count !== undefined) summaryParts.push(`${count}个`);
   const summary = summaryParts.join(" · ") || "默认";
 
-  const stop = (e: ReactMouseEvent) => e.stopPropagation();
-
-  const toggle = (e: ReactMouseEvent) => {
-    stop(e);
-    if (!open && triggerRef.current) {
-      const rect = triggerRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const nextOpenUp = spaceBelow < 500;
-      const left = Math.min(Math.max(12, Math.round(rect.left)), Math.max(12, window.innerWidth - PANEL_WIDTH - 12));
-      setOpenUp(nextOpenUp);
-      setPanelPos({ left, top: Math.round(nextOpenUp ? rect.top - 8 : rect.bottom + 8) });
-    }
-    setOpen(!open);
-  };
-
   return (
-    <div className="relative" ref={containerRef} onMouseDown={stop}>
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={toggle}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        className="flex h-8 max-w-[250px] items-center gap-1.5 rounded-xl px-2 text-[11px] text-neutral-700 transition-colors hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/35 dark:text-neutral-300 dark:hover:bg-neutral-800"
-      >
-        <Monitor className="h-3.5 w-3.5 shrink-0" />
-        <span className="truncate">{summary}</span>
-        {showAudio && (value.audio ? <Volume2 className="h-3 w-3 shrink-0 text-neutral-500" /> : <VolumeX className="h-3 w-3 shrink-0 text-neutral-400" />)}
-        <ChevronDown className={`h-3 w-3 shrink-0 text-neutral-400 transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-
-      {open && typeof document !== "undefined" && createPortal(
-        <div
-          ref={panelRef}
-          role="dialog"
-          aria-label="视频参数"
-          className={`fixed z-[90] w-[372px] max-w-[calc(100vw-24px)] rounded-2xl border border-border/80 bg-popover/95 p-4 text-left text-popover-foreground shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl dark:border-white/10 dark:bg-neutral-900/95 dark:shadow-black/55 ${openUp ? "-translate-y-full" : ""}`}
-          style={{ left: panelPos.left, top: panelPos.top }}
-          onMouseDown={stop}
-        >
+    <Popover opened={menuOpen} onChange={setOpen} position="bottom-start" offset={8}
+      width={344} withinPortal floatingStrategy="fixed" zIndex={110} radius={12} trapFocus returnFocus
+      shadow="none" middlewares={{ flip: true, shift: { padding: 12, crossAxis: true } }}
+      clickOutsideEvents={["pointerdown"]}
+      positionDependencies={[value.ratio, value.resolution, value.duration, ratioOpts.length, resolutionOpts.length, durationOpts.length, count, audioReadOnly, audioHint]}
+      transitionProps={{ duration: 100, transition: "fade" }}>
+      <Popover.Target>
+        <button type="button" className={`${styles.trigger} disabled:cursor-default disabled:opacity-50`} disabled={disabled} aria-haspopup="dialog" aria-expanded={menuOpen}
+          aria-label={`视频参数，${summary}`} title="视频参数"
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={(event) => { event.stopPropagation(); setOpen(!open); }}
+          onKeyDown={(event) => { if (event.key === "Escape" && open) { event.stopPropagation(); setOpen(false); } }}>
+          <Monitor className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span className={styles.triggerText}>{summary}</span>
+          {showAudio && (!audioReadOnly || value.audio) && (value.audio ? <Volume2 className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /> : <VolumeX className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />)}
+          <ChevronDown className={`h-3 w-3 shrink-0 text-muted-foreground ${menuOpen ? "rotate-180" : ""}`} aria-hidden />
+        </button>
+      </Popover.Target>
+      <Popover.Dropdown role="dialog" aria-label="视频参数" className={styles.panel}
+        onMouseDown={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.key === "Escape") { event.preventDefault(); setOpen(false); }
+        }}>
+        <fieldset disabled={disabled} className="m-0 min-w-0 border-0 p-0" aria-label="视频参数">
           {/* 只有一个可选值的参数不渲染假按钮，直接在标题行右侧显示为只读值 */}
           {ratioOpts.length === 1 && <ParamSection title="视频尺寸" aside={<StaticValue>{ratioOpts[0].label}</StaticValue>} />}
           {ratioOpts.length > 1 && (
             <ParamSection title="视频尺寸">
-              <div className="grid grid-cols-6 gap-1.5">
+              <div className={styles.ratioGrid}>
                 {ratioOpts.map((ratio) => (
                   <RatioTile key={ratio.value} option={ratio} active={value.ratio === ratio.value} onClick={() => onChange({ ...value, ratio: ratio.value })} />
                 ))}
@@ -195,35 +166,48 @@ export function VideoParamPicker({ value, onChange, resolutions, ratios, duratio
             </ParamSection>
           )}
 
+          {count !== undefined && (
+            <ParamSection title="生成数量" aside={!onCountChange ? <StaticValue>{count}个</StaticValue> : undefined}>
+              {onCountChange && <ChipRow count={GENERATION_COUNTS.length}>
+                {GENERATION_COUNTS.map((option) => (
+                  <Chip key={option} active={count === option} onClick={() => onCountChange(option)}>{option}个</Chip>
+                ))}
+              </ChipRow>}
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">每个视频单独生成并计费。</p>
+            </ParamSection>
+          )}
+
           {showAudio && (
             <ParamSection
-              title="生成音频"
-              aside={
+              title={audioReadOnly ? "音频" : "生成音频"}
+              aside={audioReadOnly ? <StaticValue>按模型默认</StaticValue> : (
                 <button
                   type="button"
                   role="switch"
+                  aria-label="生成音频"
                   aria-checked={value.audio}
                   onClick={() => onChange({ ...value, audio: !value.audio })}
-                  className={`flex h-5 w-9 items-center rounded-full p-0.5 transition-colors ${value.audio ? "bg-neutral-900 dark:bg-white/85" : "bg-neutral-200 dark:bg-white/15"}`}
+                  className={`flex h-5 w-9 items-center rounded-full p-0.5 transition-colors ${value.audio ? "bg-primary" : "bg-muted"}`}
                 >
-                  <span className={`h-4 w-4 rounded-full bg-white transition-transform ${value.audio ? "translate-x-4 dark:bg-neutral-900" : "dark:bg-neutral-400"}`} />
+                  <span className={`h-4 w-4 rounded-full transition-transform ${value.audio ? "translate-x-4 bg-primary-foreground" : "bg-muted-foreground"}`} />
                 </button>
-              }
-            />
+              )}
+            >
+              {audioHint && <p className="text-xs leading-5 text-muted-foreground">{audioHint}</p>}
+            </ParamSection>
           )}
-        </div>,
-        document.body,
-      )}
-    </div>
+        </fieldset>
+      </Popover.Dropdown>
+    </Popover>
   );
 }
 
 // 标题行 = 小号灰色说明文字 + 右侧可选内容（只读值/开关）；正文可省（纯展示行）。
 function ParamSection({ title, aside, children }: { title: string; aside?: ReactNode; children?: ReactNode }) {
   return (
-    <section className="not-first:mt-5">
+    <section className={styles.section}>
       <div className={`flex h-5 items-center justify-between ${children ? "mb-2" : ""}`}>
-        <span className="text-xs font-medium text-neutral-500 dark:text-white/50">{title}</span>
+        <span className="text-xs font-medium text-muted-foreground">{title}</span>
         {aside}
       </div>
       {children}
@@ -232,13 +216,8 @@ function ParamSection({ title, aside, children }: { title: string; aside?: React
 }
 
 function StaticValue({ children }: { children: ReactNode }) {
-  return <span className="text-[13px] font-medium tabular-nums text-neutral-900 dark:text-white/90">{children}</span>;
+  return <span className="text-[13px] font-medium tabular-nums text-popover-foreground">{children}</span>;
 }
-
-// 选中态用低饱和强调底色与细描边，避免硬黑框带来的塑料按钮感。
-const chipActive = "border-blue-500/35 bg-blue-500/[0.06] text-neutral-950 shadow-[0_1px_2px_rgba(15,23,42,0.05)] dark:border-blue-400/35 dark:bg-blue-400/10 dark:text-white";
-const chipRest =
-  "border-neutral-200/80 text-neutral-500 hover:border-neutral-300 hover:bg-neutral-100/55 hover:text-neutral-900 dark:border-white/10 dark:text-white/60 dark:hover:border-white/20 dark:hover:bg-white/[0.06] dark:hover:text-white/90";
 
 // 时长选项多(>6)时按钮挤不下，改用细轨道滑块（样式同图片节点的 .slider-thin），
 // 当前值显示在标题行右侧。选项可能不连续(如 4,6,8,12)，滑块走索引再映射回秒数。
@@ -254,6 +233,8 @@ function DurationSlider({ options, value, onChange }: { options: number[]; value
         step={1}
         value={idx}
         onChange={(e) => onChange(options[Number(e.target.value)])}
+        aria-label="视频时长"
+        aria-valuetext={`${value} 秒`}
         className="slider-thin w-full"
         style={{ "--pct": `${pct}%` } as CSSProperties}
       />
@@ -263,7 +244,7 @@ function DurationSlider({ options, value, onChange }: { options: number[]; value
 
 function ChipRow({ children, count }: { children: ReactNode; count: number }) {
   return (
-    <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.max(1, count)}, minmax(0, 1fr))` }}>
+    <div className={styles.segmentedRow} style={{ gridTemplateColumns: `repeat(${Math.max(1, Math.min(count, 4))}, minmax(0, 1fr))` }}>
       {children}
     </div>
   );
@@ -274,7 +255,8 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
     <button
       type="button"
       onClick={onClick}
-      className={`${active ? chipActive : chipRest} flex h-8 items-center justify-center rounded-lg border text-[13px] font-medium transition-colors`}
+      aria-pressed={active}
+      className={`${styles.segmentButton} ${active ? styles.segmentButtonActive : ""}`}
     >
       {children}
     </button>
@@ -290,7 +272,8 @@ function RatioTile({ option, active, onClick }: { option: RatioOption; active: b
     <button
       type="button"
       onClick={onClick}
-      className={`${active ? chipActive : chipRest} flex h-[52px] flex-col items-center justify-center gap-1 rounded-[10px] border text-[11px] font-medium transition-colors`}
+      aria-pressed={active}
+      className={`${styles.ratioTile} ${active ? styles.ratioTileActive : ""}`}
     >
       <span className="flex h-5 items-center justify-center">
         <span className="block rounded-[2px] border border-current" style={{ width, height } as CSSProperties} />

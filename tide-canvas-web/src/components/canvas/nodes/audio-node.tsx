@@ -2,6 +2,7 @@
 
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Popover } from "@mantine/core";
 import { useCanvasStore } from "@/stores/use-canvas-store";
 import {
   AudioLines,
@@ -9,7 +10,6 @@ import {
   FolderOpen,
   Loader2,
   Mic2,
-  Music2,
   SlidersHorizontal,
   Upload,
   Zap,
@@ -21,7 +21,6 @@ import {
   buildMusicInput,
   clipDisplayLabel,
   fetchClipOptions,
-  isSfxModel,
   validateMusicParams,
   findClipModel,
   uploadCostOf,
@@ -41,11 +40,13 @@ import type { CanvasNodeProps } from "./types/node-props";
 import { useAiModels, useNodeRuntime } from "./shared/use-node-runtime";
 import { useMediaUpload } from "./shared/use-media-upload";
 import { parseModelConfig, stopEvent as stop } from "./shared/node-utils";
-import { GenerateSubmitButton, NodePanelChrome, NodeShell } from "./shared/node-overlays";
+import { GenerateSubmitButton, NodeShell } from "./shared/node-overlays";
+import { NodeComposer } from "./shared/node-composer";
+import { PromptEditorModal } from "./prompt-ref-editor";
 import { CANVAS_AUDIO_ACCEPT } from "@/lib/canvas-drop-files";
+import { audioModelKind } from "./audio-model-kind";
 
 const MAX_TEXT = 50000;
-const WAVE_BARS = [16, 28, 44, 60, 40, 24, 34, 54, 70, 48, 30, 18, 42, 56, 36, 22];
 const PAUSE_OPTIONS = [
   { label: "0.25s", token: "<#0.25#>" },
   { label: "0.5s", token: "<#0.5#>" },
@@ -84,7 +85,7 @@ interface VoiceOption {
   name: string;
 }
 
-/** 模型配置里的生成方式（t2a=音乐 / sfx=音效；TTS 模型通常不配）。 */
+/** 模型配置里的生成方式；上游也可能为 TTS 返回通用 t2a。 */
 function modesOf(model?: AiModelVO): string[] {
   const cfg = parseModelConfig<{ modes?: unknown }>(model);
   return Array.isArray(cfg.modes) ? cfg.modes.filter((m): m is string => typeof m === "string") : [];
@@ -132,7 +133,7 @@ function createAudioTokenElement(tokenText: string) {
   token.dataset.audioToken = normalizedToken;
   token.textContent = normalizedToken;
   token.className =
-    "mx-0.5 inline-flex h-[22px] items-center rounded-md bg-sky-50 px-1.5 align-middle text-xs font-semibold leading-none text-sky-600 ring-1 ring-sky-100 dark:bg-sky-950/40 dark:text-sky-300 dark:ring-sky-900/60";
+    "mx-0.5 inline-flex h-[22px] items-center rounded-md bg-[var(--accent)] px-1.5 align-middle text-xs font-medium leading-none text-[var(--foreground)] ring-1 ring-[var(--border)]";
   return token;
 }
 
@@ -300,15 +301,18 @@ const AudioPromptEditor = forwardRef<AudioPromptEditorHandle, AudioPromptEditorP
   };
 
   return (
-    <div className="relative px-2 pt-1">
+    <div className="relative">
       {!value && (
-        <span className="pointer-events-none absolute left-2 top-1 text-sm leading-5 text-neutral-400">
+        <span className="pointer-events-none absolute inset-x-0 top-0 text-sm leading-[25.2px] text-[var(--muted-foreground)] opacity-65">
           {placeholder}
         </span>
       )}
       <div
         ref={editorRef}
         contentEditable
+        role="textbox"
+        aria-label="音频提示词"
+        aria-multiline="true"
         suppressContentEditableWarning
         spellCheck={false}
         onInput={updateFromEditor}
@@ -330,11 +334,11 @@ const AudioPromptEditor = forwardRef<AudioPromptEditorHandle, AudioPromptEditorP
           syncAudioPromptEditor(editor, next);
           rangeRef.current = null;
         }}
-        className="block w-full overflow-y-auto whitespace-pre-wrap break-words border-none bg-transparent text-sm leading-5 text-neutral-900 outline-none caret-neutral-900 selection:bg-blue-200/60 focus:border-transparent focus:outline-none focus-visible:outline-none focus:ring-0 dark:text-neutral-100 dark:caret-neutral-100 dark:selection:bg-blue-500/40"
+        className="image-composer-editor outline-none"
         style={{
           cursor: "text",
-          minHeight: expanded ? 120 : 72,
-          maxHeight: expanded ? 220 : 92,
+          minHeight: expanded ? 120 : 80,
+          maxHeight: expanded ? 220 : 160,
           overflowX: "hidden",
           wordBreak: "break-word",
           overflowWrap: "anywhere",
@@ -369,6 +373,8 @@ export const AudioNode = memo(function AudioNode({
     uploadPreviewSrc,
   } = useMediaUpload(node, "audio", undefined);
   const [assetPickerOpen, setAssetPickerOpen] = useState(false);
+  const [promptExpanded, setPromptExpanded] = useState(false);
+  const [musicSettingsOpen, setMusicSettingsOpen] = useState(false);
 
   const [voice, setVoice] = useState("");
   const [activeTokenMenu, setActiveTokenMenu] = useState<AudioTokenMenu>(null);
@@ -410,19 +416,19 @@ export const AudioNode = memo(function AudioNode({
     setVoice(voices[0]?.id ?? "");
   }
 
-  // 音频模型分流（与创作台一致）：sfx = 音效（只吃描述）；音乐 = 后台生成方式勾
-  // t2a 或 modelKey 命中 suno；其余按 TTS（音色 + 停顿/语气词 token）。
+  // 通用 t2a 不能证明支持 Suno 的歌词、延长和翻唱协议。
   const modelModes = modesOf(selectedModel);
-  const isSfx = isSfxModel(selectedModel?.modelId, modelModes);
-  const isMusic =
-    !isSfx &&
-    (modelModes.includes("t2a") || /suno/i.test(`${selectedModel?.modelId ?? ""} ${selectedModel?.name ?? ""}`));
+  const audioKind = audioModelKind(selectedModel ?? {}, modelModes, voices.length > 0);
+  const isSfx = audioKind === "sfx";
+  const isSuno = audioKind === "suno";
+  const isSpeech = audioKind === "speech";
+  const isMusic = isSuno || audioKind === "music";
   const musicMode = music.musicMode;
 
   // 每次进入延长/翻唱都重拉原曲候选（新生成的歌完成后，重新切入即可看到）；
   // 已有列表在刷新期间保留展示，仅首次为 null 时显示加载态。
   useEffect(() => {
-    if (!isMusic || (musicMode !== "extend" && musicMode !== "cover")) return;
+    if (!isSuno || (musicMode !== "extend" && musicMode !== "cover")) return;
     let alive = true;
     fetchClipOptions().then((opts) => {
       if (alive) setClipOpts(opts);
@@ -430,7 +436,7 @@ export const AudioNode = memo(function AudioNode({
     return () => {
       alive = false;
     };
-  }, [isMusic, musicMode]);
+  }, [isSuno, musicMode]);
 
   const clipLabel = clipDisplayLabel(clipOpts, music.sourceClipId);
 
@@ -458,8 +464,8 @@ export const AudioNode = memo(function AudioNode({
   const cardHeight = node.contentH ?? node.height ?? 200;
   const hasPrompt = prompt.trim().length > 0;
   // 音乐模式的可生成判定：灵感要描述，自定义要歌词，延长/翻唱要原曲。
-  const musicReady = isMusic && validateMusicParams(prompt, music) === null;
-  const canGenerate = isMusic ? musicReady : hasPrompt;
+  const musicReady = isSuno && validateMusicParams(prompt, music) === null;
+  const canGenerate = isSuno ? musicReady : hasPrompt;
 
   // 分轨播放地址：有分轨按选中项，否则回落 audioSrc。
   const tracks = node.audioTracks ?? [];
@@ -512,7 +518,7 @@ export const AudioNode = memo(function AudioNode({
 
   const handleGenerate = () => {
     if (generating || nodeUploading) return;
-    if (isMusic) {
+    if (isSuno) {
       const err = validateMusicParams(prompt, music);
       if (err) {
         toast.info(err);
@@ -535,7 +541,7 @@ export const AudioNode = memo(function AudioNode({
       modelId: modelId || "default",
       input: {
         prompt,
-        ...(effectiveVoice ? { voice: effectiveVoice } : {}),
+        ...(isSpeech && effectiveVoice ? { voice: effectiveVoice } : {}),
       },
     });
   };
@@ -545,24 +551,18 @@ export const AudioNode = memo(function AudioNode({
     <NodeShell node={node} isSelected={isSelected} isDragging={isDragging} onNodeMouseDown={onNodeMouseDown}>
       <div className="relative">
         <div
-          className={`relative overflow-hidden rounded-[18px] bg-white shadow-sm ring-1 transition-all dark:bg-neutral-950 ${
-            isConnectTarget ? "ring-2 ring-blue-500/70" :
-            isSelected ? "ring-2 ring-neutral-400 dark:ring-neutral-600" : "ring-neutral-200 hover:ring-neutral-300 dark:ring-neutral-800 dark:hover:ring-neutral-700"
-          }`}
-          style={{ height: cardHeight }}
+          className="relative overflow-hidden rounded-xl border bg-[var(--popover)] text-[var(--foreground)] transition-colors"
+          style={{ height: cardHeight, borderColor: isConnectTarget ? "var(--ring)" : isSelected ? "var(--canvas-input-focus-border)" : "var(--border)" }}
         >
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(59,130,246,0.10),transparent_34%),radial-gradient(circle_at_82%_18%,rgba(16,185,129,0.08),transparent_30%)]" />
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/80 to-transparent dark:via-white/15" />
-
           {nodeUploading && (
             <div className="absolute inset-0 z-[6] flex items-center justify-center bg-white/80 backdrop-blur-sm dark:bg-neutral-950/80">
               <div className="flex min-w-40 flex-col items-center gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 shadow-lg dark:border-neutral-800 dark:bg-neutral-900">
                 <div className="flex items-center gap-2 text-sm font-medium text-neutral-700 dark:text-neutral-200">
-                  <Loader2 className="h-4 w-4 animate-spin text-blue-500" aria-hidden />
+                  <Loader2 className="h-4 w-4 animate-spin text-[var(--muted-foreground)]" aria-hidden />
                   {nodeUploadPct > 0 ? `上传音频 ${nodeUploadPct}%` : "正在载入音频..."}
                 </div>
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800" role="progressbar" aria-label="音频上传进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.max(0, Math.min(100, nodeUploadPct))}>
-                  <span className="block h-full rounded-full bg-blue-500 transition-[width] duration-150 motion-reduce:transition-none" style={{ width: `${Math.max(0, Math.min(100, nodeUploadPct))}%` }} />
+                  <span className="block h-full rounded-full bg-[var(--foreground)] transition-[width] duration-150 motion-reduce:transition-none" style={{ width: `${Math.max(0, Math.min(100, nodeUploadPct))}%` }} />
                 </div>
               </div>
             </div>
@@ -571,7 +571,7 @@ export const AudioNode = memo(function AudioNode({
           {generating && !nodeUploading && (
             <div className="absolute inset-0 z-[5] flex items-center justify-center bg-white/75 backdrop-blur-sm dark:bg-neutral-950/75">
               <div className="flex flex-col items-center gap-3 rounded-2xl border border-neutral-200 bg-white/90 px-5 py-4 shadow-lg dark:border-neutral-800 dark:bg-neutral-900/90">
-                <Loader2 className="h-7 w-7 animate-spin text-blue-500" />
+                <Loader2 className="h-7 w-7 animate-spin text-[var(--muted-foreground)]" />
                 <p className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
                   {isMusic ? "音乐生成中..." : isSfx ? "音效生成中..." : "语音合成中..."}
                 </p>
@@ -583,23 +583,10 @@ export const AudioNode = memo(function AudioNode({
 
             <div className="flex min-h-0 flex-1 items-center justify-center">
               <div className="flex w-full flex-col items-center gap-2">
-                <div className="flex items-end justify-center gap-1.5">
-                  {WAVE_BARS.map((h, i) => (
-                    <span
-                      key={i}
-                      className={`w-1.5 rounded-full ${
-                        node.audioSrc || generating
-                          ? "bg-blue-500/80 shadow-[0_0_14px_rgba(59,130,246,0.24)]"
-                          : "bg-neutral-300 dark:bg-neutral-700"
-                      }`}
-                      style={{ height: h }}
-                    />
-                  ))}
-                </div>
+                <AudioLines className="h-12 w-12 text-[var(--muted-foreground)] opacity-60" aria-hidden />
                 {!playSrc && (
                   <div className="flex max-w-full flex-col items-center gap-2">
-                    <div className="flex max-w-full items-center gap-2 rounded-xl border border-neutral-200/80 bg-white/80 px-3 py-2 text-sm text-neutral-700 shadow-sm dark:border-neutral-800 dark:bg-neutral-900/80 dark:text-neutral-300">
-                      <Music2 className="h-4 w-4 shrink-0 text-neutral-500" />
+                    <div className="flex max-w-full items-center gap-2 py-1 text-sm text-[var(--muted-foreground)]">
                       <span className="truncate">
                         {isMusic ? "描述你想要的音乐" : isSfx ? "描述你想要的音效" : "输入文本生成音频"}
                       </span>
@@ -610,7 +597,7 @@ export const AudioNode = memo(function AudioNode({
                         onMouseDown={stop}
                         onClick={openFilePicker}
                         disabled={nodeUploading || generating}
-                        className="inline-flex h-11 touch-manipulation items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 text-xs font-medium text-neutral-600 transition-colors hover:border-neutral-400 hover:text-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:text-white"
+                        className="image-composer-chip"
                       >
                         <Upload className="h-3.5 w-3.5" aria-hidden />上传本地音频
                       </button>
@@ -619,7 +606,7 @@ export const AudioNode = memo(function AudioNode({
                         onMouseDown={stop}
                         onClick={openAssetPicker}
                         disabled={nodeUploading || generating}
-                        className="inline-flex h-11 touch-manipulation items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 text-xs font-medium text-neutral-600 transition-colors hover:border-neutral-400 hover:text-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:text-white"
+                        className="image-composer-chip"
                       >
                         <FolderOpen className="h-3.5 w-3.5" aria-hidden />从资产库选择
                       </button>
@@ -630,7 +617,7 @@ export const AudioNode = memo(function AudioNode({
             </div>
 
             {playSrc && (
-              <div className="rounded-2xl border border-neutral-200/80 bg-white/85 p-2 shadow-sm backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/85">
+              <div className="rounded-lg bg-[var(--canvas-menu-hover)] p-2">
                 {/* Suno 一次两首：分轨在节点内切换（标题来自上游 tracks） */}
                 {tracks.length > 1 && (
                   <div className="mb-1.5 flex items-center gap-1 px-1">
@@ -693,72 +680,167 @@ export const AudioNode = memo(function AudioNode({
         <NodeHeader icon={AudioLines} title={node.title || "音频节点"} visible={showAuxUI} overlay />
         <NodePorts nodeId={node.id} visible={showAuxUI} overlay onPortMouseDown={onPortMouseDown} />
         {showAuxUI && (
-          <NodePanelChrome width={660}>
-              <AudioPromptEditor
-                ref={promptEditorRef}
-                value={prompt}
-                onChange={updatePrompt}
-                placeholder={
-                  isMusic
-                    ? musicMode === "inspire"
-                      ? "描述你想要的音乐，Suno 自动作曲填词..."
-                      : musicMode === "custom"
-                        ? "备注（仅作记录，不参与生成）· 歌词在下方填写"
-                        : "备注（仅作记录，不参与生成）· 原曲在下方选择"
-                    : isSfx
-                      ? "描述你想要的音效..."
-                      : "输入要合成的语音文本..."
-                }
-                expanded={false}
-              />
-
-              {/* 音乐四创作模式（对齐创作台：灵感 / 自定义歌词 / 延长 / 翻唱） */}
-              {isMusic && (
-                <div className="mt-3 flex flex-col gap-2.5 px-2">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {MUSIC_MODES.map((o) => (
-                      <button
-                        key={o.v}
-                        type="button"
-                        onMouseDown={keepPanelFocus}
-                        onClick={(e) => {
-                          stop(e);
-                          setMusic((m) => ({ ...m, musicMode: o.v }));
-                        }}
-                        className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                          musicMode === o.v
-                            ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-                            : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white"
-                        }`}
-                      >
-                        {o.l}
+          <NodeComposer label="音频创作" onExpand={() => setPromptExpanded(true)}
+            tools={<>
+              <button type="button" onMouseDown={stop} onClick={openFilePicker}
+                disabled={nodeUploading || generating} className="image-composer-chip"
+                title={node.audioSrc ? "替换当前音频" : "上传本地音频"}>
+                {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Upload className="h-3.5 w-3.5" aria-hidden />}
+                {node.audioSrc ? "替换" : "上传"}
+              </button>
+              <button type="button" onMouseDown={stop} onClick={openAssetPicker}
+                disabled={nodeUploading || generating} className="image-composer-chip" title="从资产库选择音频">
+                <FolderOpen className="h-3.5 w-3.5" aria-hidden />资产库
+              </button>
+              {isSpeech && <>
+                <Popover opened={activeTokenMenu === "pause"} onChange={(open) => setActiveTokenMenu(open ? "pause" : null)}
+                  position="bottom-start" offset={6} withinPortal zIndex={110} floatingStrategy="fixed"
+                  middlewares={{ flip: true, shift: { padding: 12 } }} clickOutsideEvents={["pointerdown"]}>
+                  <Popover.Target>
+                    <button type="button" onMouseDown={keepPanelFocus} className="image-composer-chip"
+                      onClick={() => setActiveTokenMenu((value) => value === "pause" ? null : "pause")}>
+                      停顿<ChevronDown className="h-3 w-3" aria-hidden />
+                    </button>
+                  </Popover.Target>
+                  <Popover.Dropdown className="node-composer-popover" w={184} p={8}>
+                    <div className="px-2 py-1 text-xs text-[var(--muted-foreground)]">停顿时长</div>
+                    {PAUSE_OPTIONS.map((item) => (
+                      <button key={item.token} type="button" onMouseDown={keepPanelFocus}
+                        onClick={() => { insertPromptToken(item.token); setActiveTokenMenu(null); }}
+                        className="flex h-8 w-full items-center rounded-md px-2 text-left text-xs hover:bg-[var(--canvas-menu-hover)]">
+                        {item.label}
                       </button>
                     ))}
-                    <span className="mx-1 h-4 w-px bg-neutral-200 dark:bg-neutral-800" />
-                    {/* 人声/纯音乐（上游 make_instrumental，各模式通吃） */}
-                    {[
-                      { v: false, l: "有人声" },
-                      { v: true, l: "纯音乐" },
-                    ].map((o) => (
-                      <button
-                        key={o.l}
-                        type="button"
-                        onMouseDown={keepPanelFocus}
-                        onClick={(e) => {
-                          stop(e);
-                          setMusic((m) => ({ ...m, instrumental: o.v }));
-                        }}
-                        className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                          music.instrumental === o.v
-                            ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-                            : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white"
-                        }`}
-                      >
-                        {o.l}
+                    <div className="mt-1 border-t border-[var(--border)] pt-2">
+                      <label htmlFor={`audio-pause-${node.id}`} className="px-2 text-xs text-[var(--muted-foreground)]">自定义（秒）</label>
+                      <div className="mt-1 flex items-center gap-1 px-1">
+                        <input id={`audio-pause-${node.id}`} value={customPauseValue} onMouseDown={stop}
+                          onChange={(e) => setCustomPauseValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") insertCustomPause(); }}
+                          inputMode="decimal" className="h-8 min-w-0 flex-1 rounded-md border border-[var(--border)] bg-transparent px-2 text-xs outline-none" />
+                        <button type="button" onMouseDown={keepPanelFocus} onClick={insertCustomPause}
+                          className="h-8 rounded-md px-2 text-xs hover:bg-[var(--canvas-menu-hover)]">插入</button>
+                      </div>
+                    </div>
+                  </Popover.Dropdown>
+                </Popover>
+                <Popover opened={activeTokenMenu === "tone"} onChange={(open) => setActiveTokenMenu(open ? "tone" : null)}
+                  position="bottom-start" offset={6} withinPortal zIndex={110} floatingStrategy="fixed"
+                  middlewares={{ flip: true, shift: { padding: 12 } }} clickOutsideEvents={["pointerdown"]}>
+                  <Popover.Target>
+                    <button type="button" onMouseDown={keepPanelFocus} className="image-composer-chip"
+                      onClick={() => setActiveTokenMenu((value) => value === "tone" ? null : "tone")}>
+                      语气词<ChevronDown className="h-3 w-3" aria-hidden />
+                    </button>
+                  </Popover.Target>
+                  <Popover.Dropdown className="node-composer-popover" w={160} p={8}>
+                    <div className="mb-1 px-2 text-xs text-[var(--muted-foreground)]">选择语气词</div>
+                    <div className="max-h-56 overflow-y-auto">
+                      {TONE_OPTIONS.map((item) => (
+                        <button key={item.token} type="button" onMouseDown={keepPanelFocus}
+                          onClick={() => { insertPromptToken(item.token); setActiveTokenMenu(null); }}
+                          className="flex h-8 w-full items-center rounded-md px-2 text-left text-xs hover:bg-[var(--canvas-menu-hover)]">
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </Popover.Dropdown>
+                </Popover>
+              </>}
+            </>}
+            footer={<>
+              <div className="image-composer-model"><ModelPicker models={models} value={modelId} onChange={setModelId} /></div>
+              <div className="image-composer-parameters">
+                {isSuno ? <>
+                  <PopoverSelect value={musicMode} options={MUSIC_MODES.map((mode) => ({ value: mode.v, label: mode.l }))}
+                    onChange={(value) => setMusic((current) => ({ ...current, musicMode: value as MusicParams["musicMode"] }))}
+                    label="音乐创作模式" className="h-8 border-transparent bg-transparent px-2 text-xs" />
+                  <Popover opened={musicSettingsOpen} onChange={setMusicSettingsOpen}
+                    position="bottom-start" offset={6} withinPortal zIndex={110} floatingStrategy="fixed"
+                    middlewares={{ flip: true, shift: { padding: 12 } }} clickOutsideEvents={["pointerdown"]}>
+                    <Popover.Target>
+                      <button type="button" onMouseDown={keepPanelFocus} onClick={() => setMusicSettingsOpen((open) => !open)}
+                        className="image-composer-icon" aria-label="音乐设置" title="音乐设置">
+                        <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
                       </button>
-                    ))}
-                  </div>
+                    </Popover.Target>
+                    <Popover.Dropdown className="node-composer-popover" w={320} p={12}>
+                      <div className="mb-2 text-xs text-[var(--muted-foreground)]">人声</div>
+                      <div className="mb-4 flex gap-2">
+                        {[{ value: false, label: "有人声" }, { value: true, label: "纯音乐" }].map((option) => (
+                          <button key={option.label} type="button" aria-pressed={music.instrumental === option.value}
+                            onMouseDown={keepPanelFocus} onClick={() => setMusic((current) => ({ ...current, instrumental: option.value }))}
+                            className="h-8 flex-1 rounded-md border border-[var(--border)] px-2 text-xs aria-pressed:border-[var(--canvas-input-focus-border)] aria-pressed:bg-[var(--accent)]">
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                      {musicMode !== "inspire" && <>
+                        <div className="mb-2 text-xs text-[var(--muted-foreground)]">风格与歌名</div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {AUDIO_STYLES.map((s) => {
+                          const on = music.songStyles.includes(s.v);
+                          return (
+                            <button
+                              key={s.v}
+                              type="button"
+                              aria-pressed={on}
+                              onMouseDown={keepPanelFocus}
+                              onClick={(e) => {
+                                stop(e);
+                                setMusic((m) => ({
+                                  ...m,
+                                  songStyles: on
+                                    ? m.songStyles.filter((x) => x !== s.v)
+                                    : [...m.songStyles, s.v],
+                                }));
+                              }}
+                              className={`flex h-7 items-center rounded-lg border px-2.5 text-xs font-medium transition-colors ${
+                                on
+                                  ? "border-[var(--canvas-input-focus-border)] bg-[var(--accent)] text-[var(--foreground)]"
+                                  : "border-neutral-200 text-neutral-500 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-800 dark:text-neutral-400 dark:hover:border-neutral-600 dark:hover:text-white"
+                              }`}
+                            >
+                              {s.l}
+                            </button>
+                          );
+                        })}
+                        <input
+                          value={music.songTitle}
+                          onMouseDown={stop}
+                          onChange={(e) => setMusic((m) => ({ ...m, songTitle: e.target.value }))}
+                          aria-label="歌名"
+                          placeholder="歌名 · 选填"
+                          className="h-7 min-w-[140px] flex-1 rounded-lg border border-neutral-200 bg-white px-2.5 text-xs text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
+                        />
+                      </div>
 
+                      </>}
+                    </Popover.Dropdown>
+                  </Popover>
+                </> : isSpeech && voices.length > 0 ? (
+                  <span className="flex min-w-0 items-center gap-1">
+                    <Mic2 className="h-3.5 w-3.5 shrink-0 text-[var(--muted-foreground)]" aria-hidden />
+                    <PopoverSelect value={effectiveVoice} options={voices.map((voiceOption) => ({ value: voiceOption.id, label: voiceOption.name }))}
+                      onChange={setVoice} label="选择音色" className="h-8 max-w-[132px] border-transparent bg-transparent px-1.5 text-xs" />
+                  </span>
+                ) : null}
+              </div>
+              <div className="image-composer-actions">
+                <span className="text-[11px] tabular-nums text-[var(--muted-foreground)]" aria-label="提示词字数">{textLen}/{MAX_TEXT}</span>
+                <span className="image-composer-cost" title="本次生成消耗积分"><Zap className="h-3.5 w-3.5" aria-hidden />{cost}</span>
+                <GenerateSubmitButton compact disabled={!canGenerate || generating || nodeUploading} generating={generating}
+                  title={nodeUploading ? "音频上传中..." : generating ? "生成中..." : !canGenerate
+                    ? (isSuno ? validateMusicParams(prompt, music) ?? "先填写必填项" : isSpeech ? "先输入语音文本" : "先输入描述")
+                    : isSpeech ? "开始合成" : "开始生成"} onClick={handleGenerate} />
+              </div>
+            </>}>
+            <AudioPromptEditor ref={promptEditorRef} value={prompt} onChange={updatePrompt}
+              placeholder={isSuno ? musicMode === "inspire" ? "描述你想要的音乐，Suno 自动作曲填词..."
+                : musicMode === "custom" ? "备注（仅作记录，不参与生成）· 歌词在下方填写"
+                : "备注（仅作记录，不参与生成）· 原曲在下方选择"
+                : isMusic ? "描述你想要的音乐..." : isSfx ? "描述你想要的音效..." : "输入要合成的语音文本..."} expanded={false} />
+              {isSuno && (
+                <div className="mt-2 flex flex-col gap-2">
                   {(musicMode === "extend" || musicMode === "cover") && (
                     <div className="flex items-center gap-2">
                       <button
@@ -781,6 +863,7 @@ export const AudioNode = memo(function AudioNode({
                           value={music.continueAt}
                           onMouseDown={stop}
                           onChange={(e) => setMusic((m) => ({ ...m, continueAt: e.target.value }))}
+                          aria-label="延长起点（秒）"
                           inputMode="numeric"
                           placeholder="延长起点 · 秒 · 选填"
                           className="h-8 w-[150px] rounded-md border border-neutral-200 bg-white px-2 text-xs text-neutral-900 outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
@@ -820,213 +903,19 @@ export const AudioNode = memo(function AudioNode({
                               ? "续写歌词 · 选填 · 留空则由 Suno 续写"
                               : "改编提示 / 歌词 · 选填 · 留空则保留原词"
                         }
-                        className="thin-scroll min-h-[96px] w-full resize-y rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-xs leading-5 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
+                        aria-label="歌词"
+                        className="thin-scroll min-h-[96px] max-h-40 w-full resize-none rounded-lg border border-neutral-200 bg-white px-3 py-2.5 text-xs leading-5 text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
                       />
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {AUDIO_STYLES.map((s) => {
-                          const on = music.songStyles.includes(s.v);
-                          return (
-                            <button
-                              key={s.v}
-                              type="button"
-                              onMouseDown={keepPanelFocus}
-                              onClick={(e) => {
-                                stop(e);
-                                setMusic((m) => ({
-                                  ...m,
-                                  songStyles: on
-                                    ? m.songStyles.filter((x) => x !== s.v)
-                                    : [...m.songStyles, s.v],
-                                }));
-                              }}
-                              className={`flex h-7 items-center rounded-lg border px-2.5 text-xs font-medium transition-colors ${
-                                on
-                                  ? "border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900"
-                                  : "border-neutral-200 text-neutral-500 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-800 dark:text-neutral-400 dark:hover:border-neutral-600 dark:hover:text-white"
-                              }`}
-                            >
-                              {s.l}
-                            </button>
-                          );
-                        })}
-                        <input
-                          value={music.songTitle}
-                          onMouseDown={stop}
-                          onChange={(e) => setMusic((m) => ({ ...m, songTitle: e.target.value }))}
-                          placeholder="歌名 · 选填"
-                          className="h-7 min-w-[140px] flex-1 rounded-lg border border-neutral-200 bg-white px-2.5 text-xs text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
-                        />
-                      </div>
                     </>
                   )}
                 </div>
               )}
 
-              {!isMusic && (
-              <div className="mt-3 px-2">
-                <div className="relative flex min-w-0 flex-wrap items-center gap-1.5">
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onMouseDown={keepPanelFocus}
-                      onClick={(e) => { stop(e); setActiveTokenMenu((v) => (v === "pause" ? null : "pause")); }}
-                      className="inline-flex items-center gap-1 rounded-md bg-neutral-100 px-2 py-1 text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-200 hover:text-neutral-950 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700 dark:hover:text-white"
-                      title="设置并插入停顿时间"
-                    >
-                      {"<#> 停顿"}
-                    </button>
-                    {activeTokenMenu === "pause" && (
-                      <div
-                        onMouseDown={stop}
-                        onWheelCapture={(e) => e.stopPropagation()}
-                        onWheel={(e) => e.stopPropagation()}
-                        className="absolute left-0 top-[calc(100%+8px)] z-20 w-[138px] animate-in rounded-2xl border border-neutral-200/80 bg-white/95 p-1.5 shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl duration-100 fade-in-0 zoom-in-95 motion-reduce:animate-none dark:border-white/10 dark:bg-neutral-900/95 dark:shadow-black/55"
-                      >
-                        <div className="flex items-center justify-between px-2.5 pb-1.5 pt-1 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">
-                          <span>停顿时长</span>
-                          <span className="font-normal text-neutral-400 dark:text-neutral-500">秒</span>
-                        </div>
-                        {PAUSE_OPTIONS.map((item) => (
-                          <button
-                            key={item.token}
-                            type="button"
-                            onMouseDown={keepPanelFocus}
-                            onClick={(e) => { stop(e); insertPromptToken(item.token); setActiveTokenMenu(null); }}
-                            className="block h-9 w-full rounded-xl px-2.5 text-left text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-100/85 hover:text-neutral-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/35 dark:text-neutral-300 dark:hover:bg-white/[0.07] dark:hover:text-white"
-                          >
-                            {item.label}
-                          </button>
-                        ))}
-                        <div className="mx-1 mt-1 border-t border-neutral-200/70 pt-1.5 dark:border-white/10">
-                          <div className="px-2 py-1 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">自定义</div>
-                          <div className="flex items-center gap-1 px-2 pb-1">
-                            <input
-                              value={customPauseValue}
-                              onChange={(e) => setCustomPauseValue(e.target.value)}
-                              onMouseDown={stop}
-                              onKeyDown={(e) => { if (e.key === "Enter") insertCustomPause(); }}
-                              inputMode="decimal"
-                              className="h-7 min-w-0 flex-1 rounded-md border border-neutral-200 bg-white px-2 text-xs text-neutral-900 outline-none focus:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
-                            />
-                            <span className="text-xs text-neutral-400">s</span>
-                            <button
-                              type="button"
-                              onMouseDown={keepPanelFocus}
-                              onClick={(e) => { stop(e); insertCustomPause(); }}
-                              className="rounded-md px-2 py-1 text-xs font-medium text-sky-600 hover:bg-sky-50 dark:text-sky-300 dark:hover:bg-sky-950/50"
-                            >
-                              插入
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onMouseDown={keepPanelFocus}
-                      onClick={(e) => { stop(e); setActiveTokenMenu((v) => (v === "tone" ? null : "tone")); }}
-                      className="inline-flex items-center gap-1 rounded-md bg-neutral-100 px-2 py-1 text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-200 hover:text-neutral-950 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700 dark:hover:text-white"
-                      title="插入语气词"
-                    >
-                      {"() 语气词"}
-                    </button>
-                    {activeTokenMenu === "tone" && (
-                      <div
-                        onMouseDown={keepPanelFocus}
-                        onWheelCapture={(e) => e.stopPropagation()}
-                        onWheel={(e) => e.stopPropagation()}
-                        className="absolute left-0 top-[calc(100%+8px)] z-20 max-h-[250px] w-[148px] animate-in overflow-y-auto rounded-2xl border border-neutral-200/80 bg-white/95 p-1.5 shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl duration-100 fade-in-0 zoom-in-95 motion-reduce:animate-none dark:border-white/10 dark:bg-neutral-900/95 dark:shadow-black/55"
-                      >
-                        <div className="px-2.5 pb-1.5 pt-1 text-[11px] font-medium text-neutral-500 dark:text-neutral-400">选择语气词</div>
-                        {TONE_OPTIONS.map((item) => (
-                          <button
-                            key={item.token}
-                            type="button"
-                            onMouseDown={keepPanelFocus}
-                            onClick={(e) => { stop(e); insertPromptToken(item.token); setActiveTokenMenu(null); }}
-                            className="block h-9 w-full rounded-xl px-2.5 text-left text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-100/85 hover:text-neutral-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/35 dark:text-neutral-300 dark:hover:bg-white/[0.07] dark:hover:text-white"
-                          >
-                            {item.label}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-              )}
-
-              <div className="mt-3 flex items-center justify-between gap-2 px-2">
-                <div className="flex min-w-0 items-center gap-1 text-xs text-neutral-600 dark:text-neutral-400">
-                  <button
-                    type="button"
-                    onMouseDown={stop}
-                    onClick={openFilePicker}
-                    disabled={nodeUploading || generating}
-                    className="inline-flex h-11 touch-manipulation shrink-0 items-center gap-1.5 rounded-md border border-neutral-200 px-2 text-xs font-medium text-neutral-600 transition-colors hover:border-neutral-400 hover:text-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:text-white"
-                    title={node.audioSrc ? "替换当前音频" : "上传本地音频"}
-                  >
-                    {nodeUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Upload className="h-3.5 w-3.5" aria-hidden />}
-                    {node.audioSrc ? "替换" : "上传"}
-                  </button>
-                  <button
-                    type="button"
-                    onMouseDown={stop}
-                    onClick={openAssetPicker}
-                    disabled={nodeUploading || generating}
-                    className="inline-flex h-11 touch-manipulation shrink-0 items-center gap-1.5 rounded-md border border-neutral-200 px-2 text-xs font-medium text-neutral-600 transition-colors hover:border-neutral-400 hover:text-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-800 dark:text-neutral-300 dark:hover:border-neutral-600 dark:hover:text-white"
-                    title="从资产库选择音频"
-                  >
-                    <FolderOpen className="h-3.5 w-3.5" aria-hidden />资产库
-                  </button>
-                  <ModelPicker models={models} value={modelId} onChange={setModelId} />
-                  {!isMusic && voices.length > 0 && (
-                    <span className="flex min-w-0 items-center gap-1">
-                      <Mic2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <PopoverSelect
-                        value={effectiveVoice}
-                        options={voices.map((v) => ({ value: v.id, label: v.name }))}
-                        onChange={setVoice}
-                        label="选择音色"
-                        className="h-7 max-w-[132px] border-transparent bg-transparent px-1.5 py-1 text-xs font-medium"
-                      />
-                    </span>
-                  )}
-                  <button onMouseDown={stop} title="音频参数" className="rounded-md p-1.5 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800">
-                    <SlidersHorizontal className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-
-                <div className="flex shrink-0 items-center gap-2 text-xs text-neutral-500">
-                  <span className="tabular-nums text-neutral-400">{textLen}/{MAX_TEXT}</span>
-                  <span className="flex items-center gap-0.5">
-                    <Zap className="h-3 w-3 text-neutral-900 dark:text-neutral-100" fill="currentColor" />
-                    {cost}
-                  </span>
-                  <GenerateSubmitButton
-                    disabled={!canGenerate || generating || nodeUploading}
-                    generating={generating}
-                    title={
-                      nodeUploading
-                        ? "音频上传中..."
-                        : generating
-                        ? "生成中..."
-                        : !canGenerate
-                          ? (isMusic ? validateMusicParams(prompt, music) ?? "先填写必填项" : "先输入文案")
-                          : isMusic
-                            ? "开始生成"
-                            : "开始合成"
-                    }
-                    onClick={handleGenerate}
-                  />
-                </div>
-              </div>
-          </NodePanelChrome>
+          </NodeComposer>
         )}
       </div>
+      <PromptEditorModal open={promptExpanded} onClose={() => setPromptExpanded(false)}
+        value={prompt} onChange={updatePrompt} refs={[]} placeholder="输入音频描述或语音文本…" />
     </NodeShell>
   );
 });

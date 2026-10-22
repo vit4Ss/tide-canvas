@@ -4,6 +4,7 @@ import { useCallback, useEffect } from "react";
 import { useCanvasStore } from "@/stores/use-canvas-store";
 
 interface Options {
+  disabled?: boolean;
   onEscape?: () => void;
   onCopyNode?: (nodeId: string) => void;
   onPaste?: () => void;
@@ -18,13 +19,14 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return !!target.closest('[contenteditable="true"], [role="textbox"]');
 }
 
-export function useCanvasKeyboard({ onEscape, onCopyNode, onPaste, canPaste = false }: Options = {}) {
+export function useCanvasKeyboard({ onEscape, onCopyNode, onPaste, canPaste = false, disabled = false }: Options = {}) {
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (disabled) return;
     if (isEditableTarget(e.target)) return;
     // 画布级弹窗(标注/资产库/放大编辑等)打开时键盘归弹窗:弹窗内点击空白后
     // 焦点常落在 body,isEditableTarget 挡不住,快捷键会穿透误伤画布
     // (Ctrl+Z 双撤销、Delete 删掉弹窗背后正在编辑的节点、Esc 清选中)。
-    if (document.querySelector("[data-canvas-modal]")) return;
+    if (document.querySelector('[data-canvas-modal], [aria-modal="true"]') || (e.target instanceof Element && e.target.closest('[role="menu"], [role="listbox"], [role="dialog"], [data-canvas-sidebar], [data-image-composer-anchor]'))) return;
 
     const store = useCanvasStore.getState();
     const ctrl = e.ctrlKey || e.metaKey;
@@ -87,7 +89,7 @@ export function useCanvasKeyboard({ onEscape, onCopyNode, onPaste, canPaste = fa
       store.clearSelection();
       store.selectConnection(null);
     }
-  }, [canPaste, onCopyNode, onEscape, onPaste]);
+  }, [canPaste, onCopyNode, onEscape, onPaste, disabled]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown);

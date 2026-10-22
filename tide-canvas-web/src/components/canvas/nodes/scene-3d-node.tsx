@@ -2,7 +2,7 @@
 
 import { memo, useCallback, useState } from "react";
 import { useCanvasStore, type CanvasNode } from "@/stores/use-canvas-store";
-import { Layers, Box } from "lucide-react";
+import { Layers, Box, Image as ImageIcon, ArrowUpRight } from "lucide-react";
 import { NodeHeader } from "./base/node-header";
 import { NodePorts } from "./base/node-ports";
 import { Scene3DEditor } from "./scene-3d-editor";
@@ -54,11 +54,9 @@ export const Scene3DNode = memo(function Scene3DNode({ node, isSelected, isDragg
 
       <div className="relative">
         <div
-          className={`relative overflow-hidden rounded-2xl border transition-all ${
-            node.imageSrc ? "bg-gradient-to-br from-slate-800 to-slate-900" : "bg-white dark:bg-neutral-950"
-          } ${
+          className={`relative overflow-hidden rounded-xl border bg-[var(--popover)] transition-colors ${
             isConnectTarget ? "border-blue-500 ring-2 ring-blue-500/40" :
-            isSelected ? "border-neutral-300 dark:border-neutral-700" : "border-neutral-200 dark:border-neutral-800"
+            isSelected ? "border-[var(--canvas-input-focus-border)]" : "border-[var(--border)]"
           }`}
           style={{ height: cardHeight }}
         >
@@ -70,35 +68,37 @@ export const Scene3DNode = memo(function Scene3DNode({ node, isSelected, isDragg
               {/* 选中时悬浮重开入口：继续摆姿/再截图 */}
               {showAuxUI && (
                 <button
+                  type="button"
                   onMouseDown={stop}
                   onClick={(e) => { stop(e); setEditorOpen(true); }}
-                  className="absolute bottom-3 left-1/2 z-[6] flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-black/55 px-3.5 py-1.5 text-xs font-medium text-white backdrop-blur transition-colors hover:bg-black/70"
+                  className="absolute bottom-3 left-1/2 z-[6] flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--popover)] px-3 text-xs font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--canvas-menu-hover)]"
                 >
-                  <Box className="h-3.5 w-3.5" /> 打开导演台
+                  <Box className="h-3.5 w-3.5" /> 打开导演台<ArrowUpRight className="h-3.5 w-3.5" />
                 </button>
               )}
             </>
           ) : (
             /* 未编辑占位：静态卡片可整体拖动，仅中间小按钮可点开编辑器 */
-            <div className="flex h-full w-full flex-col items-center justify-center gap-3">
-              <Layers className="h-10 w-10 text-neutral-300 dark:text-neutral-600" />
-              <p className="text-sm text-neutral-500 dark:text-neutral-400">在 3D 空间中搭建场景并进行多视角截图</p>
+            <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-6 text-[var(--muted-foreground)]">
+              <Layers className="h-10 w-10 opacity-60" strokeWidth={1.5} />
+              <p className="text-center text-sm leading-6">在 3D 空间中搭建场景并进行多视角截图</p>
               {panoConnected && (
-                <span className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> 已连接全景背景
+                <span className="flex items-center gap-1.5 text-xs">
+                  <ImageIcon className="h-3.5 w-3.5" /> 已连接全景背景
                 </span>
               )}
               {sceneConnected && (
-                <span className="flex items-center gap-1.5 text-xs text-cyan-600 dark:text-cyan-400">
-                  <span className="h-1.5 w-1.5 rounded-full bg-cyan-500" /> 已连接 3D 场景
+                <span className="flex items-center gap-1.5 text-xs">
+                  <Box className="h-3.5 w-3.5" /> 已连接 3D 场景
                 </span>
               )}
               <button
+                type="button"
                 onMouseDown={stop}
                 onClick={(e) => { stop(e); setEditorOpen(true); }}
-                className="mt-1 rounded-lg border border-neutral-200 bg-white px-4 py-2 text-sm font-medium text-neutral-700 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                className="mt-1 flex h-8 items-center gap-1.5 rounded-lg bg-[var(--canvas-menu-hover)] px-3 text-xs font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]"
               >
-                打开导演台
+                打开导演台<ArrowUpRight className="h-3.5 w-3.5" />
               </button>
             </div>
           )}

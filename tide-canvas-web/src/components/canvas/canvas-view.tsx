@@ -16,12 +16,16 @@ import { canvasConnectionRule } from "@/lib/canvas-connection-rules";
 import { CANVAS_FOCUS_POINT_EVENT, type CanvasFocusPoint } from "@/lib/canvas-navigation";
 import { CanvasGridBackground } from "./canvas-grid-background";
 import { CanvasEmptyState } from "./canvas-empty-state";
+import { CanvasThemeToggle, useCanvasTheme } from "./canvas-theme";
+import { CanvasStoryboard } from "./canvas-storyboard";
+import type { CanvasViewMode } from "@/lib/canvas-document";
 import { CanvasNodeComponent } from "./canvas-node";
 import { ConnectionsLayer } from "./connections-layer";
 import { CanvasGroupsLayer } from "./canvas-groups-layer";
 import { CanvasSelectionBox } from "./canvas-selection-box";
 import { CanvasContextMenu, type ContextMenuState } from "./canvas-context-menu";
 import { CanvasBottomToolbar } from "./canvas-bottom-toolbar";
+import { CanvasViewportNotice } from "./canvas-viewport-notice";
 import { MyAssetsPanel } from "./my-assets-panel";
 import { CanvasHistoryPanel } from "./canvas-history-panel";
 import { FileCategory, type FileVO } from "@/types/file";
@@ -40,6 +44,11 @@ import { MantineProvider } from "@mantine/core";
 import "@mantine/core/styles.css";
 
 interface CanvasViewProps {
+  sidebarOpen: boolean;
+  onSidebarOpenChange: (open: boolean) => void;
+  viewMode?: CanvasViewMode;
+  onViewChange?: (mode: CanvasViewMode) => void;
+  onAssistantBusyChange?: (busy: boolean) => void;
   launchJournal?: CanvasLaunchJournal | null;
   persistenceReady?: boolean;
   onLaunchConsumed?: () => void;
@@ -53,7 +62,8 @@ interface CanvasUploadFile {
 const MAX_CANVAS_UPLOAD_FILES = 24;
 const CANVAS_UPLOAD_CONCURRENCY = 3;
 
-export function CanvasView({ launchJournal, persistenceReady = false, onLaunchConsumed }: CanvasViewProps) {
+export function CanvasView({ sidebarOpen, onSidebarOpenChange, launchJournal, persistenceReady = false, onLaunchConsumed, viewMode = "workflow", onViewChange, onAssistantBusyChange }: CanvasViewProps) {
+  const { theme } = useCanvasTheme();
   // A journal that already froze/submitted the legacy single-model payload
   // must resume that exact request. Fresh journals with a selected Skill are
   // handed to the assistant only when the user asked to run immediately.
@@ -85,7 +95,9 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
 
   const [gridSnap, setGridSnap] = useState(false);
   const [minimapVisible, setMinimapVisible] = useState(false);
-  const [myAssetsOpen, setMyAssetsOpen] = useState(false);
+  const [connectionsVisible, setConnectionsVisible] = useState(true);
+  const myAssetsOpen = sidebarOpen;
+  const setMyAssetsOpen = onSidebarOpenChange;
   const [assetsRefreshKey, setAssetsRefreshKey] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -96,6 +108,17 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
 
   const panZoom = useCanvasPanZoom({ containerRef });
   const centerCanvasOn = panZoom.centerOn;
+  const fitCanvasView = panZoom.fitView;
+  const returnToCanvasNodes = useCallback(() => {
+    // Frame the nodes with room for the attached editor and bottom dock.
+    // The editor stays beneath its node even outside the viewport.
+    const composer = document.querySelector<HTMLElement>("[data-image-composer-anchor]");
+    const editorHeight = Number(composer?.dataset.contentHeight) || 0;
+    const viewportBottom = containerRef.current?.getBoundingClientRect().bottom;
+    const toolbarTop = containerRef.current?.parentElement?.querySelector("[data-canvas-controls]")?.getBoundingClientRect().top;
+    const dockInset = Math.max(72, viewportBottom != null && toolbarTop != null ? viewportBottom - toolbarTop + 16 : 0);
+    fitCanvasView({ top: 64, bottom: dockInset + (editorHeight > 0 ? editorHeight + 16 : 0) });
+  }, [fitCanvasView]);
   const nodeDrag = useCanvasNodeDrag({ gridSnap });
   const clipboard = useCanvasClipboard();
   const connection = useCanvasConnection({ containerRef });
@@ -115,6 +138,7 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
   }, [centerCanvasOn]);
 
   useCanvasKeyboard({
+    disabled: viewMode !== "workflow",
     onEscape: () => setContextMenu(null),
     onCopyNode: clipboard.copyNode,
     onPaste: () => clipboard.pasteNode(),
@@ -235,7 +259,7 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
     } else {
       toast.error(res.message || "保存失败");
     }
-  }, [nodes, contextMenu]);
+  }, [nodes, contextMenu, setMyAssetsOpen]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -280,8 +304,8 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
     st.pushHistory();
     // 纯函数算位 → 单次批量落位（一次渲染），随后视口适配新布局
     st.updateNodePositions(autoArrangeNodes(st.nodes, st.connections, st.groups));
-    panZoom.fitView();
-  }, [panZoom]);
+    returnToCanvasNodes();
+  }, [returnToCanvasNodes]);
 
   // 把当前多选节点创建为一个分组
   const handleCreateGroup = useCallback(() => {
@@ -439,7 +463,10 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
       await Promise.all(batch.map((entry, offset) => uploadOne(entry, start + offset)));
     }
 
-    if (ok > 0) toast.success(ok > 1 ? `已添加 ${ok} 个节点` : "已添加到画布");
+    if (ok > 0) {
+      toast.success(ok > 1 ? `已添加 ${ok} 个节点` : "已添加到画布");
+      setAssetsRefreshKey((key) => key + 1);
+    }
   }, [addNode, selectNode]);
 
   // 从系统拖入文件：在落点上传生成节点
@@ -501,8 +528,10 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
   return (
     // translate="no" + notranslate：告知浏览器/翻译类扩展（如「沉浸式翻译」）整块画布勿翻译，
     // 抑制其在节点（尤其视频）上注入的悬浮翻译工具条。彻底关闭仍需在扩展侧将本站设为「永不翻译」。
-    <MantineProvider>
-    <div translate="no" className="notranslate relative h-full w-full overflow-hidden bg-neutral-50 dark:bg-neutral-900">
+    <MantineProvider forceColorScheme={theme}>
+    <div translate="no" data-view-mode={viewMode} data-sidebar-open={sidebarOpen || undefined} className="canvas-workspace notranslate relative h-full w-full">
+      <div className="canvas-viewport-shell">
+      <CanvasThemeToggle />
       <div
         ref={containerRef}
         className="h-full w-full cursor-grab active:cursor-grabbing"
@@ -519,7 +548,7 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
           <CanvasGroupsLayer groups={groups} nodes={nodes} selectedNodeIds={selectedNodeIds} />
           <ConnectionsLayer
             nodes={nodes}
-            connections={connections}
+            connections={connectionsVisible ? connections : []}
             temp={connection.connecting}
             selectedConnectionId={selectedConnectionId}
             selectedNodeIds={selectedNodeIds}
@@ -557,7 +586,7 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
         />
       )}
 
-      {nodes.length === 0 && <CanvasEmptyState />}
+      {nodes.length === 0 && !launchJournal && <CanvasEmptyState onAddNode={addNodeAtViewportCenter} onUpload={handleUploadRequest} />}
 
       {/* 多选浮动操作：在选区顶部上方居中显示「创建分组」（拖动/框选/连线时隐藏） */}
       {selectionBox && !nodeDrag.draggingNodeId && !boxSelect.isBoxSelecting && !connection.connecting && (
@@ -617,31 +646,43 @@ export function CanvasView({ launchJournal, persistenceReady = false, onLaunchCo
         className="hidden"
         onChange={handleUploadPick}
       />
-      <MyAssetsPanel open={myAssetsOpen} onClose={() => setMyAssetsOpen(false)} onPick={addAssetToCanvas} refreshKey={assetsRefreshKey} />
       <CanvasHistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
 
       <CanvasAssistantPanel
+        docked={viewMode === "storyboard"}
+        onBusyChange={onAssistantBusyChange}
         launchJournal={assistantLaunchJournal}
         persistenceReady={persistenceReady}
         onLaunchConsumed={onLaunchConsumed}
       />
 
+      {viewMode === "storyboard" && <CanvasStoryboard onWorkflow={() => onViewChange?.("workflow")} onRevealNode={(node) => { onViewChange?.("workflow"); selectNode(node.id); panZoom.centerOn(node.x + node.width / 2, node.y + node.height / 2); }} />}
+
+      {viewMode === "workflow" && persistenceReady && nodes.length > 0 && (
+        <CanvasViewportNotice nodes={nodes} viewportSize={viewportSize} onReturn={returnToCanvasNodes} />
+      )}
+
       <CanvasBottomToolbar
         gridSnap={gridSnap}
         minimapVisible={minimapVisible}
+        connectionsVisible={connectionsVisible}
         assetsActive={myAssetsOpen}
         historyActive={historyOpen}
         onAddNode={addNodeAtViewportCenter}
+        onUpload={handleUploadRequest}
         onZoomIn={panZoom.zoomIn}
         onZoomOut={panZoom.zoomOut}
-        onZoomReset={panZoom.zoomReset}
-        onFitView={panZoom.fitView}
+        onZoomTo={panZoom.zoomTo}
+        onFitView={returnToCanvasNodes}
         onToggleGridSnap={() => setGridSnap(!gridSnap)}
         onToggleMinimap={() => setMinimapVisible(!minimapVisible)}
+        onToggleConnections={() => { setConnectionsVisible((value) => !value); selectConnection(null); }}
         onArrange={handleArrange}
-        onOpenAssets={() => { setMyAssetsOpen((v) => !v); setHistoryOpen(false); }}
+        onOpenAssets={() => { setMyAssetsOpen(!myAssetsOpen); setHistoryOpen(false); }}
         onOpenHistory={() => { setHistoryOpen((v) => !v); setMyAssetsOpen(false); }}
       />
+      </div>
+      <MyAssetsPanel open={myAssetsOpen} onClose={() => setMyAssetsOpen(false)} onPick={addAssetToCanvas} onUpload={handleUploadRequest} onAddNode={() => addNodeAtViewportCenter("image")} onFitView={returnToCanvasNodes} onRevealNode={(node) => { onViewChange?.("workflow"); selectNode(node.id); const rect = nodeRenderRect(node); panZoom.centerOn(rect.x + rect.w / 2, rect.y + rect.h / 2); }} refreshKey={assetsRefreshKey} />
     </div>
     </MantineProvider>
   );
