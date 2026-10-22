@@ -888,8 +888,19 @@ function TemplateEditor({
           {requirementKinds.length > 0 && (
             <FormCard title="素材用途名称">
               <p>
-                前台将直接显示这些名称，例如「人物照片」「服装图片」。留空时使用素材编号。
+                这些名称只用于前台上传位置的标签，例如「人物照片」「服装图片」，不会自动写入或替换提示词。留空时使用素材编号。
               </p>
+              <p className={css.note}>
+                {form.mode === "flf"
+                  ? "图片1是首帧，图片2是尾帧。请在「完整提示词」中描述从首帧到尾帧的动作与画面过渡。"
+                  : form.mode === "i2v"
+                    ? "图片1会作为视频首帧。请在「完整提示词」中描述人物动作、镜头运动等，生成时使用用户上传的图片作为首帧。"
+                    : form.mode === "i2i" && form.requirements.images === 1
+                      ? "只有一张参考图时，可写「保留图片1中的人物，将背景改为……」，也可写「以上传的人物照片为参考……」，不强制使用编号。"
+                      : "涉及多份素材时，建议在「完整提示词」中按下方顺序写清图片1、图片2（或视频1、音频1）分别做什么。例如：用图片2的服装替换图片1人物的服装，保持人物和背景不变。"}
+                {form.mode === "ref" && " 图片、视频、音频各自从1开始编号；可选素材没有上传时，不要在提示词中要求使用它。"}
+              </p>
+              <p className={css.note}>编号用于描述素材顺序，不是自动替换的变量。用途名称、上传说明和提示词应保持一致，上架前请用实际素材试做确认。</p>
               <FormGrid>
                 {(["images", "videos", "audio"] as const).flatMap(
                   (kind, kindIndex) =>
@@ -911,6 +922,9 @@ function TemplateEditor({
                         <Field
                           key={`${kind}-${index}`}
                           label={`${["图片", "视频", "音频"][kindIndex]}${index + 1}用途`}
+                          hint={form.mode === "flf" && kind === "images"
+                            ? `对应用户上传的${index === 0 ? "首帧" : "尾帧"}图片。`
+                            : `对应用户上传的第${index + 1}${["张图片", "段视频", "段音频"][kindIndex]}，提示词可按「${["图片", "视频", "音频"][kindIndex]}${index + 1}」描述其用途。`}
                         >
                           <input
                             maxLength={40}
