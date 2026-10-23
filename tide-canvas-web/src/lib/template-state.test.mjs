@@ -34,6 +34,17 @@ test("operator submits visible defaults explicitly even when API duration orderi
  assert.deepEqual(templateOptionsForRequest({},'image',{resolutions:['4k','2k'],qualities:['high'],hideBatchCount:true}),{resolution:'4k',quality:'high'});
 });
 
+test("switching a 30s recipe to a short-video model cannot silently shorten its timeline",()=>{
+ const short={durations:['5s','15s'],ratios:['9:16']};
+ const switched=templateOptionsForModel({duration:30,aspectRatio:'9:16'},'video',short);
+ assert.equal(switched.duration,30);
+ assert.equal(templateSpecChoices(String(switched.duration),['5','15']).invalid,true);
+ assert.equal(templateOptionsForRequest(switched,'video',short).duration,30);
+ const unavailable=templateOptionsForModel(switched,'video',{});
+ assert.equal(templateOptionsForRequest(unavailable,'video',{}).duration,30);
+ assert.equal(templateOptionsForRequest({...switched,duration:undefined},'video',short).duration,5,'explicitly choosing model default remains possible');
+});
+
 test("numeric legacy durations remain selectable and malformed batch config does not crash the page",()=>{
  assert.deepEqual(modelGenerationOptions({durations:[5,4.5,'10S',null,-1,'broken']}).durDisplay,['4.5s','5s','10S']);
  assert.deepEqual(templateParameterFields('video',{durations:[5,4.5]}).find(f=>f.key==='duration').values,['5','4.5']);
@@ -78,6 +89,8 @@ test("drafts recover uploaded references only for the same account and recipe",(
  assert.deepEqual(readTemplateDraft("7","13",signature,storage).files,{});
  const changed=readTemplateDraft("7","12",templateDraftSignature({...recipe,mode:"flf"}),storage);
  assert.equal(changed.changed,true);assert.deepEqual(changed.files,{});
+ const changedOptional=readTemplateDraft("7","12",templateDraftSignature({...recipe,requirements:{...recipe.requirements,optionalImages:[2]}}),storage);
+ assert.equal(changedOptional.changed,true);assert.deepEqual(changedOptional.files,{});
  saveTemplateDraft("7","12",signature,{},storage);assert.deepEqual(readTemplateDraft("7","12",signature,storage).files,{});
 });
 test("expired, corrupted and unavailable browser storage cannot authorize a generation",()=>{

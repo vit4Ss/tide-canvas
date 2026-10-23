@@ -4,7 +4,7 @@ import type { PublicStudioTemplate } from "./studio-template-api";
 export type TemplateDraftFiles = Record<string, FileVO>;
 const TTL = 7 * 24 * 60 * 60 * 1000;
 const key = (owner: string, templateId: string) => `flowlight.template.draft.v1.${encodeURIComponent(owner)}.${encodeURIComponent(templateId)}`;
-export const templateDraftSignature = (row: Pick<PublicStudioTemplate, "mode" | "requirements" | "inputLabels">) => JSON.stringify([row.mode, row.requirements.images, row.requirements.videos, row.requirements.audio, row.inputLabels || {}]);
+export const templateDraftSignature = (row: Pick<PublicStudioTemplate, "mode" | "requirements" | "inputLabels">) => JSON.stringify([row.mode, row.requirements.images, row.requirements.videos, row.requirements.audio, row.inputLabels || {}, ...(row.requirements.optionalImages?.length ? [row.requirements.optionalImages] : [])]);
 
 export function readTemplateDraft(owner: string, templateId: string, signature: string, storage?: Storage): { files: TemplateDraftFiles; changed?: boolean } {
   if (!owner) return { files: {} };

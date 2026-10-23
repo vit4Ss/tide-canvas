@@ -35,6 +35,7 @@ await context.route("**/api/**",async route=>{
   const row=templates.find(t=>t.id===path.split('/').at(-1));if(req.method()==='PUT'){Object.assign(row,req.postDataJSON());data=row;}else if(req.method()==='DELETE'){templates.splice(templates.indexOf(row),1);data={};}
  }
  else if(path.startsWith("/api/ai/template-setup/") && setupFails)return fail("模拟规格读取失败",503);
+ else if(path.startsWith("/api/ai/template-setup/") && Number(path.split('/').at(-1))>=20000){const row=templates.find(t=>t.id===path.split('/').at(-1));data={modelId:"fixture-video",modelName:"Fixture Video",handler:"reference_to_video",basePointCost:7,referenceVideoBilling:false,options:row.options,maxUploadBytes:{image:52428800,video:52428800,audio:52428800}};}
  else if(path.startsWith("/api/ai/template-setup/")) data={modelId:"fixture-model",modelName:"Fixture Model",handler:"image_to_image",basePointCost:7,referenceVideoBilling:false,options:{resolution:"2k",aspectRatio:"4:5",quality:"high"},maxUploadBytes:{image:52428800,video:52428800,audio:52428800}};
  else if(path.startsWith("/api/files/detail/")){if(verifyFilesFails)return fail("模拟核验失败",503);data=storedFiles.get(path.split('/').at(-1));if(!data||data.ownerId!==owner)return fail("素材不存在",404);}
  else if(path==="/api/files/download-ticket")data={url:"/api/files/download?ticket=fixture",native:false};
@@ -49,12 +50,13 @@ await context.route("**/api/**",async route=>{
   if(adminCatalogueFails&&path.includes('admin'))return fail('模拟后台模板加载失败',503);
   if(catalogueFails && !path.includes("admin"))return fail("fixture catalogue unavailable",503);
   if(req.method()==="POST"){data={...req.postDataJSON(),id:String(10001+templates.length),uses:0};templates.push(data);}
-  else {const rows=templates.filter(t=>(!url.searchParams.get('mediaType')||t.mediaType===url.searchParams.get('mediaType'))&&(!url.searchParams.get('category')||t.category===url.searchParams.get('category'))&&(!url.searchParams.get('kind')||t.kind===url.searchParams.get('kind'))&&(!url.searchParams.get('keyword')||t.title.includes(url.searchParams.get('keyword'))));data={records:path.includes('admin')?rows:rows.map(publicRow),categories:[...new Set(rows.map(t=>t.category))],pages:1,total:rows.length,pageNum:1,pageSize:18};}
- }else if(/^\/api\/studio-templates\/\d+$/.test(path)){const row=templates.find(t=>t.id===path.split('/').at(-1));if(!row||templateHidden)return fail("模板已下架或不存在",404);data=publicRow(row);}
+  else {const rows=templates.filter(t=>(path.includes("admin")||t.status===1)&&(!url.searchParams.get('mediaType')||t.mediaType===url.searchParams.get('mediaType'))&&(!url.searchParams.get('category')||t.category===url.searchParams.get('category'))&&(!url.searchParams.get('kind')||t.kind===url.searchParams.get('kind'))&&(!url.searchParams.get('keyword')||t.title.includes(url.searchParams.get('keyword'))));data={records:path.includes('admin')?rows:rows.map(publicRow),categories:[...new Set(rows.map(t=>t.category))],pages:1,total:rows.length,pageNum:1,pageSize:18};}
+ }else if(/^\/api\/studio-templates\/\d+$/.test(path)){const row=templates.find(t=>t.id===path.split('/').at(-1));if(!row||row.status!==1||templateHidden)return fail("模板已下架或不存在",404);data=publicRow(row);}
  else if(path==="/api/ai/template-quote"){
-  const body=req.postDataJSON();quotes.push(body);assert.deepEqual(Object.keys(body.input).sort(),['audioIds','imageIds','videoIds']);
+  const body=req.postDataJSON();quotes.push(body);assert.deepEqual(Object.keys(body.input).sort(),body.input.imageSlots?['audioIds','imageIds','imageSlots','videoIds']:['audioIds','imageIds','videoIds']);
   if(quoteFails)return fail("模板输出规格尚未配置价格");
-  data={templateId:body.templateId,modelId:"fixture-model",modelName:"Fixture Model",handler:body.templateId==="7"?"reference_to_video":"image_to_image",pointCost:7,quoteToken:"fixture-quote",options:{resolution:"2k",aspectRatio:"4:5",quality:"high",...(body.templateId==="7"?{duration:5}:{})},basePointCost:7,referencePointCost:0};
+  data={templateId:body.templateId,modelId:"fixture-model",modelName:"Fixture Model",handler:body.templateId==="7"||Number(body.templateId)>=20000?"reference_to_video":"image_to_image",pointCost:7,quoteToken:"fixture-quote",options:{resolution:"2k",aspectRatio:"4:5",quality:"high",...(body.templateId==="7"?{duration:5}:{})},basePointCost:7,referencePointCost:0};
+  if(Number(body.templateId)>=20000)data.options=templates.find(t=>t.id===body.templateId).options;
  }else if(path==="/api/ai/generate"){
   const body=req.postDataJSON();submits.push(body);assert.ok(body.templateId && body.templateQuote && body.clientRequestId);assert.equal('prompt' in body.input,false);assert.equal('imageUrls' in body.input,false);
   let task=tasks.get(body.clientRequestId);
@@ -187,7 +189,7 @@ try{
  const beforeOperator=submits.length;await page.goto(base+'/admin/studio-templates',{waitUntil:'networkidle'});await page.getByRole('button',{name:'新建风格',exact:true}).click();const editor=page.getByRole('dialog',{name:'新建创作模板'});await editor.getByLabel(/^名称/).fill('运营测试风格');await editor.getByLabel(/完整提示词/).fill('admin-only-recipe');
  const imageCount=editor.getByRole('spinbutton',{name:'参考图片数量',exact:true});
  assert.equal(await editor.getByRole('button',{name:'减少参考图片',exact:true}).isDisabled(),true);
- await imageCount.fill('4');assert.equal(await editor.getByRole('button',{name:'增加参考图片',exact:true}).isDisabled(),true);
+ await imageCount.fill('16');assert.equal(await editor.getByRole('button',{name:'增加参考图片',exact:true}).isDisabled(),true);
  await imageCount.fill('2');await editor.getByLabel('图片2用途',{exact:true}).waitFor();
  assert.equal(await editor.getByRole('spinbutton',{name:'参考视频数量',exact:true}).count(),0,'unsupported video input is shown for image mode');
  for(const name of ['创作模式','默认生成模型']){
@@ -226,7 +228,7 @@ try{
  await edit.getByRole('button',{name:'取消',exact:true}).click();await page.getByRole('alertdialog',{name:'放弃未保存的修改？'}).getByRole('button',{name:'取消',exact:true}).click();assert.equal(await edit.getByRole('button',{name:'分辨率',exact:true}).innerText(),'2K');
  await edit.getByRole('button',{name:'展示状态',exact:true}).click();await page.getByRole('option',{name:'上架到灵感和模板',exact:true}).click();await edit.getByRole('button',{name:'保存并上架',exact:true}).click();await edit.waitFor({state:'hidden'});await page.getByRole('heading',{name:'运营测试风格',exact:true}).waitFor();
  assert.equal(operatorRow.modelKey,'fixture-model','default generation model was not saved');assert.equal(operatorRow.options.quality,'high','visible quality default was omitted from save');assert.equal(checks.at(-1).options.quality,'high');
- await page.getByRole('button',{name:'编辑运营测试风格',exact:true}).click();assert.equal(await edit.getByRole('button',{name:'默认生成模型',exact:true}).innerText(),'Fixture Model','saved default model was not restored');
+ await page.getByRole('button',{name:'编辑运营测试风格',exact:true}).click();await edit.getByRole('button',{name:'刷新模型列表',exact:true}).waitFor();assert.equal(await edit.getByRole('button',{name:'默认生成模型',exact:true}).innerText(),'Fixture Model','saved default model was not restored');
  catalogModelName='运营维护名称（旗舰）';catalogDelay=800;await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await edit.getByRole('button',{name:'正在读取模型…',exact:true}).waitFor();
  assert.equal(await edit.getByRole('button',{name:'保存并上架',exact:true}).isDisabled(),true);assert.equal(await edit.getByRole('button',{name:'检查生成配置',exact:true}).isDisabled(),true);
  assert.equal(await edit.getByRole('button',{name:'分辨率',exact:true}).innerText(),'2K','refresh hid the existing configuration');
@@ -259,5 +261,30 @@ try{
  await videoEditor.getByRole('button',{name:'清晰度',exact:true}).click();await page.getByRole('option',{name:'1080P',exact:true}).click();
  await videoEditor.getByRole('button',{name:'视频时长',exact:true}).click();await page.getByRole('option',{name:'4.5 秒',exact:true}).click();
  await videoEditor.getByRole('button',{name:'默认生成模型',exact:true}).scrollIntoViewIfNeeded();await snap('video-model-parameters-desktop');await page.setViewportSize({width:390,height:844});await videoEditor.getByRole('button',{name:'视频时长',exact:true}).scrollIntoViewIfNeeded();assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await snap('video-model-parameters-mobile');
+
+ await page.setViewportSize({width:1440,height:1000});await videoEditor.getByRole('button',{name:'取消',exact:true}).click();await page.getByRole('alertdialog',{name:'放弃未保存的修改？'}).getByRole('button',{name:'放弃修改',exact:true}).click();
+ const contentPack=JSON.parse(await readFile(new URL('../../tide-canvas-server/internal/handler/studiotemplate/content-packs/store-food-v002/catalog.json',import.meta.url),'utf8'));
+ const packRows=contentPack.entries.map((entry,i)=>({...entry.template,id:String(20000+i),uses:0}));templates.push(...packRows);
+ await page.goto(base+'/admin/studio-templates',{waitUntil:'networkidle'});await page.getByRole('button',{name:/^灵感做同款/}).click();await page.getByRole('button',{name:'视频',exact:true}).click();await page.getByRole('heading',{name:'火锅店真人带看 · 15秒',exact:true}).waitFor();
+ await page.getByRole('button',{name:'编辑火锅店真人带看 · 15秒',exact:true}).click();const packEditor=page.getByRole('dialog',{name:'编辑创作模板'});
+ assert.equal(await packEditor.getByRole('spinbutton',{name:'参考图片数量',exact:true}).inputValue(),'6');assert.ok((await packEditor.getByLabel(/完整提示词/).inputValue()).includes('{{image:3}}'));
+ const optionalPanel=packEditor.getByRole('group',{name:'可选图片位置',exact:true});assert.equal(await optionalPanel.getByRole('checkbox').count(),6);assert.equal(await optionalPanel.getByRole('checkbox').nth(2).isChecked(),true);assert.equal(await optionalPanel.getByRole('checkbox').nth(0).isChecked(),false);assert.equal(await packEditor.getByText('本人头像（选填，至少一种）',{exact:true}).count(),0);
+ await optionalPanel.scrollIntoViewIfNeeded();await snap('content-pack-admin-desktop');await page.setViewportSize({width:390,height:844});await optionalPanel.scrollIntoViewIfNeeded();assert.equal(await packEditor.evaluate(el=>el.scrollWidth>el.clientWidth+1),false);await snap('content-pack-admin-mobile');await page.setViewportSize({width:1440,height:1000});await packEditor.getByRole('button',{name:'取消',exact:true}).click();
+
+ await page.getByRole('button',{name:'编辑火锅店真人带看 · 30秒',exact:true}).click();const longEditor=page.getByRole('dialog',{name:'编辑创作模板'});
+ await longEditor.getByRole('button',{name:'默认生成模型',exact:true}).click();await page.getByRole('option',{name:'Fixture Video',exact:true}).click();
+ const longDuration=longEditor.getByRole('button',{name:'视频时长',exact:true});assert.equal(await longDuration.getAttribute('data-invalid'),'true');assert.ok((await longDuration.innerText()).includes('30'));await longEditor.getByText(/原模板为 30 秒，所选模型不支持/).waitFor();
+ await longEditor.getByRole('button',{name:'默认生成模型',exact:true}).click();await page.getByRole('option',{name:'自动选择兼容模型（上架时确定）',exact:true}).click();
+ await longEditor.getByRole('button',{name:'保存草稿',exact:true}).click();await longEditor.waitFor({state:'hidden'});assert.equal(packRows[10].options.duration,30,'automatic model selection dropped 30s template timeline');assert.equal(packRows[10].options.aspectRatio,'9:16');
+ await page.goto(base+'/templates',{waitUntil:'networkidle'});assert.equal(await page.getByRole('heading',{name:'火锅店真人带看 · 15秒',exact:true}).count(),0,'draft pack leaked publicly');
+ // Only this fixture is marked published to exercise upload behavior. Source data remains draft.
+ packRows[0].status=1;packRows[0].coverUrl=base+'/studio-samples/v1/rainy-cinema.webp';packRows[0].previewUrl=base+'/fixture.mp4';
+ await page.goto(base+'/templates/20000',{waitUntil:'networkidle'});await page.getByLabel('上传门面照片',{exact:true}).waitFor();assert.equal(await page.locator('input[type=file]').count(),6);assert.equal(await page.locator('textarea,[contenteditable=true]').count(),0);
+ await page.getByLabel('上传门面照片',{exact:true}).setInputFiles({...imageFile,name:'shop-front.png'});await page.locator('small').filter({hasText:'已上传'}).waitFor();await page.getByLabel('上传店内全景',{exact:true}).setInputFiles({...imageFile,name:'shop-room.png'});await page.getByText('7 积分',{exact:true}).waitFor();
+ assert.deepEqual(quotes.at(-1).input.imageSlots,[1,2]);assert.equal(await page.getByRole('button',{name:'生成同款',exact:true}).isEnabled(),true);
+ await page.getByLabel('上传真实菜品',{exact:true}).setInputFiles({...imageFile,name:'food.png'});await page.getByText('7 积分',{exact:true}).waitFor();assert.deepEqual(quotes.at(-1).input.imageSlots,[1,2,4]);
+ await page.getByText('成品规格：比例 9:16 · 15 秒',{exact:true}).waitFor();await snap('content-pack-user-desktop');await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await snap('content-pack-user-mobile');await page.setViewportSize({width:1440,height:1000});
+ const beforePackReload=uploaded;await page.reload({waitUntil:'networkidle'});await page.getByText('7 积分',{exact:true}).waitFor();assert.equal(uploaded,beforePackReload);assert.deepEqual(quotes.at(-1).input.imageSlots,[1,2,4]);
+ await page.getByRole('button',{name:'生成同款',exact:true}).click();await page.getByRole('heading',{name:'你的同款，完成了'}).waitFor();assert.deepEqual(submits.at(-1).input.imageSlots,[1,2,4]);assert.equal('prompt' in submits.at(-1).input,false);
  assert.deepEqual(errors,[]);console.log('PASS: prompt-free gallery/workshop and static assets, repeated active filters, owned image/video/audio IDs, quotes, ambiguous retry, refresh/unpublished/deleted-task recovery, account isolation, working Studio, admin edit/import, desktop/mobile.');
 }catch(error){console.log(JSON.stringify({url:page.url(),body:(await page.locator('body').innerText().catch(()=>'')),errors}));throw error;}finally{await browser.close();}

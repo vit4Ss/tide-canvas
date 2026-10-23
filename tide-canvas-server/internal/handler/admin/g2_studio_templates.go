@@ -272,8 +272,8 @@ func (h *studioTemplatesHandler) fromTask(c *gin.Context) {
 		row.Requirements.Videos = templateSourceRefCount(in, "videoReferences", "videoUrls", "video_urls")
 		row.Requirements.Audio = templateSourceRefCount(in, "audioReferences", "audioUrls", "audio_urls")
 	}
-	if row.Requirements.Images > 4 || row.Requirements.Videos > 3 || row.Requirements.Audio > 3 {
-		response.Fail(c, 400, "原作品素材数量超过模板限制（图片4张、视频和音频各3段），请先在创作台减少素材并验证效果后导入")
+	if row.Requirements.Images > model.MaxTemplateImages || row.Requirements.Videos > 3 || row.Requirements.Audio > 3 {
+		response.Fail(c, 400, "原作品素材数量超过模板限制（图片16张、视频和音频各3段），请先在创作台减少素材并验证效果后导入")
 		return
 	}
 	if row.Mode == "flf" {

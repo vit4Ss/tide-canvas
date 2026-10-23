@@ -32,6 +32,9 @@ type StudioTemplateRequirements struct {
 	Images int `json:"images"`
 	Videos int `json:"videos"`
 	Audio  int `json:"audio"`
+	// One-based image positions which the user may leave empty. The browser
+	// submits explicit positions so skipping a portrait cannot shift later roles.
+	OptionalImages []int `json:"optionalImages,omitempty"`
 }
 
 type StudioTemplateInputLabels struct {

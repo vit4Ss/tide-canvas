@@ -22,9 +22,10 @@ import (
 // The browser submits owned upload IDs, never prompt text, provider parameters,
 // references belonging to another user, or the preview displayed in the catalogue.
 type templateUploads struct {
-	ImageIDs []idgen.ID `json:"imageIds"`
-	VideoIDs []idgen.ID `json:"videoIds"`
-	AudioIDs []idgen.ID `json:"audioIds"`
+	ImageIDs   []idgen.ID `json:"imageIds"`
+	VideoIDs   []idgen.ID `json:"videoIds"`
+	AudioIDs   []idgen.ID `json:"audioIds"`
+	ImageSlots []int      `json:"imageSlots,omitempty"`
 }
 
 type templateQuoteVO struct {
@@ -89,18 +90,63 @@ func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *gen
 	if row.Mode == "flf" {
 		req.Images = 2
 	}
+	if err := model.ValidateTemplateImageReferences(row.Mode, req, row.Prompt); err != nil {
+		return templateError(err.Error())
+	}
+	imageSlots := uploads.ImageSlots
+	if len(imageSlots) == 0 {
+		for i := range uploads.ImageIDs {
+			imageSlots = append(imageSlots, i+1)
+		}
+	}
+	if setupOnly {
+		imageSlots = nil
+		for i := 0; i < req.Images; i++ {
+			imageSlots = append(imageSlots, i+1)
+		}
+	}
+	if !setupOnly && len(uploads.ImageSlots) > 0 && len(imageSlots) != len(uploads.ImageIDs) {
+		return templateError("图片位置与上传数量不一致，请重新选择素材")
+	}
+	if !setupOnly && len(req.OptionalImages) > 0 {
+		if len(uploads.ImageIDs) != req.Images && len(uploads.ImageSlots) == 0 {
+			return templateError("缺少图片用途位置，请刷新页面后重试")
+		}
+		provided := map[int]bool{}
+		optional := map[int]bool{}
+		for _, n := range req.OptionalImages {
+			optional[n] = true
+		}
+		for _, n := range imageSlots {
+			if n < 1 || n > req.Images || provided[n] {
+				return templateError("图片用途位置无效或重复")
+			}
+			provided[n] = true
+		}
+		for n := 1; n <= req.Images; n++ {
+			if !optional[n] && !provided[n] {
+				return templateError(fmt.Sprintf("请上传图片位置%d要求的素材", n))
+			}
+		}
+	} else if !setupOnly && len(uploads.ImageSlots) > 0 {
+		for i, n := range imageSlots {
+			if n != i+1 {
+				return templateError("固定模板的图片位置不能更改")
+			}
+		}
+	}
 	flexible := row.Mode == "ref" && req.Images+req.Videos+req.Audio == 0
 	if !setupOnly && flexible {
 		if len(uploads.ImageIDs)+len(uploads.VideoIDs)+len(uploads.AudioIDs) == 0 {
 			return templateError("请上传至少一个参考素材")
 		}
-	} else if !setupOnly && (len(uploads.ImageIDs) != req.Images || len(uploads.VideoIDs) != req.Videos || len(uploads.AudioIDs) != req.Audio) {
+	} else if !setupOnly && ((len(req.OptionalImages) == 0 && len(uploads.ImageIDs) != req.Images) || len(uploads.VideoIDs) != req.Videos || len(uploads.AudioIDs) != req.Audio) {
 		return templateError(fmt.Sprintf("请按模板要求上传 %d 张图片、%d 段视频、%d 段音频", req.Images, req.Videos, req.Audio))
 	}
 	if len(uploads.ImageIDs) > 16 || len(uploads.VideoIDs) > 15 || len(uploads.AudioIDs) > 15 {
 		return templateError("上传素材数量过多")
 	}
-	input := map[string]any{"prompt": row.Prompt, "batchCount": 1}
+	input := map[string]any{"prompt": model.ResolveTemplateImageReferences(row, imageSlots), "batchCount": 1}
 	ownedFiles := make([]model.File, 0)
 	for _, group := range []struct {
 		ids       []idgen.ID
@@ -167,6 +213,11 @@ func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *gen
 		}
 		var cfg map[string]any
 		_ = json.Unmarshal([]byte(m.Config), &cfg)
+		// Auto-selection must honor the recipe's duration/specs. A popular 15s
+		// model cannot block a 30s recipe when a compatible model is available.
+		if key == "" && !templateModelSupportsRequestedOptions(row, cfg) {
+			continue
+		}
 		mode := row.Mode
 		if mode == "flf" {
 			mode = "keyframe"
@@ -188,6 +239,9 @@ func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *gen
 		candidate := *dto
 		candidate.Handler = handler
 		candidate.Input, _ = json.Marshal(input)
+		if key == "" && templatePromptLimitError(row, &candidate, m, setupOnly) != nil {
+			continue
+		}
 		if validateOmniReferenceInput(&candidate, m) != nil || validateReferenceCountInput(&candidate, m) != nil {
 			continue
 		}
@@ -223,6 +277,22 @@ func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *gen
 				continue
 			}
 		}
+		if key == "" {
+			// Check the same resolved defaults and pricing contract used later
+			// for quote/submission; an incomplete candidate must not hide a
+			// later model which can execute this recipe.
+			candidateInput := decodeInput(candidate.Input)
+			if applyTemplateModelOptions(row, cfg, candidateInput) != nil {
+				continue
+			}
+			candidate.Input, _ = json.Marshal(candidateInput)
+			if configured, valid := prepareVideoPerRequestPricingInput(&candidate, m); configured && !valid {
+				continue
+			}
+			if _, configured, allowed := modelVideoDurationAllowed(m, handler, candidate.Input); configured && !allowed {
+				continue
+			}
+		}
 		selected = m
 		break
 	}
@@ -241,6 +311,32 @@ func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *gen
 			return templateError(fmt.Sprintf("模板所用模型要求单个%s不超过 %g MB，请压缩后重新上传", map[string]string{"image": "图片", "video": "视频", "audio": "音频"}[kind], float64(limit)/(1024*1024)))
 		}
 	}
+	if err := applyTemplateModelOptions(row, cfg, input); err != nil {
+		return err
+	}
+	dto.Handler = handler
+	dto.ModelID = selected.ModelID
+	dto.Origin = "template"
+	dto.templateSnapshot = &row
+	dto.Input, _ = json.Marshal(input)
+	public := decodeInput(dto.Input)
+	delete(public, "prompt")
+	public["templateId"] = row.ID.String()
+	public["templateTitle"] = row.Title
+	dto.PublicInput, _ = json.Marshal(public)
+	if err := validateGenerationPromptSize(input); err != nil {
+		return templateError("模板内容过长，请联系管理员调整")
+	}
+	if err := templatePromptLimitError(row, dto, selected, setupOnly); err != nil {
+		return err
+	}
+	if err := validateRequiredReferenceInput(dto); !setupOnly && err != nil {
+		return err
+	}
+	return nil
+}
+
+func applyTemplateModelOptions(row model.StudioTemplate, cfg map[string]any, input map[string]any) error {
 	pick := func(value, key string) (string, error) {
 		options := inputStrings(cfg, key)
 		for _, option := range options {
@@ -309,26 +405,46 @@ func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *gen
 			input["duration"] = duration
 		}
 	}
-	dto.Handler = handler
-	dto.ModelID = selected.ModelID
-	dto.Origin = "template"
-	dto.templateSnapshot = &row
-	dto.Input, _ = json.Marshal(input)
-	public := decodeInput(dto.Input)
-	delete(public, "prompt")
-	public["templateId"] = row.ID.String()
-	public["templateTitle"] = row.Title
-	dto.PublicInput, _ = json.Marshal(public)
-	if err := validateGenerationPromptSize(input); err != nil {
-		return templateError("模板内容过长，请联系管理员调整")
+	return nil
+}
+
+func templatePromptLimitError(row model.StudioTemplate, dto *generateDTO, selected *model.AiModel, setupOnly bool) error {
+	if setupOnly && selected.Type == "video" {
+		if limit := model.ModelConfigMaxPromptChars(selected.Config); limit > 0 && model.TemplatePromptMaxRunes(row) > limit {
+			return templateError(fmt.Sprintf("模板含缺图说明后可能超过模型的 %d 字限制，请缩短模板或更换模型", limit))
+		}
 	}
 	if err := validateModelPromptCharLimit(dto, selected); err != nil {
 		return templateError("模板内容超过模型限制，请联系管理员")
 	}
-	if err := validateRequiredReferenceInput(dto); !setupOnly && err != nil {
-		return err
-	}
 	return nil
+}
+
+func templateModelSupportsRequestedOptions(row model.StudioTemplate, cfg map[string]any) bool {
+	for _, spec := range []struct{ key, value string }{{"ratios", row.Options.AspectRatio}, {"resolutions", row.Options.Resolution}, {"qualities", row.Options.Quality}} {
+		if strings.TrimSpace(spec.value) == "" {
+			continue
+		}
+		found := false
+		for _, v := range inputStrings(cfg, spec.key) {
+			if strings.EqualFold(strings.TrimSpace(v), strings.TrimSpace(spec.value)) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	if row.MediaType == "video" && row.Options.Duration > 0 {
+		for _, v := range configDurationValues(cfg["durations"]) {
+			if durationSeconds(v) == row.Options.Duration {
+				return true
+			}
+		}
+		return false
+	}
+	return true
 }
 
 func templateBatchRange(cfg map[string]any) (int, int) {

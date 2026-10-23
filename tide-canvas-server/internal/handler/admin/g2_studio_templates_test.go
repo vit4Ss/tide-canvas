@@ -182,7 +182,7 @@ func TestStudioTemplatesPublicationImportAndPermissions(t *testing.T) {
 		t.Fatal("reimport retry duplicated the draft")
 	}
 	for _, input := range []string{
-		`{"prompt":"needs all five images","imageUrls":["a","b","c","d","e"]}`,
+		`{"prompt":"needs 17 images","imageUrls":["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17"]}`,
 		`{"prompt":"needs all four audio tracks","audio_urls":["a","b","c","d"]}`,
 	} {
 		source := task

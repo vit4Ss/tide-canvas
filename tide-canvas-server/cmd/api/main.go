@@ -300,6 +300,9 @@ func run() error {
 	if err := studiotemplate.SeedSamples(deps.DB); err != nil {
 		logger.L().Warn("seed: studio sample templates", zap.Error(err))
 	}
+	if err := studiotemplate.SeedContentPacks(deps.DB); err != nil {
+		logger.L().Warn("seed: supplied studio content packs", zap.Error(err))
+	}
 	studiotemplate.Register(api, deps)
 	skill.Register(api, deps)
 	skillrun.Register(api, deps)

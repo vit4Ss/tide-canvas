@@ -1,6 +1,6 @@
 import type { PublicStudioTemplate, TemplateUploads } from "./studio-template-api";
 
-export type TemplateSlot = { key: string; kind: "image" | "video" | "audio"; label: string; optional: boolean };
+export type TemplateSlot = { key: string; kind: "image" | "video" | "audio"; label: string; optional: boolean; imagePosition?: number };
 type UploadFile = { id: string };
 export function templateUploadSlots(row: Pick<PublicStudioTemplate, "mode" | "requirements" | "inputLabels">): TemplateSlot[] {
   const requirements = { ...row.requirements };
@@ -8,13 +8,15 @@ export function templateUploadSlots(row: Pick<PublicStudioTemplate, "mode" | "re
   if (row.mode === "flf") requirements.images = 2;
   const flexible = row.mode === "ref" && requirements.images + requirements.videos + requirements.audio === 0;
   return ([['image', 'images', '图片'], ['video', 'videos', '视频'], ['audio', 'audio', '音频']] as const).flatMap(([kind, field, name]) =>
-    Array.from({ length: Math.max(0, Math.min(16, flexible ? 1 : requirements[field])) }, (_, i) => ({ key: `${kind}-${i}`, kind, optional: flexible,
+    Array.from({ length: Math.max(0, Math.min(16, flexible ? 1 : requirements[field])) }, (_, i) => ({ key: `${kind}-${i}`, kind, optional: flexible || (kind === "image" && !!requirements.optionalImages?.includes(i+1)),
+      ...(kind === "image" && requirements.optionalImages?.length ? { imagePosition: i+1 } : {}),
       label: row.inputLabels?.[field]?.[i]?.trim() || (row.mode === "flf" && kind === "image" ? i ? "尾帧图片" : "首帧图片" : `${name}${i + 1}`) })),
   );
 }
 export function templateUploadInput(slots: TemplateSlot[], files: Record<string, UploadFile>): TemplateUploads {
   const ids = (kind: TemplateSlot["kind"]) => slots.filter(slot => slot.kind === kind && files[slot.key]?.id).map(slot => files[slot.key].id);
-  return { imageIds: ids("image"), videoIds: ids("video"), audioIds: ids("audio") };
+  return { imageIds: ids("image"), videoIds: ids("video"), audioIds: ids("audio"),
+    ...(slots.some(slot => slot.imagePosition) ? { imageSlots: slots.filter(slot => slot.kind === "image" && files[slot.key]?.id).map(slot => slot.imagePosition!) } : {}) };
 }
 export function templateUploadsReady(row: Pick<PublicStudioTemplate, "mode" | "requirements">, slots: TemplateSlot[], files: Record<string, UploadFile>): boolean {
   if (slots.some(slot => !slot.optional && !files[slot.key]?.id)) return false;

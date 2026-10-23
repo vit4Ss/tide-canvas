@@ -13,8 +13,8 @@ export function templateParameterFields(media: "image" | "video", config?: Model
   return fields;
 }
 
-/** Used on an explicit model switch, never on initial hydration of a saved
- * recipe. Compatible settings survive; hidden/unsupported values are removed. */
+/** Used on an explicit model switch. A fixed video timeline must not shrink to
+ * another model's default; retain its duration for visible/server validation. */
 export function templateOptionsForModel(options: StudioTemplate["options"], media: "image" | "video", config?: ModelConfig | null): StudioTemplate["options"] {
   const result: StudioTemplate["options"] = {};
   for (const field of templateParameterFields(media, config)) {
@@ -22,6 +22,7 @@ export function templateOptionsForModel(options: StudioTemplate["options"], medi
     const match = field.values.find(v => v.toLowerCase() === value.toLowerCase());
     if (match) Object.assign(result, { [field.key]: field.numeric ? Number(match) : match });
   }
+  if (media === "video" && options.duration && options.duration > 0) result.duration = options.duration;
   return result;
 }
 
@@ -35,6 +36,7 @@ export function templateOptionsForRequest(options: StudioTemplate["options"], me
     const value = raw === undefined || raw === "" || raw === 0 ? field.values[0] : raw;
     Object.assign(result, { [field.key]: field.numeric ? Number(value) : String(value) });
   }
+  if (media === "video" && options.duration && options.duration > 0) result.duration = options.duration;
   return result;
 }
 
@@ -53,7 +55,7 @@ export function copyTemplateDraft(row: StudioTemplate): StudioTemplateSave {
     inputLabels: structuredClone(row.inputLabels || {}),
     mode: row.mode,
     modelKey: row.modelKey,
-    requirements: { ...row.requirements },
+    requirements: structuredClone(row.requirements),
     options: { ...row.options },
     status: 0,
     sortOrder: row.sortOrder,
@@ -74,9 +76,9 @@ export function templateCountRange(
     case "flf":
       return { min: 2, max: 2 };
     case "i2i":
-      return { min: 1, max: 4 };
+      return { min: 1, max: 16 };
     default:
-      return { min: 0, max: 4 };
+      return { min: 0, max: 16 };
   }
 }
 

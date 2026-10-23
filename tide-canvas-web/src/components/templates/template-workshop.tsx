@@ -158,6 +158,8 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
   const anyUploading = Object.values(uploads).some(value => value.busy);
   const ready = !!row && !anyUploading && templateUploadsReady(row, slots, files);
   const uploadedCount = slots.filter(slot => !!files[slot.key]).length;
+  const requiredSlots = slots.filter(slot => !slot.optional);
+  const requiredUploaded = requiredSlots.filter(slot => !!files[slot.key]).length;
   const processing = task?.status === AiTaskStatus.PROCESSING;
   const locked = sending || recovering || !draftReady || !setup || !!setupError || unresolved || !!task;
 
@@ -291,7 +293,7 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
         </section>
         <section className={css.uploadPane} aria-labelledby={task ? "task-result-title" : "materials-title"}>
           {task ? resultView : <>
-          <div className={css.sectionHeading}><h2 id="materials-title">换上你的素材</h2>{owner && slots.length > 0 && <span className={ready ? css.uploadComplete : ""}>{ready && <Check size={14} />}已上传 {uploadedCount}{slots.every(slot => slot.optional) ? " 个素材" : ` / ${slots.length}`}</span>}</div>
+          <div className={css.sectionHeading}><h2 id="materials-title">换上你的素材</h2>{owner && slots.length > 0 && <span className={ready ? css.uploadComplete : ""}>{ready && <Check size={14} />}{requiredSlots.length ? `必填 ${requiredUploaded} / ${requiredSlots.length} · 已上传 ${uploadedCount}` : `已上传 ${uploadedCount} 个素材`}</span>}</div>
           <p className={css.instructions}>{row.inputHint || "按下方要求上传你自己的素材，其他设置已为你准备好。"}</p>
           <div className={css.recipeSummary}><span>{templateInputs(row)}</span><ArrowUpRight size={15} /><span>生成{row.mediaType === "video" ? "视频" : "图片"}</span></div>
           <p className={css.preflightInfo}>{validQuote ? `成品规格：${templateOutputText(validQuote.options)}` : setup ? `${setup.referenceVideoBilling ? "基础 " : "预计 "}${setup.basePointCost} 积分 · ${templateOutputText(setup.options)}` : setupError || "正在读取成品规格与基础积分…"}</p>

@@ -1,3 +1,5 @@
 # 容器入口脚本必须 LF：Windows 提交 CRLF 会让 Linux 容器报 "no such file or directory"
 *.sh text eol=lf
+# Preserve supplied source bytes: the private content-pack manifest verifies SHA-256.
+tide-canvas-server/internal/handler/studiotemplate/content-packs/store-food-v002/source/*.txt -text
 # Unified diff context lines require a leading space even on empty lines.

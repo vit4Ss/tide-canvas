@@ -34,3 +34,14 @@ test("flexible reference templates still require one asset; ready-made text temp
 test("image-to-video automatically exposes the mandatory first image", () => {
   assert.equal(templateUploadSlots(recipe("i2v")).length, 1);
 });
+
+test("optional portrait does not shift product and workshop image positions",()=>{
+ const row={mode:'ref',requirements:{images:6,videos:0,audio:0,optionalImages:[3,6]},inputLabels:{images:['入口','接待区','本人头像','产品','车间','工序']}};
+ const slots=templateUploadSlots(row);
+ assert.equal(slots.length,6);assert.deepEqual(slots.map(s=>s.optional),[false,false,true,false,false,true]);
+ const files={'image-0':{id:'1'},'image-1':{id:'2'},'image-3':{id:'4'},'image-4':{id:'5'}};
+ assert.equal(templateUploadsReady(row,slots,files),true);
+ assert.deepEqual(templateUploadInput(slots,files),{imageIds:['1','2','4','5'],videoIds:[],audioIds:[],imageSlots:[1,2,4,5]});
+ assert.equal(templateUploadsReady(row,slots,{'image-0':{id:'1'},'image-1':{id:'2'}}),false);
+ assert.equal(templateInputs(row),'4 张必填图片 + 2 张选填图片');
+});

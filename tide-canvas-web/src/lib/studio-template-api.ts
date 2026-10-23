@@ -16,7 +16,7 @@ export interface StudioTemplate {
   inputLabels?: { images?: string[]; videos?: string[]; audio?: string[] };
   mode: "t2i" | "i2i" | "t2v" | "i2v" | "flf" | "ref";
   modelKey: string;
-  requirements: { images: number; videos: number; audio: number };
+  requirements: { images: number; videos: number; audio: number; optionalImages?: number[] };
   options: {
     aspectRatio?: string;
     resolution?: string;
@@ -31,7 +31,7 @@ export interface StudioTemplate {
 export type StudioTemplateSave = Omit<StudioTemplate, "id" | "uses">;
 export type PublicStudioTemplate = Omit<StudioTemplate, "prompt" | "modelKey" | "status" | "sortOrder">;
 export type PublicTemplatePage = PageData<PublicStudioTemplate> & { categories: string[] };
-export interface TemplateUploads { imageIds: string[]; videoIds: string[]; audioIds: string[] }
+export interface TemplateUploads { imageIds: string[]; videoIds: string[]; audioIds: string[]; imageSlots?: number[] }
 export interface TemplateSetup { modelId: string; modelName: string; handler: string; basePointCost: number; referenceVideoBilling: boolean; options: StudioTemplate["options"]; maxUploadBytes: Record<"image" | "video" | "audio", number> }
 export interface TemplateQuote { templateId: string; modelId: string; modelName: string; handler: string; pointCost: number; quoteToken: string; options: StudioTemplate["options"]; basePointCost: number; referencePointCost: number }
 export type StudioTemplatePage = PageData<StudioTemplate> & {

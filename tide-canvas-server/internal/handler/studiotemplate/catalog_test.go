@@ -18,7 +18,7 @@ func TestRequirementsRejectImpossibleInputs(t *testing.T) {
 		{"i2i", "image", model.StudioTemplateRequirements{Videos: 1}},
 		{"i2v", "video", model.StudioTemplateRequirements{Images: 2}},
 		{"ref", "video", model.StudioTemplateRequirements{Audio: 4}},
-		{"i2i", "image", model.StudioTemplateRequirements{Images: 5}},
+		{"i2i", "image", model.StudioTemplateRequirements{Images: 17}},
 		{"ref", "video", model.StudioTemplateRequirements{Images: -1}},
 	} {
 		dto := base

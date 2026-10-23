@@ -835,3 +835,6 @@
     font-size: 11px;
   }
 }
+.optionalRoles { display: grid; gap: 8px; padding-top: 16px; border-top: 1px solid var(--border); }
+.optionalRoles > label { display: flex; gap: 8px; align-items: center; min-height: 44px; font-size: 13px; cursor: pointer; }
+.optionalRoles input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; padding: 0; accent-color: var(--accent); flex-shrink: 0; }

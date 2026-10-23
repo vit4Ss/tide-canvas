@@ -217,8 +217,8 @@ func (d *SaveDTO) Validate() error {
 		return errors.New("封面和预览需使用有效的 HTTP/HTTPS 媒体地址")
 	}
 	r := d.Requirements
-	if r.Images < 0 || r.Images > 4 || r.Videos < 0 || r.Videos > 3 || r.Audio < 0 || r.Audio > 3 {
-		return errors.New("素材要求超出范围：图片最多 4 张，视频和音频各最多 3 段")
+	if r.Images < 0 || r.Images > model.MaxTemplateImages || r.Videos < 0 || r.Videos > 3 || r.Audio < 0 || r.Audio > 3 {
+		return errors.New("素材要求超出范围：图片最多 16 张，视频和音频各最多 3 段，仍需符合所选模型限制")
 	}
 	if d.MediaType == "image" {
 		if d.Mode != "t2i" && d.Mode != "i2i" || r.Videos > 0 || r.Audio > 0 {
@@ -241,6 +241,9 @@ func (d *SaveDTO) Validate() error {
 	}
 	if d.Mode == "flf" {
 		d.Requirements.Images = 2
+	}
+	if err := model.ValidateTemplateImageReferences(d.Mode, d.Requirements, d.Prompt); err != nil {
+		return err
 	}
 	if d.Options.BatchCount < 0 || d.Options.BatchCount > 4 || d.Options.Duration < 0 || d.Options.Duration > 600 || len(d.Options.AspectRatio) > 32 || len(d.Options.Resolution) > 32 || len(d.Options.Quality) > 64 {
 		return errors.New("默认参数无效")

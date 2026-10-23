@@ -818,14 +818,13 @@ function TemplateEditor({
                     audio: "参考音频",
                   }[key];
                   const unit = key === "images" ? "张" : "段";
-                  const update = (value: number) =>
+                  const update = (value: number) => {
+                    const count = Math.min(range.max, Math.max(range.min, Math.trunc(value) || 0));
                     change("requirements", {
-                      ...form.requirements,
-                      [key]: Math.min(
-                        range.max,
-                        Math.max(range.min, Math.trunc(value) || 0),
-                      ),
+                      ...form.requirements, [key]: count,
+                      ...(key === "images" ? { optionalImages: (form.requirements.optionalImages || []).filter(position => position <= count).slice(0, Math.max(0,count-1)) } : {}),
                     });
+                  };
                   return (
                     <div className={css.requirementRow} key={key}>
                       <div>
@@ -879,7 +878,7 @@ function TemplateEditor({
               <p className={css.note}>此模式不需要上传参考素材。</p>
             )}
             {form.mode === "ref" &&
-              !Object.values(form.requirements).some(Boolean) && (
+              !(form.requirements.images + form.requirements.videos + form.requirements.audio) && (
                 <p className={css.note}>
                   数量均为 0 时，用户可按需选择参考素材。
                 </p>
@@ -888,10 +887,12 @@ function TemplateEditor({
           {requirementKinds.length > 0 && (
             <FormCard title="素材用途名称">
               <p>
-                这些名称只用于前台上传位置的标签，例如「人物照片」「服装图片」，不会自动写入或替换提示词。留空时使用素材编号。
+                这些名称用于前台上传位置的标签，例如「人物照片」「服装图片」。留空时使用素材编号，具体创作要求请在完整提示词中说明。
               </p>
               <p className={css.note}>
-                {form.mode === "flf"
+                {form.requirements.optionalImages?.length
+                  ? "本模板有可选图片。提示词请使用固定位置占位符，缺图时由系统自动调整真实图号，避免把产品图误当头像。"
+                  : form.mode === "flf"
                   ? "图片1是首帧，图片2是尾帧。请在「完整提示词」中描述从首帧到尾帧的动作与画面过渡。"
                   : form.mode === "i2v"
                     ? "图片1会作为视频首帧。请在「完整提示词」中描述人物动作、镜头运动等，生成时使用用户上传的图片作为首帧。"
@@ -900,19 +901,19 @@ function TemplateEditor({
                       : "涉及多份素材时，建议在「完整提示词」中按下方顺序写清图片1、图片2（或视频1、音频1）分别做什么。例如：用图片2的服装替换图片1人物的服装，保持人物和背景不变。"}
                 {form.mode === "ref" && " 图片、视频、音频各自从1开始编号；可选素材没有上传时，不要在提示词中要求使用它。"}
               </p>
-              <p className={css.note}>编号用于描述素材顺序，不是自动替换的变量。用途名称、上传说明和提示词应保持一致，上架前请用实际素材试做确认。</p>
+              <p className={css.note}>普通「图片1」描述不会自动改写。有可选图片时，在提示词里用 {"{{image:1}}"}、{"{{image:2}}"} 等对应固定上传位置；系统会按实际上传顺序换成图号，缺图时明确标记未上传。用途名称、上传说明和提示词应保持一致。</p>
               <FormGrid>
                 {(["images", "videos", "audio"] as const).flatMap(
                   (kind, kindIndex) =>
                     Array.from(
                       {
                         length: Math.min(
-                          kind === "images" ? 4 : 3,
+                          kind === "images" ? 16 : 3,
                           Math.max(
                             0,
                             form.requirements[kind] ||
                               (form.mode === "ref" &&
-                              !Object.values(form.requirements).some(Boolean)
+                              !(form.requirements.images + form.requirements.videos + form.requirements.audio)
                                 ? 1
                                 : 0),
                           ),
@@ -922,7 +923,9 @@ function TemplateEditor({
                         <Field
                           key={`${kind}-${index}`}
                           label={`${["图片", "视频", "音频"][kindIndex]}${index + 1}用途`}
-                          hint={form.mode === "flf" && kind === "images"
+                          hint={kind === "images" && !!form.requirements.optionalImages?.length
+                            ? `固定图片位置${index+1}；提示词使用 {{image:${index+1}}}，系统按实际上传顺序绑定。`
+                            : form.mode === "flf" && kind === "images"
                             ? `对应用户上传的${index === 0 ? "首帧" : "尾帧"}图片。`
                             : `对应用户上传的第${index + 1}${["张图片", "段视频", "段音频"][kindIndex]}，提示词可按「${["图片", "视频", "音频"][kindIndex]}${index + 1}」描述其用途。`}
                         >
@@ -950,6 +953,18 @@ function TemplateEditor({
                     ),
                 )}
               </FormGrid>
+              {(form.mode === "ref" || form.mode === "i2i") && form.requirements.images > 1 && <div className={css.optionalRoles} role="group" aria-label="可选图片位置">
+                <strong>允许用户不上传的图片</strong>
+                <p className={css.note}>至少保留一个必填位置。可选图片的提示词应包含未上传时的处理方式。</p>
+                {templateUploadSlots(form).filter(slot => slot.kind === "image").map((slot, index) => {
+                  const positions = form.requirements.optionalImages || [];
+                  const optional = positions.includes(index + 1);
+                  return <label key={slot.key}>
+                    <input type="checkbox" checked={optional} disabled={!optional && positions.length >= form.requirements.images-1} onChange={event => change("requirements", { ...form.requirements, optionalImages: event.target.checked ? [...positions,index+1].sort((a,b)=>a-b) : positions.filter(n=>n!==index+1) })} />
+                    允许不上传图片{index + 1} · {slot.label}
+                  </label>;
+                })}
+              </div>}
             </FormCard>
           )}
           <FormCard title="输出规格与发布">
@@ -989,7 +1004,7 @@ function TemplateEditor({
                 ]}
                 onChange={(v) => {
                   const chosen = models.find(m => m.modelKey === v);
-                  setForm(old => ({ ...old, modelKey: v, options: chosen ? templateOptionsForModel(old.options, old.mediaType, chosen.config) : {} }));
+                  setForm(old => ({ ...old, modelKey: v, options: chosen ? templateOptionsForModel(old.options, old.mediaType, chosen.config) : old.options }));
                 }}
               />
             </Field>
@@ -1010,7 +1025,8 @@ function TemplateEditor({
               </p>
             )}
             {!selectedModel && !modelsLoading && !modelError && <p className={css.note}>先选择默认生成模型，再配置对应参数；自动模式可点击「检查生成配置」确定模型。</p>}
-            {selectedModel && !parameterFields.length && <p className={css.note}>此模型没有可选的输出参数，将使用模型默认设置。</p>}
+            {selectedModel && !parameterFields.length && <p className={css.note}>此模型未提供可选的输出参数。</p>}
+            {selectedModel && form.mediaType === "video" && !!form.options.duration && !parameterFields.some(field => field.key === "duration") && <p className={css.error} role="alert">当前模板为 {form.options.duration} 秒，但所选模型未配置可选时长。请更换支持此时长的模型后再上架。</p>}
             <FormGrid>
               {parameterFields.map(({ key, label, values, numeric }) => {
                 const raw = form.options[key];
@@ -1021,7 +1037,7 @@ function TemplateEditor({
                   key === "quality" ? ({low:"低画质",medium:"标准画质",high:"高画质"}[option.value] || option.value) : option.label }));
                 // Keep the default choice first, sort only explicit supported values like Studio.
                 if (key === "resolution" || key === "duration") options.sort((a,b) => !a.value ? -1 : !b.value ? 1 : key === "resolution" ? resolutionRank(a.value)-resolutionRank(b.value) : Number(a.value)-Number(b.value));
-                return <Field key={key} label={label} error={spec.invalid ? `当前值 ${raw} 不在该模型的配置中，请重新选择。` : undefined}>
+                return <Field key={key} label={label} error={spec.invalid ? key === "duration" ? `原模板为 ${raw} 秒，所选模型不支持。请更换模型；若主动改短时长，请同时调整提示词中的分镜。` : `当前值 ${raw} 不在该模型的配置中，请重新选择。` : undefined}>
                   <PopoverSelect {...selectProps} label={label} value={spec.value} options={options} invalid={spec.invalid}
                     onChange={value => change("options", { ...form.options, [key]: numeric ? Number(value) || undefined : value })} />
                 </Field>;
@@ -1094,7 +1110,7 @@ function TemplateEditor({
             {templateUploadSlots(form).map((slot) => (
               <li key={slot.key}>
                 {slot.label}
-                {slot.optional ? "（选填，至少一种）" : "（必填）"}
+                {slot.optional ? (form.requirements.images + form.requirements.videos + form.requirements.audio === 0 ? "（选填，至少一种）" : "（选填）") : "（必填）"}
               </li>
             ))}
           </ul>
