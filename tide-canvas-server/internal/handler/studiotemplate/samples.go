@@ -28,8 +28,8 @@ var legacySampleInputHints = map[string]string{
 
 // SeedSamples installs original, generated starter assets with their matching
 // creative recipes. A tombstone is intentional: operator edits, downlisting and
-// deletion must survive every later restart. Video keyframes remain drafts
-// until an operator supplies an actual playable preview.
+// deletion must survive every later restart. Video starter templates remain
+// drafts until an operator verifies their configuration and publishes them.
 func SeedSamples(db *gorm.DB) error {
 	var entries []struct {
 		Slug     string  `json:"slug"`

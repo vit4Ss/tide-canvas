@@ -30,7 +30,7 @@ func TestStudioTemplatesPublicationImportAndPermissions(t *testing.T) {
 	}
 	for _, row := range []model.MarketModel{
 		{BaseModel: model.BaseModel{ID: 501}, ModelKey: "image-test", Name: "Image display name", Type: "image", Status: 1, Config: `{"modes":["i2i"],"ratios":["1:1"],"resolutions":["2k"]}`},
-		{BaseModel: model.BaseModel{ID: 502}, ModelKey: "video-test", Name: "Video display name", Type: "video", Status: 1, Config: `{"modes":["omni_ref"],"durations":["5s"]}`},
+		{BaseModel: model.BaseModel{ID: 502}, ModelKey: "video-test", Name: "Video display name", Type: "video", Status: 1, Config: `{"modes":["omni_ref","i2v"],"durations":["5s"],"ratios":["1:1"]}`},
 	} {
 		if err := db.Create(&row).Error; err != nil {
 			t.Fatal(err)
@@ -127,8 +127,16 @@ func TestStudioTemplatesPublicationImportAndPermissions(t *testing.T) {
 		t.Fatal("unsafe media accepted")
 	}
 	video := strings.ReplaceAll(strings.ReplaceAll(published, `"mediaType":"image"`, `"mediaType":"video"`), `"mode":"i2i"`, `"mode":"i2v"`)
-	if call("POST", "/admin/studio-templates", video, true)["code"] != float64(400) {
-		t.Fatal("published video without preview")
+	if result := call("POST", "/admin/studio-templates", video, true); result["success"] != true {
+		t.Fatal("video cover should publish without a preview", result)
+	}
+	noCover := strings.Replace(video, `"coverUrl":"https://cdn.example.test/cover.png"`, `"coverUrl":""`, 1)
+	if call("POST", "/admin/studio-templates", noCover, true)["code"] != float64(400) {
+		t.Fatal("video without cover was published")
+	}
+	unsafePreview := strings.Replace(video, `"status":1`, `"status":1,"previewUrl":"javascript:alert(1)"`, 1)
+	if call("POST", "/admin/studio-templates", unsafePreview, true)["code"] != float64(400) {
+		t.Fatal("unsafe optional preview accepted")
 	}
 	if call("GET", "/admin/studio-templates/sources", "", false)["code"] != float64(403) {
 		t.Fatal("curator without generation access could read private outputs")

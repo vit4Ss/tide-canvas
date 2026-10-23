@@ -11,6 +11,7 @@ const templates = catalog.map(({ template }, i) => ({ ...template, id: String(i+
 const publicRow = template => { const row = { ...template }; for (const key of ['prompt','modelKey','status','sortOrder']) delete row[key]; return row; };
 let catalogModelName="Fixture Model",catalogDelay=0,catalogFails=false;
 let owner="801", uploaded=0, loseResponse=false, quoteFails=false, catalogueFails=false, adminCatalogueFails=false, failNextTask=false, deletedTask=false, templateHidden=false, uploadFails=false, verifyFilesFails=false, setupFails=false, uploadDelay=0;
+const coverRequests=[],coverTasks=new Map();let loseCoverResponse=false,coverPollPaused=false,failCoverTask=false,coverModelAvailable=true;
 const submits=[], quotes=[], checks=[], tasks=new Map(), storedFiles=new Map(), errors=[];
 const context=await browser.newContext({viewport:{width:1440,height:1000}});
 await context.addInitScript(()=>localStorage.setItem("access_token","template-fixture"));
@@ -25,6 +26,7 @@ await context.route("**/api/**",async route=>{
  const delayed=catalogDelay,failed=catalogFails;data=[{id:"41",modelKey:"fixture-model",name:catalogModelName,type:"image",config:{modes:["i2i"],resolutions:["2k"],ratios:["4:5"],qualities:["high"]}},{id:"42",modelKey:"fixture-square",name:"Square Model",type:"image",config:{modes:["i2i"],resolutions:["1k"],ratios:["1:1"],qualities:["standard"]}},{id:"43",modelKey:"fixture-basic",name:"Basic Image",type:"image",config:{modes:["i2i"],ratios:["1:1"],hideBatchCount:true}},{id:"44",modelKey:"fixture-video",name:"Fixture Video",type:"video",config:{modes:["i2v"],ratios:["16:9","9:16"],resolutions:["1080p","720p"],durations:[10,4.5],qualities:["high"]}}].filter(model=>!url.searchParams.get("type")||model.type===url.searchParams.get("type"));
  if(delayed)await new Promise(resolve=>setTimeout(resolve,delayed));if(failed)return fail("模拟模型目录读取失败",503);
  }
+ else if(path==="/api/ai/models")data=[{id:"cover-model",modelId:coverModelAvailable?"fixture-cover":"replacement-cover",name:coverModelAvailable?"封面测试模型":"替代图片模型",type:"image",pointCost:7,config:JSON.stringify({imagePrimary:true,modes:['t2i'],ratios:['16:9'],resolutions:['2k'],qualities:['high']})},{id:"edit-only",modelId:"edit-only",name:"不能文生图",type:"image",pointCost:5,config:JSON.stringify({modes:['i2i']})}];
  else if(path==="/api/points/balance")data={points:1000,frozen:0};
  else if(path==="/api/ai/optimize-cost")data={cost:0};
  else if(path==="/api/admin/studio-templates/check"){
@@ -50,7 +52,7 @@ await context.route("**/api/**",async route=>{
   if(adminCatalogueFails&&path.includes('admin'))return fail('模拟后台模板加载失败',503);
   if(catalogueFails && !path.includes("admin"))return fail("fixture catalogue unavailable",503);
   if(req.method()==="POST"){data={...req.postDataJSON(),id:String(10001+templates.length),uses:0};templates.push(data);}
-  else {const rows=templates.filter(t=>(path.includes("admin")||t.status===1)&&(!url.searchParams.get('mediaType')||t.mediaType===url.searchParams.get('mediaType'))&&(!url.searchParams.get('category')||t.category===url.searchParams.get('category'))&&(!url.searchParams.get('kind')||t.kind===url.searchParams.get('kind'))&&(!url.searchParams.get('keyword')||t.title.includes(url.searchParams.get('keyword'))));data={records:path.includes('admin')?rows:rows.map(publicRow),categories:[...new Set(rows.map(t=>t.category))],pages:1,total:rows.length,pageNum:1,pageSize:18};}
+  else {const rows=templates.filter(t=>(path.includes("admin")||t.status===1)&&(!url.searchParams.get('mediaType')||t.mediaType===url.searchParams.get('mediaType'))&&(!url.searchParams.get('category')||t.category===url.searchParams.get('category'))&&(!url.searchParams.get('kind')||t.kind===url.searchParams.get('kind'))&&(!url.searchParams.get('keyword')||t.title.includes(url.searchParams.get('keyword'))));data={records:path.includes('admin')?rows:rows.map(publicRow),categories:[...new Set(rows.map(t=>t.category).filter(Boolean))],pages:1,total:rows.length,pageNum:1,pageSize:18};}
  }else if(/^\/api\/studio-templates\/\d+$/.test(path)){const row=templates.find(t=>t.id===path.split('/').at(-1));if(!row||row.status!==1||templateHidden)return fail("模板已下架或不存在",404);data=publicRow(row);}
  else if(path==="/api/ai/template-quote"){
   const body=req.postDataJSON();quotes.push(body);assert.deepEqual(Object.keys(body.input).sort(),body.input.imageSlots?['audioIds','imageIds','imageSlots','videoIds']:['audioIds','imageIds','videoIds']);
@@ -58,12 +60,20 @@ await context.route("**/api/**",async route=>{
   data={templateId:body.templateId,modelId:"fixture-model",modelName:"Fixture Model",handler:body.templateId==="7"||Number(body.templateId)>=20000?"reference_to_video":"image_to_image",pointCost:7,quoteToken:"fixture-quote",options:{resolution:"2k",aspectRatio:"4:5",quality:"high",...(body.templateId==="7"?{duration:5}:{})},basePointCost:7,referencePointCost:0};
   if(Number(body.templateId)>=20000)data.options=templates.find(t=>t.id===body.templateId).options;
  }else if(path==="/api/ai/generate"){
-  const body=req.postDataJSON();submits.push(body);assert.ok(body.templateId && body.templateQuote && body.clientRequestId);assert.equal('prompt' in body.input,false);assert.equal('imageUrls' in body.input,false);
+  const body=req.postDataJSON();
+  if(!body.templateId&&body.handler==='text_to_image'){
+   coverRequests.push(body);assert.ok(body.clientRequestId);assert.equal(body.input.batchCount,1);assert.equal(body.input.aspectRatio,'16:9');assert.equal(body.modelId,'fixture-cover');assert.equal('imageIds' in body.input,false);assert.equal(body.input.prompt.includes('{{image:'),false);
+   let task=coverTasks.get(body.clientRequestId);if(!task){task={id:String(80001+coverTasks.size),handler:'text_to_image',modelName:'封面测试模型',status:0,progress:10,pointCost:7,resultUrl:base+'/studio-samples/v1/tidal-product.webp',resultMeta:{},input:body.input,fail:failCoverTask};coverTasks.set(body.clientRequestId,task);failCoverTask=false;}
+   if(loseCoverResponse){loseCoverResponse=false;return route.abort('failed');}
+   return route.fulfill({json:{success:true,code:200,data:task}});
+  }
+  submits.push(body);assert.ok(body.templateId && body.templateQuote && body.clientRequestId);assert.equal('prompt' in body.input,false);assert.equal('imageUrls' in body.input,false);
   let task=tasks.get(body.clientRequestId);
   if(!task){task={id:String(5001+tasks.size),handler:body.handler,modelName:"Fixture Model",status:0,progress:30,pointCost:7,resultUrl:base+"/studio-samples/v1/tidal-product.webp",resultMeta:templates.find(row=>row.id===body.templateId)?.options?.batchCount>1?{urls:[base+"/studio-samples/v1/tidal-product.webp",base+"/studio-samples/v1/rainy-cinema.webp"]}:{},input:{templateId:body.templateId,templateTitle:"Fixture Template"},createTime:new Date().toISOString(),fail:failNextTask};tasks.set(body.clientRequestId,task);failNextTask=false;}
   if(loseResponse){loseResponse=false;return route.abort('failed');}
   data=task;
- }else if(/^\/api\/ai\/tasks\/\d+$/.test(path)){data=[...tasks.values()].find(t=>t.id===path.split('/').at(-1));if(!data||deletedTask)return fail("not found",404);data.status=data.fail?2:1;data.progress=100;if(data.fail)data.errorMsg="生成失败，请稍后重试";}
+ }else if(/^\/api\/ai\/tasks\/\d+$/.test(path)){data=[...coverTasks.values()].find(t=>t.id===path.split('/').at(-1));if(data){if(!coverPollPaused){data.status=data.fail?2:1;data.progress=100;if(data.fail)data.errorMsg='模拟封面生成失败';}return route.fulfill({json:{success:true,code:200,data}});}
+  data=[...tasks.values()].find(t=>t.id===path.split('/').at(-1));if(!data||deletedTask)return fail("not found",404);data.status=data.fail?2:1;data.progress=100;if(data.fail)data.errorMsg="生成失败，请稍后重试";}
  else if(path==="/api/ai/tasks"||path==="/api/ai/history"||path.includes("notifications"))data={records:[],total:0,pages:1};
  else if(path.endsWith("unread-count"))data={count:0};
  else if(path==="/api/admin/studio-templates/sources")data={records:[{id:"9001",userId:owner,mediaType:"image",prompt:"导入的运营提示词",model:"Fixture Model",resultUrl:base+"/studio-samples/v1/tidal-product.webp",createTime:"2026-10-20T00:00:00Z"}],total:1,pages:1};
@@ -276,10 +286,46 @@ try{
  const longDuration=longEditor.getByRole('button',{name:'视频时长',exact:true});assert.equal(await longDuration.getAttribute('data-invalid'),'true');assert.ok((await longDuration.innerText()).includes('30'));await longEditor.getByText(/原模板为 30 秒，所选模型不支持/).waitFor();
  await longEditor.getByRole('button',{name:'默认生成模型',exact:true}).click();await page.getByRole('option',{name:'自动选择兼容模型（上架时确定）',exact:true}).click();
  await longEditor.getByRole('button',{name:'保存草稿',exact:true}).click();await longEditor.waitFor({state:'hidden'});assert.equal(packRows[10].options.duration,30,'automatic model selection dropped 30s template timeline');assert.equal(packRows[10].options.aspectRatio,'9:16');
+
+ await page.getByRole('button',{name:'编辑火锅店真人带看 · 15秒',exact:true}).click();const coverEditor=page.getByRole('dialog',{name:'编辑创作模板'});
+ const originalCover=base+'/studio-samples/v1/rainy-cinema.webp';await coverEditor.getByLabel('封面图片',{exact:true}).fill(originalCover);
+ await coverEditor.getByRole('button',{name:'AI 生成封面',exact:true}).click();const coverPanel=page.getByRole('region',{name:'AI 生成模板封面',exact:true});
+ const coverGenerate=coverPanel.getByRole('button',{name:/^生成封面/});await page.waitForFunction(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent.includes('生成封面 · 约 7 积分')&&!b.disabled));
+ assert.ok((await coverPanel.getByRole('textbox',{name:'封面画面描述'}).inputValue()).includes('火锅店真人带看'));assert.equal((await coverPanel.getByRole('textbox',{name:'封面画面描述'}).inputValue()).includes('{{image:'),false);
+ await coverPanel.getByRole('button',{name:'封面图片模型',exact:true}).click();assert.equal(await page.getByRole('option',{name:'不能文生图',exact:true}).count(),0);await page.getByRole('option',{name:'封面测试模型',exact:true}).click();
+ await coverPanel.scrollIntoViewIfNeeded();await snap('cover-ai-desktop');await page.setViewportSize({width:390,height:844});assert.equal(await coverEditor.evaluate(el=>el.scrollWidth>el.clientWidth+1),false);await coverPanel.scrollIntoViewIfNeeded();await snap('cover-ai-mobile');await page.setViewportSize({width:1440,height:1000});
+ loseCoverResponse=true;await coverGenerate.evaluate(button=>{button.click();button.click();});await coverPanel.getByRole('button',{name:'检查封面任务状态',exact:true}).waitFor();assert.equal(coverTasks.size,1);assert.equal(coverRequests.length,1);assert.equal(await coverEditor.getByLabel('封面图片',{exact:true}).inputValue(),originalCover);
+ coverPollPaused=true;await coverPanel.getByRole('button',{name:'检查封面任务状态',exact:true}).click();await coverPanel.getByRole('progressbar',{name:'封面生成进度'}).waitFor();assert.equal(coverTasks.size,1);assert.equal(coverRequests[0].clientRequestId,coverRequests[1].clientRequestId);assert.equal(await coverEditor.getByRole('button',{name:'保存草稿',exact:true}).isDisabled(),true);
+ await coverPanel.getByRole('button',{name:'稍后查看封面任务',exact:true}).click();await coverPanel.waitFor({state:'hidden'});coverPollPaused=false;
+ await coverEditor.getByRole('button',{name:'AI 生成封面',exact:true}).click();await coverPanel.getByRole('button',{name:'采用这张封面',exact:true}).waitFor();assert.equal(coverTasks.size,1);assert.equal(coverRequests.length,2);assert.equal(await coverEditor.getByLabel('封面图片',{exact:true}).inputValue(),originalCover);
+ await coverPanel.getByRole('button',{name:'采用这张封面',exact:true}).click();await coverPanel.waitFor({state:'hidden'});assert.equal(await coverEditor.getByLabel('封面图片',{exact:true}).inputValue(),base+'/studio-samples/v1/tidal-product.webp');assert.equal(packRows[0].coverUrl,'','cover generation saved the template without operator action');
+ // An adopted but unsaved cover must survive reload without a new paid request.
+ coverModelAvailable=false;page.once('dialog',dialog=>dialog.accept());await page.reload({waitUntil:'networkidle'});await page.getByRole('button',{name:/^灵感做同款/}).click();await page.getByRole('button',{name:'视频',exact:true}).click();await page.getByRole('button',{name:'编辑火锅店真人带看 · 15秒',exact:true}).click();await coverEditor.getByRole('button',{name:'AI 生成封面',exact:true}).click();
+ await coverPanel.getByRole('button',{name:'采用这张封面',exact:true}).waitFor();await coverPanel.getByRole('alert').filter({hasText:'原图片模型已不可用'}).waitFor();assert.equal(await coverPanel.getByRole('button',{name:'重新生成封面',exact:true}).isDisabled(),true,'missing original model was silently replaced');assert.equal(coverRequests.length,2);
+ await coverPanel.getByRole('button',{name:'采用这张封面',exact:true}).click();await coverPanel.waitFor({state:'hidden'});coverModelAvailable=true;
+
+ await coverEditor.getByRole('button',{name:'保存草稿',exact:true}).click();await coverEditor.waitFor({state:'hidden'});assert.equal(packRows[0].coverUrl,base+'/studio-samples/v1/tidal-product.webp');
+ await page.getByRole('button',{name:'编辑火锅店真人带看 · 15秒',exact:true}).click();await coverEditor.getByRole('button',{name:'AI 生成封面',exact:true}).click();await page.waitForFunction(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent.includes('生成封面 · 约 7 积分')&&!b.disabled));failCoverTask=true;
+ await coverPanel.getByRole('button',{name:/^生成封面/}).click();await coverPanel.getByRole('alert').filter({hasText:'模拟封面生成失败'}).waitFor();assert.equal(await coverEditor.getByLabel('封面图片',{exact:true}).inputValue(),base+'/studio-samples/v1/tidal-product.webp','failed generation replaced the current cover');assert.equal(coverTasks.size,2);
+ await coverPanel.getByRole('button',{name:'收起 AI 生成封面',exact:true}).click();await coverEditor.getByRole('button',{name:'取消',exact:true}).click();
+
+ // New templates get their own persisted ID before any paid cover request.
+ await page.getByRole('button',{name:/^新建/}).click();let draftCoverEditor=page.getByRole('dialog',{name:'新建创作模板'});await draftCoverEditor.getByLabel(/^名称/).fill('新模板封面隔离 A');
+ const beforeDraftCover=coverRequests.length;await draftCoverEditor.getByRole('button',{name:'保存草稿并制作封面',exact:true}).click();await page.getByRole('dialog',{name:'编辑创作模板'}).waitFor();const newDraftA=templates.at(-1);assert.equal(newDraftA.status,0);assert.equal(coverRequests.length,beforeDraftCover,'saving a draft unexpectedly charged for an image');
+ const newCoverPanel=page.getByRole('region',{name:'AI 生成模板封面',exact:true});await page.waitForFunction(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent.includes('生成封面 · 约 7 积分')&&!b.disabled));coverPollPaused=true;await newCoverPanel.getByRole('button',{name:/^生成封面/}).click();await newCoverPanel.getByRole('progressbar',{name:'封面生成进度'}).waitFor();
+ await newCoverPanel.getByRole('button',{name:'稍后查看封面任务',exact:true}).click();await page.getByRole('dialog',{name:'编辑创作模板'}).getByRole('button',{name:'取消',exact:true}).click();
+ await page.getByRole('button',{name:/^新建/}).click();draftCoverEditor=page.getByRole('dialog',{name:'新建创作模板'});await draftCoverEditor.getByLabel(/^名称/).fill('新模板封面隔离 B');await draftCoverEditor.getByRole('button',{name:'保存草稿并制作封面',exact:true}).click();await page.getByRole('dialog',{name:'编辑创作模板'}).waitFor();const newDraftB=templates.at(-1);assert.notEqual(newDraftA.id,newDraftB.id);
+ await page.waitForFunction(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent.includes('生成封面 · 约 7 积分')&&!b.disabled));assert.equal(await newCoverPanel.getByRole('progressbar').count(),0,'another unsaved template task leaked into this draft');assert.equal(await newCoverPanel.getByRole('img').count(),0);await newCoverPanel.getByRole('button',{name:'收起 AI 生成封面',exact:true}).click();await page.getByRole('dialog',{name:'编辑创作模板'}).getByRole('button',{name:'取消',exact:true}).click();
+ // The original draft recovers its own pending task under the same account.
+ coverPollPaused=false;await page.getByRole('button',{name:'编辑新模板封面隔离 A',exact:true}).click();await page.getByRole('dialog',{name:'编辑创作模板'}).getByRole('button',{name:'AI 生成封面',exact:true}).click();await newCoverPanel.getByRole('button',{name:'采用这张封面',exact:true}).waitFor();assert.equal(coverRequests.length,beforeDraftCover+1);
+ await newCoverPanel.getByRole('button',{name:'收起 AI 生成封面',exact:true}).click();await page.getByRole('dialog',{name:'编辑创作模板'}).getByRole('button',{name:'取消',exact:true}).click();
+ // Recovery pointers are account-isolated even for the same saved template.
+ owner='803';await page.reload({waitUntil:'networkidle'});await page.getByRole('button',{name:/^灵感做同款/}).click();await page.getByRole('button',{name:'视频',exact:true}).click();await page.getByRole('button',{name:'编辑新模板封面隔离 A',exact:true}).click();await page.getByRole('dialog',{name:'编辑创作模板'}).getByRole('button',{name:'AI 生成封面',exact:true}).click();await page.waitForFunction(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent.includes('生成封面 · 约 7 积分')&&!b.disabled));assert.equal(await newCoverPanel.getByRole('img').count(),0,'another account recovered the prior account cover');assert.equal(coverRequests.length,beforeDraftCover+1);
+ await newCoverPanel.getByRole('button',{name:'收起 AI 生成封面',exact:true}).click();await page.getByRole('dialog',{name:'编辑创作模板'}).getByRole('button',{name:'取消',exact:true}).click();
  await page.goto(base+'/templates',{waitUntil:'networkidle'});assert.equal(await page.getByRole('heading',{name:'火锅店真人带看 · 15秒',exact:true}).count(),0,'draft pack leaked publicly');
  // Only this fixture is marked published to exercise upload behavior. Source data remains draft.
- packRows[0].status=1;packRows[0].coverUrl=base+'/studio-samples/v1/rainy-cinema.webp';packRows[0].previewUrl=base+'/fixture.mp4';
- await page.goto(base+'/templates/20000',{waitUntil:'networkidle'});await page.getByLabel('上传门面照片',{exact:true}).waitFor();assert.equal(await page.locator('input[type=file]').count(),6);assert.equal(await page.locator('textarea,[contenteditable=true]').count(),0);
+ packRows[0].status=1;packRows[0].coverUrl=base+'/studio-samples/v1/rainy-cinema.webp';packRows[0].previewUrl='';
+ await page.goto(base+'/templates/20000',{waitUntil:'networkidle'});await page.getByLabel('上传门面照片',{exact:true}).waitFor();assert.equal(await page.locator('video').count(),0,'cover-only template pretends to have a video preview');await page.getByText(/当前展示的是封面示意图，尚无视频成片预览/).waitFor();assert.equal(await page.locator('input[type=file]').count(),6);assert.equal(await page.locator('textarea,[contenteditable=true]').count(),0);
  await page.getByLabel('上传门面照片',{exact:true}).setInputFiles({...imageFile,name:'shop-front.png'});await page.locator('small').filter({hasText:'已上传'}).waitFor();await page.getByLabel('上传店内全景',{exact:true}).setInputFiles({...imageFile,name:'shop-room.png'});await page.getByText('7 积分',{exact:true}).waitFor();
  assert.deepEqual(quotes.at(-1).input.imageSlots,[1,2]);assert.equal(await page.getByRole('button',{name:'生成同款',exact:true}).isEnabled(),true);
  await page.getByLabel('上传真实菜品',{exact:true}).setInputFiles({...imageFile,name:'food.png'});await page.getByText('7 积分',{exact:true}).waitFor();assert.deepEqual(quotes.at(-1).input.imageSlots,[1,2,4]);

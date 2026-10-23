@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- Operator-selected uploads use dynamic storage URLs and the existing direct-media fallback. */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   Clapperboard,
@@ -18,6 +18,8 @@ import {
   Upload,
 } from "lucide-react";
 import { AdminModal, Field, FormCard, FormGrid } from "@/components/admin";
+import { TemplateCoverAI } from "@/components/admin/template-cover-ai";
+import { commitAcceptedAiGeneration } from "@/lib/ai-generation-idempotency";
 import { PopoverSelect } from "@/components/shared/popover-select";
 import { confirmDialog } from "@/components/shared/confirm";
 import { toast } from "@/components/shared/toast";
@@ -98,6 +100,7 @@ export default function StudioTemplatesAdmin() {
     (StudioTemplateSave & { id?: string }) | null
   >(null);
   const [importing, setImporting] = useState(false);
+  const [coverStart, setCoverStart] = useState<{id: string; owner: string} | null>(null);
   const [deleting, setDeleting] = useState("");
   const canImport =
     user?.role === 9 || !!user?.adminPerms?.includes("admin.generations");
@@ -399,11 +402,18 @@ export default function StudioTemplatesAdmin() {
       </nav>
       {draft && (
         <TemplateEditor
-          key={draft.id || "new"}
+          key={`${user?.id || "guest"}:${draft.id || "new"}`}
           initial={draft}
-          onClose={() => setDraft(null)}
+          initialCoverOpen={coverStart?.id === draft.id && coverStart?.owner === String(user?.id)}
+          onClose={() => {setDraft(null);setCoverStart(null);}}
+          onDraftSaved={(row) => {
+            setCoverStart({id:row.id,owner:String(user?.id)});
+            setDraft(row);setKind(row.kind);setMedia(row.mediaType);
+            setStatus("");setKeyword("");setQuery("");setPage(1);setVersion(v=>v+1);
+          }}
           onSaved={(row) => {
             setDraft(null);
+            setCoverStart(null);
             setKind(row.kind);
             setMedia(row.mediaType);
             setStatus("");
@@ -433,12 +443,16 @@ export default function StudioTemplatesAdmin() {
 
 function TemplateEditor({
   initial,
+  initialCoverOpen,
   onClose,
   onSaved,
+  onDraftSaved,
 }: {
   initial: StudioTemplateSave & { id?: string };
+  initialCoverOpen: boolean;
   onClose: () => void;
   onSaved: (row: StudioTemplate) => void;
+  onDraftSaved: (row: StudioTemplate) => void;
 }) {
   const [form, setForm] = useState(initial);
   const [models, setModels] = useState<StudioModelVO[]>([]);
@@ -446,6 +460,10 @@ function TemplateEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
+  const [coverOpen, setCoverOpen] = useState(initialCoverOpen);
+  const [coverBusy, setCoverBusy] = useState(false);
+  const coverTask = useRef<{id: string; owner: string} | null>(null);
+  const coverScope = initial.id ? `admin:template-cover:${initial.id}` : "";
   const [checked, setChecked] = useState<{
     signature: string;
     data: TemplateSetup;
@@ -455,6 +473,7 @@ function TemplateEditor({
   const [modelsLoading, setModelsLoading] = useState(true);
   const modelRequestPending = useRef(false);
   const busy = useRef(false);
+  const onCoverBusy = useCallback((value: boolean) => { busy.current = value; setCoverBusy(value); }, []);
   const closing = useRef(false);
   const errorElement = useRef<HTMLParagraphElement>(null);
   const checkElement = useRef<HTMLDivElement>(null);
@@ -630,6 +649,20 @@ function TemplateEditor({
       if (alive.current) setUploading("");
     }
   };
+  const openCover = async () => {
+    if(busy.current || modelsLoading || modelRequestPending.current)return;
+    if(initial.id){setCoverOpen(true);return;}
+    // Give each new template a durable identity before starting a paid cover
+    // task. Otherwise all unsaved templates share the same recovery journal.
+    busy.current=true;setSaving(true);setError("");
+    try {
+      const res=await api.save({...requestForm(),status:0});
+      if(!alive.current)return;
+      if(res.success && res.data?.id){saved.current=true;onDraftSaved(res.data);}
+      else setError(res.message || "草稿未能保存，尚未开始封面生成。请确认列表中的保存状态后重试。");
+    } catch {if(alive.current)setError("暂时无法确认草稿保存状态，请先检查模板列表；封面任务尚未开始。");}
+    finally{busy.current=false;if(alive.current)setSaving(false);}
+  };
   const save = async () => {
     if (busy.current || modelsLoading || modelRequestPending.current) return false;
     if (form.status === 1 && form.modelKey && (modelError || !selectedModel)) {
@@ -641,8 +674,10 @@ function TemplateEditor({
     setError("");
     try {
       const res = await api.save(requestForm(), form.id);
+      if(!alive.current)return false;
       if (res.success && res.data) {
         saved.current = true;
+        if (coverTask.current) void commitAcceptedAiGeneration(coverScope, coverTask.current.id, coverTask.current.owner).catch(()=>undefined);
         toast.success(form.status ? "模板已上架" : "草稿已保存");
         onSaved(res.data);
         return true;
@@ -672,13 +707,13 @@ function TemplateEditor({
       subtitle={
         form.kind === "style"
           ? "配置完整视觉配方，用户上传素材即可生成，提示词仅后台可见。"
-          : "提供真实成品与完整配方，用户无需填写提示词。"
+          : "维护模板介绍、封面与生成配方，用户无需填写提示词。"
       }
       onClose={() => void close()}
-      closeable={!saving && !uploading && !checking}
-      showCancel={!saving && !uploading && !checking}
+      closeable={!saving && !uploading && !checking && !coverBusy}
+      showCancel={!saving && !uploading && !checking && !coverBusy}
       onSave={save}
-      saveDisabled={!!uploading || saving || checking || modelsLoading || (form.status === 1 && !!form.modelKey && (!!modelError || !selectedModel))}
+      saveDisabled={!!uploading || saving || checking || coverBusy || modelsLoading || (form.status === 1 && !!form.modelKey && (!!modelError || !selectedModel))}
       saveLabel={form.status === 1 ? "保存并上架" : "保存草稿"}
       footNote="上架后展示在「灵感和模板」；用户只上传素材，提示词不会公开。"
     >
@@ -689,7 +724,7 @@ function TemplateEditor({
       )}
       <fieldset
         className={css.editor}
-        disabled={saving || checking || !!uploading}
+        disabled={saving || checking || !!uploading || coverBusy}
       >
         <div>
           <FormCard title="展示信息">
@@ -1103,7 +1138,7 @@ function TemplateEditor({
           </div>
           <h4>{form.title || "你的模板名称"}</h4>
           <p>
-            {form.description || "上传真实成品预览，让用户一眼看懂创作效果。"}
+            {form.description || "上传封面或用 AI 生成示意图，让用户了解模板主题。"}
           </p>
           <p>{templateInputs(form)}</p>
           <ul className={css.slotPreview}>
@@ -1122,7 +1157,7 @@ function TemplateEditor({
           ).map((key) => (
             <div key={key} className={css.upload}>
               <label>
-                {key === "coverUrl" ? "封面图片" : "视频成片预览"}
+                {key === "coverUrl" ? "封面图片" : "视频成片预览（选填）"}
                 <input
                   type="text"
                   inputMode="url"
@@ -1151,13 +1186,17 @@ function TemplateEditor({
                   }}
                 />
               </label>
+              {key === "coverUrl" && <button type="button" className="adm-btn ghost small" disabled={saving || checking || !!uploading || modelsLoading} aria-expanded={coverOpen} onClick={()=>void openCover()}><Sparkles size={14}/>{initial.id ? "AI 生成封面" : "保存草稿并制作封面"}</button>}
             </div>
           ))}
           <p className={css.note}>
-            成品只用于展示，不会自动作为用户的参考素材发送。视频上架需要封面和可播放的成片地址。
+            封面只用于展示，不会作为用户的参考素材。视频预览可不填；仅有封面时，用户端会标注「封面示意」。
           </p>
         </aside>
       </fieldset>
+      {coverOpen && initial.id && <TemplateCoverAI scope={coverScope} template={form} disabled={saving || checking || !!uploading}
+        onBusyChange={onCoverBusy} onClose={()=>setCoverOpen(false)}
+        onApply={(url,id,owner)=>{coverTask.current={id,owner};change("coverUrl",url);setCoverOpen(false);toast.success("已采用封面，保存模板后生效");}} />}
     </AdminModal>
   );
 }

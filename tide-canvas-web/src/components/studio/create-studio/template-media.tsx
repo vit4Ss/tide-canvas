@@ -82,7 +82,7 @@ export function TemplateMedia({
         )}
       {row.mediaType === "video" && !controls && (
         <span className={css.play}>
-          <Play size={12} fill="currentColor" /> 视频
+          {source ? <><Play size={12} fill="currentColor" /> 视频</> : <><ImageIcon size={12} /> 视频模板 · 封面</>}
         </span>
       )}
       {broken && controls && (

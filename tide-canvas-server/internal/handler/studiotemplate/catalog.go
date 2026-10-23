@@ -251,8 +251,8 @@ func (d *SaveDTO) Validate() error {
 	if d.MediaType == "video" && d.Options.BatchCount > 1 {
 		return errors.New("视频模板每次只能生成一个视频")
 	}
-	if d.Status == 1 && (d.CoverURL == "" || d.MediaType == "video" && d.PreviewURL == "") {
-		return errors.New("上架前请补充封面；视频模板还需要成片预览")
+	if d.Status == 1 && d.CoverURL == "" {
+		return errors.New("上架前请补充封面图片，视频预览可选")
 	}
 	return nil
 }
