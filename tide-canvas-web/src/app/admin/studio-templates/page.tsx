@@ -462,7 +462,11 @@ function TemplateEditor({
   const [checking, setChecking] = useState(false);
   const [coverOpen, setCoverOpen] = useState(initialCoverOpen);
   const [coverBusy, setCoverBusy] = useState(false);
-  const coverTask = useRef<{id: string; owner: string} | null>(null);
+  const [coverMessage, setCoverMessage] = useState("");
+  const [filledCoverUrl, setFilledCoverUrl] = useState("");
+  const coverBlocking = coverOpen && coverBusy;
+  const coverNeedsSave = !!filledCoverUrl && form.coverUrl === filledCoverUrl && form.coverUrl !== initial.coverUrl;
+  const coverTask = useRef<{id: string; owner: string; url: string} | null>(null);
   const coverScope = initial.id ? `admin:template-cover:${initial.id}` : "";
   const [checked, setChecked] = useState<{
     signature: string;
@@ -473,7 +477,7 @@ function TemplateEditor({
   const [modelsLoading, setModelsLoading] = useState(true);
   const modelRequestPending = useRef(false);
   const busy = useRef(false);
-  const onCoverBusy = useCallback((value: boolean) => { busy.current = value; setCoverBusy(value); }, []);
+  const onCoverBusy = useCallback((value: boolean) => { setCoverBusy(value); }, []);
   const closing = useRef(false);
   const errorElement = useRef<HTMLParagraphElement>(null);
   const checkElement = useRef<HTMLDivElement>(null);
@@ -559,7 +563,7 @@ function TemplateEditor({
     };
   }, [form.mediaType, modelRetry]);
   const close = async () => {
-    if (busy.current || closing.current) return;
+    if (busy.current || coverBlocking || closing.current) return;
     closing.current = true;
     try {
       if (
@@ -578,7 +582,7 @@ function TemplateEditor({
     }
   };
   const check = async () => {
-    if (busy.current || modelsLoading || modelRequestPending.current) return;
+    if (busy.current || coverBlocking || modelsLoading || modelRequestPending.current) return;
     if (form.modelKey && (modelError || !selectedModel)) {
       setError("请先重新读取模型列表，确认所选模型可用后再检查配置。");
       return;
@@ -611,11 +615,18 @@ function TemplateEditor({
     setError("");
     setForm((v) => ({ ...v, [key]: value }));
   };
+  const applyCover = useCallback((url: string, id: string, owner: string) => {
+    if(!alive.current || String(useAuthStore.getState().user?.id || "") !== owner)return;
+    coverTask.current={id,owner,url};
+    setForm(value=>({...value,coverUrl:url}));
+    setFilledCoverUrl(url);
+    setError("");
+  },[]);
   const upload = async (
     file: File | undefined,
     key: "coverUrl" | "previewUrl",
   ) => {
-    if (!file || busy.current) return;
+    if (!file || busy.current || coverBlocking) return;
     if (file.size > 50 * 1024 * 1024) {
       setError("预览文件不能超过 50 MB，请压缩后上传");
       return;
@@ -664,7 +675,7 @@ function TemplateEditor({
     finally{busy.current=false;if(alive.current)setSaving(false);}
   };
   const save = async () => {
-    if (busy.current || modelsLoading || modelRequestPending.current) return false;
+    if (busy.current || coverBlocking || modelsLoading || modelRequestPending.current) return false;
     if (form.status === 1 && form.modelKey && (modelError || !selectedModel)) {
       setError("请先重新读取模型列表，确认所选模型可用后再上架。");
       return false;
@@ -672,12 +683,13 @@ function TemplateEditor({
     busy.current = true;
     setSaving(true);
     setError("");
+    const appliedTask = coverTask.current?.url === form.coverUrl ? coverTask.current : null;
     try {
       const res = await api.save(requestForm(), form.id);
       if(!alive.current)return false;
       if (res.success && res.data) {
         saved.current = true;
-        if (coverTask.current) void commitAcceptedAiGeneration(coverScope, coverTask.current.id, coverTask.current.owner).catch(()=>undefined);
+        if (appliedTask && res.data.coverUrl === appliedTask.url) void commitAcceptedAiGeneration(coverScope, appliedTask.id, appliedTask.owner).catch(()=>undefined);
         toast.success(form.status ? "模板已上架" : "草稿已保存");
         onSaved(res.data);
         return true;
@@ -710,12 +722,12 @@ function TemplateEditor({
           : "维护模板介绍、封面与生成配方，用户无需填写提示词。"
       }
       onClose={() => void close()}
-      closeable={!saving && !uploading && !checking && !coverBusy}
-      showCancel={!saving && !uploading && !checking && !coverBusy}
+      closeable={!saving && !uploading && !checking && !coverBlocking}
+      showCancel={!saving && !uploading && !checking && !coverBlocking}
       onSave={save}
-      saveDisabled={!!uploading || saving || checking || coverBusy || modelsLoading || (form.status === 1 && !!form.modelKey && (!!modelError || !selectedModel))}
+      saveDisabled={!!uploading || saving || checking || coverBlocking || modelsLoading || (form.status === 1 && !!form.modelKey && (!!modelError || !selectedModel))}
       saveLabel={form.status === 1 ? "保存并上架" : "保存草稿"}
-      footNote="上架后展示在「灵感和模板」；用户只上传素材，提示词不会公开。"
+      footNote={coverNeedsSave ? "AI 封面已填入，尚未保存。请点击右侧保存按钮。" : "上架后展示在「灵感和模板」；用户只上传素材，提示词不会公开。"}
     >
       {error && (
         <p ref={errorElement} tabIndex={-1} className={css.error} role="alert">
@@ -724,7 +736,7 @@ function TemplateEditor({
       )}
       <fieldset
         className={css.editor}
-        disabled={saving || checking || !!uploading || coverBusy}
+        disabled={saving || checking || !!uploading || coverBlocking}
       >
         <div>
           <FormCard title="展示信息">
@@ -1187,6 +1199,7 @@ function TemplateEditor({
                 />
               </label>
               {key === "coverUrl" && <button type="button" className="adm-btn ghost small" disabled={saving || checking || !!uploading || modelsLoading} aria-expanded={coverOpen} onClick={()=>void openCover()}><Sparkles size={14}/>{initial.id ? "AI 生成封面" : "保存草稿并制作封面"}</button>}
+              {key === "coverUrl" && (coverMessage || coverNeedsSave) && <p className={css.note} role="status">{coverMessage || "AI 封面已填入，尚未保存。"}</p>}
             </div>
           ))}
           <p className={css.note}>
@@ -1194,9 +1207,8 @@ function TemplateEditor({
           </p>
         </aside>
       </fieldset>
-      {coverOpen && initial.id && <TemplateCoverAI scope={coverScope} template={form} disabled={saving || checking || !!uploading}
-        onBusyChange={onCoverBusy} onClose={()=>setCoverOpen(false)}
-        onApply={(url,id,owner)=>{coverTask.current={id,owner};change("coverUrl",url);setCoverOpen(false);toast.success("已采用封面，保存模板后生效");}} />}
+      {initial.id && <TemplateCoverAI scope={coverScope} template={form} savedCoverUrl={initial.coverUrl} open={coverOpen} disabled={saving || checking || !!uploading}
+        onBusyChange={onCoverBusy} onStatusChange={setCoverMessage} onClose={()=>setCoverOpen(false)} onApply={applyCover} />}
     </AdminModal>
   );
 }

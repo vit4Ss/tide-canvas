@@ -43,3 +43,10 @@ export function templateCoverResult(task: AiTaskVO): string {
   if (meta && typeof meta === "object" && Array.isArray(meta.urls)) return meta.urls.find(safe)?.trim() || "";
   return "";
 }
+
+/** Recover old tasks into an empty cover, but never overwrite a cover changed
+ * after submission. Older journals do not contain a baseline URL. */
+export function canFillTemplateCover(currentUrl: string, originalUrl: unknown, currentTitle: string, sourceTitle: string, savedUrl?: unknown): boolean {
+  if (currentTitle !== sourceTitle) return false;
+  return typeof originalUrl === "string" ? currentUrl === originalUrl || (typeof savedUrl === "string" && currentUrl === savedUrl) : !currentUrl.trim();
+}

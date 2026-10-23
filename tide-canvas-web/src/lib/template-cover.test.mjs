@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildTemplateCoverPrompt, templateCoverModels, templateCoverInput, templateCoverResult } from "./template-cover.ts";
+import { buildTemplateCoverPrompt, canFillTemplateCover, templateCoverModels, templateCoverInput, templateCoverResult } from "./template-cover.ts";
 import { resolveImageToolPointCost } from "./price-matrix.ts";
 
 test("cover brief uses presentation text and excludes the private recipe and reference tokens",()=>{
@@ -28,4 +28,16 @@ test("cover results accept usable image URLs only, with optional metadata fallba
  assert.equal(templateCoverResult({resultUrl:'javascript:alert(1)',resultMeta:{urls:['https://cdn.test/cover.webp']}}),'https://cdn.test/cover.webp');
  assert.equal(templateCoverResult({resultUrl:'https://cdn.test/cover.webp',resultMeta:'broken'}),'https://cdn.test/cover.webp');
  assert.equal(templateCoverResult({resultUrl:'',resultMeta:'broken'}),'');
+});
+
+test("automatic fill preserves edits and handles old recovery records conservatively",()=>{
+ assert.equal(canFillTemplateCover('', '', 'hotpot', 'hotpot'),true);
+ assert.equal(canFillTemplateCover('/old.webp', '/old.webp', 'hotpot', 'hotpot'),true);
+ assert.equal(canFillTemplateCover('/manual.webp', '/old.webp', 'hotpot', 'hotpot'),false);
+ assert.equal(canFillTemplateCover('', '/old.webp', 'hotpot', 'hotpot'),false);
+ assert.equal(canFillTemplateCover('', '', 'bakery', 'hotpot'),false);
+ assert.equal(canFillTemplateCover('', undefined, 'hotpot', 'hotpot'),true);
+ assert.equal(canFillTemplateCover('/manual.webp', undefined, 'hotpot', 'hotpot'),false);
+ assert.equal(canFillTemplateCover('', '/unsaved-upload.webp', 'hotpot', 'hotpot',''),true);
+ assert.equal(canFillTemplateCover('/manual.webp', '/unsaved-upload.webp', 'hotpot', 'hotpot',''),false);
 });
