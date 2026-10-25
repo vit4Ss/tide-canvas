@@ -23,20 +23,25 @@ const (
 // GenerationCommand is the internal contract used by SkillRun. Orchestration
 // metadata is persisted on AiTask and never forwarded to an upstream provider.
 type GenerationCommand struct {
-	IsAPICall         bool
-	PublicInput       json.RawMessage
-	ProjectID         idgen.ID
-	Handler           string
-	ModelID           string
-	Input             map[string]any
-	Origin            string
-	SkillRunID        idgen.ID
-	SkillRunStepID    idgen.ID
-	SkillRunRevision  int64
-	SkillRunWorkerID  string
-	OutputRole        string
-	RegisterWork      bool
-	PinnedSkillPrompt string
+	ClientRequestID         string
+	TemplateCoverModelHash  string
+	TemplateCoverBatchID    idgen.ID
+	TemplateCoverTemplateID idgen.ID
+	TemplateCoverWorker     string
+	IsAPICall               bool
+	PublicInput             json.RawMessage
+	ProjectID               idgen.ID
+	Handler                 string
+	ModelID                 string
+	Input                   map[string]any
+	Origin                  string
+	SkillRunID              idgen.ID
+	SkillRunStepID          idgen.ID
+	SkillRunRevision        int64
+	SkillRunWorkerID        string
+	OutputRole              string
+	RegisterWork            bool
+	PinnedSkillPrompt       string
 }
 
 type TaskSnapshot struct {
@@ -67,6 +72,10 @@ func persistedGenerationInput(dto generateDTO) json.RawMessage {
 // in-process orchestrators without making an HTTP loopback call.
 type GenerationFacade struct{ svc *service }
 
+func IsTaskMissing(err error) bool {
+	return errors.Is(err, errTaskNotFound) || errors.Is(err, gorm.ErrRecordNotFound)
+}
+
 func NewGenerationFacade(d *app.Deps) *GenerationFacade {
 	return &GenerationFacade{svc: newService(d)}
 }
@@ -82,6 +91,8 @@ func (f *GenerationFacade) Submit(ctx context.Context, userID idgen.ID, cmd Gene
 	registerWork := cmd.RegisterWork
 	vo, err := f.svc.generate(ctx, userID, generateDTO{
 		IsAPICall: cmd.IsAPICall, PublicInput: cmd.PublicInput,
+		ClientRequestID: cmd.ClientRequestID, TemplateCoverModelHash: cmd.TemplateCoverModelHash,
+		TemplateCoverBatchID: cmd.TemplateCoverBatchID, TemplateCoverTemplateID: cmd.TemplateCoverTemplateID, TemplateCoverWorker: cmd.TemplateCoverWorker,
 		Handler: cmd.Handler, ModelID: cmd.ModelID, ProjectID: cmd.ProjectID,
 		Input: raw, Origin: cmd.Origin, SkillRunID: cmd.SkillRunID,
 		SkillRunStepID: cmd.SkillRunStepID, SkillRunRevision: cmd.SkillRunRevision,
@@ -108,6 +119,27 @@ func (f *GenerationFacade) Get(ctx context.Context, userID, taskID idgen.ID) (*T
 	return &TaskSnapshot{ID: t.ID, UserID: t.UserID, Status: t.Status,
 		Progress: t.Progress, PointCost: t.PointCost, ResultURL: t.ResultUrl,
 		ResultMeta: t.ResultMeta, ErrorMessage: t.ErrorMsg}, nil
+}
+
+// Recover checks the full request fingerprint; a matching client ID alone is
+// never enough to attach a task to an orchestration job.
+func (f *GenerationFacade) Recover(ctx context.Context, userID idgen.ID, cmd GenerationCommand) (idgen.ID, bool, error) {
+	if cmd.ClientRequestID == "" {
+		return 0, false, nil
+	}
+	raw, err := json.Marshal(cmd.Input)
+	if err != nil {
+		return 0, false, err
+	}
+	hash, err := directGenerationFingerprint(generateDTO{Handler: cmd.Handler, ModelID: cmd.ModelID, ProjectID: cmd.ProjectID, Input: raw, IsAPICall: cmd.IsAPICall, TemplateCoverModelHash: cmd.TemplateCoverModelHash, TemplateCoverBatchID: cmd.TemplateCoverBatchID, TemplateCoverTemplateID: cmd.TemplateCoverTemplateID})
+	if err != nil {
+		return 0, false, err
+	}
+	task, found, err := f.svc.replayDirectTask(ctx, userID, cmd.ClientRequestID, hash)
+	if err != nil || !found {
+		return 0, found, err
+	}
+	return task.ID, true, nil
 }
 
 func (f *GenerationFacade) Cancel(ctx context.Context, userID, taskID idgen.ID) error {

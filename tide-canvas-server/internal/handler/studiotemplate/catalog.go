@@ -57,6 +57,7 @@ type Query struct {
 	Category  string `form:"category" binding:"max=64"`
 	Keyword   string `form:"keyword" binding:"max=128"`
 	Status    string `form:"status" binding:"omitempty,oneof=0 1"`
+	Order     string `form:"order" binding:"omitempty,oneof=sort newest"`
 }
 
 func (h *Handler) List(admin bool) gin.HandlerFunc {
@@ -108,7 +109,11 @@ func (h *Handler) List(admin bool) gin.HandlerFunc {
 			response.Fail(c, 500, "读取模板失败")
 			return
 		}
-		if err := tx.Order("sort_order ASC, id DESC").Limit(q.PageSize).Offset((q.PageNum - 1) * q.PageSize).Find(&rows).Error; err != nil {
+		order := "sort_order ASC, id DESC"
+		if admin && q.Order == "newest" {
+			order = "create_time DESC, id DESC"
+		}
+		if err := tx.Order(order).Limit(q.PageSize).Offset((q.PageNum - 1) * q.PageSize).Find(&rows).Error; err != nil {
 			response.Fail(c, 500, "读取模板失败")
 			return
 		}

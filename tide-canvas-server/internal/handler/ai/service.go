@@ -279,6 +279,11 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 	if err := validateModelAvailability(m); err != nil {
 		return nil, err
 	}
+	if dto.TemplateCoverModelHash != "" {
+		if dto.Handler != "text_to_image" || !templateCoverModelAllowed(m) || templateCoverModelHash(m) != dto.TemplateCoverModelHash {
+			return nil, skillPlacementError{message: "批量封面模型已关闭或配置、价格已变更，请重新确认后执行"}
+		}
+	}
 	if !modelSupportsHandler(m, dto.Handler) {
 		return nil, skillPlacementError{message: "所选模型不支持当前生成方式，请切换模型或生成模式"}
 	}
@@ -407,6 +412,9 @@ func (s *service) generate(ctx context.Context, userID idgen.ID, dto generateDTO
 			if err := reserveGenerationSlot(tx, userID, concurrentLimit, now); err != nil {
 				return err
 			}
+			if err := validateTemplateCoverBatchTx(tx, userID, dto, cost, requestHash); err != nil {
+				return err
+			}
 			if cost > 0 {
 				if err := points.Consume(tx, userID, cost, "生成消耗："+m.Name, task.ID); err != nil {
 					return err
@@ -496,20 +504,25 @@ func directGenerationFingerprint(dto generateDTO) (string, error) {
 		}
 	}
 	payload := struct {
-		TemplateID    idgen.ID `json:"templateId,omitempty"`
-		TemplateQuote string   `json:"templateQuote,omitempty"`
-		BillingMarket string   `json:"billingMarket,omitempty"`
-		IsAPICall     bool     `json:"isApiCall,omitempty"`
-		Handler       string   `json:"handler"`
-		ModelID       string   `json:"modelId"`
-		ProjectID     idgen.ID `json:"projectId"`
-		Input         any      `json:"input"`
-		EntryPoint    string   `json:"entryPoint"`
-		TargetType    string   `json:"targetType"`
+		TemplateID              idgen.ID `json:"templateId,omitempty"`
+		TemplateQuote           string   `json:"templateQuote,omitempty"`
+		BillingMarket           string   `json:"billingMarket,omitempty"`
+		TemplateCoverModelHash  string   `json:"templateCoverModelHash,omitempty"`
+		TemplateCoverBatchID    idgen.ID `json:"templateCoverBatchId,omitempty"`
+		TemplateCoverTemplateID idgen.ID `json:"templateCoverTemplateId,omitempty"`
+		IsAPICall               bool     `json:"isApiCall,omitempty"`
+		Handler                 string   `json:"handler"`
+		ModelID                 string   `json:"modelId"`
+		ProjectID               idgen.ID `json:"projectId"`
+		Input                   any      `json:"input"`
+		EntryPoint              string   `json:"entryPoint"`
+		TargetType              string   `json:"targetType"`
 	}{
 		TemplateID: dto.TemplateID, TemplateQuote: dto.TemplateQuote,
-		BillingMarket: dto.BillingMarket,
-		Handler:       strings.TrimSpace(dto.Handler), ModelID: strings.TrimSpace(dto.ModelID), ProjectID: dto.ProjectID,
+		BillingMarket:          dto.BillingMarket,
+		TemplateCoverModelHash: dto.TemplateCoverModelHash,
+		TemplateCoverBatchID:   dto.TemplateCoverBatchID, TemplateCoverTemplateID: dto.TemplateCoverTemplateID,
+		Handler: strings.TrimSpace(dto.Handler), ModelID: strings.TrimSpace(dto.ModelID), ProjectID: dto.ProjectID,
 		IsAPICall: dto.IsAPICall,
 		Input:     input, EntryPoint: strings.ToLower(strings.TrimSpace(dto.EntryPoint)), TargetType: strings.ToLower(strings.TrimSpace(dto.TargetType)),
 	}

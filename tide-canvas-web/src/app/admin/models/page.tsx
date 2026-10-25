@@ -430,6 +430,9 @@ export default function AdminModelsPage() {
                       {m.type === "image" && m.config?.supportsMask && (
                         <StatusPill tone="blue">蒙版</StatusPill>
                       )}
+                      {m.type === "image" && m.config?.templateCoverBatch && (
+                        <StatusPill tone="blue">模板封面</StatusPill>
+                      )}
                     </div>
                   );
                 },
@@ -840,6 +843,7 @@ function ModelModal({
     uploadFormats: c0.uploadFormats ?? [],
     aiOptimizePrimary: c0.aiOptimizePrimary ?? false,
     imagePrimary: c0.imagePrimary ?? false,
+    templateCoverBatch: c0.templateCoverBatch ?? false,
     supportsMask: c0.supportsMask ?? false,
     maxPromptChars: c0.maxPromptChars ?? 0,
     refLimits: c0.refLimits ?? {},
@@ -1093,6 +1097,7 @@ function ModelModal({
           ...cfg,
           // 图片专属能力不能残留到视频等其他模型类型；服务端还会做最终校验。
           supportsMask: type === "image" && cfg.supportsMask === true,
+          templateCoverBatch: type === "image" && cfg.templateCoverBatch === true,
           // 仅视频模型公开并执行此限制；切换为其它类型后不把陈旧值带入配置。
           maxPromptChars: type === "video" ? maxPromptChars : undefined,
           // 落库前清掉空文本标签，文本去首尾空格（渲染端也会过滤，双保险）
@@ -1172,7 +1177,7 @@ function ModelModal({
                 const next = e.target.value;
                 setType(next);
                 // 主模型标记只在图片类目内有意义；切走类型时清掉，避免残留影响其他类目的默认解析
-                if (next !== "image") setC({ imagePrimary: false, supportsMask: false });
+                if (next !== "image") setC({ imagePrimary: false, supportsMask: false, templateCoverBatch: false });
               }}
             >
               {Object.keys(MODEL_TYPE_FORM_LABEL).map((t) => (
@@ -1445,6 +1450,18 @@ function ModelModal({
                   setC({ imagePrimary: on });
                 }}
               />
+            </FormSection>
+          )}
+
+          {isImage && (
+            <FormSection
+              label="创作模板批量封面"
+              hint="默认关闭。开启后可作为批量补齐模板封面的默认模型，需要支持文生图。多款开启时按模型排序优先选择；不改变创作台或画布的主模型。"
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <SwitchToggle checked={cfg.templateCoverBatch === true} onChange={(next) => setC({ templateCoverBatch: next })} aria-label="创作模板批量封面" />
+                <span>{cfg.templateCoverBatch ? "允许批量生成封面" : "未开启"}</span>
+              </div>
             </FormSection>
           )}
 

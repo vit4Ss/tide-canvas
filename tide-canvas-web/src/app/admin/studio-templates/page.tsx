@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { AdminModal, Field, FormCard, FormGrid } from "@/components/admin";
 import { TemplateCoverAI } from "@/components/admin/template-cover-ai";
+import { TemplateCoverBatchDialog } from "@/components/admin/template-cover-batch";
 import { commitAcceptedAiGeneration } from "@/lib/ai-generation-idempotency";
 import { PopoverSelect } from "@/components/shared/popover-select";
 import { confirmDialog } from "@/components/shared/confirm";
@@ -34,6 +35,7 @@ import {
   type StudioTemplatePage,
   type TemplateSource,
   type TemplateSetup,
+  type TemplateCoverFilter,
 } from "@/lib/studio-template-api";
 import { TemplateMedia } from "@/components/studio/create-studio/template-media";
 import { templateInputs } from "@/lib/studio-template";
@@ -60,6 +62,7 @@ const modeLabels = {
   flf: "首尾帧视频",
   ref: "多模态参考视频",
 };
+const PAGE_SIZE = 18;
 function empty(
   kind: "style" | "inspiration",
   mediaType: "image" | "video",
@@ -91,6 +94,7 @@ export default function StudioTemplatesAdmin() {
   const [media, setMedia] = useState<"image" | "video">("image");
   const [status, setStatus] = useState("");
   const [category, setCategory] = useState("");
+  const [order, setOrder] = useState<"sort" | "newest">("newest");
   const [keyword, setKeyword] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -102,6 +106,9 @@ export default function StudioTemplatesAdmin() {
     (StudioTemplateSave & { id?: string }) | null
   >(null);
   const [importing, setImporting] = useState(false);
+  const [batchFilter, setBatchFilter] = useState<TemplateCoverFilter | null>(
+    null,
+  );
   const [coverStart, setCoverStart] = useState<{
     id: string;
     owner: string;
@@ -134,9 +141,10 @@ export default function StudioTemplatesAdmin() {
           mediaType: media,
           status,
           category,
+          order,
           keyword: query,
           pageNum: page,
-          pageSize: 18,
+          pageSize: PAGE_SIZE,
         },
         controller.signal,
       )
@@ -157,7 +165,7 @@ export default function StudioTemplatesAdmin() {
         if (!controller.signal.aborted && !correctingPage) setLoading(false);
       });
     return () => controller.abort();
-  }, [kind, media, status, category, query, page, version]);
+  }, [kind, media, status, category, order, query, page, version]);
   const remove = async (row: StudioTemplate) => {
     if (deleteLock.current) return;
     deleteLock.current = true;
@@ -193,6 +201,22 @@ export default function StudioTemplatesAdmin() {
           <p>管理创作配方与展示效果，准备好封面和生成配置后上架。</p>
         </div>
         <div className={css.actions}>
+          <button
+            type="button"
+            className="adm-btn ghost"
+            onClick={() =>
+              setBatchFilter({
+                kind,
+                mediaType: media,
+                category,
+                status,
+                keyword: query,
+              })
+            }
+          >
+            <ImageIcon size={15} />
+            批量生成封面
+          </button>
           {canImport && (
             <button
               className="adm-btn ghost"
@@ -330,16 +354,51 @@ export default function StudioTemplatesAdmin() {
               ? "正在读取…"
               : error
                 ? "暂未获取到结果"
-                : (data?.total ?? 0) + " 个模板"}
+                : data?.total
+                  ? (page - 1) * PAGE_SIZE +
+                    1 +
+                    "–" +
+                    Math.min(page * PAGE_SIZE, data.total) +
+                    " / " +
+                    data.total +
+                    " 个模板"
+                  : "0 个模板"}
           </span>
         </div>
-        {hasFilters ? (
-          <button type="button" onClick={resetFilters}>
-            重置筛选
-          </button>
-        ) : (
-          <span>草稿仅管理员可见</span>
-        )}
+        <div className={css.catalogActions}>
+          {hasFilters && (
+            <button
+              type="button"
+              className={css.resetFilters}
+              onClick={resetFilters}
+            >
+              重置筛选
+            </button>
+          )}
+          <PopoverSelect
+            className={css.filterSelect + " " + css.sortSelect}
+            menuClassName={"admin-body " + css.selectMenu}
+            label="模板排序"
+            value={order}
+            options={[
+              { value: "newest", label: "最近添加" },
+              { value: "sort", label: "运营排序" },
+            ]}
+            onChange={(value) => {
+              setOrder(value as "sort" | "newest");
+              setPage(1);
+            }}
+          />
+          <nav className={css.topPager} aria-label="顶部翻页">
+            <TemplatePageControls
+              page={page}
+              pages={data?.pages || 1}
+              disabled={loading || !!error}
+              failed={!!error}
+              onChange={setPage}
+            />
+          </nav>
+        </div>
       </div>
       {error ? (
         <div className={css.empty} role="alert">
@@ -505,26 +564,21 @@ export default function StudioTemplatesAdmin() {
               ? "列表加载失败"
               : `共 ${data?.total ?? 0} 个模板`}
         </span>
-        <div>
-          <button
-            className="adm-btn ghost small"
-            disabled={loading || !!error || page <= 1}
-            onClick={() => setPage((v) => v - 1)}
-          >
-            上一页
-          </button>
-          <span>
-            {error ? "—" : `${page} / ${Math.max(1, data?.pages || 1)}`}
-          </span>
-          <button
-            className="adm-btn ghost small"
-            disabled={loading || !!error || page >= (data?.pages || 1)}
-            onClick={() => setPage((v) => v + 1)}
-          >
-            下一页
-          </button>
-        </div>
+        <TemplatePageControls
+          page={page}
+          pages={data?.pages || 1}
+          disabled={loading || !!error}
+          failed={!!error}
+          onChange={setPage}
+        />
       </nav>
+      {batchFilter && (
+        <TemplateCoverBatchDialog
+          filter={batchFilter}
+          onClose={() => setBatchFilter(null)}
+          onUpdated={() => setVersion((v) => v + 1)}
+        />
+      )}
       {draft && (
         <TemplateEditor
           key={`${user?.id || "guest"}:${draft.id || "new"}`}
@@ -577,6 +631,44 @@ export default function StudioTemplatesAdmin() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+function TemplatePageControls({
+  page,
+  pages,
+  disabled,
+  failed,
+  onChange,
+}: {
+  page: number;
+  pages: number;
+  disabled: boolean;
+  failed: boolean;
+  onChange: (page: number) => void;
+}) {
+  return (
+    <div className={css.pageControls}>
+      <button
+        type="button"
+        className="adm-btn ghost small"
+        disabled={disabled || page <= 1}
+        onClick={() => onChange(page - 1)}
+      >
+        上一页
+      </button>
+      <span aria-label="当前页">
+        {failed ? "—" : page + " / " + Math.max(1, pages)}
+      </span>
+      <button
+        type="button"
+        className="adm-btn ghost small"
+        disabled={disabled || page >= pages}
+        onClick={() => onChange(page + 1)}
+      >
+        下一页
+      </button>
     </div>
   );
 }
@@ -882,7 +974,7 @@ function TemplateEditor({
     const appliedTask =
       coverTask.current?.url === form.coverUrl ? coverTask.current : null;
     try {
-      const res = await api.save(requestForm(), form.id);
+      const res = await api.save(requestForm(), form.id, initial.coverUrl);
       if (!alive.current) return false;
       if (res.success && res.data) {
         saved.current = true;

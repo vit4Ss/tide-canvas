@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"tidecanvas/internal/model"
 )
 
 func validateMaskConfig(typ string, raw json.RawMessage) error {
@@ -22,5 +23,5 @@ func validateMaskConfig(typ string, raw json.RawMessage) error {
 			return errors.New("只有图片模型可以开启支持蒙版")
 		}
 	}
-	return nil
+	return model.ValidateTemplateCoverConfig(typ, raw)
 }

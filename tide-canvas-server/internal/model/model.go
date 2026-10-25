@@ -33,6 +33,7 @@ func Models() []any {
 		&AiGenerationLog{},
 		&PromptSafetyCheck{},
 		&StudioTemplate{},
+		&TemplateCoverBatch{},
 		&File{},
 		&FileUploadGrant{},
 

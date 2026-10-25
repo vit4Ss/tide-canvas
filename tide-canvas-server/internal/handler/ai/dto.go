@@ -31,7 +31,11 @@ type generateDTO struct {
 	TargetType string `json:"targetType"`
 	// Optional for legacy compatibility; official clients always send it.
 	// When supplied, retries with the same request return the original task.
-	ClientRequestID string `json:"clientRequestId"`
+	ClientRequestID         string   `json:"clientRequestId"`
+	TemplateCoverModelHash  string   `json:"-"`
+	TemplateCoverBatchID    idgen.ID `json:"-"`
+	TemplateCoverTemplateID idgen.ID `json:"-"`
+	TemplateCoverWorker     string   `json:"-"`
 	// The fields below are internal-only orchestration metadata populated by the
 	// exported GenerationFacade. They are never accepted from the HTTP body.
 	Origin            string          `json:"-"`

@@ -63,6 +63,8 @@ export interface ModelConfig {
   aiOptimizePrimary?: boolean;
   /** 图片模型：是否作为「全局图片生成主模型」（全局唯一，画布图片类功能默认走此模型，积分按该模型价格扣除） */
   imagePrimary?: boolean;
+  /** 图片模型：允许用于创作模板批量封面；缺省关闭，多款开启时按模型排序优先选择。 */
+  templateCoverBatch?: boolean;
   /** 蒙版局部重绘专用候选；多款启用时按后台顺序取首个可用模型。 */
   supportsMask?: boolean;
   /**

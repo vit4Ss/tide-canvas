@@ -34,7 +34,7 @@ await context.route("**/api/**",async route=>{
   data={modelId:"fixture-model",modelName:"Fixture Model",handler:"image_to_image",basePointCost:7,referenceVideoBilling:false,options:{resolution:"2k",aspectRatio:"4:5",quality:"high"},maxUploadBytes:{image:52428800,video:52428800,audio:52428800}};
  }
  else if(/^\/api\/admin\/studio-templates\/\d+$/.test(path)){
-  const row=templates.find(t=>t.id===path.split('/').at(-1));if(req.method()==='PUT'){if(failTemplateSave){failTemplateSave=false;return fail('模拟模板保存失败',503);}Object.assign(row,req.postDataJSON());data=row;}else if(req.method()==='DELETE'){templates.splice(templates.indexOf(row),1);data={};}
+  const row=templates.find(t=>t.id===path.split('/').at(-1));if(req.method()==='PUT'){if(failTemplateSave){failTemplateSave=false;return fail('模拟模板保存失败',503);}const {expectedCoverUrl,...payload}=req.postDataJSON();assert.equal(typeof expectedCoverUrl,'string','template save omitted its cover baseline');if(payload.coverUrl===expectedCoverUrl)payload.coverUrl=row.coverUrl;else if(expectedCoverUrl!==row.coverUrl&&payload.coverUrl!==row.coverUrl)return fail('封面已由后台任务更新',409);Object.assign(row,payload);data=row;}else if(req.method()==='DELETE'){templates.splice(templates.indexOf(row),1);data={};}
  }
  else if(path.startsWith("/api/ai/template-setup/") && setupFails)return fail("模拟规格读取失败",503);
  else if(path.startsWith("/api/ai/template-setup/") && Number(path.split('/').at(-1))>=20000){const row=templates.find(t=>t.id===path.split('/').at(-1));data={modelId:"fixture-video",modelName:"Fixture Video",handler:"reference_to_video",basePointCost:7,referenceVideoBilling:false,options:row.options,maxUploadBytes:{image:52428800,video:52428800,audio:52428800}};}

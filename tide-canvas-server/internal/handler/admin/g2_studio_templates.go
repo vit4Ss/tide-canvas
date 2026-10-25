@@ -1,6 +1,9 @@
 package admin
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -8,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"tidecanvas/internal/app"
@@ -16,12 +20,32 @@ import (
 	"tidecanvas/internal/middleware"
 	"tidecanvas/internal/model"
 	"tidecanvas/internal/pkg/idgen"
+	"tidecanvas/internal/pkg/logger"
 	"tidecanvas/internal/pkg/response"
 )
 
 func RegisterStudioTemplates(g *gin.RouterGroup, d *app.Deps) {
 	h := &studioTemplatesHandler{db: d.DB}
+	if d.Storage != nil {
+		h.urlRewrites = d.Storage.PublicRewrites()
+	}
 	s := g.Group("/studio-templates")
+	batches := &coverBatchService{db: d.DB}
+	if d.Cfg != nil {
+		var nonce [16]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			logger.L().Error("template cover worker identity unavailable", zap.Error(err))
+		} else {
+			batches.worker = "cover-" + hex.EncodeToString(nonce[:])
+			batches.generator = ai.NewGenerationFacade(d)
+			go batches.run(context.Background())
+		}
+	}
+	s.POST("/cover-batches/preview", batches.previewHTTP)
+	s.POST("/cover-batches", batches.createHTTP)
+	s.GET("/cover-batches/current", batches.currentHTTP)
+	s.GET("/cover-batches/:batchId", batches.getHTTP)
+	s.POST("/cover-batches/:batchId/stop", batches.stopHTTP)
 	s.GET("", (&studiotemplate.Handler{DB: d.DB}).List(true))
 	s.POST("", h.save)
 	s.POST("/check", h.check)
@@ -32,14 +56,57 @@ func RegisterStudioTemplates(g *gin.RouterGroup, d *app.Deps) {
 	s.POST("/from-task", middleware.AdminPerm("admin.generations"), h.fromTask)
 }
 
-type studioTemplatesHandler struct{ db *gorm.DB }
+type studioTemplatesHandler struct {
+	db          *gorm.DB
+	urlRewrites [][2]string
+}
+
+func (h *studioTemplatesHandler) displayCoverURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	for _, pair := range h.urlRewrites {
+		if pair[0] != "" && pair[1] != "" && pair[0] != pair[1] {
+			raw = strings.ReplaceAll(raw, pair[0], pair[1])
+		}
+	}
+	return raw
+}
 
 func (h *studioTemplatesHandler) save(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 128<<10)
-	var dto studiotemplate.SaveDTO
+	var dto struct {
+		studiotemplate.SaveDTO
+		ExpectedCoverURL *string `json:"expectedCoverUrl" binding:"omitempty,max=2048"`
+	}
 	if err := c.ShouldBindJSON(&dto); err != nil {
 		response.Fail(c, 400, "请检查名称、提示词、媒体类型和参数长度")
 		return
+	}
+	var old model.StudioTemplate
+	if c.Param("id") != "" {
+		id, err := idgen.Parse(c.Param("id"))
+		if err != nil || id == 0 {
+			response.Fail(c, 400, "模板编号无效")
+			return
+		}
+		if err := h.db.WithContext(c.Request.Context()).First(&old, "id = ?", id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				response.Fail(c, 404, "模板不存在")
+			} else {
+				response.Fail(c, 500, "读取模板失败")
+			}
+			return
+		}
+		if dto.ExpectedCoverURL != nil {
+			expected := h.displayCoverURL(*dto.ExpectedCoverURL)
+			if h.displayCoverURL(dto.CoverURL) == expected {
+				// This form never changed its cover. Keep the newer server
+				// cover while applying the operator's other edits.
+				dto.CoverURL = old.CoverURL
+			} else if h.displayCoverURL(old.CoverURL) != expected && h.displayCoverURL(dto.CoverURL) != h.displayCoverURL(old.CoverURL) {
+				response.Fail(c, 409, "封面已由后台任务或其他管理员更新，请重新打开模板确认后再修改封面")
+				return
+			}
+		}
 	}
 	if err := dto.Validate(); err != nil {
 		response.Fail(c, 400, err.Error())
@@ -63,21 +130,28 @@ func (h *studioTemplatesHandler) save(c *gin.Context) {
 			return
 		}
 	} else {
-		id, err := idgen.Parse(c.Param("id"))
-		if err != nil || id == 0 {
-			response.Fail(c, 400, "模板编号无效")
-			return
-		}
-		var old model.StudioTemplate
-		if err := h.db.First(&old, "id = ?", id).Error; err != nil {
-			response.Fail(c, 404, "模板不存在")
-			return
-		}
 		row.BaseModel = old.BaseModel
+		previousCover := old.CoverURL
 		// Explicit fields include zero values, and never overwrite source/uses.
-		if err := h.db.Model(&old).Select("Kind", "MediaType", "Title", "Description", "Category", "Prompt", "CoverURL", "PreviewURL", "AuthorName", "InputHint", "InputLabels", "Mode", "ModelKey", "Requirements", "Options", "Status", "SortOrder").Updates(&row).Error; err != nil {
+		result := h.db.WithContext(c.Request.Context()).Model(&old).Where("COALESCE(cover_url,'') = ?", previousCover).Select("Kind", "MediaType", "Title", "Description", "Category", "Prompt", "CoverURL", "PreviewURL", "AuthorName", "InputHint", "InputLabels", "Mode", "ModelKey", "Requirements", "Options", "Status", "SortOrder").Updates(&row)
+		if result.Error != nil {
 			response.Fail(c, 500, "保存模板失败")
 			return
+		}
+		if result.RowsAffected == 0 {
+			var latest model.StudioTemplate
+			if err := h.db.WithContext(c.Request.Context()).Select("id", "cover_url").First(&latest, "id = ?", old.ID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					response.Fail(c, 404, "模板已删除")
+				} else {
+					response.Fail(c, 500, "确认保存状态失败，请重试")
+				}
+				return
+			}
+			if latest.CoverURL != previousCover {
+				response.Fail(c, 409, "模板封面刚刚更新，请重试保存；本次修改尚未写入")
+				return
+			}
 		}
 		row.Uses = old.Uses
 	}

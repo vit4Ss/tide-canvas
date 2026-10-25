@@ -160,13 +160,35 @@
   color: var(--text);
   overflow-wrap: anywhere;
 }
-.resultSummary button {
+.resultSummary .resetFilters {
   border: 0;
   padding: 6px 0;
   background: none;
   color: var(--accent-strong);
   cursor: pointer;
   font: inherit;
+}
+.catalogActions {
+  justify-content: flex-end;
+}
+.resultSummary .sortSelect {
+  width: 144px;
+  min-width: 144px;
+  min-height: 36px;
+  flex: 0 0 auto;
+}
+.pageControls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.pageControls > span {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.pageControls button {
+  min-height: 36px;
 }
 .toolbar form {
   display: flex;
@@ -790,6 +812,13 @@
   line-height: 1.6;
 }
 @media (max-width: 700px) {
+  .catalogActions {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .topPager {
+    margin-left: auto;
+  }
   .requirementRow {
     flex-direction: row;
     align-items: center;

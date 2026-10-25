@@ -42,7 +42,7 @@ await context.route("**/api/**", async (route) => {
     }
     queries.push(Object.fromEntries(url.searchParams));
     if (failList) return fail("模拟分类列表读取失败");
-    const catalog = [...rows].sort((a, b) => a.sortOrder - b.sortOrder || Number(b.id) - Number(a.id));
+    const catalog = [...rows].sort((a, b) => (url.searchParams.get("order") === "newest" ? 0 : a.sortOrder - b.sortOrder) || Number(b.id) - Number(a.id));
     let matches = (limitRows ? catalog.slice(0, limitRows) : catalog).filter(row =>
       (!url.searchParams.get("kind") || row.kind === url.searchParams.get("kind"))
       && (!url.searchParams.get("mediaType") || row.mediaType === url.searchParams.get("mediaType"))
@@ -96,12 +96,21 @@ try {
   await page.getByRole("button", { name: "视频", exact: true }).click();
   await waitForCards(18);
   await pager.getByText("1 / 4", { exact: true }).waitFor();
+  assert.equal(queries.at(-1).order, "newest", "admin did not request newest additions");
+  assert.equal(await cards.first().getByRole("heading").innerText(), rows.at(-1).title, "newly imported templates are hidden behind old sort priorities");
+  assert.ok((await cards.getByRole("heading").allTextContents()).every(title => /^[FJMQDW]\d{2} /.test(title)), "first page is not the newly imported pack");
   assert.equal(await cards.locator("video").count(), 0, "draft list starts loading videos");
   assert.equal(await cards.locator("img").count(), 0, "draft list invents cover images");
   const cover = cards.first().getByRole("button", { name: /制作封面$/ });
   assert.ok((await cover.boundingBox()).height < 120, "missing cover still occupies a large poster");
-  await pager.getByRole("button", { name: "下一页", exact: true }).click();
+  const topPager = page.getByRole("navigation", { name: "顶部翻页", exact: true });
+  await topPager.getByRole("button", { name: "下一页", exact: true }).click();
   await pager.getByText("2 / 4", { exact: true }).waitFor();
+  await topPager.getByText("2 / 4", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "模板排序", exact: true }).click();
+  await page.getByRole("option", { name: "运营排序", exact: true }).click();
+  await pager.getByText("1 / 4", { exact: true }).waitFor();
+  assert.equal(await cards.first().getByRole("heading").innerText(), rows[0].title);
   await category("美食团购");
   await waitForCards(12);
   await pager.getByText("1 / 1", { exact: true }).waitFor();
