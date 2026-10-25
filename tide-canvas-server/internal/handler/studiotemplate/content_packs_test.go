@@ -63,7 +63,7 @@ func TestSuppliedContentPackImportsTwentyPrivateDraftsOnce(t *testing.T) {
 		}
 	}
 	var rows []model.StudioTemplate
-	db.Order("sort_order").Find(&rows)
+	db.Where("source_key LIKE ?", StoreFoodSourcePrefix+"%").Order("sort_order").Find(&rows)
 	if len(rows) != 20 {
 		t.Fatalf("imported %d rows", len(rows))
 	}
@@ -85,7 +85,7 @@ func TestSuppliedContentPackImportsTwentyPrivateDraftsOnce(t *testing.T) {
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest("GET", "/admin?mediaType=video&kind=inspiration", nil))
 	json.Unmarshal(w.Body.Bytes(), &result)
-	if result.Data.Total != 20 || !strings.Contains(w.Body.String(), "完整承接") {
+	if result.Data.Total != 70 || !strings.Contains(w.Body.String(), "完整承接") {
 		t.Fatal("operator cannot find/edit the pack")
 	}
 	db.Model(&rows[0]).Updates(map[string]any{"title": "运营调整", "prompt": "新配方", "uses": 9, "status": 1})
@@ -100,7 +100,7 @@ func TestSuppliedContentPackImportsTwentyPrivateDraftsOnce(t *testing.T) {
 	}
 	var count int64
 	db.Model(&model.StudioTemplate{}).Count(&count)
-	if count != 19 {
+	if count != 69 {
 		t.Fatal("deleted pack entry was resurrected")
 	}
 }
@@ -202,7 +202,7 @@ func TestContentPackSeedingFailureDoesNotLeavePartialImport(t *testing.T) {
 	attempt := 0
 	if err := db.Callback().Create().Before("gorm:create").Register("test:pack-failure", func(tx *gorm.DB) {
 		attempt++
-		if attempt == 3 {
+		if attempt == 23 {
 			tx.AddError(errors.New("simulated write failure"))
 		}
 	}); err != nil {
@@ -221,7 +221,7 @@ func TestContentPackSeedingFailureDoesNotLeavePartialImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Model(&model.StudioTemplate{}).Count(&count)
-	if count != 20 {
+	if count != 70 {
 		t.Fatal("retry failed", count)
 	}
 }

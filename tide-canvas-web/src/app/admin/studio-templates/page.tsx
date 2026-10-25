@@ -10,6 +10,7 @@ import {
   Edit3,
   ImageIcon,
   Layers3,
+  Check,
   Minus,
   Plus,
   Search,
@@ -89,6 +90,7 @@ export default function StudioTemplatesAdmin() {
   const [kind, setKind] = useState<"style" | "inspiration">("style");
   const [media, setMedia] = useState<"image" | "video">("image");
   const [status, setStatus] = useState("");
+  const [category, setCategory] = useState("");
   const [keyword, setKeyword] = useState("");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -100,13 +102,28 @@ export default function StudioTemplatesAdmin() {
     (StudioTemplateSave & { id?: string }) | null
   >(null);
   const [importing, setImporting] = useState(false);
-  const [coverStart, setCoverStart] = useState<{id: string; owner: string} | null>(null);
+  const [coverStart, setCoverStart] = useState<{
+    id: string;
+    owner: string;
+  } | null>(null);
   const [deleting, setDeleting] = useState("");
+  const deleteLock = useRef(false);
   const canImport =
     user?.role === 9 || !!user?.adminPerms?.includes("admin.generations");
-  const hasFilters = !!(query.trim() || status);
+  const hasFilters = !!(query.trim() || status || category);
+  const categories = [
+    ...new Set([...(data?.categories || []), category].filter(Boolean)),
+  ];
+  const resetFilters = () => {
+    setStatus("");
+    setCategory("");
+    setKeyword("");
+    setQuery("");
+    setPage(1);
+  };
   useEffect(() => {
     const controller = new AbortController();
+    let correctingPage = false;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     setError("");
@@ -116,6 +133,7 @@ export default function StudioTemplatesAdmin() {
           kind,
           mediaType: media,
           status,
+          category,
           keyword: query,
           pageNum: page,
           pageSize: 18,
@@ -126,39 +144,44 @@ export default function StudioTemplatesAdmin() {
         if (controller.signal.aborted) return;
         if (res.success && res.data) {
           const last = Math.max(1, res.data.pages);
-          if (page > last) setPage(last);
-          else setData(res.data);
+          if (page > last) {
+            correctingPage = true;
+            setPage(last);
+          } else setData(res.data);
         } else setError(res.message || "读取模板失败");
       })
       .catch(() => {
         if (!controller.signal.aborted) setError("读取失败，请重试");
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted && !correctingPage) setLoading(false);
       });
     return () => controller.abort();
-  }, [kind, media, status, query, page, version]);
+  }, [kind, media, status, category, query, page, version]);
   const remove = async (row: StudioTemplate) => {
-    if (
-      deleting ||
-      !(await confirmDialog({
-        title: "删除创作模板",
-        message: `确定删除「${row.title}」？已生成的作品不会受影响。`,
-        confirmText: "删除",
-      }))
-    )
-      return;
-    setDeleting(row.id);
+    if (deleteLock.current) return;
+    deleteLock.current = true;
     try {
+      if (
+        !(await confirmDialog({
+          title: "删除创作模板",
+          message: `确定删除「${row.title}」？已生成的作品不会受影响。`,
+          confirmText: "删除",
+        }))
+      )
+        return;
+      setDeleting(row.id);
       const res = await api.remove(row.id);
       if (res.success) {
         toast.success("已删除");
-        if (data?.records.length === 1 && page > 1) setPage(page - 1);
+        // Refresh the current filter. The list response corrects an out-of-range
+        // page; a late delete response must never restore a captured old page.
         setVersion((v) => v + 1);
       } else toast.error(res.message || "删除失败");
     } catch {
       toast.error("删除失败，请重试");
     } finally {
+      deleteLock.current = false;
       setDeleting("");
     }
   };
@@ -167,9 +190,7 @@ export default function StudioTemplatesAdmin() {
       <header className={css.header}>
         <div>
           <h1>创作模板</h1>
-          <p>
-            维护「灵感和模板」的成品效果与生成配方。已有模板可复制为草稿，再调整为新的同款。
-          </p>
+          <p>管理创作配方与展示效果，准备好封面和生成配置后上架。</p>
         </div>
         <div className={css.actions}>
           {canImport && (
@@ -193,8 +214,11 @@ export default function StudioTemplatesAdmin() {
       <div className={css.kinds} role="group" aria-label="模板类型">
         <button
           className={kind === "style" ? css.active : ""}
+          aria-pressed={kind === "style"}
           onClick={() => {
+            if (kind === "style") return;
             setKind("style");
+            setCategory("");
             setPage(1);
           }}
         >
@@ -206,24 +230,30 @@ export default function StudioTemplatesAdmin() {
         </button>
         <button
           className={kind === "inspiration" ? css.active : ""}
+          aria-pressed={kind === "inspiration"}
           onClick={() => {
+            if (kind === "inspiration") return;
             setKind("inspiration");
+            setCategory("");
             setPage(1);
           }}
         >
-          <Sparkles size={22} />
+          <Copy size={22} />
           <span>
             <strong>灵感做同款</strong>
-            <small>成品预览 + 提示词 + 素材要求</small>
+            <small>完整配方，用户上传素材即可生成</small>
           </span>
         </button>
       </div>
       <div className={css.toolbar}>
-        <div className={css.mediaTabs}>
+        <div className={css.mediaTabs} role="group" aria-label="媒体类型筛选">
           <button
             className={media === "image" ? css.active : ""}
+            aria-pressed={media === "image"}
             onClick={() => {
+              if (media === "image") return;
               setMedia("image");
+              setCategory("");
               setPage(1);
             }}
           >
@@ -232,8 +262,11 @@ export default function StudioTemplatesAdmin() {
           </button>
           <button
             className={media === "video" ? css.active : ""}
+            aria-pressed={media === "video"}
             onClick={() => {
+              if (media === "video") return;
               setMedia("video");
+              setCategory("");
               setPage(1);
             }}
           >
@@ -242,6 +275,8 @@ export default function StudioTemplatesAdmin() {
           </button>
         </div>
         <PopoverSelect
+          className={css.filterSelect}
+          menuClassName={"admin-body " + css.selectMenu}
           label="上架状态"
           value={status}
           options={[
@@ -254,22 +289,57 @@ export default function StudioTemplatesAdmin() {
             setPage(1);
           }}
         />
+        <PopoverSelect
+          className={css.filterSelect}
+          menuClassName={"admin-body " + css.selectMenu}
+          label="模板分类"
+          value={category}
+          disabled={loading || !!error}
+          options={[
+            { value: "", label: "全部分类" },
+            ...categories.map((value) => ({ value, label: value })),
+          ]}
+          onChange={(value) => {
+            setCategory(value);
+            setPage(1);
+          }}
+        />
         <form
           onSubmit={(e) => {
             e.preventDefault();
             setQuery(keyword.trim());
             setPage(1);
+            setVersion((v) => v + 1);
           }}
         >
           <Search size={15} />
           <input
             value={keyword}
             aria-label="搜索模板"
-            placeholder="搜索名称、描述"
+            placeholder="搜索编号、名称或描述"
             onChange={(e) => setKeyword(e.target.value)}
           />
           <button className="adm-btn ghost small">查询</button>
         </form>
+      </div>
+      <div className={css.resultSummary}>
+        <div>
+          <strong>{category || "全部分类"}</strong>
+          <span>
+            {loading
+              ? "正在读取…"
+              : error
+                ? "暂未获取到结果"
+                : (data?.total ?? 0) + " 个模板"}
+          </span>
+        </div>
+        {hasFilters ? (
+          <button type="button" onClick={resetFilters}>
+            重置筛选
+          </button>
+        ) : (
+          <span>草稿仅管理员可见</span>
+        )}
       </div>
       {error ? (
         <div className={css.empty} role="alert">
@@ -299,10 +369,7 @@ export default function StudioTemplatesAdmin() {
             className="adm-btn"
             onClick={() => {
               if (hasFilters) {
-                setStatus("");
-                setKeyword("");
-                setQuery("");
-                setPage(1);
+                resetFilters();
               } else setDraft(empty(kind, media));
             }}
           >
@@ -313,24 +380,82 @@ export default function StudioTemplatesAdmin() {
         <div className={css.grid} data-count={data.records.length}>
           {data.records.map((row) => (
             <article className={css.card} key={row.id}>
-              <div className={css.cardMedia}>
-                <TemplateMedia key={row.coverUrl + row.previewUrl} row={row} />
+              <div
+                className={css.cardMedia}
+                data-empty={!row.coverUrl || undefined}
+              >
+                {row.coverUrl ? (
+                  <TemplateMedia
+                    key={row.coverUrl + row.previewUrl}
+                    row={row}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className={css.missingCover}
+                    aria-label={"为" + row.title + "制作封面"}
+                    onClick={() => {
+                      setDraft(row);
+                      setCoverStart({ id: row.id, owner: String(user?.id) });
+                    }}
+                  >
+                    <span className={css.coverIcon}>
+                      <ImageIcon size={22} />
+                    </span>
+                    <span>
+                      <strong>添加封面</strong>
+                      <small>
+                        {row.previewUrl
+                          ? "已添加视频预览，还需补充封面"
+                          : "打开封面制作工具，保存后再上架"}
+                      </small>
+                    </span>
+                    <Plus size={16} />
+                  </button>
+                )}
               </div>
               <div className={css.cardBody}>
-                <span className={row.status === 1 ? css.live : css.draft}>
-                  {row.status === 1 ? "已上架" : "草稿 / 已下架"}
-                </span>
-                <h3>{row.title}</h3>
-                <p>
-                  {row.category || "未分类"} · {templateInputs(row)}
-                </p>
+                <div className={css.cardLabels}>
+                  <span
+                    className={css.categoryLabel}
+                    title={row.category || "未分类"}
+                  >
+                    {row.category || "未分类"}
+                  </span>
+                  <span className={row.status === 1 ? css.live : css.draft}>
+                    {row.status === 1 ? "已上架" : "未上架"}
+                  </span>
+                </div>
+                <h3 title={row.title}>{row.title}</h3>
+                {row.description && (
+                  <p className={css.cardDescription}>{row.description}</p>
+                )}
+                <div className={css.specs}>
+                  <span>{modeLabels[row.mode]}</span>
+                  {!!row.options.duration && (
+                    <span>{row.options.duration} 秒</span>
+                  )}
+                  {row.options.aspectRatio && (
+                    <span>{row.options.aspectRatio}</span>
+                  )}
+                </div>
+                <p className={css.materialSummary}>{templateInputs(row)}</p>
                 <footer>
+                  {row.status !== 1 && (
+                    <p className={css.nextStep}>
+                      {!row.coverUrl
+                        ? "下一步：补充展示封面"
+                        : !row.prompt.trim()
+                          ? "下一步：完善生成配方"
+                          : "下一步：检查配置并上架"}
+                    </p>
+                  )}
                   <small>
                     排序 {row.sortOrder} · 使用 {row.uses} 次
                   </small>
                   <div className={css.cardActions}>
                     <button
-                      className="adm-btn ghost small"
+                      className={"adm-btn ghost small " + css.editAction}
                       aria-label={`编辑${row.title}`}
                       onClick={() => setDraft(row)}
                     >
@@ -404,12 +529,25 @@ export default function StudioTemplatesAdmin() {
         <TemplateEditor
           key={`${user?.id || "guest"}:${draft.id || "new"}`}
           initial={draft}
-          initialCoverOpen={coverStart?.id === draft.id && coverStart?.owner === String(user?.id)}
-          onClose={() => {setDraft(null);setCoverStart(null);}}
+          initialCoverOpen={
+            coverStart?.id === draft.id &&
+            coverStart?.owner === String(user?.id)
+          }
+          onClose={() => {
+            setDraft(null);
+            setCoverStart(null);
+          }}
           onDraftSaved={(row) => {
-            setCoverStart({id:row.id,owner:String(user?.id)});
-            setDraft(row);setKind(row.kind);setMedia(row.mediaType);
-            setStatus("");setKeyword("");setQuery("");setPage(1);setVersion(v=>v+1);
+            setCoverStart({ id: row.id, owner: String(user?.id) });
+            setDraft(row);
+            setKind(row.kind);
+            setMedia(row.mediaType);
+            setStatus("");
+            setCategory("");
+            setKeyword("");
+            setQuery("");
+            setPage(1);
+            setVersion((v) => v + 1);
           }}
           onSaved={(row) => {
             setDraft(null);
@@ -417,6 +555,7 @@ export default function StudioTemplatesAdmin() {
             setKind(row.kind);
             setMedia(row.mediaType);
             setStatus("");
+            setCategory("");
             setKeyword("");
             setQuery("");
             setPage(1);
@@ -431,6 +570,7 @@ export default function StudioTemplatesAdmin() {
             setImporting(false);
             setDraft(row);
             setKind("inspiration");
+            setCategory("");
             setMedia(row.mediaType);
             setPage(1);
             setVersion((v) => v + 1);
@@ -465,8 +605,13 @@ function TemplateEditor({
   const [coverMessage, setCoverMessage] = useState("");
   const [filledCoverUrl, setFilledCoverUrl] = useState("");
   const coverBlocking = coverOpen && coverBusy;
-  const coverNeedsSave = !!filledCoverUrl && form.coverUrl === filledCoverUrl && form.coverUrl !== initial.coverUrl;
-  const coverTask = useRef<{id: string; owner: string; url: string} | null>(null);
+  const coverNeedsSave =
+    !!filledCoverUrl &&
+    form.coverUrl === filledCoverUrl &&
+    form.coverUrl !== initial.coverUrl;
+  const coverTask = useRef<{ id: string; owner: string; url: string } | null>(
+    null,
+  );
   const coverScope = initial.id ? `admin:template-cover:${initial.id}` : "";
   const [checked, setChecked] = useState<{
     signature: string;
@@ -477,7 +622,9 @@ function TemplateEditor({
   const [modelsLoading, setModelsLoading] = useState(true);
   const modelRequestPending = useRef(false);
   const busy = useRef(false);
-  const onCoverBusy = useCallback((value: boolean) => { setCoverBusy(value); }, []);
+  const onCoverBusy = useCallback((value: boolean) => {
+    setCoverBusy(value);
+  }, []);
   const closing = useRef(false);
   const errorElement = useRef<HTMLParagraphElement>(null);
   const checkElement = useRef<HTMLDivElement>(null);
@@ -487,17 +634,23 @@ function TemplateEditor({
   const currentCheck =
     checked?.signature === signature ? checked.data : undefined;
   const selectedModel = models.find(
-          (model) =>
-            model.type === form.mediaType &&
-            (model.modelKey === form.modelKey || model.id === form.modelKey),
-        );
+    (model) =>
+      model.type === form.mediaType &&
+      (model.modelKey === form.modelKey || model.id === form.modelKey),
+  );
   const requirementKinds = (["images", "videos", "audio"] as const).filter(
     (kind) => templateCountRange(form.mode, kind).max > 0,
   );
-  const parameterFields = selectedModel ? templateParameterFields(form.mediaType, selectedModel.config) : [];
+  const parameterFields = selectedModel
+    ? templateParameterFields(form.mediaType, selectedModel.config)
+    : [];
   const requestForm = () => {
     if (!selectedModel) return form;
-    const options = templateOptionsForRequest(form.options, form.mediaType, selectedModel.config);
+    const options = templateOptionsForRequest(
+      form.options,
+      form.mediaType,
+      selectedModel.config,
+    );
     return { ...form, options };
   };
   const alive = useRef(true);
@@ -539,10 +692,13 @@ function TemplateEditor({
         const result = await marketApi.studioModels(form.mediaType);
         if (!current || request !== sequence) return;
         if (result.success && Array.isArray(result.data)) {
-          setModels(result.data.filter(model => model.type === form.mediaType));
+          setModels(
+            result.data.filter((model) => model.type === form.mediaType),
+          );
         } else setModelError(result.message || "模型列表读取失败，请重试");
       } catch {
-        if (current && request === sequence) setModelError("模型列表读取失败，请重试");
+        if (current && request === sequence)
+          setModelError("模型列表读取失败，请重试");
       } finally {
         if (current && request === sequence) {
           modelRequestPending.current = false;
@@ -550,7 +706,9 @@ function TemplateEditor({
         }
       }
     };
-    const onVisible = () => { if (document.visibilityState === "visible") void loadModels(); };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void loadModels();
+    };
     // Match Studio's live catalog refresh without rewriting the selected model key.
     void loadModels();
     window.addEventListener("focus", loadModels);
@@ -582,7 +740,13 @@ function TemplateEditor({
     }
   };
   const check = async () => {
-    if (busy.current || coverBlocking || modelsLoading || modelRequestPending.current) return;
+    if (
+      busy.current ||
+      coverBlocking ||
+      modelsLoading ||
+      modelRequestPending.current
+    )
+      return;
     if (form.modelKey && (modelError || !selectedModel)) {
       setError("请先重新读取模型列表，确认所选模型可用后再检查配置。");
       return;
@@ -596,11 +760,15 @@ function TemplateEditor({
       if (!alive.current) return;
       if (res.success && res.data) {
         if (!form.modelKey) {
-          const resolved = { ...form, modelKey: res.data.modelId, options: res.data.options };
-          setForm(resolved); setChecked({ signature: JSON.stringify(resolved), data: res.data });
+          const resolved = {
+            ...form,
+            modelKey: res.data.modelId,
+            options: res.data.options,
+          };
+          setForm(resolved);
+          setChecked({ signature: JSON.stringify(resolved), data: res.data });
         } else setChecked({ signature, data: res.data });
-      }
-      else setError(res.message || "配置检查失败，请重试");
+      } else setError(res.message || "配置检查失败，请重试");
     } catch {
       if (alive.current) setError("配置检查失败，请重试");
     } finally {
@@ -616,12 +784,16 @@ function TemplateEditor({
     setForm((v) => ({ ...v, [key]: value }));
   };
   const applyCover = useCallback((url: string, id: string, owner: string) => {
-    if(!alive.current || String(useAuthStore.getState().user?.id || "") !== owner)return;
-    coverTask.current={id,owner,url};
-    setForm(value=>({...value,coverUrl:url}));
+    if (
+      !alive.current ||
+      String(useAuthStore.getState().user?.id || "") !== owner
+    )
+      return;
+    coverTask.current = { id, owner, url };
+    setForm((value) => ({ ...value, coverUrl: url }));
     setFilledCoverUrl(url);
     setError("");
-  },[]);
+  }, []);
   const upload = async (
     file: File | undefined,
     key: "coverUrl" | "previewUrl",
@@ -661,21 +833,45 @@ function TemplateEditor({
     }
   };
   const openCover = async () => {
-    if(busy.current || modelsLoading || modelRequestPending.current)return;
-    if(initial.id){setCoverOpen(true);return;}
+    if (busy.current || modelsLoading || modelRequestPending.current) return;
+    if (initial.id) {
+      setCoverOpen(true);
+      return;
+    }
     // Give each new template a durable identity before starting a paid cover
     // task. Otherwise all unsaved templates share the same recovery journal.
-    busy.current=true;setSaving(true);setError("");
+    busy.current = true;
+    setSaving(true);
+    setError("");
     try {
-      const res=await api.save({...requestForm(),status:0});
-      if(!alive.current)return;
-      if(res.success && res.data?.id){saved.current=true;onDraftSaved(res.data);}
-      else setError(res.message || "草稿未能保存，尚未开始封面生成。请确认列表中的保存状态后重试。");
-    } catch {if(alive.current)setError("暂时无法确认草稿保存状态，请先检查模板列表；封面任务尚未开始。");}
-    finally{busy.current=false;if(alive.current)setSaving(false);}
+      const res = await api.save({ ...requestForm(), status: 0 });
+      if (!alive.current) return;
+      if (res.success && res.data?.id) {
+        saved.current = true;
+        onDraftSaved(res.data);
+      } else
+        setError(
+          res.message ||
+            "草稿未能保存，尚未开始封面生成。请确认列表中的保存状态后重试。",
+        );
+    } catch {
+      if (alive.current)
+        setError(
+          "暂时无法确认草稿保存状态，请先检查模板列表；封面任务尚未开始。",
+        );
+    } finally {
+      busy.current = false;
+      if (alive.current) setSaving(false);
+    }
   };
   const save = async () => {
-    if (busy.current || coverBlocking || modelsLoading || modelRequestPending.current) return false;
+    if (
+      busy.current ||
+      coverBlocking ||
+      modelsLoading ||
+      modelRequestPending.current
+    )
+      return false;
     if (form.status === 1 && form.modelKey && (modelError || !selectedModel)) {
       setError("请先重新读取模型列表，确认所选模型可用后再上架。");
       return false;
@@ -683,13 +879,19 @@ function TemplateEditor({
     busy.current = true;
     setSaving(true);
     setError("");
-    const appliedTask = coverTask.current?.url === form.coverUrl ? coverTask.current : null;
+    const appliedTask =
+      coverTask.current?.url === form.coverUrl ? coverTask.current : null;
     try {
       const res = await api.save(requestForm(), form.id);
-      if(!alive.current)return false;
+      if (!alive.current) return false;
       if (res.success && res.data) {
         saved.current = true;
-        if (appliedTask && res.data.coverUrl === appliedTask.url) void commitAcceptedAiGeneration(coverScope, appliedTask.id, appliedTask.owner).catch(()=>undefined);
+        if (appliedTask && res.data.coverUrl === appliedTask.url)
+          void commitAcceptedAiGeneration(
+            coverScope,
+            appliedTask.id,
+            appliedTask.owner,
+          ).catch(() => undefined);
         toast.success(form.status ? "模板已上架" : "草稿已保存");
         onSaved(res.data);
         return true;
@@ -725,9 +927,22 @@ function TemplateEditor({
       closeable={!saving && !uploading && !checking && !coverBlocking}
       showCancel={!saving && !uploading && !checking && !coverBlocking}
       onSave={save}
-      saveDisabled={!!uploading || saving || checking || coverBlocking || modelsLoading || (form.status === 1 && !!form.modelKey && (!!modelError || !selectedModel))}
+      saveDisabled={
+        !!uploading ||
+        saving ||
+        checking ||
+        coverBlocking ||
+        modelsLoading ||
+        (form.status === 1 &&
+          !!form.modelKey &&
+          (!!modelError || !selectedModel))
+      }
       saveLabel={form.status === 1 ? "保存并上架" : "保存草稿"}
-      footNote={coverNeedsSave ? "AI 封面已填入，尚未保存。请点击右侧保存按钮。" : "上架后展示在「灵感和模板」；用户只上传素材，提示词不会公开。"}
+      footNote={
+        coverNeedsSave
+          ? "AI 封面已填入，尚未保存。请点击右侧保存按钮。"
+          : "上架后展示在「灵感和模板」；用户只上传素材，提示词不会公开。"
+      }
     >
       {error && (
         <p ref={errorElement} tabIndex={-1} className={css.error} role="alert">
@@ -766,7 +981,8 @@ function TemplateEditor({
                     { value: "image", label: "图片" },
                     { value: "video", label: "视频" },
                   ]}
-                  onChange={(v) =>
+                  onChange={(v) => {
+                    setError("");
                     setForm((old) => ({
                       ...old,
                       mediaType: v as "image" | "video",
@@ -775,8 +991,8 @@ function TemplateEditor({
                       inputLabels: {},
                       modelKey: "",
                       options: {},
-                    }))
-                  }
+                    }));
+                  }}
                 />
               </Field>
               <Field label="作者署名">
@@ -835,7 +1051,8 @@ function TemplateEditor({
                   value,
                   label: modeLabels[value],
                 }))}
-                onChange={(v) =>
+                onChange={(v) => {
+                  setError("");
                   setForm((old) => ({
                     ...old,
                     mode: v as StudioTemplate["mode"],
@@ -846,8 +1063,8 @@ function TemplateEditor({
                       videos: 0,
                       audio: 0,
                     },
-                  }))
-                }
+                  }));
+                }}
               />
             </Field>
             {requirementKinds.length ? (
@@ -866,10 +1083,22 @@ function TemplateEditor({
                   }[key];
                   const unit = key === "images" ? "张" : "段";
                   const update = (value: number) => {
-                    const count = Math.min(range.max, Math.max(range.min, Math.trunc(value) || 0));
+                    const count = Math.min(
+                      range.max,
+                      Math.max(range.min, Math.trunc(value) || 0),
+                    );
                     change("requirements", {
-                      ...form.requirements, [key]: count,
-                      ...(key === "images" ? { optionalImages: (form.requirements.optionalImages || []).filter(position => position <= count).slice(0, Math.max(0,count-1)) } : {}),
+                      ...form.requirements,
+                      [key]: count,
+                      ...(key === "images"
+                        ? {
+                            optionalImages: (
+                              form.requirements.optionalImages || []
+                            )
+                              .filter((position) => position <= count)
+                              .slice(0, Math.max(0, count - 1)),
+                          }
+                        : {}),
                     });
                   };
                   return (
@@ -925,7 +1154,11 @@ function TemplateEditor({
               <p className={css.note}>此模式不需要上传参考素材。</p>
             )}
             {form.mode === "ref" &&
-              !(form.requirements.images + form.requirements.videos + form.requirements.audio) && (
+              !(
+                form.requirements.images +
+                form.requirements.videos +
+                form.requirements.audio
+              ) && (
                 <p className={css.note}>
                   数量均为 0 时，用户可按需选择参考素材。
                 </p>
@@ -940,15 +1173,20 @@ function TemplateEditor({
                 {form.requirements.optionalImages?.length
                   ? "本模板有可选图片。提示词请使用固定位置占位符，缺图时由系统自动调整真实图号，避免把产品图误当头像。"
                   : form.mode === "flf"
-                  ? "图片1是首帧，图片2是尾帧。请在「完整提示词」中描述从首帧到尾帧的动作与画面过渡。"
-                  : form.mode === "i2v"
-                    ? "图片1会作为视频首帧。请在「完整提示词」中描述人物动作、镜头运动等，生成时使用用户上传的图片作为首帧。"
-                    : form.mode === "i2i" && form.requirements.images === 1
-                      ? "只有一张参考图时，可写「保留图片1中的人物，将背景改为……」，也可写「以上传的人物照片为参考……」，不强制使用编号。"
-                      : "涉及多份素材时，建议在「完整提示词」中按下方顺序写清图片1、图片2（或视频1、音频1）分别做什么。例如：用图片2的服装替换图片1人物的服装，保持人物和背景不变。"}
-                {form.mode === "ref" && " 图片、视频、音频各自从1开始编号；可选素材没有上传时，不要在提示词中要求使用它。"}
+                    ? "图片1是首帧，图片2是尾帧。请在「完整提示词」中描述从首帧到尾帧的动作与画面过渡。"
+                    : form.mode === "i2v"
+                      ? "图片1会作为视频首帧。请在「完整提示词」中描述人物动作、镜头运动等，生成时使用用户上传的图片作为首帧。"
+                      : form.mode === "i2i" && form.requirements.images === 1
+                        ? "只有一张参考图时，可写「保留图片1中的人物，将背景改为……」，也可写「以上传的人物照片为参考……」，不强制使用编号。"
+                        : "涉及多份素材时，建议在「完整提示词」中按下方顺序写清图片1、图片2（或视频1、音频1）分别做什么。例如：用图片2的服装替换图片1人物的服装，保持人物和背景不变。"}
+                {form.mode === "ref" &&
+                  " 图片、视频、音频各自从1开始编号；可选素材没有上传时，不要在提示词中要求使用它。"}
               </p>
-              <p className={css.note}>普通「图片1」描述不会自动改写。有可选图片时，在提示词里用 {"{{image:1}}"}、{"{{image:2}}"} 等对应固定上传位置；系统会按实际上传顺序换成图号，缺图时明确标记未上传。用途名称、上传说明和提示词应保持一致。</p>
+              <p className={css.note}>
+                普通「图片1」描述不会自动改写。有可选图片时，在提示词里用{" "}
+                {"{{image:1}}"}、{"{{image:2}}"}{" "}
+                等对应固定上传位置；系统会按实际上传顺序换成图号，缺图时明确标记未上传。用途名称、上传说明和提示词应保持一致。
+              </p>
               <FormGrid>
                 {(["images", "videos", "audio"] as const).flatMap(
                   (kind, kindIndex) =>
@@ -960,7 +1198,11 @@ function TemplateEditor({
                             0,
                             form.requirements[kind] ||
                               (form.mode === "ref" &&
-                              !(form.requirements.images + form.requirements.videos + form.requirements.audio)
+                              !(
+                                form.requirements.images +
+                                form.requirements.videos +
+                                form.requirements.audio
+                              )
                                 ? 1
                                 : 0),
                           ),
@@ -970,11 +1212,14 @@ function TemplateEditor({
                         <Field
                           key={`${kind}-${index}`}
                           label={`${["图片", "视频", "音频"][kindIndex]}${index + 1}用途`}
-                          hint={kind === "images" && !!form.requirements.optionalImages?.length
-                            ? `固定图片位置${index+1}；提示词使用 {{image:${index+1}}}，系统按实际上传顺序绑定。`
-                            : form.mode === "flf" && kind === "images"
-                            ? `对应用户上传的${index === 0 ? "首帧" : "尾帧"}图片。`
-                            : `对应用户上传的第${index + 1}${["张图片", "段视频", "段音频"][kindIndex]}，提示词可按「${["图片", "视频", "音频"][kindIndex]}${index + 1}」描述其用途。`}
+                          hint={
+                            kind === "images" &&
+                            !!form.requirements.optionalImages?.length
+                              ? `固定图片位置${index + 1}；提示词使用 {{image:${index + 1}}}，系统按实际上传顺序绑定。`
+                              : form.mode === "flf" && kind === "images"
+                                ? `对应用户上传的${index === 0 ? "首帧" : "尾帧"}图片。`
+                                : `对应用户上传的第${index + 1}${["张图片", "段视频", "段音频"][kindIndex]}，提示词可按「${["图片", "视频", "音频"][kindIndex]}${index + 1}」描述其用途。`
+                          }
                         >
                           <input
                             maxLength={40}
@@ -1000,18 +1245,49 @@ function TemplateEditor({
                     ),
                 )}
               </FormGrid>
-              {(form.mode === "ref" || form.mode === "i2i") && form.requirements.images > 1 && <div className={css.optionalRoles} role="group" aria-label="可选图片位置">
-                <strong>允许用户不上传的图片</strong>
-                <p className={css.note}>至少保留一个必填位置。可选图片的提示词应包含未上传时的处理方式。</p>
-                {templateUploadSlots(form).filter(slot => slot.kind === "image").map((slot, index) => {
-                  const positions = form.requirements.optionalImages || [];
-                  const optional = positions.includes(index + 1);
-                  return <label key={slot.key}>
-                    <input type="checkbox" checked={optional} disabled={!optional && positions.length >= form.requirements.images-1} onChange={event => change("requirements", { ...form.requirements, optionalImages: event.target.checked ? [...positions,index+1].sort((a,b)=>a-b) : positions.filter(n=>n!==index+1) })} />
-                    允许不上传图片{index + 1} · {slot.label}
-                  </label>;
-                })}
-              </div>}
+              {(form.mode === "ref" || form.mode === "i2i") &&
+                form.requirements.images > 1 && (
+                  <div
+                    className={css.optionalRoles}
+                    role="group"
+                    aria-label="可选图片位置"
+                  >
+                    <strong>允许用户不上传的图片</strong>
+                    <p className={css.note}>
+                      至少保留一个必填位置。可选图片的提示词应包含未上传时的处理方式。
+                    </p>
+                    {templateUploadSlots(form)
+                      .filter((slot) => slot.kind === "image")
+                      .map((slot, index) => {
+                        const positions =
+                          form.requirements.optionalImages || [];
+                        const optional = positions.includes(index + 1);
+                        return (
+                          <label key={slot.key}>
+                            <input
+                              type="checkbox"
+                              checked={optional}
+                              disabled={
+                                !optional &&
+                                positions.length >= form.requirements.images - 1
+                              }
+                              onChange={(event) =>
+                                change("requirements", {
+                                  ...form.requirements,
+                                  optionalImages: event.target.checked
+                                    ? [...positions, index + 1].sort(
+                                        (a, b) => a - b,
+                                      )
+                                    : positions.filter((n) => n !== index + 1),
+                                })
+                              }
+                            />
+                            允许不上传图片{index + 1} · {slot.label}
+                          </label>
+                        );
+                      })}
+                  </div>
+                )}
             </FormCard>
           )}
           <FormCard title="输出规格与发布">
@@ -1050,14 +1326,34 @@ function TemplateEditor({
                     : []),
                 ]}
                 onChange={(v) => {
-                  const chosen = models.find(m => m.modelKey === v);
-                  setForm(old => ({ ...old, modelKey: v, options: chosen ? templateOptionsForModel(old.options, old.mediaType, chosen.config) : old.options }));
+                  setError("");
+                  const chosen = models.find((m) => m.modelKey === v);
+                  setForm((old) => ({
+                    ...old,
+                    modelKey: v,
+                    options: chosen
+                      ? templateOptionsForModel(
+                          old.options,
+                          old.mediaType,
+                          chosen.config,
+                        )
+                      : old.options,
+                  }));
                 }}
               />
             </Field>
             <div className={css.actions}>
-              <button type="button" className="adm-btn ghost small" disabled={modelsLoading} onClick={() => setModelRetry(v => v + 1)}>{modelsLoading ? "正在读取模型…" : "刷新模型列表"}</button>
-              <span className={css.note}>名称与创作台一致，使用模型管理中维护的名称。</span>
+              <button
+                type="button"
+                className="adm-btn ghost small"
+                disabled={modelsLoading}
+                onClick={() => setModelRetry((v) => v + 1)}
+              >
+                {modelsLoading ? "正在读取模型…" : "刷新模型列表"}
+              </button>
+              <span className={css.note}>
+                名称与创作台一致，使用模型管理中维护的名称。
+              </span>
             </div>
             {modelError && (
               <p role="alert">
@@ -1071,23 +1367,89 @@ function TemplateEditor({
                 </button>
               </p>
             )}
-            {!selectedModel && !modelsLoading && !modelError && <p className={css.note}>先选择默认生成模型，再配置对应参数；自动模式可点击「检查生成配置」确定模型。</p>}
-            {selectedModel && !parameterFields.length && <p className={css.note}>此模型未提供可选的输出参数。</p>}
-            {selectedModel && form.mediaType === "video" && !!form.options.duration && !parameterFields.some(field => field.key === "duration") && <p className={css.error} role="alert">当前模板为 {form.options.duration} 秒，但所选模型未配置可选时长。请更换支持此时长的模型后再上架。</p>}
+            {!selectedModel && !modelsLoading && !modelError && (
+              <p className={css.note}>
+                先选择默认生成模型，再配置对应参数；自动模式可点击「检查生成配置」确定模型。
+              </p>
+            )}
+            {selectedModel && !parameterFields.length && (
+              <p className={css.note}>此模型未提供可选的输出参数。</p>
+            )}
+            {selectedModel &&
+              form.mediaType === "video" &&
+              !!form.options.duration &&
+              !parameterFields.some((field) => field.key === "duration") && (
+                <p className={css.error} role="alert">
+                  当前模板为 {form.options.duration}{" "}
+                  秒，但所选模型未配置可选时长。请更换支持此时长的模型后再上架。
+                </p>
+              )}
             <FormGrid>
               {parameterFields.map(({ key, label, values, numeric }) => {
                 const raw = form.options[key];
-                const spec = templateSpecChoices(raw ? String(raw) : "", values);
-                const options = spec.options.map(option => ({ ...option, label: !option.value || option.disabled ? option.label :
-                  key === "duration" ? `${option.value} 秒` : key === "batchCount" ? `${option.value} 张` :
-                  option.value === "auto" ? "自适应" : key === "resolution" ? option.value.toUpperCase() :
-                  key === "quality" ? ({low:"低画质",medium:"标准画质",high:"高画质"}[option.value] || option.value) : option.label }));
+                const spec = templateSpecChoices(
+                  raw ? String(raw) : "",
+                  values,
+                );
+                const options = spec.options.map((option) => ({
+                  ...option,
+                  label:
+                    !option.value || option.disabled
+                      ? option.label
+                      : key === "duration"
+                        ? `${option.value} 秒`
+                        : key === "batchCount"
+                          ? `${option.value} 张`
+                          : option.value === "auto"
+                            ? "自适应"
+                            : key === "resolution"
+                              ? option.value.toUpperCase()
+                              : key === "quality"
+                                ? {
+                                    low: "低画质",
+                                    medium: "标准画质",
+                                    high: "高画质",
+                                  }[option.value] || option.value
+                                : option.label,
+                }));
                 // Keep the default choice first, sort only explicit supported values like Studio.
-                if (key === "resolution" || key === "duration") options.sort((a,b) => !a.value ? -1 : !b.value ? 1 : key === "resolution" ? resolutionRank(a.value)-resolutionRank(b.value) : Number(a.value)-Number(b.value));
-                return <Field key={key} label={label} error={spec.invalid ? key === "duration" ? `原模板为 ${raw} 秒，所选模型不支持。请更换模型；若主动改短时长，请同时调整提示词中的分镜。` : `当前值 ${raw} 不在该模型的配置中，请重新选择。` : undefined}>
-                  <PopoverSelect {...selectProps} label={label} value={spec.value} options={options} invalid={spec.invalid}
-                    onChange={value => change("options", { ...form.options, [key]: numeric ? Number(value) || undefined : value })} />
-                </Field>;
+                if (key === "resolution" || key === "duration")
+                  options.sort((a, b) =>
+                    !a.value
+                      ? -1
+                      : !b.value
+                        ? 1
+                        : key === "resolution"
+                          ? resolutionRank(a.value) - resolutionRank(b.value)
+                          : Number(a.value) - Number(b.value),
+                  );
+                return (
+                  <Field
+                    key={key}
+                    label={label}
+                    error={
+                      spec.invalid
+                        ? key === "duration"
+                          ? `原模板为 ${raw} 秒，所选模型不支持。请更换模型；若主动改短时长，请同时调整提示词中的分镜。`
+                          : `当前值 ${raw} 不在该模型的配置中，请重新选择。`
+                        : undefined
+                    }
+                  >
+                    <PopoverSelect
+                      {...selectProps}
+                      label={label}
+                      value={spec.value}
+                      options={options}
+                      invalid={spec.invalid}
+                      onChange={(value) =>
+                        change("options", {
+                          ...form.options,
+                          [key]: numeric ? Number(value) || undefined : value,
+                        })
+                      }
+                    />
+                  </Field>
+                );
               })}
               <Field label="排序（越小越靠前）">
                 <input
@@ -1114,7 +1476,10 @@ function TemplateEditor({
             <button
               type="button"
               className="adm-btn ghost"
-              disabled={modelsLoading || (!!form.modelKey && (!!modelError || !selectedModel))}
+              disabled={
+                modelsLoading ||
+                (!!form.modelKey && (!!modelError || !selectedModel))
+              }
               onClick={() => void check()}
             >
               {checking ? "正在检查…" : "检查生成配置"}
@@ -1140,8 +1505,41 @@ function TemplateEditor({
           </FormCard>
         </div>
         <aside className={css.preview}>
-          <h3>用户看到的预览</h3>
-          <div className={css.previewArtwork}>
+          <h3>展示与发布</h3>
+          <ul className={css.previewChecklist} aria-label="上架准备">
+            {[
+              {
+                name: "展示封面",
+                done: !!form.coverUrl.trim(),
+                complete: "已填入",
+                pending: "待添加",
+              },
+              {
+                name: "生成配方",
+                done: !!form.prompt.trim(),
+                complete: "已填写",
+                pending: "待填写",
+              },
+              {
+                name: "配置检查",
+                done: !!currentCheck,
+                complete: "已通过",
+                pending: "本次未检查",
+              },
+            ].map((item) => (
+              <li key={item.name} data-done={item.done || undefined}>
+                <span className={css.checkMark}>
+                  {item.done && <Check size={12} />}
+                </span>
+                <span>{item.name}</span>
+                <small>{item.done ? item.complete : item.pending}</small>
+              </li>
+            ))}
+          </ul>
+          <div
+            className={css.previewArtwork}
+            data-empty={!form.coverUrl || undefined}
+          >
             <TemplateMedia
               key={form.coverUrl + form.previewUrl}
               row={form}
@@ -1150,14 +1548,22 @@ function TemplateEditor({
           </div>
           <h4>{form.title || "你的模板名称"}</h4>
           <p>
-            {form.description || "上传封面或用 AI 生成示意图，让用户了解模板主题。"}
+            {form.description ||
+              "上传封面或用 AI 生成示意图，让用户了解模板主题。"}
           </p>
           <p>{templateInputs(form)}</p>
           <ul className={css.slotPreview}>
             {templateUploadSlots(form).map((slot) => (
               <li key={slot.key}>
                 {slot.label}
-                {slot.optional ? (form.requirements.images + form.requirements.videos + form.requirements.audio === 0 ? "（选填，至少一种）" : "（选填）") : "（必填）"}
+                {slot.optional
+                  ? form.requirements.images +
+                      form.requirements.videos +
+                      form.requirements.audio ===
+                    0
+                    ? "（选填，至少一种）"
+                    : "（选填）"
+                  : "（必填）"}
               </li>
             ))}
           </ul>
@@ -1198,8 +1604,23 @@ function TemplateEditor({
                   }}
                 />
               </label>
-              {key === "coverUrl" && <button type="button" className="adm-btn ghost small" disabled={saving || checking || !!uploading || modelsLoading} aria-expanded={coverOpen} onClick={()=>void openCover()}><Sparkles size={14}/>{initial.id ? "AI 生成封面" : "保存草稿并制作封面"}</button>}
-              {key === "coverUrl" && (coverMessage || coverNeedsSave) && <p className={css.note} role="status">{coverMessage || "AI 封面已填入，尚未保存。"}</p>}
+              {key === "coverUrl" && (
+                <button
+                  type="button"
+                  className="adm-btn ghost small"
+                  disabled={saving || checking || !!uploading || modelsLoading}
+                  aria-expanded={coverOpen}
+                  onClick={() => void openCover()}
+                >
+                  <Sparkles size={14} />
+                  {initial.id ? "AI 生成封面" : "保存草稿并制作封面"}
+                </button>
+              )}
+              {key === "coverUrl" && (coverMessage || coverNeedsSave) && (
+                <p className={css.note} role="status">
+                  {coverMessage || "AI 封面已填入，尚未保存。"}
+                </p>
+              )}
             </div>
           ))}
           <p className={css.note}>
@@ -1207,8 +1628,19 @@ function TemplateEditor({
           </p>
         </aside>
       </fieldset>
-      {initial.id && <TemplateCoverAI scope={coverScope} template={form} savedCoverUrl={initial.coverUrl} open={coverOpen} disabled={saving || checking || !!uploading}
-        onBusyChange={onCoverBusy} onStatusChange={setCoverMessage} onClose={()=>setCoverOpen(false)} onApply={applyCover} />}
+      {initial.id && (
+        <TemplateCoverAI
+          scope={coverScope}
+          template={form}
+          savedCoverUrl={initial.coverUrl}
+          open={coverOpen}
+          disabled={saving || checking || !!uploading}
+          onBusyChange={onCoverBusy}
+          onStatusChange={setCoverMessage}
+          onClose={() => setCoverOpen(false)}
+          onApply={applyCover}
+        />
+      )}
     </AdminModal>
   );
 }

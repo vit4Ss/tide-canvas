@@ -2,4 +2,6 @@
 *.sh text eol=lf
 # Preserve supplied source bytes: the private content-pack manifest verifies SHA-256.
 tide-canvas-server/internal/handler/studiotemplate/content-packs/store-food-v002/source/*.txt -text
+# Verbatim archive sources include CRCRLF/BOM and trailing blank lines.
+tide-canvas-server/internal/handler/studiotemplate/content-packs/groupbuy-promo-v2/source/* -text -whitespace
 # Unified diff context lines require a leading space even on empty lines.

@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
+	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -15,10 +17,13 @@ import (
 // Source prompts are embedded in the backend only, never served as public files.
 //
 //go:embed content-packs/store-food-v002/catalog.json content-packs/store-food-v002/source/*.txt
+//go:embed content-packs/groupbuy-promo-v2/catalog.json content-packs/groupbuy-promo-v2/source/*.txt content-packs/groupbuy-promo-v2/source/manifest.json
 var contentPackFiles embed.FS
 
 const StoreFoodSourcePrefix = "content:store-food-v002:"
 const storeFoodRoot = "content-packs/store-food-v002/"
+const GroupbuyPromoSourcePrefix = "content:groupbuy-promo-v2:"
+const groupbuyPromoRoot = "content-packs/groupbuy-promo-v2/"
 
 type contentPackEntry struct {
 	Slug         string  `json:"slug"`
@@ -28,7 +33,15 @@ type contentPackEntry struct {
 }
 
 func storeFoodEntries() ([]contentPackEntry, error) {
-	raw, err := contentPackFiles.ReadFile(storeFoodRoot + "catalog.json")
+	return readContentPack(storeFoodRoot, 20)
+}
+
+func groupbuyPromoEntries() ([]contentPackEntry, error) {
+	return readContentPack(groupbuyPromoRoot, 50)
+}
+
+func readContentPack(root string, expected int) ([]contentPackEntry, error) {
+	raw, err := contentPackFiles.ReadFile(root + "catalog.json")
 	if err != nil {
 		return nil, err
 	}
@@ -39,8 +52,8 @@ func storeFoodEntries() ([]contentPackEntry, error) {
 		return nil, err
 	}
 	seen := map[string]bool{}
-	if len(pack.Entries) != 20 {
-		return nil, fmt.Errorf("store/food pack must contain 20 recipes")
+	if len(pack.Entries) != expected {
+		return nil, fmt.Errorf("content pack %s must contain %d recipes", root, expected)
 	}
 	for i := range pack.Entries {
 		entry := &pack.Entries[i]
@@ -54,7 +67,10 @@ func storeFoodEntries() ([]contentPackEntry, error) {
 		if entry.Template.Status != 0 || entry.Template.MediaType != "video" {
 			return nil, fmt.Errorf("content %s must start as a video draft", entry.Slug)
 		}
-		source, err := contentPackFiles.ReadFile(storeFoodRoot + entry.SourceFile)
+		if !fs.ValidPath(entry.SourceFile) || !strings.HasPrefix(entry.SourceFile, "source/") {
+			return nil, fmt.Errorf("invalid content source path: %s", entry.Slug)
+		}
+		source, err := contentPackFiles.ReadFile(root + entry.SourceFile)
 		if err != nil {
 			return nil, err
 		}
@@ -69,22 +85,34 @@ func storeFoodEntries() ([]contentPackEntry, error) {
 // SeedContentPacks adds the supplied content once. Unscoped lookup honors deleted
 // records; subsequent startup never rewrites an operator's recipe or publication.
 func SeedContentPacks(db *gorm.DB) error {
-	entries, err := storeFoodEntries()
-	if err != nil {
-		return err
+	var rows []model.StudioTemplate
+	for _, pack := range []struct {
+		prefix string
+		load   func() ([]contentPackEntry, error)
+	}{
+		{StoreFoodSourcePrefix, storeFoodEntries},
+		{GroupbuyPromoSourcePrefix, groupbuyPromoEntries},
+	} {
+		entries, err := pack.load()
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			key := pack.prefix + entry.Slug
+			row := entry.Template.Row()
+			row.SourceKey = &key
+			rows = append(rows, row)
+		}
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
-		for _, entry := range entries {
-			key := StoreFoodSourcePrefix + entry.Slug
+		for _, row := range rows {
 			var count int64
-			if err := tx.Unscoped().Model(&model.StudioTemplate{}).Where("source_key = ?", key).Count(&count).Error; err != nil {
+			if err := tx.Unscoped().Model(&model.StudioTemplate{}).Where("source_key = ?", *row.SourceKey).Count(&count).Error; err != nil {
 				return err
 			}
 			if count > 0 {
 				continue
 			}
-			row := entry.Template.Row()
-			row.SourceKey = &key
 			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
 				return err
 			}
