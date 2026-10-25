@@ -64,6 +64,7 @@ export function TemplatePromptFillButton({ filter, disabled, onUpdated }: {
         }}
         footNote="上架后用户即可在模板列表使用。不生成视频、不扣积分；封面和提示词保持原内容。">
         <div className={css.body}>
+          <p className={css.note}>清晰度未设置或为480p时更新为720p，其他已设清晰度保留。已上架模板也会按此规则更新；模型不支持720p时显示原因并保留原配置。</p>
           <p className={css.note}>
             {chosen.kind === "style" ? "风格主题" : "灵感做同款"} · 视频 · {chosen.category || "全部分类"}
             {" · " + (chosen.status === "1" ? "已上架" : chosen.status === "0" ? "草稿 / 已下架" : "全部状态")}

@@ -171,8 +171,8 @@ export const studioTemplateApi = {
 export const adminStudioTemplateApi = {
   fillFromPrompts: (filter: TemplateCoverFilter, publish = false) =>
     http.post<TemplatePromptFillResult>(admin + "/fill-from-prompts", { ...filter, publish }),
-  check: (row: StudioTemplateSave) =>
-    http.post<TemplateSetup>(`${admin}/check`, row),
+  check: (row: StudioTemplateSave, fillFromPrompt = false) =>
+    http.post<TemplateSetup>(`${admin}/check`, { ...row, ...(fillFromPrompt ? { fillFromPrompt: true } : {}) }),
   list: (q: TemplateQuery, signal?: AbortSignal) =>
     http.get<StudioTemplatePage>(admin, toParams(q), { signal }),
   save: (row: StudioTemplateSave, id?: string, expectedCoverUrl?: string, fillFromPrompt = false, expectedStatus?: number) =>

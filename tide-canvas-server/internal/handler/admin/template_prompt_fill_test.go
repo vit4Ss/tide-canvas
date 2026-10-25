@@ -15,7 +15,7 @@ import (
 
 func TestTemplateFillSavesOnlyConfigurationAndRetriesSafely(t *testing.T) {
 	s, _ := coverFixture(t)
-	m := model.MarketModel{ModelKey: "seedance-2.5", Name: "Seedance 2.5", Type: "video", Status: 1, Config: `{"modes":["i2v"],"durations":["30s"],"ratios":["9:16"]}`}
+	m := model.MarketModel{ModelKey: "seedance-2.5", Name: "Seedance 2.5", Type: "video", Status: 1, Config: `{"modes":["i2v"],"durations":["30s"],"ratios":["9:16"],"resolutions":["480p","720p","1080p"]}`}
 	if err := s.db.Create(&m).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestTemplateFillSavesOnlyConfigurationAndRetriesSafely(t *testing.T) {
 
 func TestTemplateFillPublishesReadyDraftsAndRejectsIncompleteOnes(t *testing.T) {
 	s, _ := coverFixture(t)
-	m := model.MarketModel{ModelKey: "seedance-2.5", Name: "Seedance 2.5", Type: "video", Status: 1, Config: `{"modes":["i2v"],"durations":["30s"],"ratios":["9:16"]}`}
+	m := model.MarketModel{ModelKey: "seedance-2.5", Name: "Seedance 2.5", Type: "video", Status: 1, Config: `{"modes":["i2v"],"durations":["30s"],"ratios":["9:16"],"resolutions":["480p","720p","1080p"]}`}
 	if err := s.db.Create(&m).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestTemplateFillPublishesReadyDraftsAndRejectsIncompleteOnes(t *testing.T) 
 
 func TestSingleTemplateFillPublishesWithTheNormalCoverValidation(t *testing.T) {
 	s, _ := coverFixture(t)
-	m := model.MarketModel{ModelKey: "seedance-2.5", Name: "Seedance 2.5", Type: "video", Status: 1, Config: `{"modes":["i2v"],"durations":["30s"],"ratios":["9:16"]}`}
+	m := model.MarketModel{ModelKey: "seedance-2.5", Name: "Seedance 2.5", Type: "video", Status: 1, Config: `{"modes":["i2v"],"durations":["30s"],"ratios":["9:16"],"resolutions":["480p","720p","1080p"]}`}
 	if err := s.db.Create(&m).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestTemplateStaleDraftCannotUndoConcurrentPublication(t *testing.T) {
 
 func TestSingleTemplatePublicationAcceptsConfiguredRecipeWithoutHeader(t *testing.T) {
 	s, _ := coverFixture(t)
-	m := model.MarketModel{ModelKey: "seedance-2.5", Name: "Seedance 2.5", Type: "video", Status: 1, Config: `{"modes":["i2v"],"durations":["30s"],"ratios":["9:16"]}`}
+	m := model.MarketModel{ModelKey: "seedance-2.5", Name: "Seedance 2.5", Type: "video", Status: 1, Config: `{"modes":["i2v"],"durations":["30s"],"ratios":["9:16"],"resolutions":["480p","720p","1080p"]}`}
 	if err := s.db.Create(&m).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func TestSingleTemplatePublicationAcceptsConfiguredRecipeWithoutHeader(t *testin
 
 func TestTemplateFillDoesNotPublishOutsideLiteralFilter(t *testing.T) {
 	s, _ := coverFixture(t)
-	m := model.MarketModel{ModelKey: "seedance-2.5", Name: "Seedance 2.5", Type: "video", Status: 1, Config: `{"modes":["i2v"],"durations":["30s"],"ratios":["9:16"]}`}
+	m := model.MarketModel{ModelKey: "seedance-2.5", Name: "Seedance 2.5", Type: "video", Status: 1, Config: `{"modes":["i2v"],"durations":["30s"],"ratios":["9:16"],"resolutions":["480p","720p","1080p"]}`}
 	if err := s.db.Create(&m).Error; err != nil {
 		t.Fatal(err)
 	}

@@ -131,9 +131,8 @@ func (h *studioTemplatesHandler) save(c *gin.Context) {
 	if !dto.FillFromPrompt && row.Status == 0 && row.ModelKey == "" && model.TemplatePrefersSeedance25(row) {
 		// Drafts can still be saved when the preferred model is unavailable.
 		// Use the runtime validator so modes, uploads, specs and prices agree.
-		if setup, err := ai.CheckStudioTemplate(c.Request.Context(), h.db, row); err == nil {
-			row.ModelKey = setup.ModelID
-			row.Options = setup.Options
+		if filled, err := fillStudioTemplateFromPrompt(c.Request.Context(), h.db, row); err == nil {
+			row = filled
 		}
 	}
 	if row.Status == 1 && !dto.FillFromPrompt {
@@ -190,7 +189,7 @@ func fillStudioTemplateFromPrompt(ctx context.Context, db *gorm.DB, row model.St
 	if row.MediaType != "video" || (row.Status != 1 && model.TemplateVideoPromptOptions(row.Prompt).Duration == 0) {
 		return row, errors.New("请在视频提示词开头填写如【生成视频：30秒｜9:16】的时长与画面比例")
 	}
-	row = model.WithTemplatePromptDefaults(row)
+	row = templateFillDefaults(row)
 	setup, err := ai.CheckStudioTemplate(ctx, db, row)
 	if err != nil {
 		return row, err
@@ -202,7 +201,10 @@ func fillStudioTemplateFromPrompt(ctx context.Context, db *gorm.DB, row model.St
 func (h *studioTemplatesHandler) check(c *gin.Context) {
 	c.Header("Cache-Control", "private, no-store")
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 128<<10)
-	var dto studiotemplate.SaveDTO
+	var dto struct {
+		studiotemplate.SaveDTO
+		FillFromPrompt bool `json:"fillFromPrompt"`
+	}
 	if c.ShouldBindJSON(&dto) != nil {
 		response.Fail(c, 400, "请检查名称、提示词、媒体类型和参数长度")
 		return
@@ -213,7 +215,11 @@ func (h *studioTemplatesHandler) check(c *gin.Context) {
 		response.Fail(c, 400, err.Error())
 		return
 	}
-	setup, err := ai.CheckStudioTemplate(c.Request.Context(), h.db, dto.Row())
+	row := dto.Row()
+	if dto.FillFromPrompt {
+		row = templateFillDefaults(row)
+	}
+	setup, err := ai.CheckStudioTemplate(c.Request.Context(), h.db, row)
 	if err != nil {
 		response.Fail(c, 400, err.Error())
 		return

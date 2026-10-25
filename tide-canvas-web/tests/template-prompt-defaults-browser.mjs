@@ -5,7 +5,7 @@ const base = process.env.FRONTEND_TEST_URL || "http://127.0.0.1:3319";
 const browser = await chromium.launch({ headless: true, ...(process.env.BROWSER_PATH ? { executablePath: process.env.BROWSER_PATH } : { channel: "chrome" }) });
 const context = await browser.newContext({ viewport: { width: 1440, height: 1050 } });
 await context.addInitScript(() => localStorage.setItem("access_token", "template-defaults-fixture"));
-const seedance = { id: "501", modelKey: "seedance-2.5-test", name: "Seedance 2.5", type: "video", config: { modes: ["i2v"], ratios: ["16:9", "9:16"], durations: ["15s", "30s"] } };
+const seedance = { id: "501", modelKey: "seedance-2.5-test", name: "Seedance 2.5", type: "video", config: { modes: ["i2v"], ratios: ["16:9", "9:16"], durations: ["15s", "30s"], resolutions: ["480p", "720p", "1080p"] } };
 const alternate = { ...seedance, id: "502", modelKey: "manual-video", name: "手动选择的视频模型" };
 let row = { id: "81", kind: "inspiration", mediaType: "video", title: "门店宣传", prompt: "【生成视频：30秒｜9:16】\n门店镜头", description: "", category: "", coverUrl: base + "/studio-samples/v1/clay-adventure.webp", previewUrl: "", mode: "i2v", modelKey: "", requirements: { images: 1, videos: 0, audio: 0 }, options: {}, status: 0, sortOrder: 0, uses: 0 };
 let pendingCheck = null, releaseCheck = () => {}, unavailable = false, paid = 0, saves = 0, singleFillCalls = 0, batchCalls = 0, loseBatchResponse = true, duplicates = false;
@@ -22,6 +22,7 @@ await context.route("**/api/**", async route => {
     assert.equal(req.postDataJSON().publish, true, "batch action only saved a draft");
     if (loseBatchResponse) { loseBatchResponse = false; return route.abort("failed"); }
     row.status = 1;
+    if (!row.options.resolution || /^(480p?)$/i.test(row.options.resolution)) row.options.resolution = "720p";
     data = { publish: true, total: 3, counts: { saved: 0, published: 1, skipped: 1, failed: 1 }, items: [
       { id: "81", title: "门店宣传", status: "published", message: "配置校验通过，已上架" },
       { id: "82", title: "已配置模板", status: "skipped", message: "模型与参数已填写，无需更新" },
@@ -33,7 +34,9 @@ await context.route("**/api/**", async route => {
     const body = req.postDataJSON(); checks.push(body);
     if (pendingCheck) await pendingCheck;
     if (unavailable) return route.fulfill({ json: { success: false, code: 400, message: "未找到支持30秒的 Seedance 2.5" } });
-    data = { modelId: body.modelKey || seedance.modelKey, modelName: "Seedance 2.5", handler: "image_to_video", basePointCost: 9, options: body.options, maxUploadBytes: { image: 52428800 } };
+    const options = { ...body.options };
+    if (body.fillFromPrompt && (!options.resolution || /^(480p?)$/i.test(options.resolution))) options.resolution = "720p";
+    data = { modelId: body.modelKey || seedance.modelKey, modelName: "Seedance 2.5", handler: "image_to_video", basePointCost: 9, options, maxUploadBytes: { image: 52428800 } };
   } else if (path === "/api/admin/studio-templates/81" && req.method() === "PUT") {
     const { expectedCoverUrl, expectedStatus, fillFromPrompt, ...body } = req.postDataJSON();
     assert.equal(typeof expectedStatus, "number", "save omitted the publication baseline");
@@ -43,6 +46,7 @@ await context.route("**/api/**", async route => {
       assert.equal(body.status, 1, "single action only saved a draft");
       if (!body.coverUrl) return route.fulfill({ json: { success: false, code: 400, message: "上架前请补充封面图片" } });
       if (unavailable) return route.fulfill({ json: { success: false, code: 400, message: "自动填充失败：未找到支持30秒的 Seedance 2.5" } });
+      if (!body.options.resolution || /^(480p?)$/i.test(body.options.resolution)) body.options.resolution = "720p";
     }
     row = { ...row, ...body }; saves++; data = row;
   } else if (path === "/api/ai/generate") { paid++; throw new Error("autofill must never generate"); }
@@ -68,11 +72,13 @@ try {
   await page.waitForFunction(() => document.querySelector('[role="dialog"] button[aria-label="默认生成模型"]')?.textContent?.includes("Seedance 2.5"));
   assert.match(await editor.getByRole("button", { name: "视频时长", exact: true }).innerText(), /30/);
   assert.match(await editor.getByRole("button", { name: "画面比例", exact: true }).innerText(), /9:16/);
+  assert.match(await editor.getByRole("button", { name: "清晰度", exact: true }).innerText(), /720P/i);
   assert.deepEqual(checks[0].options, { duration: 30, aspectRatio: "9:16" });
   await editor.getByRole("button", { name: "自动填充并上架", exact: true }).evaluate(button => { button.click(); button.click(); });
   await editor.waitFor({ state: "hidden" });
   assert.equal(row.modelKey, seedance.modelKey);
   assert.equal(row.options.duration, 30);
+  assert.equal(row.options.resolution, "720p");
   assert.equal(row.status, 1, "single template remained a draft");
   assert.equal(singleFillCalls, 1, "double click submitted twice");
 
@@ -90,12 +96,12 @@ try {
   assert.equal(row.modelKey, alternate.modelKey, "late automatic response overwrote manual model");
 
   // Saved manual specs remain authoritative even when the header changes.
-  row = { ...row, options: { duration: 15, aspectRatio: "16:9" } };
+  row = { ...row, options: { duration: 15, aspectRatio: "16:9", resolution: "1080p" } };
   await open();
   await editor.getByLabel("完整提示词", { exact: true }).fill("【生成视频：30秒｜1:1】\n不同画幅");
   await editor.getByRole("button", { name: "保存草稿", exact: true }).click();
   await editor.waitFor({ state: "hidden" });
-  assert.deepEqual(row.options, { duration: 15, aspectRatio: "16:9" });
+  assert.deepEqual(row.options, { duration: 15, aspectRatio: "16:9", resolution: "1080p" });
 
   row = { ...row, modelKey: "", options: {}, prompt: "" };
   unavailable = true;
@@ -164,6 +170,15 @@ try {
   await editor.getByRole("button", { name: "自动填充并上架", exact: true }).click();
   await editor.waitFor({ state: "hidden" });
   assert.equal(row.modelKey, "503", "duplicate key selected a different catalog row");
+  row.options.resolution = "480p";
+  await page.getByRole("button", { name: "上架状态", exact: true }).click();
+  await page.getByRole("option", { name: "已上架", exact: true }).click();
+  await page.getByRole("button", { name: "批量填充并上架", exact: true }).click();
+  await batch.getByRole("list", { name: "自动填充结果" }).waitFor();
+  assert.equal(batchScopes.at(-1).status, "1");
+  assert.equal(row.options.resolution, "720p", "re-clicking did not refresh a published 480p template");
+  assert.equal(row.status, 1);
+  await batch.getByRole("button", { name: "完成", exact: true }).click();
   assert.equal(paid, 0);
   assert.deepEqual(errors, []);
   console.log("PASS: header defaults, Seedance selection, single and batch publication, failed drafts preserved, double-click guards, retries, mobile layout, manual choices and zero paid calls.");

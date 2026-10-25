@@ -12,7 +12,7 @@ import (
 
 func TestTemplateDraftSaveFillsHeaderAndDefaultModel(t *testing.T) {
 	s, _ := coverFixture(t)
-	chosen := model.MarketModel{ModelKey: "seedance-2.5-test", Name: "Seedance 2.5", Type: "video", Status: 1, Config: `{"modes":["i2v"],"durations":["15s","30s"],"ratios":["16:9","9:16"]}`}
+	chosen := model.MarketModel{ModelKey: "seedance-2.5-test", Name: "Seedance 2.5", Type: "video", Status: 1, Config: `{"modes":["i2v"],"durations":["15s","30s"],"ratios":["16:9","9:16"],"resolutions":["480p","720p","1080p"]}`}
 	if err := s.db.Create(&chosen).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -44,6 +44,8 @@ func TestTemplateDraftSaveFillsHeaderAndDefaultModel(t *testing.T) {
 	}
 	if row := save(); row.ModelKey != chosen.ModelKey {
 		t.Fatal("default model not saved", row.ModelKey)
+	} else if row.Options.Resolution != "720p" {
+		t.Fatal("default video resolution was not 720p", row.Options.Resolution)
 	}
 	if err := s.db.Model(&chosen).Update("status", 0).Error; err != nil {
 		t.Fatal(err)

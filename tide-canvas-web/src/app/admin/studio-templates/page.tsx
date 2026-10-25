@@ -848,7 +848,7 @@ function TemplateEditor({
       try {
         // Reuse the server's free validator, including reference/price checks,
         // rather than choosing a similarly named but incompatible model here.
-        const result = await api.check({ ...form, title: form.title.trim() || "视频模板", status: 0 });
+        const result = await api.check({ ...form, title: form.title.trim() || "视频模板", status: 0 }, true);
         if (cancelled || !alive.current || busy.current) return;
         if (result.success && result.data) {
           const setup = result.data;
@@ -1216,7 +1216,7 @@ function TemplateEditor({
                     {savingPromptDefaults ? "正在填充并上架…" : "自动填充并上架"}
                   </button>
                 </div>
-                <p className={css.note}>补齐模型与参数，校验封面和生成配置后直接上架。失败保留当前内容；仅暂存请用下方「保存草稿」。不生成、不扣积分。</p>
+                <p className={css.note}>补齐模型与参数后上架；清晰度未设置或为480p时更新为720p，其他已设清晰度保留。失败不修改原内容，不生成、不扣积分。</p>
               </>
             )}
             <Field label="用户需要上传什么">

@@ -84,7 +84,7 @@ func (h *studioTemplatesHandler) fillFromPrompts(c *gin.Context) {
 				item.Status, item.Message = "skipped", "提示词开头没有可识别的视频时长"
 				return nil
 			}
-			filled := row
+			filled := templateFillDefaults(row)
 			var err error
 			if request.Publish {
 				filled.Status = 1
@@ -132,6 +132,19 @@ func (h *studioTemplatesHandler) fillFromPrompts(c *gin.Context) {
 		counts[item.Status]++
 	}
 	response.OK(c, gin.H{"total": len(items), "counts": counts, "items": items, "publish": request.Publish})
+}
+
+// Applied only by autofill, not when running an existing recipe. Re-clicking
+// upgrades the old 480p default, while retaining higher or other explicit sizes.
+func templateFillDefaults(row model.StudioTemplate) model.StudioTemplate {
+	row = model.WithTemplatePromptDefaults(row)
+	if row.MediaType == "video" {
+		switch strings.ToLower(strings.TrimSpace(row.Options.Resolution)) {
+		case "", "480", "480p":
+			row.Options.Resolution = "720p"
+		}
+	}
+	return row
 }
 
 // Match the ordinary admin save's field and publication validation. Validate a
