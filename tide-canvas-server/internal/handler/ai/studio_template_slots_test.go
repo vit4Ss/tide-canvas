@@ -208,7 +208,7 @@ func TestThirtySecondPackAutoSelectsModelSupportingThirtySeconds(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.repo.db.Model(&model.MarketModel{}).Where("model_key = ?", "fixture-video").Updates(map[string]any{"config": `{"modes":["omni_ref"],"durations":["15s"],"ratios":["9:16"]}`, "use_count": 9999})
-	long := model.MarketModel{ModelKey: "long-video", Name: "30s model", Type: "video", Status: 1, Config: `{"modes":["omni_ref"],"durations":["15s","30s"],"ratios":["9:16"],"refLimits":{"omniRef.imageCount":6}}`}
+	long := model.MarketModel{ModelKey: "long-video", Name: "Seedance 2.5", Type: "video", Status: 1, Config: `{"modes":["omni_ref"],"durations":["15s","30s"],"ratios":["9:16"],"refLimits":{"omniRef.imageCount":6}}`}
 	s.repo.db.Create(&long)
 	var row model.StudioTemplate
 	s.repo.db.Where("source_key = ?", studiotemplate.StoreFoodSourcePrefix+"hotpot-30s").First(&row)
@@ -229,7 +229,7 @@ func TestTemplateAutoSelectionSkipsUnpricedDefaultWithoutChangingPinnedModel(t *
 	}
 	common := `{"modes":["omni_ref"],"durations":["15s","30s"],"ratios":["9:16"],"resolutions":["1080p"],"videoBillingMode":"per_request","pricePerRequestByResolution":%s}`
 	s.repo.db.Model(&model.MarketModel{}).Where("model_key = ?", "fixture-video").Updates(map[string]any{"use_count": 9999, "config": fmt.Sprintf(common, `{}`)})
-	priced := model.MarketModel{ModelKey: "priced-video", Name: "Priced video", Type: "video", Status: 1, Config: fmt.Sprintf(common, `{"1080p":23}`)}
+	priced := model.MarketModel{ModelKey: "priced-video", Name: "Seedance 2.5 priced", Type: "video", Status: 1, Config: fmt.Sprintf(common, `{"1080p":23}`)}
 	if err := s.repo.db.Create(&priced).Error; err != nil {
 		t.Fatal(err)
 	}

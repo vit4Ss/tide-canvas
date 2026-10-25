@@ -64,9 +64,10 @@ await context.route("**/api/**", async (route) => {
     if (limitRows) limitRows--;
   } else if (path === "/api/admin/studio-templates/check") {
     if (failCheck) return fail("模拟：原模型暂不可用");
-    data = { modelId: "video-fixture", modelName: "视频参考模型", handler: "reference_to_video", basePointCost: 7, options: { duration: 30, aspectRatio: "9:16", resolution: "1080p" }, maxUploadBytes: { image: 52428800, video: 52428800, audio: 52428800 } };
+    data = { modelId: request.postDataJSON().modelKey || "video-fixture", modelName: "视频参考模型", handler: "reference_to_video", basePointCost: 7, options: { duration: 30, aspectRatio: "9:16", resolution: "1080p" }, maxUploadBytes: { image: 52428800, video: 52428800, audio: 52428800 } };
   } else if (path === "/api/market/studio-models") {
     data = [{ id: "41", modelKey: "video-fixture", name: "视频参考模型", type: "video", config: { modes: ["omni_ref"], ratios: ["9:16"], durations: ["30s"], resolutions: ["1080p"] } }];
+    data.push({ ...data[0], id: "43", modelKey: "manual-video-fixture", name: "手动视频模型" });
   } else if (path === "/api/ai/models") {
     data = [{ id: "42", modelId: "cover-fixture", name: "封面图片模型", type: "image", pointCost: 7, config: JSON.stringify({ modes: ["t2i"], ratios: ["16:9"], resolutions: ["2k"] }) }];
   } else if (path === "/api/ai/generate") {
@@ -170,7 +171,7 @@ try {
   await editor.getByRole("button", { name: "检查生成配置", exact: true }).click();
   await editor.getByRole("alert").filter({ hasText: "模拟：原模型暂不可用" }).waitFor();
   await editor.getByRole("button", { name: "默认生成模型", exact: true }).click();
-  await page.getByRole("option", { name: "视频参考模型", exact: true }).click();
+  await page.getByRole("option", { name: "手动视频模型", exact: true }).click();
   assert.equal(await editor.getByRole("alert").filter({ hasText: "模拟：原模型暂不可用" }).count(), 0, "stale validation error survived a model change");
   failCheck = false;
   await editor.getByRole("button", { name: "检查生成配置", exact: true }).click();

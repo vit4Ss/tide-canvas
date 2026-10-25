@@ -70,6 +70,7 @@ func (s *service) prepareTemplateRecipe(ctx context.Context, uid idgen.ID, dto *
 }
 
 func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *generateDTO, row model.StudioTemplate, setupOnly bool) error {
+	row = model.WithTemplatePromptDefaults(row)
 	handler := map[string]string{"t2i": "text_to_image", "i2i": "image_to_image", "t2v": "text_to_video", "i2v": "image_to_video", "flf": "start_end_to_video", "ref": "reference_to_video"}[row.Mode]
 	if handler == "" || strings.TrimSpace(row.Prompt) == "" || (row.MediaType != "image" && row.MediaType != "video") {
 		return templateError("模板配置不完整，请联系管理员")
@@ -198,6 +199,7 @@ func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *gen
 		return err
 	}
 	var selected *model.AiModel
+	preferSeedance := strings.TrimSpace(row.ModelKey) == "" && model.TemplatePrefersSeedance25(row)
 	for i := range models {
 		m := &models[i]
 		// A quoted model is pinned for the submit, even if catalogue popularity changes.
@@ -206,6 +208,9 @@ func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *gen
 			key = strings.TrimSpace(dto.ModelID)
 		}
 		if key != "" && m.ModelID != key && m.ID.String() != key {
+			continue
+		}
+		if preferSeedance && !model.IsTemplateSeedance25(m.ModelID, m.Name) {
 			continue
 		}
 		if m.ModelID == "" || m.Type != row.MediaType || !modelSupportsHandler(m, handler) || validateModelAvailability(m) != nil {
@@ -297,6 +302,9 @@ func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *gen
 		break
 	}
 	if selected == nil {
+		if preferSeedance {
+			return templateError("30秒模板默认使用 Seedance 2.5，未找到支持当前素材与输出规格的可用模型。请在模型管理中检查上架状态、30秒时长和画面比例，或手动指定其他模型")
+		}
 		return templateError("此模板暂时没有可用模型，请稍后重试或选择其他模板")
 	}
 	var cfg map[string]any
@@ -315,7 +323,21 @@ func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *gen
 		return err
 	}
 	dto.Handler = handler
+	// A provider key is not a unique catalog identity. Keep explicit row IDs
+	// pinned, and use one whenever several rows share the same provider key.
+	// Otherwise a later lookup can charge/execute a different catalog entry.
+	pinnedID := selected.ID.String()
+	pinRow := strings.TrimSpace(row.ModelKey) == pinnedID || strings.TrimSpace(dto.ModelID) == pinnedID
+	for _, candidate := range models {
+		if candidate.ID != selected.ID && candidate.ModelID == selected.ModelID {
+			pinRow = true
+			break
+		}
+	}
 	dto.ModelID = selected.ModelID
+	if pinRow {
+		dto.ModelID = pinnedID
+	}
 	dto.Origin = "template"
 	dto.templateSnapshot = &row
 	dto.Input, _ = json.Marshal(input)
@@ -533,7 +555,7 @@ func (s *service) templateSetupResult(ctx context.Context, dto *generateDTO) (te
 	for _, kind := range []string{"image", "video", "audio"} {
 		limits[kind] = templateUploadLimit(cfg, dto.templateSnapshot.Mode, kind)
 	}
-	return templateSetupVO{ModelID: m.ModelID, ModelName: m.Name, Handler: dto.Handler, BasePointCost: resolveCost(m, dto.Input), ReferenceVideoBilling: referenceVideoPricing(m) && dto.Handler == "reference_to_video", Options: templateOutputOptions(*dto), MaxUploadBytes: limits}, nil
+	return templateSetupVO{ModelID: dto.ModelID, ModelName: m.Name, Handler: dto.Handler, BasePointCost: resolveCost(m, dto.Input), ReferenceVideoBilling: referenceVideoPricing(m) && dto.Handler == "reference_to_video", Options: templateOutputOptions(*dto), MaxUploadBytes: limits}, nil
 }
 
 // CheckStudioTemplate runs the runtime's model/spec/price checks on an unsaved
@@ -541,6 +563,7 @@ func (s *service) templateSetupResult(ctx context.Context, dto *generateDTO) (te
 // Explicit unsupported output settings are rejected instead of silently changing
 // the effect an operator intends to publish. Empty settings adopt model defaults.
 func CheckStudioTemplate(ctx context.Context, db *gorm.DB, row model.StudioTemplate) (templateSetupVO, error) {
+	row = model.WithTemplatePromptDefaults(row)
 	s := &service{repo: newRepo(db)}
 	dto := generateDTO{Input: json.RawMessage(`{}`)}
 	if err := s.prepareTemplateRow(ctx, 0, &dto, row, true); err != nil {

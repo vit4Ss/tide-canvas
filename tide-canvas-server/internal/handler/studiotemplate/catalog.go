@@ -37,6 +37,7 @@ type PublicTemplate struct {
 }
 
 func publicTemplate(row model.StudioTemplate) PublicTemplate {
+	row = model.WithTemplatePromptDefaults(row)
 	return PublicTemplate{ID: row.ID, Kind: row.Kind, MediaType: row.MediaType, Title: row.Title,
 		Description: row.Description, Category: row.Category, CoverURL: row.CoverURL, PreviewURL: row.PreviewURL,
 		AuthorName: row.AuthorName, InputHint: row.InputHint, InputLabels: row.InputLabels, Mode: row.Mode, Requirements: row.Requirements, Options: row.Options, Uses: row.Uses}
@@ -120,6 +121,9 @@ func (h *Handler) List(admin bool) gin.HandlerFunc {
 		if rows == nil {
 			rows = []model.StudioTemplate{}
 		}
+		for i := range rows {
+			rows[i] = model.WithTemplatePromptDefaults(rows[i])
+		}
 		if categories == nil {
 			categories = []string{}
 		}
@@ -201,6 +205,7 @@ func (d *SaveDTO) Validate() error {
 	d.Options.AspectRatio = strings.TrimSpace(d.Options.AspectRatio)
 	d.Options.Resolution = strings.TrimSpace(d.Options.Resolution)
 	d.Options.Quality = strings.TrimSpace(d.Options.Quality)
+	d.Options = model.WithTemplatePromptDefaults(d.Row()).Options
 	if d.Title == "" {
 		return errors.New("名称不能为空")
 	}

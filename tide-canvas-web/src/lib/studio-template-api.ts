@@ -95,6 +95,12 @@ export type TemplateCoverFilter = Pick<
   TemplateQuery,
   "kind" | "mediaType" | "category" | "keyword" | "status"
 >;
+export interface TemplatePromptFillResult {
+  total: number;
+  publish: boolean;
+  counts: { saved: number; published: number; skipped: number; failed: number };
+  items: { id: string; title: string; status: "saved" | "published" | "skipped" | "failed"; message: string }[];
+}
 export interface TemplateCoverBatchPreview {
   count: number;
   modelId: string;
@@ -163,17 +169,21 @@ export const studioTemplateApi = {
     ),
 };
 export const adminStudioTemplateApi = {
+  fillFromPrompts: (filter: TemplateCoverFilter, publish = false) =>
+    http.post<TemplatePromptFillResult>(admin + "/fill-from-prompts", { ...filter, publish }),
   check: (row: StudioTemplateSave) =>
     http.post<TemplateSetup>(`${admin}/check`, row),
   list: (q: TemplateQuery, signal?: AbortSignal) =>
     http.get<StudioTemplatePage>(admin, toParams(q), { signal }),
-  save: (row: StudioTemplateSave, id?: string, expectedCoverUrl?: string) =>
+  save: (row: StudioTemplateSave, id?: string, expectedCoverUrl?: string, fillFromPrompt = false, expectedStatus?: number) =>
     id
       ? http.put<StudioTemplate>(`${admin}/${id}`, {
           ...row,
           ...(expectedCoverUrl !== undefined ? { expectedCoverUrl } : {}),
+          ...(expectedStatus !== undefined ? { expectedStatus } : {}),
+          ...(fillFromPrompt ? { fillFromPrompt: true } : {}),
         })
-      : http.post<StudioTemplate>(admin, row),
+      : http.post<StudioTemplate>(admin, { ...row, ...(fillFromPrompt ? { fillFromPrompt: true } : {}) }),
   remove: (id: string) => http.delete(`${admin}/${id}`),
   sources: (
     q: { pageNum?: number; userId?: string; taskId?: string },

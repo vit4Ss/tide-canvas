@@ -49,6 +49,7 @@ func RegisterStudioTemplates(g *gin.RouterGroup, d *app.Deps) {
 	s.GET("", (&studiotemplate.Handler{DB: d.DB}).List(true))
 	s.POST("", h.save)
 	s.POST("/check", h.check)
+	s.POST("/fill-from-prompts", h.fillFromPrompts)
 	s.PUT("/:id", h.save)
 	s.DELETE("/:id", h.remove)
 	// Access to unpublished user generations also needs the generation module.
@@ -76,6 +77,8 @@ func (h *studioTemplatesHandler) save(c *gin.Context) {
 	var dto struct {
 		studiotemplate.SaveDTO
 		ExpectedCoverURL *string `json:"expectedCoverUrl" binding:"omitempty,max=2048"`
+		ExpectedStatus   *int    `json:"expectedStatus" binding:"omitempty,oneof=0 1"`
+		FillFromPrompt   bool    `json:"fillFromPrompt"`
 	}
 	if err := c.ShouldBindJSON(&dto); err != nil {
 		response.Fail(c, 400, "请检查名称、提示词、媒体类型和参数长度")
@@ -96,6 +99,10 @@ func (h *studioTemplatesHandler) save(c *gin.Context) {
 			}
 			return
 		}
+		if dto.ExpectedStatus != nil && old.Status != *dto.ExpectedStatus && dto.Status != old.Status {
+			response.Fail(c, 409, "模板上架状态已由其他操作更新，请重新打开确认后保存；本次修改尚未写入")
+			return
+		}
 		if dto.ExpectedCoverURL != nil {
 			expected := h.displayCoverURL(*dto.ExpectedCoverURL)
 			if h.displayCoverURL(dto.CoverURL) == expected {
@@ -113,7 +120,23 @@ func (h *studioTemplatesHandler) save(c *gin.Context) {
 		return
 	}
 	row := dto.Row()
-	if row.Status == 1 {
+	if dto.FillFromPrompt {
+		var err error
+		row, err = fillStudioTemplateFromPrompt(c.Request.Context(), h.db, row)
+		if err != nil {
+			response.Fail(c, 400, "自动填充失败："+err.Error())
+			return
+		}
+	}
+	if !dto.FillFromPrompt && row.Status == 0 && row.ModelKey == "" && model.TemplatePrefersSeedance25(row) {
+		// Drafts can still be saved when the preferred model is unavailable.
+		// Use the runtime validator so modes, uploads, specs and prices agree.
+		if setup, err := ai.CheckStudioTemplate(c.Request.Context(), h.db, row); err == nil {
+			row.ModelKey = setup.ModelID
+			row.Options = setup.Options
+		}
+	}
+	if row.Status == 1 && !dto.FillFromPrompt {
 		setup, err := ai.CheckStudioTemplate(c.Request.Context(), h.db, row)
 		if err != nil {
 			response.Fail(c, 400, "暂不能上架："+err.Error())
@@ -132,20 +155,25 @@ func (h *studioTemplatesHandler) save(c *gin.Context) {
 	} else {
 		row.BaseModel = old.BaseModel
 		previousCover := old.CoverURL
+		previousStatus := old.Status
 		// Explicit fields include zero values, and never overwrite source/uses.
-		result := h.db.WithContext(c.Request.Context()).Model(&old).Where("COALESCE(cover_url,'') = ?", previousCover).Select("Kind", "MediaType", "Title", "Description", "Category", "Prompt", "CoverURL", "PreviewURL", "AuthorName", "InputHint", "InputLabels", "Mode", "ModelKey", "Requirements", "Options", "Status", "SortOrder").Updates(&row)
+		result := h.db.WithContext(c.Request.Context()).Model(&old).Where("COALESCE(cover_url,'') = ? AND status = ?", previousCover, previousStatus).Select("Kind", "MediaType", "Title", "Description", "Category", "Prompt", "CoverURL", "PreviewURL", "AuthorName", "InputHint", "InputLabels", "Mode", "ModelKey", "Requirements", "Options", "Status", "SortOrder").Updates(&row)
 		if result.Error != nil {
 			response.Fail(c, 500, "保存模板失败")
 			return
 		}
 		if result.RowsAffected == 0 {
 			var latest model.StudioTemplate
-			if err := h.db.WithContext(c.Request.Context()).Select("id", "cover_url").First(&latest, "id = ?", old.ID).Error; err != nil {
+			if err := h.db.WithContext(c.Request.Context()).Select("id", "cover_url", "status").First(&latest, "id = ?", old.ID).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					response.Fail(c, 404, "模板已删除")
 				} else {
 					response.Fail(c, 500, "确认保存状态失败，请重试")
 				}
+				return
+			}
+			if latest.Status != previousStatus {
+				response.Fail(c, 409, "模板上架状态刚刚更新，请重新打开确认后保存；本次修改尚未写入")
 				return
 			}
 			if latest.CoverURL != previousCover {
@@ -156,6 +184,19 @@ func (h *studioTemplatesHandler) save(c *gin.Context) {
 		row.Uses = old.Uses
 	}
 	response.OK(c, row)
+}
+
+func fillStudioTemplateFromPrompt(ctx context.Context, db *gorm.DB, row model.StudioTemplate) (model.StudioTemplate, error) {
+	if row.MediaType != "video" || (row.Status != 1 && model.TemplateVideoPromptOptions(row.Prompt).Duration == 0) {
+		return row, errors.New("请在视频提示词开头填写如【生成视频：30秒｜9:16】的时长与画面比例")
+	}
+	row = model.WithTemplatePromptDefaults(row)
+	setup, err := ai.CheckStudioTemplate(ctx, db, row)
+	if err != nil {
+		return row, err
+	}
+	row.ModelKey, row.Options = setup.ModelID, setup.Options
+	return row, nil
 }
 
 func (h *studioTemplatesHandler) check(c *gin.Context) {

@@ -2,6 +2,30 @@ import type { StudioTemplate, StudioTemplateSave } from "./studio-template-api";
 import type { ModelConfig } from "../types/admin-models";
 import { modelGenerationOptions } from "./model-generation-options.mjs";
 
+/** Upstream model keys can be shared by independently configured catalog rows. */
+export function templateModelChoiceKey<T extends { id: string; modelKey: string }>(model: T, models: T[]): string {
+  return models.some(other => other.id !== model.id && other.modelKey === model.modelKey)
+    ? model.id : model.modelKey;
+}
+
+export function templateVideoPromptOptions(prompt: string): StudioTemplate["options"] {
+  const line = prompt.trim().replace(/^\uFEFF/, "").trim().split(/\r?\n/, 1)[0].replace(/^[【[]/, "").trim();
+  const match = /^生成视频\s*[:：]\s*([0-9]+(?:\.[0-9]+)?)\s*秒(?:\s*[｜|]\s*([1-9][0-9]{0,2})\s*[:：]\s*([1-9][0-9]{0,2}))?/.exec(line);
+  if (!match || Number(match[1]) <= 0 || Number(match[1]) > 600) return {};
+  return { duration: Number(match[1]), ...(match[2] ? { aspectRatio: match[2] + ":" + match[3] } : {}) };
+}
+
+/** Fill only unspecified values; existing operator choices remain authoritative. */
+export function withTemplatePromptDefaults<T extends Pick<StudioTemplateSave, "mediaType" | "prompt" | "options">>(row: T): T {
+  if (row.mediaType !== "video") return row;
+  const inferred = templateVideoPromptOptions(row.prompt);
+  return { ...row, options: {
+    ...row.options,
+    ...(!row.options.duration && inferred.duration ? { duration: inferred.duration } : {}),
+    ...(!row.options.aspectRatio?.trim() && inferred.aspectRatio ? { aspectRatio: inferred.aspectRatio } : {}),
+  } };
+}
+
 export function templateParameterFields(media: "image" | "video", config?: ModelConfig | null) {
   const opts = modelGenerationOptions(config);
   const fields: { key: keyof StudioTemplate["options"]; label: string; values: string[]; numeric?: boolean }[] = [];
@@ -37,6 +61,8 @@ export function templateOptionsForRequest(options: StudioTemplate["options"], me
     Object.assign(result, { [field.key]: field.numeric ? Number(value) : String(value) });
   }
   if (media === "video" && options.duration && options.duration > 0) result.duration = options.duration;
+  // A missing model capability must not silently discard the prompt's ratio.
+  if (media === "video" && options.aspectRatio?.trim()) result.aspectRatio = options.aspectRatio;
   return result;
 }
 

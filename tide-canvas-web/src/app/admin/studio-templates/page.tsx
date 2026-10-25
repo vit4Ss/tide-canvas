@@ -21,6 +21,7 @@ import {
 import { AdminModal, Field, FormCard, FormGrid } from "@/components/admin";
 import { TemplateCoverAI } from "@/components/admin/template-cover-ai";
 import { TemplateCoverBatchDialog } from "@/components/admin/template-cover-batch";
+import { TemplatePromptFillButton } from "@/components/admin/template-prompt-fill";
 import { commitAcceptedAiGeneration } from "@/lib/ai-generation-idempotency";
 import { PopoverSelect } from "@/components/shared/popover-select";
 import { confirmDialog } from "@/components/shared/confirm";
@@ -46,6 +47,9 @@ import {
   templateParameterFields,
   templateOptionsForModel,
   templateOptionsForRequest,
+  templateVideoPromptOptions,
+  withTemplatePromptDefaults,
+  templateModelChoiceKey,
 } from "@/lib/template-operator";
 import {
   templateOutputText,
@@ -201,6 +205,14 @@ export default function StudioTemplatesAdmin() {
           <p>管理创作配方与展示效果，准备好封面和生成配置后上架。</p>
         </div>
         <div className={css.actions}>
+          {media === "video" && (
+            <TemplatePromptFillButton
+              key={String(user?.id || "")}
+              filter={{ kind, mediaType: media, category, status, keyword: query }}
+              disabled={loading || !!error}
+              onUpdated={() => setVersion((v) => v + 1)}
+            />
+          )}
           <button
             type="button"
             className="adm-btn ghost"
@@ -686,10 +698,19 @@ function TemplateEditor({
   onSaved: (row: StudioTemplate) => void;
   onDraftSaved: (row: StudioTemplate) => void;
 }) {
-  const [form, setForm] = useState(initial);
+  const [form, setForm] = useState(() => withTemplatePromptDefaults(initial));
+  const [promptDefaultError, setPromptDefaultError] = useState("");
+  const [fillingPromptModel, setFillingPromptModel] = useState(false);
+  const autoModelKey = useRef("");
+  const manualModelChoice = useRef(false);
+  const manualPromptSpecs = useRef({
+    duration: !!initial.options.duration,
+    aspectRatio: !!initial.options.aspectRatio?.trim(),
+  });
   const [models, setModels] = useState<StudioModelVO[]>([]);
   const [uploading, setUploading] = useState("");
   const [saving, setSaving] = useState(false);
+  const [savingPromptDefaults, setSavingPromptDefaults] = useState(false);
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
   const [coverOpen, setCoverOpen] = useState(initialCoverOpen);
@@ -736,14 +757,16 @@ function TemplateEditor({
   const parameterFields = selectedModel
     ? templateParameterFields(form.mediaType, selectedModel.config)
     : [];
-  const requestForm = () => {
+  const requestForm = (resolveDefaults = true) => {
     if (!selectedModel) return form;
-    const options = templateOptionsForRequest(
+    const options = resolveDefaults ? templateOptionsForRequest(
       form.options,
       form.mediaType,
       selectedModel.config,
-    );
-    return { ...form, options };
+    ) : form.options;
+    const modelKey = form.modelKey === selectedModel.id
+      ? selectedModel.id : templateModelChoiceKey(selectedModel, models);
+    return { ...form, modelKey, options };
   };
   const alive = useRef(true);
   useEffect(() => {
@@ -812,6 +835,40 @@ function TemplateEditor({
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [form.mediaType, modelRetry]);
+  useEffect(() => {
+    if (
+      form.mediaType !== "video" || form.modelKey || manualModelChoice.current ||
+      templateVideoPromptOptions(form.prompt).duration !== 30 ||
+      form.options.duration !== 30 || modelsLoading || modelError || busy.current
+    ) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setFillingPromptModel(true);
+      setPromptDefaultError("");
+      try {
+        // Reuse the server's free validator, including reference/price checks,
+        // rather than choosing a similarly named but incompatible model here.
+        const result = await api.check({ ...form, title: form.title.trim() || "视频模板", status: 0 });
+        if (cancelled || !alive.current || busy.current) return;
+        if (result.success && result.data) {
+          const setup = result.data;
+          autoModelKey.current = setup.modelId;
+          setForm((old) => JSON.stringify(old) === signature
+            ? { ...old, modelKey: setup.modelId, options: setup.options }
+            : old);
+        } else setPromptDefaultError(result.message || "未能匹配 Seedance 2.5，请检查模型配置或手动选择。");
+      } catch {
+        if (!cancelled) setPromptDefaultError("默认模型读取失败，可点击刷新模型列表重试。");
+      } finally {
+        if (!cancelled) setFillingPromptModel(false);
+      }
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      setFillingPromptModel(false);
+    };
+  }, [form, signature, models, modelsLoading, modelError]);
   const close = async () => {
     if (busy.current || coverBlocking || closing.current) return;
     closing.current = true;
@@ -873,7 +930,18 @@ function TemplateEditor({
     value: StudioTemplateSave[K],
   ) => {
     setError("");
-    setForm((v) => ({ ...v, [key]: value }));
+    setPromptDefaultError("");
+    setForm((v) => {
+      const next = { ...v, [key]: value };
+      if (key !== "prompt" || next.mediaType !== "video") return next;
+      const before = templateVideoPromptOptions(v.prompt);
+      const after = templateVideoPromptOptions(next.prompt);
+      const options = { ...v.options };
+      if (!manualPromptSpecs.current.duration && before.duration && options.duration === before.duration) options.duration = after.duration;
+      if (!manualPromptSpecs.current.aspectRatio && before.aspectRatio && options.aspectRatio === before.aspectRatio) options.aspectRatio = after.aspectRatio;
+      if (v.modelKey === autoModelKey.current && before.duration !== after.duration) next.modelKey = "";
+      return withTemplatePromptDefaults({ ...next, options });
+    });
   };
   const applyCover = useCallback((url: string, id: string, owner: string) => {
     if (
@@ -956,7 +1024,7 @@ function TemplateEditor({
       if (alive.current) setSaving(false);
     }
   };
-  const save = async () => {
+  const save = async (fillFromPrompt = false, publish = false) => {
     if (
       busy.current ||
       coverBlocking ||
@@ -964,17 +1032,19 @@ function TemplateEditor({
       modelRequestPending.current
     )
       return false;
-    if (form.status === 1 && form.modelKey && (modelError || !selectedModel)) {
+    if ((form.status === 1 || publish) && form.modelKey && (modelError || !selectedModel)) {
       setError("请先重新读取模型列表，确认所选模型可用后再上架。");
       return false;
     }
     busy.current = true;
     setSaving(true);
+    setSavingPromptDefaults(fillFromPrompt);
     setError("");
     const appliedTask =
       coverTask.current?.url === form.coverUrl ? coverTask.current : null;
     try {
-      const res = await api.save(requestForm(), form.id, initial.coverUrl);
+      const payload = requestForm(!fillFromPrompt);
+      const res = await api.save(publish ? { ...payload, status: 1 } : payload, form.id, initial.coverUrl, fillFromPrompt, initial.status);
       if (!alive.current) return false;
       if (res.success && res.data) {
         saved.current = true;
@@ -984,7 +1054,7 @@ function TemplateEditor({
             appliedTask.id,
             appliedTask.owner,
           ).catch(() => undefined);
-        toast.success(form.status ? "模板已上架" : "草稿已保存");
+        toast.success(fillFromPrompt ? res.data.status === 1 ? "模板已填充并上架" : "模板参数已填充并保存" : form.status ? "模板已上架" : "草稿已保存");
         onSaved(res.data);
         return true;
       }
@@ -995,7 +1065,10 @@ function TemplateEditor({
       return false;
     } finally {
       busy.current = false;
-      if (alive.current) setSaving(false);
+      if (alive.current) {
+        setSaving(false);
+        setSavingPromptDefaults(false);
+      }
     }
   };
   const modes = (
@@ -1075,7 +1148,11 @@ function TemplateEditor({
                   ]}
                   onChange={(v) => {
                     setError("");
-                    setForm((old) => ({
+                    setPromptDefaultError("");
+                    manualModelChoice.current = false;
+                    autoModelKey.current = "";
+                    manualPromptSpecs.current = { duration: false, aspectRatio: false };
+                    setForm((old) => withTemplatePromptDefaults({
                       ...old,
                       mediaType: v as "image" | "video",
                       mode: v === "image" ? "i2i" : "i2v",
@@ -1110,7 +1187,9 @@ function TemplateEditor({
             <Field
               label="完整提示词"
               required={form.status === 1}
-              hint="仅管理员可见，生成时自动使用。"
+              hint={form.mediaType === "video"
+                ? "仅管理员可见。开头如【生成视频：30秒｜9:16】会自动填入时长和画面比例；30秒默认匹配 Seedance 2.5。"
+                : "仅管理员可见，生成时自动使用。"}
             >
               <textarea
                 className={css.promptInput}
@@ -1125,6 +1204,21 @@ function TemplateEditor({
                 onChange={(e) => change("prompt", e.target.value)}
               />
             </Field>
+            {form.mediaType === "video" && (
+              <>
+                <div className={css.actions}>
+                  <button
+                    type="button"
+                    className="adm-btn ghost"
+                    disabled={saving || checking || !!uploading || coverBlocking || modelsLoading}
+                    onClick={() => void save(true, true)}
+                  >
+                    {savingPromptDefaults ? "正在填充并上架…" : "自动填充并上架"}
+                  </button>
+                </div>
+                <p className={css.note}>补齐模型与参数，校验封面和生成配置后直接上架。失败保留当前内容；仅暂存请用下方「保存草稿」。不生成、不扣积分。</p>
+              </>
+            )}
             <Field label="用户需要上传什么">
               <textarea
                 rows={2}
@@ -1145,9 +1239,11 @@ function TemplateEditor({
                 }))}
                 onChange={(v) => {
                   setError("");
+                  setPromptDefaultError("");
                   setForm((old) => ({
                     ...old,
                     mode: v as StudioTemplate["mode"],
+                    modelKey: old.modelKey === autoModelKey.current ? "" : old.modelKey,
                     inputLabels: {},
                     requirements: {
                       images:
@@ -1400,11 +1496,11 @@ function TemplateEditor({
                 {...selectProps}
                 label="默认生成模型"
                 disabled={modelsLoading || !!modelError}
-                value={selectedModel?.modelKey || form.modelKey}
+                value={selectedModel ? templateModelChoiceKey(selectedModel, models) : form.modelKey}
                 options={[
                   { value: "", label: "自动选择兼容模型（上架时确定）" },
                   ...models.map((m) => ({
-                    value: m.modelKey,
+                    value: templateModelChoiceKey(m, models),
                     label: m.name,
                   })),
                   ...(form.modelKey && !selectedModel
@@ -1419,7 +1515,10 @@ function TemplateEditor({
                 ]}
                 onChange={(v) => {
                   setError("");
-                  const chosen = models.find((m) => m.modelKey === v);
+                  setPromptDefaultError("");
+                  manualModelChoice.current = true;
+                  autoModelKey.current = "";
+                  const chosen = models.find((m) => templateModelChoiceKey(m, models) === v);
                   setForm((old) => ({
                     ...old,
                     modelKey: v,
@@ -1434,6 +1533,8 @@ function TemplateEditor({
                 }}
               />
             </Field>
+            {fillingPromptModel && <p className={css.note} role="status">正在匹配支持30秒的 Seedance 2.5…</p>}
+            {promptDefaultError && !form.modelKey && <p className={css.error} role="alert">{promptDefaultError}</p>}
             <div className={css.actions}>
               <button
                 type="button"
@@ -1533,12 +1634,13 @@ function TemplateEditor({
                       value={spec.value}
                       options={options}
                       invalid={spec.invalid}
-                      onChange={(value) =>
+                      onChange={(value) => {
+                        if (key === "duration" || key === "aspectRatio") manualPromptSpecs.current[key] = true;
                         change("options", {
                           ...form.options,
                           [key]: numeric ? Number(value) || undefined : value,
-                        })
-                      }
+                        });
+                      }}
                     />
                   </Field>
                 );

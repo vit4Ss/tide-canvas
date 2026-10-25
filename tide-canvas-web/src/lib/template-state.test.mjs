@@ -3,8 +3,27 @@ import test from "node:test";
 import { readTemplateDraft, saveTemplateDraft, templateDraftSignature } from "./template-draft.ts";
 import { templateFilters, templateListURL, templateReturnURL } from "./template-navigation.ts";
 import { templateUploadSlots, templateOutputText, templateResultURLs } from "./template-workshop.ts";
-import { copyTemplateDraft, templateCountRange, templateSpecChoices, templateParameterFields, templateOptionsForModel, templateOptionsForRequest } from "./template-operator.ts";
+import { copyTemplateDraft, templateCountRange, templateSpecChoices, templateParameterFields, templateOptionsForModel, templateOptionsForRequest, templateVideoPromptOptions, withTemplatePromptDefaults, templateModelChoiceKey } from "./template-operator.ts";
 import { modelGenerationOptions } from "./model-generation-options.mjs";
+
+test("template selector distinguishes catalog entries sharing an upstream key", () => {
+  const first = { id: "501", modelKey: "seedance-2.5" }, second = { id: "502", modelKey: "seedance-2.5" };
+  assert.equal(templateModelChoiceKey(first, [first, second]), "501");
+  assert.equal(templateModelChoiceKey(second, [first, second]), "502");
+  assert.equal(templateModelChoiceKey(first, [first]), "seedance-2.5");
+});
+
+test("opening video headers fill missing defaults while explicit settings survive", () => {
+  assert.deepEqual(templateVideoPromptOptions("【生成视频：30秒｜9:16】\n画面"), { duration: 30, aspectRatio: "9:16" });
+  assert.deepEqual(templateVideoPromptOptions(" \uFEFF[生成视频: 15 秒 | 16：9 横屏]\r\n30秒备选"), { duration: 15, aspectRatio: "16:9" });
+  for (const prompt of ["海报\n【生成视频：30秒｜9:16】", "只参考30秒的视频", "生成视频：601秒", "生成视频：0秒"]) assert.deepEqual(templateVideoPromptOptions(prompt), {});
+  const row = { mediaType: "video", prompt: "【生成视频：30秒｜9:16】", options: {} };
+  assert.deepEqual(withTemplatePromptDefaults(row).options, { duration: 30, aspectRatio: "9:16" });
+  const manual = { ...row, options: { duration: 15, aspectRatio: "16:9", resolution: "1080p" } };
+  assert.deepEqual(withTemplatePromptDefaults(manual).options, manual.options);
+  assert.deepEqual(withTemplatePromptDefaults({ ...row, mediaType: "image" }).options, {});
+  assert.deepEqual(templateOptionsForRequest({ duration: 30, aspectRatio: "9:16" }, "video", {}), { duration: 30, aspectRatio: "9:16" });
+});
 
 test("template parameters use Studio configuration with media-specific visibility and defaults",()=>{
  const image={ratios:['1:1','9:16'],resolutions:['4k','1k','2k'],qualities:['high','low'],durations:['10s','4.5s'],batchOptions:[1,4]};

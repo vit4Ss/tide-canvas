@@ -322,15 +322,15 @@ func TestTemplateDefaultModelControlsQuoteAndSubmissionWithoutFallback(t *testin
 				t.Fatal(err)
 			}
 			setup, err := CheckStudioTemplate(ctx, s.repo.db, *row)
-			if err != nil || setup.ModelID != chosen.ModelKey || setup.Options.Resolution != "4k" || setup.BasePointCost != 19 {
+			if err != nil || setup.ModelID != row.ModelKey || setup.Options.Resolution != "4k" || setup.BasePointCost != 19 {
 				t.Fatalf("preflight ignored default model: %+v %v", setup, err)
 			}
 			q := quoteTemplate(t, s, row.ID, `{"imageIds":["91"]}`)
-			if q.ModelID != chosen.ModelKey || q.PointCost != 19 {
+			if q.ModelID != row.ModelKey || q.PointCost != 19 {
 				t.Fatalf("quote ignored default model or its price: %+v", q)
 			}
 			dto := generateDTO{TemplateID: row.ID, TemplateQuote: q.QuoteToken, ModelID: "fixture-image", Input: json.RawMessage(`{"imageIds":["91"]}`)}
-			if err := s.prepareTemplateGeneration(ctx, 42, &dto); err != nil || dto.ModelID != chosen.ModelKey {
+			if err := s.prepareTemplateGeneration(ctx, 42, &dto); err != nil || dto.ModelID != row.ModelKey {
 				t.Fatalf("client overrode default model: %s %v", dto.ModelID, err)
 			}
 			if err := s.repo.db.Model(&chosen).Update("status", 2).Error; err != nil {

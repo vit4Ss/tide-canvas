@@ -25,6 +25,9 @@ func TestGroupbuyPackQuotesUseOwnedSlotsAndPreserveThirtySeconds(t *testing.T) {
 	if _, err := CheckStudioTemplate(ctx, s.repo.db, rows[0]); err == nil {
 		t.Fatal("unsupported duration silently shortened")
 	}
+	if err := s.repo.db.Model(&model.MarketModel{}).Where("model_key = ?", "fixture-video").Update("name", "Seedance 2.5").Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := s.repo.db.Model(&model.MarketModel{}).Where("model_key = ?", "fixture-video").Update("config",
 		`{"modes":["omni_ref"],"durations":["30s"],"ratios":["9:16"],"resolutions":["1080p"],"maxPromptChars":6000,"refLimits":{"omniRef.imageCount":5},"videoBillingMode":"per_request","pricePerRequestByResolution":{"1080p":19}}`).Error; err != nil {
 		t.Fatal(err)
