@@ -4,6 +4,8 @@
 
 新增内容包：[AI超市团购与宣传50套](groupbuy-promo-template-pack.md)，部署后端后自动添加为视频草稿，与已有[门店与食品厂20套](store-food-template-pack.md)独立保留。
 
+另新增[物业通用30套场景](property-general-template-pack.md)，包含6类场景及12种推荐摄影风格；启动时补齐为30秒、9:16、720p的视频草稿，沿用现有批量封面和填充上架流程。
+
 FlowLight 主站通过 `/templates` 展示图片、视频模板，`/templates/:id` 提供「看效果 → 上传素材 → 确认积分 → 生成同款」的独立流程。入口在主站导航和工作区侧栏；创作台 `/studio` 保留自由创作，不再展示模板库或把模板提示词填进编辑器。原有 `/inspire` 灵感合集与 Skill 功能保持独立。
 
 ## 用户流程

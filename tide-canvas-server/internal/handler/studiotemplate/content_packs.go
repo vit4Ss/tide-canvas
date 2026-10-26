@@ -18,12 +18,15 @@ import (
 //
 //go:embed content-packs/store-food-v002/catalog.json content-packs/store-food-v002/source/*.txt
 //go:embed content-packs/groupbuy-promo-v2/catalog.json content-packs/groupbuy-promo-v2/source/*.txt content-packs/groupbuy-promo-v2/source/manifest.json
+//go:embed content-packs/property-general-v3/catalog.json content-packs/property-general-v3/source/*
 var contentPackFiles embed.FS
 
 const StoreFoodSourcePrefix = "content:store-food-v002:"
 const storeFoodRoot = "content-packs/store-food-v002/"
 const GroupbuyPromoSourcePrefix = "content:groupbuy-promo-v2:"
 const groupbuyPromoRoot = "content-packs/groupbuy-promo-v2/"
+const PropertyGeneralSourcePrefix = "content:property-general-v3:"
+const propertyGeneralRoot = "content-packs/property-general-v3/"
 
 type contentPackEntry struct {
 	Slug         string  `json:"slug"`
@@ -38,6 +41,10 @@ func storeFoodEntries() ([]contentPackEntry, error) {
 
 func groupbuyPromoEntries() ([]contentPackEntry, error) {
 	return readContentPack(groupbuyPromoRoot, 50)
+}
+
+func propertyGeneralEntries() ([]contentPackEntry, error) {
+	return readContentPack(propertyGeneralRoot, 30)
 }
 
 func readContentPack(root string, expected int) ([]contentPackEntry, error) {
@@ -92,6 +99,7 @@ func SeedContentPacks(db *gorm.DB) error {
 	}{
 		{StoreFoodSourcePrefix, storeFoodEntries},
 		{GroupbuyPromoSourcePrefix, groupbuyPromoEntries},
+		{PropertyGeneralSourcePrefix, propertyGeneralEntries},
 	} {
 		entries, err := pack.load()
 		if err != nil {

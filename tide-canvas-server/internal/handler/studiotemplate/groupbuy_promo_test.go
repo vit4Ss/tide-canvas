@@ -193,7 +193,7 @@ func TestGroupbuyPackUpgradePreservesExistingAndOperatorChanges(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := db.Unscoped().Model(&model.StudioTemplate{}).Count(&count).Error; err != nil || count != 70 {
+	if err := db.Unscoped().Model(&model.StudioTemplate{}).Count(&count).Error; err != nil || count != 100 {
 		t.Fatalf("upgrade imported duplicates or lost data: %d %v", count, err)
 	}
 	var existing model.StudioTemplate
@@ -236,7 +236,7 @@ func TestGroupbuyPackUpgradePreservesExistingAndOperatorChanges(t *testing.T) {
 	if err := db.First(&changed, "id = ?", changed.ID).Error; err != nil || changed.Title != "运营修改" || changed.Prompt != "运营配方" || changed.Status != 1 || changed.ModelKey != "chosen-model" || changed.Uses != 9 {
 		t.Fatal("restart overwrote new pack curation", err)
 	}
-	if err := db.Model(&model.StudioTemplate{}).Count(&count).Error; err != nil || count != 69 {
+	if err := db.Model(&model.StudioTemplate{}).Count(&count).Error; err != nil || count != 99 {
 		t.Fatal("deleted content resurrected", count, err)
 	}
 }

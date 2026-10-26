@@ -31,7 +31,7 @@ func TestAdminNewestShowsNewPackWithoutChangingPublicDisplayOrder(t *testing.T) 
 		t.Fatal(err)
 	}
 	var imported []model.StudioTemplate
-	if err := db.Where("source_key LIKE ?", GroupbuyPromoSourcePrefix+"%").Find(&imported).Error; err != nil {
+	if err := db.Where("source_key LIKE ?", PropertyGeneralSourcePrefix+"%").Find(&imported).Error; err != nil {
 		t.Fatal(err)
 	}
 	newIDs := map[string]bool{}
@@ -62,8 +62,8 @@ func TestAdminNewestShowsNewPackWithoutChangingPublicDisplayOrder(t *testing.T) 
 	}
 	seen := map[string]bool{}
 	for _, page := range []string{"1", "2"} {
-		response := get("/admin?mediaType=video&kind=inspiration&status=0&order=newest&pageSize=18&pageNum=" + page)
-		if !response.Success || response.Data.Total != 70 || len(response.Data.Records) != 18 {
+		response := get("/admin?mediaType=video&kind=inspiration&status=0&order=newest&pageSize=15&pageNum=" + page)
+		if !response.Success || response.Data.Total != 100 || len(response.Data.Records) != 15 {
 			t.Fatal("newest pagination failed", response)
 		}
 		for _, row := range response.Data.Records {

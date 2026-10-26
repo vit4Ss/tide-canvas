@@ -85,7 +85,7 @@ func TestSuppliedContentPackImportsTwentyPrivateDraftsOnce(t *testing.T) {
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest("GET", "/admin?mediaType=video&kind=inspiration", nil))
 	json.Unmarshal(w.Body.Bytes(), &result)
-	if result.Data.Total != 70 || !strings.Contains(w.Body.String(), "完整承接") {
+	if result.Data.Total != 100 || !strings.Contains(w.Body.String(), "完整承接") {
 		t.Fatal("operator cannot find/edit the pack")
 	}
 	db.Model(&rows[0]).Updates(map[string]any{"title": "运营调整", "prompt": "新配方", "uses": 9, "status": 1})
@@ -100,7 +100,7 @@ func TestSuppliedContentPackImportsTwentyPrivateDraftsOnce(t *testing.T) {
 	}
 	var count int64
 	db.Model(&model.StudioTemplate{}).Count(&count)
-	if count != 69 {
+	if count != 99 {
 		t.Fatal("deleted pack entry was resurrected")
 	}
 }
@@ -221,7 +221,7 @@ func TestContentPackSeedingFailureDoesNotLeavePartialImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Model(&model.StudioTemplate{}).Count(&count)
-	if count != 70 {
+	if count != 100 {
 		t.Fatal("retry failed", count)
 	}
 }

@@ -4,4 +4,5 @@
 tide-canvas-server/internal/handler/studiotemplate/content-packs/store-food-v002/source/*.txt -text
 # Verbatim archive sources include CRCRLF/BOM and trailing blank lines.
 tide-canvas-server/internal/handler/studiotemplate/content-packs/groupbuy-promo-v2/source/* -text -whitespace
+tide-canvas-server/internal/handler/studiotemplate/content-packs/property-general-v3/source/* -text -whitespace
 # Unified diff context lines require a leading space even on empty lines.
