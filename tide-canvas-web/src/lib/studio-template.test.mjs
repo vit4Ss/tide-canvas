@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { templateInputs } from "./studio-template.ts";
+import { templateInputs, templateModelChoices } from "./studio-template.ts";
 import { templateUploadSlots, templateUploadInput, templateUploadsReady } from "./template-workshop.ts";
 const recipe = (mode, images = 0, videos = 0, audio = 0) => ({ mode, requirements: { images, videos, audio } });
 test("image templates require their own complete references and preserve ordered slots", () => {
@@ -33,6 +33,17 @@ test("flexible reference templates still require one asset; ready-made text temp
 });
 test("image-to-video automatically exposes the mandatory first image", () => {
   assert.equal(templateUploadSlots(recipe("i2v")).length, 1);
+});
+
+test("model choices keep only compatible, available template models", () => {
+  const row = { mediaType: "image", mode: "i2i", requirements: { images: 1, videos: 0, audio: 0 }, options: { aspectRatio: "4:5", resolution: "2k", quality: "high" } };
+  const models = [
+    { id: "1", name: "Compatible", modelKey: "ok", type: "image", desc: "", pointCost: "7", config: { modes: ["i2i"], ratios: ["4:5"], resolutions: ["2k"], qualities: ["high"] } },
+    { id: "2", name: "Wrong mode", modelKey: "t2i", type: "image", desc: "", pointCost: "5", config: { modes: ["t2i"] } },
+    { id: "3", name: "Wrong ratio", modelKey: "square", type: "image", desc: "", pointCost: "5", config: { modes: ["i2i"], ratios: ["1:1"] } },
+    { id: "4", name: "Maintenance", modelKey: "paused", type: "image", desc: "", pointCost: "5", config: { modes: ["i2i"], availabilityStatus: "maintenance" } },
+  ];
+  assert.deepEqual(templateModelChoices(row, models).map(model => model.id), ["1"]);
 });
 
 test("optional portrait does not shift product and workshop image positions",()=>{

@@ -81,6 +81,7 @@ export function copyTemplateDraft(row: StudioTemplate): StudioTemplateSave {
     inputLabels: structuredClone(row.inputLabels || {}),
     mode: row.mode,
     modelKey: row.modelKey,
+    selectableModelKeys: [...(row.selectableModelKeys || [])],
     requirements: structuredClone(row.requirements),
     options: { ...row.options },
     status: 0,

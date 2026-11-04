@@ -159,23 +159,24 @@ func (h *Handler) Get(c *gin.Context) {
 }
 
 type SaveDTO struct {
-	Kind         string                           `json:"kind" binding:"required,oneof=style inspiration"`
-	MediaType    string                           `json:"mediaType" binding:"required,oneof=image video"`
-	Title        string                           `json:"title" binding:"required,max=128"`
-	Description  string                           `json:"description" binding:"max=512"`
-	Category     string                           `json:"category" binding:"max=64"`
-	Prompt       string                           `json:"prompt" binding:"max=20000"`
-	CoverURL     string                           `json:"coverUrl" binding:"max=2048"`
-	PreviewURL   string                           `json:"previewUrl" binding:"max=2048"`
-	AuthorName   string                           `json:"authorName" binding:"max=64"`
-	InputHint    string                           `json:"inputHint" binding:"max=1024"`
-	InputLabels  model.StudioTemplateInputLabels  `json:"inputLabels"`
-	Mode         string                           `json:"mode" binding:"required,oneof=t2i i2i t2v i2v flf ref"`
-	ModelKey     string                           `json:"modelKey" binding:"max=128"`
-	Requirements model.StudioTemplateRequirements `json:"requirements"`
-	Options      model.StudioTemplateOptions      `json:"options"`
-	Status       int                              `json:"status" binding:"oneof=0 1"`
-	SortOrder    int                              `json:"sortOrder" binding:"min=0,max=100000"`
+	Kind                string                           `json:"kind" binding:"required,oneof=style inspiration"`
+	MediaType           string                           `json:"mediaType" binding:"required,oneof=image video"`
+	Title               string                           `json:"title" binding:"required,max=128"`
+	Description         string                           `json:"description" binding:"max=512"`
+	Category            string                           `json:"category" binding:"max=64"`
+	Prompt              string                           `json:"prompt" binding:"max=20000"`
+	CoverURL            string                           `json:"coverUrl" binding:"max=2048"`
+	PreviewURL          string                           `json:"previewUrl" binding:"max=2048"`
+	AuthorName          string                           `json:"authorName" binding:"max=64"`
+	InputHint           string                           `json:"inputHint" binding:"max=1024"`
+	InputLabels         model.StudioTemplateInputLabels  `json:"inputLabels"`
+	Mode                string                           `json:"mode" binding:"required,oneof=t2i i2i t2v i2v flf ref"`
+	ModelKey            string                           `json:"modelKey" binding:"max=128"`
+	SelectableModelKeys []string                         `json:"selectableModelKeys"`
+	Requirements        model.StudioTemplateRequirements `json:"requirements"`
+	Options             model.StudioTemplateOptions      `json:"options"`
+	Status              int                              `json:"status" binding:"oneof=0 1"`
+	SortOrder           int                              `json:"sortOrder" binding:"min=0,max=100000"`
 }
 
 func SafeMediaURL(raw string) bool {
@@ -202,6 +203,23 @@ func (d *SaveDTO) Validate() error {
 	d.CoverURL = strings.TrimSpace(d.CoverURL)
 	d.PreviewURL = strings.TrimSpace(d.PreviewURL)
 	d.ModelKey = strings.TrimSpace(d.ModelKey)
+	seenModels := map[string]bool{}
+	selectableModels := make([]string, 0, len(d.SelectableModelKeys))
+	for _, raw := range d.SelectableModelKeys {
+		key := strings.TrimSpace(raw)
+		if key == "" || key == d.ModelKey || seenModels[key] {
+			continue
+		}
+		if len(key) > 128 {
+			return errors.New("模型标识过长")
+		}
+		seenModels[key] = true
+		selectableModels = append(selectableModels, key)
+	}
+	if len(selectableModels) > 20 {
+		return errors.New("前台可选模型最多20个")
+	}
+	d.SelectableModelKeys = selectableModels
 	d.Options.AspectRatio = strings.TrimSpace(d.Options.AspectRatio)
 	d.Options.Resolution = strings.TrimSpace(d.Options.Resolution)
 	d.Options.Quality = strings.TrimSpace(d.Options.Quality)
@@ -268,5 +286,5 @@ func (d *SaveDTO) Validate() error {
 }
 
 func (d SaveDTO) Row() model.StudioTemplate {
-	return model.StudioTemplate{Kind: d.Kind, MediaType: d.MediaType, Title: d.Title, Description: d.Description, Category: d.Category, Prompt: d.Prompt, CoverURL: d.CoverURL, PreviewURL: d.PreviewURL, AuthorName: d.AuthorName, InputHint: d.InputHint, InputLabels: d.InputLabels, Mode: d.Mode, ModelKey: d.ModelKey, Requirements: d.Requirements, Options: d.Options, Status: d.Status, SortOrder: d.SortOrder}
+	return model.StudioTemplate{Kind: d.Kind, MediaType: d.MediaType, Title: d.Title, Description: d.Description, Category: d.Category, Prompt: d.Prompt, CoverURL: d.CoverURL, PreviewURL: d.PreviewURL, AuthorName: d.AuthorName, InputHint: d.InputHint, InputLabels: d.InputLabels, Mode: d.Mode, ModelKey: d.ModelKey, SelectableModelKeys: d.SelectableModelKeys, Requirements: d.Requirements, Options: d.Options, Status: d.Status, SortOrder: d.SortOrder}
 }

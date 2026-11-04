@@ -48,9 +48,44 @@ type templateSetupVO struct {
 	ReferenceVideoBilling bool                        `json:"referenceVideoBilling"`
 	Options               model.StudioTemplateOptions `json:"options"`
 	MaxUploadBytes        map[string]int64            `json:"maxUploadBytes"`
+	AvailableModels       []templateModelOptionVO     `json:"availableModels,omitempty"`
+}
+
+type templateModelOptionVO struct {
+	ModelID               string                      `json:"modelId"`
+	ModelName             string                      `json:"modelName"`
+	BasePointCost         int                         `json:"basePointCost"`
+	ReferenceVideoBilling bool                        `json:"referenceVideoBilling"`
+	Options               model.StudioTemplateOptions `json:"options"`
+	MaxUploadBytes        map[string]int64            `json:"maxUploadBytes"`
 }
 
 func templateError(message string) error { return skillPlacementError{message: message} }
+
+func configuredTemplateModelKeys(row model.StudioTemplate) []string {
+	keys := make([]string, 0, 1+len(row.SelectableModelKeys))
+	seen := map[string]bool{}
+	for _, raw := range append([]string{row.ModelKey}, row.SelectableModelKeys...) {
+		key := strings.TrimSpace(raw)
+		if key != "" && !seen[key] {
+			seen[key] = true
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+func templateModelAllowed(row model.StudioTemplate, candidate *model.AiModel) bool {
+	if candidate == nil {
+		return false
+	}
+	for _, key := range configuredTemplateModelKeys(row) {
+		if key == candidate.ModelID || key == candidate.ID.String() {
+			return true
+		}
+	}
+	return false
+}
 
 func (s *service) prepareTemplateGeneration(ctx context.Context, uid idgen.ID, dto *generateDTO) error {
 	return s.prepareTemplateRecipe(ctx, uid, dto, false)
@@ -199,15 +234,22 @@ func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *gen
 		return err
 	}
 	var selected *model.AiModel
-	preferSeedance := strings.TrimSpace(row.ModelKey) == "" && model.TemplatePrefersSeedance25(row)
+	requestedModel := strings.TrimSpace(dto.ModelID)
+	preferSeedance := requestedModel == "" && strings.TrimSpace(row.ModelKey) == "" && model.TemplatePrefersSeedance25(row)
 	for i := range models {
 		m := &models[i]
 		// A quoted model is pinned for the submit, even if catalogue popularity changes.
-		key := strings.TrimSpace(row.ModelKey)
+		// A model chosen by the user takes precedence over the template default.
+		// Compatibility, pricing and the private recipe are still resolved and
+		// signed on the server, so the client cannot force an arbitrary model.
+		key := strings.TrimSpace(dto.ModelID)
 		if key == "" {
-			key = strings.TrimSpace(dto.ModelID)
+			key = strings.TrimSpace(row.ModelKey)
 		}
 		if key != "" && m.ModelID != key && m.ID.String() != key {
+			continue
+		}
+		if requestedModel != "" && !templateModelAllowed(row, m) {
 			continue
 		}
 		if preferSeedance && !model.IsTemplateSeedance25(m.ModelID, m.Name) {
@@ -302,6 +344,9 @@ func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *gen
 		break
 	}
 	if selected == nil {
+		if requestedModel != "" {
+			return templateError("所选模型未在此模板开放，或当前无法满足模板规格")
+		}
 		if preferSeedance {
 			return templateError("30秒模板默认使用 Seedance 2.5，未找到支持当前素材与输出规格的可用模型。请在模型管理中检查上架状态、30秒时长和画面比例，或手动指定其他模型")
 		}
@@ -525,15 +570,59 @@ func (h *handler) templateSetup(c *gin.Context) {
 		response.Fail(c, 400, "模板编号无效")
 		return
 	}
-	dto := generateDTO{TemplateID: id, Input: json.RawMessage(`{}`)}
-	if err := h.svc.prepareTemplateRecipe(c.Request.Context(), 0, &dto, true); err != nil {
-		h.templateQuoteError(c, err)
+	var row model.StudioTemplate
+	if err := h.svc.repo.db.WithContext(c.Request.Context()).Where("id = ? AND status = 1", id).First(&row).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.Fail(c, 400, "模板已下架或不存在，请选择其他模板")
+		} else {
+			response.Fail(c, 500, "暂时无法读取模板配置")
+		}
+		return
+	}
+	requested := strings.TrimSpace(c.Query("modelId"))
+	candidates := configuredTemplateModelKeys(row)
+	if requested != "" {
+		candidates = []string{requested}
+	} else if len(candidates) == 0 {
+		candidates = []string{""}
+	}
+	var dto generateDTO
+	var prepareErr error
+	for _, key := range candidates {
+		candidate := generateDTO{TemplateID: id, ModelID: key, Input: json.RawMessage(`{}`)}
+		if err := h.svc.prepareTemplateRow(c.Request.Context(), 0, &candidate, row, true); err != nil {
+			prepareErr = err
+			continue
+		}
+		dto = candidate
+		prepareErr = nil
+		break
+	}
+	if prepareErr != nil || dto.templateSnapshot == nil {
+		h.templateQuoteError(c, prepareErr)
 		return
 	}
 	setup, err := h.svc.templateSetupResult(c.Request.Context(), &dto)
 	if err != nil {
 		h.templateQuoteError(c, err)
 		return
+	}
+	choiceKeys := configuredTemplateModelKeys(row)
+	if len(choiceKeys) == 0 {
+		choiceKeys = []string{dto.ModelID}
+	}
+	seen := map[string]bool{}
+	for _, key := range choiceKeys {
+		candidate := generateDTO{TemplateID: id, ModelID: key, Input: json.RawMessage(`{}`)}
+		if err := h.svc.prepareTemplateRow(c.Request.Context(), 0, &candidate, row, true); err != nil {
+			continue
+		}
+		available, err := h.svc.templateSetupResult(c.Request.Context(), &candidate)
+		if err != nil || seen[available.ModelID] {
+			continue
+		}
+		seen[available.ModelID] = true
+		setup.AvailableModels = append(setup.AvailableModels, templateModelOptionVO{ModelID: available.ModelID, ModelName: available.ModelName, BasePointCost: available.BasePointCost, ReferenceVideoBilling: available.ReferenceVideoBilling, Options: available.Options, MaxUploadBytes: available.MaxUploadBytes})
 	}
 	response.OK(c, setup)
 }

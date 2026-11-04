@@ -695,6 +695,105 @@
   font-size: 12px;
   line-height: 1.7;
 }
+.modelAllowlist {
+  margin-top: 16px;
+  border: 1px solid var(--border-weak);
+  border-radius: 10px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.modelAllowlistHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-weak);
+}
+.modelAllowlistHeading > div {
+  min-width: 0;
+}
+.modelAllowlistHeading strong,
+.modelAllowlistHeading span {
+  display: block;
+}
+.modelAllowlistHeading strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.modelAllowlistHeading span,
+.modelAllowlistHeading small {
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.modelAllowlistHeading small {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.modelAllowlistRows {
+  max-height: 288px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.modelAllowlistRows > .note {
+  padding: 16px;
+}
+.modelAllowlistRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-weak);
+  cursor: pointer;
+  transition: background 160ms ease-out;
+}
+.modelAllowlistRow:last-child {
+  border-bottom: 0;
+}
+.modelAllowlistRow:hover {
+  background: var(--surface-hover);
+}
+.modelAllowlistRow[data-selected],
+.modelAllowlistRow[data-default] {
+  background: var(--accent-soft);
+}
+.modelAllowlistRow[data-default] {
+  cursor: default;
+}
+.modelAllowlistRow[data-invalid] {
+  background: var(--danger-soft);
+}
+.modelAllowlistRow input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  padding: 0;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+.modelAllowlistRow > span {
+  min-width: 0;
+}
+.modelAllowlistRow strong,
+.modelAllowlistRow small {
+  display: block;
+}
+.modelAllowlistRow strong {
+  font-size: 13px;
+  font-weight: 550;
+}
+.modelAllowlistRow small {
+  margin-top: 3px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.modelAllowlistRow[data-invalid] small {
+  color: var(--danger);
+}
 .preview .note {
   margin-top: 16px;
 }

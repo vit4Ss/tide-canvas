@@ -301,7 +301,7 @@ func TestOperatorPreflightRejectsUnusableRecipesWithoutGenerating(t *testing.T) 
 	}
 }
 
-func TestTemplateDefaultModelControlsQuoteAndSubmissionWithoutFallback(t *testing.T) {
+func TestTemplateDefaultModelAllowsACompatibleUserOverrideWithoutFallback(t *testing.T) {
 	for _, byID := range []bool{false, true} {
 		t.Run(fmt.Sprintf("storedByID=%t", byID), func(t *testing.T) {
 			s, row, provider := templateFixture(t)
@@ -315,6 +315,7 @@ func TestTemplateDefaultModelControlsQuoteAndSubmissionWithoutFallback(t *testin
 				t.Fatal(err)
 			}
 			row.ModelKey = chosen.ModelKey
+			row.SelectableModelKeys = []string{"fixture-image"}
 			if byID {
 				row.ModelKey = chosen.ID.String()
 			}
@@ -330,15 +331,27 @@ func TestTemplateDefaultModelControlsQuoteAndSubmissionWithoutFallback(t *testin
 				t.Fatalf("quote ignored default model or its price: %+v", q)
 			}
 			dto := generateDTO{TemplateID: row.ID, TemplateQuote: q.QuoteToken, ModelID: "fixture-image", Input: json.RawMessage(`{"imageIds":["91"]}`)}
-			if err := s.prepareTemplateGeneration(ctx, 42, &dto); err != nil || dto.ModelID != row.ModelKey {
-				t.Fatalf("client overrode default model: %s %v", dto.ModelID, err)
+			if err := s.prepareTemplateGeneration(ctx, 42, &dto); err != nil || dto.ModelID != "fixture-image" {
+				t.Fatalf("compatible user model was not selected: %s %v", dto.ModelID, err)
+			}
+			unlisted := model.MarketModel{Name: "Unlisted compatible model", ModelKey: "unlisted-image", Type: "image", Status: 1, Price: decimal.NewFromInt(9), Config: `{"modes":["i2i"],"ratios":["4:5"],"resolutions":["2k"]}`}
+			if err := s.repo.db.Create(&unlisted).Error; err != nil {
+				t.Fatal(err)
+			}
+			blocked := generateDTO{TemplateID: row.ID, ModelID: unlisted.ModelKey, Input: json.RawMessage(`{"imageIds":["91"]}`)}
+			if err := s.prepareTemplateGeneration(ctx, 42, &blocked); err == nil {
+				t.Fatal("model outside the template allowlist was accepted")
 			}
 			if err := s.repo.db.Model(&chosen).Update("status", 2).Error; err != nil {
 				t.Fatal(err)
 			}
-			dto.Input = json.RawMessage(`{"imageIds":["91"]}`)
-			if _, err := s.generate(ctx, 42, dto); err == nil {
+			defaultDTO := generateDTO{TemplateID: row.ID, Input: json.RawMessage(`{"imageIds":["91"]}`)}
+			if err := s.prepareTemplateGeneration(ctx, 42, &defaultDTO); err == nil {
 				t.Fatal("unavailable default silently fell back to another model")
+			}
+			overrideDTO := generateDTO{TemplateID: row.ID, ModelID: "fixture-image", Input: json.RawMessage(`{"imageIds":["91"]}`)}
+			if err := s.prepareTemplateGeneration(ctx, 42, &overrideDTO); err != nil {
+				t.Fatalf("available user override should remain usable: %v", err)
 			}
 			var owner model.User
 			if err := s.repo.db.First(&owner, 42).Error; err != nil {
@@ -706,6 +719,25 @@ func TestTemplateSetupDisclosesEffectiveSpecWithoutMintingPaidQuote(t *testing.T
 	}
 	if setup.MaxUploadBytes["image"] != 50*1024*1024 {
 		t.Fatal("wrong upload bound")
+	}
+	alternative := model.MarketModel{Name: "Alternative Image", ModelKey: "alternative-image", Type: "image", Status: 1, Price: decimal.NewFromInt(11), Config: `{"modes":["i2i"],"resolutions":["2k"],"ratios":["4:5"],"qualities":["high"]}`}
+	if err := s.repo.db.Create(&alternative).Error; err != nil {
+		t.Fatal(err)
+	}
+	row.SelectableModelKeys = []string{alternative.ModelKey}
+	if err := s.repo.db.Save(row).Error; err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	engine.ServeHTTP(w, httptest.NewRequest("GET", "/setup/"+row.ID.String()+"?modelId="+alternative.ID.String(), nil))
+	if err := json.Unmarshal(w.Body.Bytes(), &responseBody); err != nil || !responseBody.Success {
+		t.Fatal(w.Body.String())
+	}
+	if responseBody.Data.ModelName != alternative.Name || responseBody.Data.BasePointCost != 11 {
+		t.Fatalf("setup ignored selected model: %+v", responseBody.Data)
+	}
+	if len(responseBody.Data.AvailableModels) != 2 || responseBody.Data.AvailableModels[0].ModelName != "Fixture Image" || responseBody.Data.AvailableModels[1].ModelName != alternative.Name {
+		t.Fatalf("setup did not expose the configured model allowlist: %+v", responseBody.Data.AvailableModels)
 	}
 	s.repo.db.Model(&model.MarketModel{}).Where("model_key = ?", "fixture-image").Update("config", `{"modes":["i2i"],"maxRefImageSizeMB":2}`)
 	w = httptest.NewRecorder()

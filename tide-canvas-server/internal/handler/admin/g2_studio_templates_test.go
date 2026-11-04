@@ -31,6 +31,7 @@ func TestStudioTemplatesPublicationImportAndPermissions(t *testing.T) {
 	for _, row := range []model.MarketModel{
 		{BaseModel: model.BaseModel{ID: 501}, ModelKey: "image-test", Name: "Image display name", Type: "image", Status: 1, Config: `{"modes":["i2i"],"ratios":["1:1"],"resolutions":["2k"]}`},
 		{BaseModel: model.BaseModel{ID: 502}, ModelKey: "video-test", Name: "Video display name", Type: "video", Status: 1, Config: `{"modes":["omni_ref","i2v"],"durations":["5s"],"ratios":["1:1"]}`},
+		{BaseModel: model.BaseModel{ID: 503}, ModelKey: "image-alt", Name: "Alternative image", Type: "image", Status: 1, Config: `{"modes":["i2i"],"ratios":["1:1"],"resolutions":["2k"]}`},
 	} {
 		if err := db.Create(&row).Error; err != nil {
 			t.Fatal(err)
@@ -62,7 +63,7 @@ func TestStudioTemplatesPublicationImportAndPermissions(t *testing.T) {
 		}
 		return data
 	}
-	body := `{"kind":"style","mediaType":"image","title":"Clay","prompt":"clay style","mode":"i2i","coverUrl":"https://cdn.example.test/cover.png","requirements":{"images":1},"options":{"aspectRatio":"1:1"},"status":0,"category":"Portrait"}`
+	body := `{"kind":"style","mediaType":"image","title":"Clay","prompt":"clay style","mode":"i2i","coverUrl":"https://cdn.example.test/cover.png","selectableModelKeys":["image-alt"],"requirements":{"images":1},"options":{"aspectRatio":"1:1"},"status":0,"category":"Portrait"}`
 	draft := call("POST", "/admin/studio-templates", body, true)
 	if draft["success"] != true {
 		t.Fatal(draft)
@@ -83,8 +84,12 @@ func TestStudioTemplatesPublicationImportAndPermissions(t *testing.T) {
 	if err := db.First(&pinned, "id = ?", id).Error; err != nil {
 		t.Fatal(err)
 	}
-	if pinned.ModelKey != "image-test" || pinned.Options.Resolution != "2k" {
+	if pinned.ModelKey != "image-test" || pinned.Options.Resolution != "2k" || len(pinned.SelectableModelKeys) != 1 || pinned.SelectableModelKeys[0] != "image-alt" {
 		t.Fatalf("publication did not pin recipe: %+v", pinned)
+	}
+	badSelectable := strings.Replace(published, `"selectableModelKeys":["image-alt"]`, `"selectableModelKeys":["video-test"]`, 1)
+	if result := call("POST", "/admin/studio-templates", badSelectable, true); result["success"] == true {
+		t.Fatal("incompatible front-end model allowlist was published")
 	}
 	unsupported := strings.Replace(published, `"aspectRatio":"1:1"`, `"aspectRatio":"16:9"`, 1)
 	if result := call("POST", "/admin/studio-templates", unsupported, true); result["success"] == true {
@@ -111,6 +116,9 @@ func TestStudioTemplatesPublicationImportAndPermissions(t *testing.T) {
 	if _, exposed := list["data"].(map[string]any)["records"].([]any)[0].(map[string]any)["prompt"]; exposed {
 		t.Fatal("public template leaked prompt")
 	}
+	if _, exposed := list["data"].(map[string]any)["records"].([]any)[0].(map[string]any)["selectableModelKeys"]; exposed {
+		t.Fatal("public template leaked private model configuration")
+	}
 	// Downlisting must write zero and preserve the real counter.
 	if result := call("PUT", "/admin/studio-templates/"+id, body, true); result["success"] != true {
 		t.Fatal(result)
@@ -126,7 +134,7 @@ func TestStudioTemplatesPublicationImportAndPermissions(t *testing.T) {
 	if call("POST", "/admin/studio-templates", invalid, true)["code"] != float64(400) {
 		t.Fatal("unsafe media accepted")
 	}
-	video := strings.ReplaceAll(strings.ReplaceAll(published, `"mediaType":"image"`, `"mediaType":"video"`), `"mode":"i2i"`, `"mode":"i2v"`)
+	video := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(published, `"mediaType":"image"`, `"mediaType":"video"`), `"mode":"i2i"`, `"mode":"i2v"`), `"selectableModelKeys":["image-alt"]`, `"selectableModelKeys":[]`)
 	if result := call("POST", "/admin/studio-templates", video, true); result["success"] != true {
 		t.Fatal("video cover should publish without a preview", result)
 	}

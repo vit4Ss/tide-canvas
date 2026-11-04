@@ -16,6 +16,7 @@ export interface StudioTemplate {
   inputLabels?: { images?: string[]; videos?: string[]; audio?: string[] };
   mode: "t2i" | "i2i" | "t2v" | "i2v" | "flf" | "ref";
   modelKey: string;
+  selectableModelKeys?: string[];
   requirements: {
     images: number;
     videos: number;
@@ -36,7 +37,7 @@ export interface StudioTemplate {
 export type StudioTemplateSave = Omit<StudioTemplate, "id" | "uses">;
 export type PublicStudioTemplate = Omit<
   StudioTemplate,
-  "prompt" | "modelKey" | "status" | "sortOrder"
+  "prompt" | "modelKey" | "selectableModelKeys" | "status" | "sortOrder"
 >;
 export type PublicTemplatePage = PageData<PublicStudioTemplate> & {
   categories: string[];
@@ -51,6 +52,15 @@ export interface TemplateSetup {
   modelId: string;
   modelName: string;
   handler: string;
+  basePointCost: number;
+  referenceVideoBilling: boolean;
+  options: StudioTemplate["options"];
+  maxUploadBytes: Record<"image" | "video" | "audio", number>;
+  availableModels?: TemplateModelOption[];
+}
+export interface TemplateModelOption {
+  modelId: string;
+  modelName: string;
   basePointCost: number;
   referenceVideoBilling: boolean;
   options: StudioTemplate["options"];
@@ -157,14 +167,14 @@ export const studioTemplateApi = {
   list: (q: TemplateQuery, signal?: AbortSignal) =>
     http.get<PublicTemplatePage>(base, toParams(q), { signal }),
   get: (id: string) => http.get<PublicStudioTemplate>(`${base}/${id}`),
-  setup: (id: string, signal?: AbortSignal) =>
-    http.get<TemplateSetup>(`/api/ai/template-setup/${id}`, undefined, {
+  setup: (id: string, modelId?: string, signal?: AbortSignal) =>
+    http.get<TemplateSetup>(`/api/ai/template-setup/${id}`, toParams({ modelId }), {
       signal,
     }),
-  quote: (templateId: string, input: TemplateUploads, signal?: AbortSignal) =>
+  quote: (templateId: string, input: TemplateUploads, modelId?: string, signal?: AbortSignal) =>
     http.post<TemplateQuote>(
       "/api/ai/template-quote",
-      { templateId, input },
+      { templateId, input, ...(modelId ? { modelId } : {}) },
       { signal },
     ),
 };

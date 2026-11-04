@@ -3,12 +3,12 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowUpRight, Check, ChevronDown, Download, ImagePlus, Loader2, Maximize2, Music2, RefreshCw, Video, X } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Check, ChevronDown, Cpu, Download, ImagePlus, Loader2, Maximize2, Music2, RefreshCw, Video, X } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { aiApi, fileApi, uploadFileSmart } from "@/lib/api";
 import { commitAcceptedAiGeneration, recoverableAiGenerations, isAmbiguousAiCreateCode } from "@/lib/ai-generation-idempotency";
-import { studioTemplateApi, type PublicStudioTemplate, type TemplateQuote, type TemplateSetup, type TemplateUploads } from "@/lib/studio-template-api";
+import { studioTemplateApi, type PublicStudioTemplate, type TemplateModelOption, type TemplateQuote, type TemplateSetup, type TemplateUploads } from "@/lib/studio-template-api";
 import { templateInputs } from "@/lib/studio-template";
 import { TemplateMedia } from "@/components/studio/create-studio/template-media";
 import type { FileVO } from "@/types/file";
@@ -38,6 +38,8 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
   const [quoteRetry, setQuoteRetry] = useState(0);
   const [setup, setSetup] = useState<TemplateSetup | null>(null);
   const [setupError, setSetupError] = useState("");
+  const [availableModels, setAvailableModels] = useState<TemplateModelOption[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState("");
   const [hydratedSignature, setHydratedSignature] = useState("");
   const [draftNotice, setDraftNotice] = useState("");
   const [draftSaved, setDraftSaved] = useState(true);
@@ -76,13 +78,13 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
 
   useEffect(() => {
     let stopped = false;
-    void studioTemplateApi.setup(templateId, AbortSignal.timeout(15000)).then(res => {
+    void studioTemplateApi.setup(templateId, selectedModelId || undefined, AbortSignal.timeout(15000)).then(res => {
       if (stopped) return;
-      if (res.success && res.data?.modelId && res.data.options) { setSetup(res.data); setSetupError(""); }
-      else setSetupError(res.message || "暂时无法读取模板规格和基础积分");
+      if (res.success && res.data?.modelId && res.data.options) { setSetup(res.data); setAvailableModels(res.data.availableModels || []); setSetupError(""); }
+      else { setSetup(null); setSetupError(res.message || "所选模型暂时无法用于这个模板"); }
     }).catch(() => { if (!stopped) setSetupError("模板规格暂时无法读取，请重试"); });
     return () => { stopped = true; };
-  }, [templateId, reload]);
+  }, [templateId, selectedModelId, reload]);
 
   const recover = useCallback(async () => {
     if (!owner || !current()) { setRecovering(false); return; }
@@ -155,6 +157,12 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
   const files = useMemo(() => Object.fromEntries(Object.entries(uploads).filter(([, value]) => value.file && !value.busy && !value.unverified).map(([key, value]) => [key, value.file!])), [uploads]);
   const input = useMemo(() => templateUploadInput(slots, files), [slots, files]);
   const inputKey = JSON.stringify(input);
+  const modelChoices = availableModels;
+  const selectedModel = modelChoices.find(model => model.modelId === selectedModelId)
+    || modelChoices.find(model => model.modelId === setup?.modelId)
+    || null;
+  const modelRequestId = selectedModelId || selectedModel?.modelId || setup?.modelId || "";
+  const quoteKey = JSON.stringify({ input, modelId: modelRequestId });
   const anyUploading = Object.values(uploads).some(value => value.busy);
   const ready = !!row && !anyUploading && templateUploadsReady(row, slots, files);
   const uploadedCount = slots.filter(slot => !!files[slot.key]).length;
@@ -171,15 +179,15 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
       setQuoteLoading(true); setQuoteError(""); setQuote(null);
       deadline = setTimeout(() => { controller.abort(); if (current()) { setQuoteLoading(false); setQuoteError("确认积分超时，请检查网络后重试"); } }, 30000);
       try {
-        const res = await studioTemplateApi.quote(templateId, JSON.parse(inputKey) as TemplateUploads, controller.signal);
+        const res = await studioTemplateApi.quote(templateId, JSON.parse(inputKey) as TemplateUploads, modelRequestId || undefined, controller.signal);
         if (controller.signal.aborted || !current()) return;
-        if (res.success && res.data) setQuote({ ...res.data, inputKey });
+        if (res.success && res.data) setQuote({ ...res.data, inputKey: quoteKey });
         else setQuoteError(res.message || "暂时无法确认积分，请重试");
       } catch { if (!controller.signal.aborted && current()) setQuoteError("网络连接中断，未能确认本次积分"); }
       finally { clearTimeout(deadline); if (!controller.signal.aborted && current()) setQuoteLoading(false); }
     }, 120);
     return () => { clearTimeout(timer); clearTimeout(deadline); controller.abort(); };
-  }, [owner, ready, locked, row, templateId, inputKey, quoteRetry, current]);
+  }, [owner, ready, locked, row, templateId, inputKey, modelRequestId, quoteKey, quoteRetry, current]);
 
   useEffect(() => {
     if (!task?.id || task.status !== AiTaskStatus.PROCESSING) return;
@@ -221,7 +229,7 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
   };
 
   const generate = async () => {
-    if (!owner || !current() || !quote || quote.inputKey !== inputKey || !ready || locked || submitLock.current || uploadLocks.current.size) return;
+    if (!owner || !current() || !quote || quote.inputKey !== quoteKey || !ready || locked || submitLock.current || uploadLocks.current.size) return;
     submitLock.current = true; setSending(true); setError("");
     try {
       const res = await aiApi.generateIdempotent({ templateId, templateQuote: quote.quoteToken, handler: quote.handler, modelId: quote.modelId, input: { ...input } }, scope, {
@@ -277,7 +285,7 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
     {!processing && !loadError && <button className={css.secondary} onClick={() => void reset()}>再次使用这个模板</button>}
   </div>;
 
-  const validQuote = quote?.inputKey === inputKey && ready ? quote : null;
+  const validQuote = quote?.inputKey === quoteKey && ready ? quote : null;
   const outputText = templateOutputText(validQuote?.options || setup?.options);
   const expanded = previewExpanded || !!hasResult;
   const coverOnly = row?.mediaType === "video" && !row.previewUrl;
@@ -298,6 +306,22 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
           <div className={css.sectionHeading}><h2 id="materials-title">换上你的素材</h2>{owner && slots.length > 0 && <span className={ready ? css.uploadComplete : ""}>{ready && <Check size={14} />}{requiredSlots.length ? `必填 ${requiredUploaded} / ${requiredSlots.length} · 已上传 ${uploadedCount}` : `已上传 ${uploadedCount} 个素材`}</span>}</div>
           <p className={css.instructions}>{row.inputHint || "按下方要求上传你自己的素材，其他设置已为你准备好。"}</p>
           <div className={css.recipeSummary}><span>{templateInputs(row)}</span><ArrowUpRight size={15} /><span>生成{row.mediaType === "video" ? "视频" : "图片"}</span></div>
+          <div className={css.modelField}>
+            <div className={css.modelLabel}><label htmlFor="template-model"><Cpu size={16} />生成模型</label><span>切换后重新核算规格与积分</span></div>
+            <div className={css.modelSelect}>
+              <select id="template-model" aria-describedby="template-model-note" value={selectedModel?.modelId || ""} disabled={!modelChoices.length || sending || recovering || unresolved || !!task || anyUploading} onChange={event => {
+                const next = event.target.value;
+                if (!next || next === modelRequestId) return;
+                setSelectedModelId(next); setSetup(null); setSetupError(""); setQuote(null); setQuoteError(""); setError("");
+              }}>
+                {!modelChoices.length && <option value="">正在读取模板可选模型…</option>}
+                {!selectedModel && modelChoices.length > 0 && <option value="" disabled>选择生成模型</option>}
+                {modelChoices.map(model => <option key={model.modelId} value={model.modelId}>{model.modelName}</option>)}
+              </select>
+              <ChevronDown size={16} aria-hidden="true" />
+            </div>
+            <p id="template-model-note" className={css.modelNote}>{modelChoices.length > 1 ? `后台已为此模板开放 ${modelChoices.length} 个模型` : "当前模板仅开放默认模型"}</p>
+          </div>
           <p className={css.preflightInfo}>{validQuote ? `成品规格：${templateOutputText(validQuote.options)}` : setup ? `${setup.referenceVideoBilling ? "基础 " : "预计 "}${setup.basePointCost} 积分 · ${templateOutputText(setup.options)}` : setupError || "正在读取成品规格与基础积分…"}</p>
           {setup?.referenceVideoBilling && <p className={css.note}>如使用参考视频，其时长费用会在上传后一起核算。</p>}
           {setupError && <button className={css.textButton} onClick={() => setReload(v => v + 1)}>重新读取规格</button>}

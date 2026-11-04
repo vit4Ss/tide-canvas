@@ -135,16 +135,24 @@ func (h *studioTemplatesHandler) save(c *gin.Context) {
 			row = filled
 		}
 	}
-	if row.Status == 1 && !dto.FillFromPrompt {
-		setup, err := ai.CheckStudioTemplate(c.Request.Context(), h.db, row)
+	if row.Status == 1 {
+		if !dto.FillFromPrompt {
+			setup, err := ai.CheckStudioTemplate(c.Request.Context(), h.db, row)
+			if err != nil {
+				response.Fail(c, 400, "暂不能上架："+err.Error())
+				return
+			}
+			// Freeze the selected model and default output settings for a reusable
+			// recipe, rather than allowing catalog ordering to change the effect.
+			row.ModelKey = setup.ModelID
+			row.Options = setup.Options
+		}
+		var err error
+		row, err = validateSelectableTemplateModels(c.Request.Context(), h.db, row)
 		if err != nil {
 			response.Fail(c, 400, "暂不能上架："+err.Error())
 			return
 		}
-		// Freeze the selected model and default output settings for a reusable
-		// recipe, rather than allowing catalog ordering to change the effect.
-		row.ModelKey = setup.ModelID
-		row.Options = setup.Options
 	}
 	if c.Param("id") == "" {
 		if err := h.db.Create(&row).Error; err != nil {
@@ -156,7 +164,7 @@ func (h *studioTemplatesHandler) save(c *gin.Context) {
 		previousCover := old.CoverURL
 		previousStatus := old.Status
 		// Explicit fields include zero values, and never overwrite source/uses.
-		result := h.db.WithContext(c.Request.Context()).Model(&old).Where("COALESCE(cover_url,'') = ? AND status = ?", previousCover, previousStatus).Select("Kind", "MediaType", "Title", "Description", "Category", "Prompt", "CoverURL", "PreviewURL", "AuthorName", "InputHint", "InputLabels", "Mode", "ModelKey", "Requirements", "Options", "Status", "SortOrder").Updates(&row)
+		result := h.db.WithContext(c.Request.Context()).Model(&old).Where("COALESCE(cover_url,'') = ? AND status = ?", previousCover, previousStatus).Select("Kind", "MediaType", "Title", "Description", "Category", "Prompt", "CoverURL", "PreviewURL", "AuthorName", "InputHint", "InputLabels", "Mode", "ModelKey", "SelectableModelKeys", "Requirements", "Options", "Status", "SortOrder").Updates(&row)
 		if result.Error != nil {
 			response.Fail(c, 500, "保存模板失败")
 			return
@@ -198,6 +206,31 @@ func fillStudioTemplateFromPrompt(ctx context.Context, db *gorm.DB, row model.St
 	return row, nil
 }
 
+func validateSelectableTemplateModels(ctx context.Context, db *gorm.DB, row model.StudioTemplate) (model.StudioTemplate, error) {
+	resolved := make([]string, 0, len(row.SelectableModelKeys))
+	seen := map[string]bool{strings.TrimSpace(row.ModelKey): true}
+	for _, raw := range row.SelectableModelKeys {
+		key := strings.TrimSpace(raw)
+		if key == "" || seen[key] {
+			continue
+		}
+		candidate := row
+		candidate.ModelKey = key
+		candidate.SelectableModelKeys = nil
+		setup, err := ai.CheckStudioTemplate(ctx, db, candidate)
+		if err != nil {
+			return row, errors.New("前台可选模型「" + key + "」不兼容当前模板：" + err.Error())
+		}
+		if seen[setup.ModelID] {
+			continue
+		}
+		seen[key], seen[setup.ModelID] = true, true
+		resolved = append(resolved, setup.ModelID)
+	}
+	row.SelectableModelKeys = resolved
+	return row, nil
+}
+
 func (h *studioTemplatesHandler) check(c *gin.Context) {
 	c.Header("Cache-Control", "private, no-store")
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 128<<10)
@@ -221,6 +254,11 @@ func (h *studioTemplatesHandler) check(c *gin.Context) {
 	}
 	setup, err := ai.CheckStudioTemplate(c.Request.Context(), h.db, row)
 	if err != nil {
+		response.Fail(c, 400, err.Error())
+		return
+	}
+	row.ModelKey, row.Options = setup.ModelID, setup.Options
+	if _, err := validateSelectableTemplateModels(c.Request.Context(), h.db, row); err != nil {
 		response.Fail(c, 400, err.Error())
 		return
 	}

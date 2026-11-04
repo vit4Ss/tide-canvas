@@ -39,7 +39,7 @@ import {
   type TemplateCoverFilter,
 } from "@/lib/studio-template-api";
 import { TemplateMedia } from "@/components/studio/create-studio/template-media";
-import { templateInputs } from "@/lib/studio-template";
+import { templateInputs, templateModelChoices } from "@/lib/studio-template";
 import {
   copyTemplateDraft,
   templateCountRange,
@@ -85,6 +85,7 @@ function empty(
     inputLabels: {},
     mode: mediaType === "image" ? "i2i" : "i2v",
     modelKey: "",
+    selectableModelKeys: [],
     requirements: { images: 1, videos: 0, audio: 0 },
     options: {},
     status: 0,
@@ -698,7 +699,8 @@ function TemplateEditor({
   onSaved: (row: StudioTemplate) => void;
   onDraftSaved: (row: StudioTemplate) => void;
 }) {
-  const [form, setForm] = useState(() => withTemplatePromptDefaults(initial));
+  const normalizedInitial = withTemplatePromptDefaults({ ...initial, selectableModelKeys: initial.selectableModelKeys || [] });
+  const [form, setForm] = useState(() => normalizedInitial);
   const [promptDefaultError, setPromptDefaultError] = useState("");
   const [fillingPromptModel, setFillingPromptModel] = useState(false);
   const autoModelKey = useRef("");
@@ -743,7 +745,7 @@ function TemplateEditor({
   const checkElement = useRef<HTMLDivElement>(null);
   const saved = useRef(false);
   const signature = JSON.stringify(form);
-  const dirty = signature !== JSON.stringify(initial);
+  const dirty = signature !== JSON.stringify(normalizedInitial);
   const currentCheck =
     checked?.signature === signature ? checked.data : undefined;
   const selectedModel = models.find(
@@ -751,6 +753,16 @@ function TemplateEditor({
       model.type === form.mediaType &&
       (model.modelKey === form.modelKey || model.id === form.modelKey),
   );
+  const selectedModelKey = selectedModel ? templateModelChoiceKey(selectedModel, models) : form.modelKey;
+  const eligibleSelectableModels = templateModelChoices(form, models).filter(
+    (model) => templateModelChoiceKey(model, models) !== selectedModelKey,
+  );
+  const eligibleSelectableKeys = new Set(eligibleSelectableModels.map((model) => templateModelChoiceKey(model, models)));
+  const invalidSelectableKeys = (form.selectableModelKeys || []).filter((key) => !eligibleSelectableKeys.has(key));
+  const invalidSelectableModels = invalidSelectableKeys.map((key) => ({
+    key,
+    model: models.find((model) => templateModelChoiceKey(model, models) === key),
+  }));
   const requirementKinds = (["images", "videos", "audio"] as const).filter(
     (kind) => templateCountRange(form.mode, kind).max > 0,
   );
@@ -854,7 +866,7 @@ function TemplateEditor({
           const setup = result.data;
           autoModelKey.current = setup.modelId;
           setForm((old) => JSON.stringify(old) === signature
-            ? { ...old, modelKey: setup.modelId, options: setup.options }
+            ? { ...old, modelKey: setup.modelId, selectableModelKeys: (old.selectableModelKeys || []).filter((key) => key !== setup.modelId), options: setup.options }
             : old);
         } else setPromptDefaultError(result.message || "未能匹配 Seedance 2.5，请检查模型配置或手动选择。");
       } catch {
@@ -900,6 +912,10 @@ function TemplateEditor({
       setError("请先重新读取模型列表，确认所选模型可用后再检查配置。");
       return;
     }
+    if (invalidSelectableKeys.length) {
+      setError("请移除不兼容当前时长或输出规格的前台可选模型，再检查配置。");
+      return;
+    }
     busy.current = true;
     setChecking(true);
     setError("");
@@ -912,6 +928,7 @@ function TemplateEditor({
           const resolved = {
             ...form,
             modelKey: res.data.modelId,
+            selectableModelKeys: (form.selectableModelKeys || []).filter((key) => key !== res.data.modelId),
             options: res.data.options,
           };
           setForm(resolved);
@@ -1036,6 +1053,10 @@ function TemplateEditor({
       setError("请先重新读取模型列表，确认所选模型可用后再上架。");
       return false;
     }
+    if ((form.status === 1 || publish) && invalidSelectableKeys.length) {
+      setError("请移除不兼容当前时长或输出规格的前台可选模型，再上架。");
+      return false;
+    }
     busy.current = true;
     setSaving(true);
     setSavingPromptDefaults(fillFromPrompt);
@@ -1100,7 +1121,8 @@ function TemplateEditor({
         modelsLoading ||
         (form.status === 1 &&
           !!form.modelKey &&
-          (!!modelError || !selectedModel))
+          (!!modelError || !selectedModel)) ||
+        (form.status === 1 && invalidSelectableKeys.length > 0)
       }
       saveLabel={form.status === 1 ? "保存并上架" : "保存草稿"}
       footNote={
@@ -1483,8 +1505,8 @@ function TemplateEditor({
               label="默认生成模型"
               hint={
                 form.modelKey
-                  ? "用户使用此模板时按所选模型生成，积分按该模型计费。切换模型后请重新检查输出规格。"
-                  : "未指定时，上架会自动选择兼容模型并保存，用户之后使用该模型生成。"
+                  ? "默认模型决定模板的标准输出规格；下方可继续配置用户能够切换的其他模型。"
+                  : "未指定时，上架会自动选择兼容模型并保存，再配置前台可选模型。"
               }
               error={
                 form.modelKey && !modelsLoading && !modelError && !selectedModel
@@ -1522,6 +1544,7 @@ function TemplateEditor({
                   setForm((old) => ({
                     ...old,
                     modelKey: v,
+                    selectableModelKeys: (old.selectableModelKeys || []).filter((key) => key !== v),
                     options: chosen
                       ? templateOptionsForModel(
                           old.options,
@@ -1560,6 +1583,34 @@ function TemplateEditor({
                 </button>
               </p>
             )}
+            <div className={css.modelAllowlist} aria-labelledby="selectable-models-title">
+              <div className={css.modelAllowlistHeading}>
+                <div>
+                  <strong id="selectable-models-title">前台可选模型</strong>
+                  <span>{form.options.duration ? `仅显示支持当前 ${form.options.duration} 秒及输出规格的模型` : "仅显示兼容当前模式与输出规格的模型"}</span>
+                </div>
+                <small>{selectedModel ? 1 + (form.selectableModelKeys || []).length : 0} 个已开放</small>
+              </div>
+              {!selectedModel ? <p className={css.note}>先选择默认生成模型，才能配置用户可切换的模型。</p> : <div className={css.modelAllowlistRows}>
+                <label className={css.modelAllowlistRow} data-default>
+                  <input type="checkbox" aria-label={`默认开放${selectedModel.name}`} checked disabled />
+                  <span><strong>{selectedModel.name}</strong><small>默认模型 · 始终开放</small></span>
+                </label>
+                {eligibleSelectableModels.map((model) => {
+                  const key = templateModelChoiceKey(model, models);
+                  const checked = (form.selectableModelKeys || []).includes(key);
+                  return <label key={model.id} className={css.modelAllowlistRow} data-selected={checked || undefined}>
+                    <input type="checkbox" aria-label={`允许用户选择${model.name}`} checked={checked} onChange={(event) => setForm((old) => ({ ...old, selectableModelKeys: event.target.checked ? [...(old.selectableModelKeys || []), key] : (old.selectableModelKeys || []).filter((value) => value !== key) }))} />
+                    <span><strong>{model.name}</strong><small>{model.pointCost ? `${model.pointCost} 积分起` : "按模型配置计费"}{form.options.duration ? ` · 支持 ${form.options.duration} 秒` : ""}</small></span>
+                  </label>;
+                })}
+                {invalidSelectableModels.map(({ key, model }) => <label key={key} className={css.modelAllowlistRow} data-invalid>
+                  <input type="checkbox" aria-label={`移除不兼容模型${model?.name || key}`} checked onChange={() => setForm((old) => ({ ...old, selectableModelKeys: (old.selectableModelKeys || []).filter((value) => value !== key) }))} />
+                  <span><strong>{model?.name || key}</strong><small>不兼容当前时长或输出规格，请取消勾选</small></span>
+                </label>)}
+                {!eligibleSelectableModels.length && !invalidSelectableModels.length && <p className={css.note}>当前没有其他模型同时满足这套模板规格。</p>}
+              </div>}
+            </div>
             {!selectedModel && !modelsLoading && !modelError && (
               <p className={css.note}>
                 先选择默认生成模型，再配置对应参数；自动模式可点击「检查生成配置」确定模型。
@@ -1672,7 +1723,8 @@ function TemplateEditor({
               className="adm-btn ghost"
               disabled={
                 modelsLoading ||
-                (!!form.modelKey && (!!modelError || !selectedModel))
+                (!!form.modelKey && (!!modelError || !selectedModel)) ||
+                invalidSelectableKeys.length > 0
               }
               onClick={() => void check()}
             >
