@@ -35,15 +35,16 @@ test("image-to-video automatically exposes the mandatory first image", () => {
   assert.equal(templateUploadSlots(recipe("i2v")).length, 1);
 });
 
-test("model choices keep only compatible, available template models", () => {
+test("model choices ignore template resolution because users choose per model", () => {
   const row = { mediaType: "image", mode: "i2i", requirements: { images: 1, videos: 0, audio: 0 }, options: { aspectRatio: "4:5", resolution: "2k", quality: "high" } };
   const models = [
     { id: "1", name: "Compatible", modelKey: "ok", type: "image", desc: "", pointCost: "7", config: { modes: ["i2i"], ratios: ["4:5"], resolutions: ["2k"], qualities: ["high"] } },
     { id: "2", name: "Wrong mode", modelKey: "t2i", type: "image", desc: "", pointCost: "5", config: { modes: ["t2i"] } },
     { id: "3", name: "Wrong ratio", modelKey: "square", type: "image", desc: "", pointCost: "5", config: { modes: ["i2i"], ratios: ["1:1"] } },
     { id: "4", name: "Maintenance", modelKey: "paused", type: "image", desc: "", pointCost: "5", config: { modes: ["i2i"], availabilityStatus: "maintenance" } },
+    { id: "5", name: "Different resolution", modelKey: "4k-only", type: "image", desc: "", pointCost: "9", config: { modes: ["i2i"], ratios: ["4:5"], resolutions: ["4k"], qualities: ["high"] } },
   ];
-  assert.deepEqual(templateModelChoices(row, models).map(model => model.id), ["1"]);
+  assert.deepEqual(templateModelChoices(row, models).map(model => model.id), ["1", "5"]);
 });
 
 test("optional portrait does not shift product and workshop image positions",()=>{

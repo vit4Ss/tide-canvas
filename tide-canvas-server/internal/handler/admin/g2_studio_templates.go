@@ -146,6 +146,7 @@ func (h *studioTemplatesHandler) save(c *gin.Context) {
 			// recipe, rather than allowing catalog ordering to change the effect.
 			row.ModelKey = setup.ModelID
 			row.Options = setup.Options
+			row.Options.Resolution = ""
 		}
 		var err error
 		row, err = validateSelectableTemplateModels(c.Request.Context(), h.db, row)
@@ -203,6 +204,7 @@ func fillStudioTemplateFromPrompt(ctx context.Context, db *gorm.DB, row model.St
 		return row, err
 	}
 	row.ModelKey, row.Options = setup.ModelID, setup.Options
+	row.Options.Resolution = ""
 	return row, nil
 }
 
@@ -217,6 +219,7 @@ func validateSelectableTemplateModels(ctx context.Context, db *gorm.DB, row mode
 		candidate := row
 		candidate.ModelKey = key
 		candidate.SelectableModelKeys = nil
+		candidate.Options.Resolution = ""
 		setup, err := ai.CheckStudioTemplate(ctx, db, candidate)
 		if err != nil {
 			return row, errors.New("前台可选模型「" + key + "」不兼容当前模板：" + err.Error())
@@ -258,6 +261,7 @@ func (h *studioTemplatesHandler) check(c *gin.Context) {
 		return
 	}
 	row.ModelKey, row.Options = setup.ModelID, setup.Options
+	row.Options.Resolution = ""
 	if _, err := validateSelectableTemplateModels(c.Request.Context(), h.db, row); err != nil {
 		response.Fail(c, 400, err.Error())
 		return
@@ -441,7 +445,6 @@ func (h *studioTemplatesHandler) fromTask(c *gin.Context) {
 	// Only an allowlist of generation options is copied. Reference URLs, user
 	// identity, private workflow prompts and provider payloads stay private.
 	row.Options.AspectRatio, _ = in["aspectRatio"].(string)
-	row.Options.Resolution, _ = in["resolution"].(string)
 	row.Options.Quality, _ = in["quality"].(string)
 	if value, ok := in["duration"].(float64); ok && value > 0 && value <= 600 {
 		row.Options.Duration = value

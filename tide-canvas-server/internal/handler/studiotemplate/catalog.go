@@ -221,7 +221,9 @@ func (d *SaveDTO) Validate() error {
 	}
 	d.SelectableModelKeys = selectableModels
 	d.Options.AspectRatio = strings.TrimSpace(d.Options.AspectRatio)
-	d.Options.Resolution = strings.TrimSpace(d.Options.Resolution)
+	// Template resolution is selected by the user from the chosen model's
+	// configured list at runtime, never authored or persisted by operators.
+	d.Options.Resolution = ""
 	d.Options.Quality = strings.TrimSpace(d.Options.Quality)
 	d.Options = model.WithTemplatePromptDefaults(d.Row()).Options
 	if d.Title == "" {

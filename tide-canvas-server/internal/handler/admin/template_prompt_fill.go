@@ -93,6 +93,7 @@ func (h *studioTemplatesHandler) fillFromPrompts(c *gin.Context) {
 					err = checkErr
 					if err == nil {
 						filled.ModelKey, filled.Options = setup.ModelID, setup.Options
+						filled.Options.Resolution = ""
 					}
 				}
 			} else {
@@ -134,16 +135,11 @@ func (h *studioTemplatesHandler) fillFromPrompts(c *gin.Context) {
 	response.OK(c, gin.H{"total": len(items), "counts": counts, "items": items, "publish": request.Publish})
 }
 
-// Applied only by autofill, not when running an existing recipe. Re-clicking
-// upgrades the old 480p default, while retaining higher or other explicit sizes.
+// Applied only by autofill, not when running an existing recipe. Resolution is
+// selected by the user from the chosen model's live configuration at runtime.
 func templateFillDefaults(row model.StudioTemplate) model.StudioTemplate {
 	row = model.WithTemplatePromptDefaults(row)
-	if row.MediaType == "video" {
-		switch strings.ToLower(strings.TrimSpace(row.Options.Resolution)) {
-		case "", "480", "480p":
-			row.Options.Resolution = "720p"
-		}
-	}
+	row.Options.Resolution = ""
 	return row
 }
 

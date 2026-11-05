@@ -48,6 +48,7 @@ type templateSetupVO struct {
 	ReferenceVideoBilling bool                        `json:"referenceVideoBilling"`
 	Options               model.StudioTemplateOptions `json:"options"`
 	MaxUploadBytes        map[string]int64            `json:"maxUploadBytes"`
+	Resolutions           []string                    `json:"resolutions"`
 	AvailableModels       []templateModelOptionVO     `json:"availableModels,omitempty"`
 }
 
@@ -58,6 +59,7 @@ type templateModelOptionVO struct {
 	ReferenceVideoBilling bool                        `json:"referenceVideoBilling"`
 	Options               model.StudioTemplateOptions `json:"options"`
 	MaxUploadBytes        map[string]int64            `json:"maxUploadBytes"`
+	Resolutions           []string                    `json:"resolutions"`
 }
 
 func templateError(message string) error { return skillPlacementError{message: message} }
@@ -106,6 +108,10 @@ func (s *service) prepareTemplateRecipe(ctx context.Context, uid idgen.ID, dto *
 
 func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *generateDTO, row model.StudioTemplate, setupOnly bool) error {
 	row = model.WithTemplatePromptDefaults(row)
+	dto.TemplateResolution = strings.TrimSpace(dto.TemplateResolution)
+	if len(dto.TemplateResolution) > 32 {
+		return templateError("所选分辨率无效，请重新选择")
+	}
 	handler := map[string]string{"t2i": "text_to_image", "i2i": "image_to_image", "t2v": "text_to_video", "i2v": "image_to_video", "flf": "start_end_to_video", "ref": "reference_to_video"}[row.Mode]
 	if handler == "" || strings.TrimSpace(row.Prompt) == "" || (row.MediaType != "image" && row.MediaType != "video") {
 		return templateError("模板配置不完整，请联系管理员")
@@ -329,7 +335,7 @@ func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *gen
 			// for quote/submission; an incomplete candidate must not hide a
 			// later model which can execute this recipe.
 			candidateInput := decodeInput(candidate.Input)
-			if applyTemplateModelOptions(row, cfg, candidateInput) != nil {
+			if applyTemplateModelOptions(row, cfg, candidateInput, dto.TemplateResolution) != nil {
 				continue
 			}
 			candidate.Input, _ = json.Marshal(candidateInput)
@@ -364,7 +370,7 @@ func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *gen
 			return templateError(fmt.Sprintf("模板所用模型要求单个%s不超过 %g MB，请压缩后重新上传", map[string]string{"image": "图片", "video": "视频", "audio": "音频"}[kind], float64(limit)/(1024*1024)))
 		}
 	}
-	if err := applyTemplateModelOptions(row, cfg, input); err != nil {
+	if err := applyTemplateModelOptions(row, cfg, input, dto.TemplateResolution); err != nil {
 		return err
 	}
 	dto.Handler = handler
@@ -403,7 +409,7 @@ func (s *service) prepareTemplateRow(ctx context.Context, uid idgen.ID, dto *gen
 	return nil
 }
 
-func applyTemplateModelOptions(row model.StudioTemplate, cfg map[string]any, input map[string]any) error {
+func applyTemplateModelOptions(row model.StudioTemplate, cfg map[string]any, input map[string]any, requestedResolution string) error {
 	pick := func(value, key string) (string, error) {
 		options := inputStrings(cfg, key)
 		for _, option := range options {
@@ -421,7 +427,6 @@ func applyTemplateModelOptions(row model.StudioTemplate, cfg map[string]any, inp
 	}
 	for _, spec := range []struct{ field, config, value string }{
 		{"aspectRatio", "ratios", row.Options.AspectRatio},
-		{"resolution", "resolutions", row.Options.Resolution},
 	} {
 		value, err := pick(spec.value, spec.config)
 		if err != nil {
@@ -430,6 +435,24 @@ func applyTemplateModelOptions(row model.StudioTemplate, cfg map[string]any, inp
 		if value != "" {
 			input[spec.field] = value
 		}
+	}
+	resolutionOptions := inputStrings(cfg, "resolutions")
+	resolution := ""
+	if requestedResolution != "" {
+		for _, option := range resolutionOptions {
+			if strings.EqualFold(requestedResolution, strings.TrimSpace(option)) {
+				resolution = option
+				break
+			}
+		}
+		if resolution == "" {
+			return templateError(fmt.Sprintf("所选模型不支持分辨率「%s」，请重新选择", requestedResolution))
+		}
+	} else if len(resolutionOptions) > 0 {
+		resolution = resolutionOptions[0]
+	}
+	if resolution != "" {
+		input["resolution"] = resolution
 	}
 	if row.MediaType == "image" {
 		value, err := pick(row.Options.Quality, "qualities")
@@ -488,7 +511,7 @@ func templatePromptLimitError(row model.StudioTemplate, dto *generateDTO, select
 }
 
 func templateModelSupportsRequestedOptions(row model.StudioTemplate, cfg map[string]any) bool {
-	for _, spec := range []struct{ key, value string }{{"ratios", row.Options.AspectRatio}, {"resolutions", row.Options.Resolution}, {"qualities", row.Options.Quality}} {
+	for _, spec := range []struct{ key, value string }{{"ratios", row.Options.AspectRatio}, {"qualities", row.Options.Quality}} {
 		if strings.TrimSpace(spec.value) == "" {
 			continue
 		}
@@ -580,6 +603,7 @@ func (h *handler) templateSetup(c *gin.Context) {
 		return
 	}
 	requested := strings.TrimSpace(c.Query("modelId"))
+	requestedResolution := strings.TrimSpace(c.Query("resolution"))
 	candidates := configuredTemplateModelKeys(row)
 	if requested != "" {
 		candidates = []string{requested}
@@ -589,7 +613,7 @@ func (h *handler) templateSetup(c *gin.Context) {
 	var dto generateDTO
 	var prepareErr error
 	for _, key := range candidates {
-		candidate := generateDTO{TemplateID: id, ModelID: key, Input: json.RawMessage(`{}`)}
+		candidate := generateDTO{TemplateID: id, ModelID: key, TemplateResolution: requestedResolution, Input: json.RawMessage(`{}`)}
 		if err := h.svc.prepareTemplateRow(c.Request.Context(), 0, &candidate, row, true); err != nil {
 			prepareErr = err
 			continue
@@ -622,7 +646,7 @@ func (h *handler) templateSetup(c *gin.Context) {
 			continue
 		}
 		seen[available.ModelID] = true
-		setup.AvailableModels = append(setup.AvailableModels, templateModelOptionVO{ModelID: available.ModelID, ModelName: available.ModelName, BasePointCost: available.BasePointCost, ReferenceVideoBilling: available.ReferenceVideoBilling, Options: available.Options, MaxUploadBytes: available.MaxUploadBytes})
+		setup.AvailableModels = append(setup.AvailableModels, templateModelOptionVO{ModelID: available.ModelID, ModelName: available.ModelName, BasePointCost: available.BasePointCost, ReferenceVideoBilling: available.ReferenceVideoBilling, Options: available.Options, MaxUploadBytes: available.MaxUploadBytes, Resolutions: available.Resolutions})
 	}
 	response.OK(c, setup)
 }
@@ -644,7 +668,7 @@ func (s *service) templateSetupResult(ctx context.Context, dto *generateDTO) (te
 	for _, kind := range []string{"image", "video", "audio"} {
 		limits[kind] = templateUploadLimit(cfg, dto.templateSnapshot.Mode, kind)
 	}
-	return templateSetupVO{ModelID: dto.ModelID, ModelName: m.Name, Handler: dto.Handler, BasePointCost: resolveCost(m, dto.Input), ReferenceVideoBilling: referenceVideoPricing(m) && dto.Handler == "reference_to_video", Options: templateOutputOptions(*dto), MaxUploadBytes: limits}, nil
+	return templateSetupVO{ModelID: dto.ModelID, ModelName: m.Name, Handler: dto.Handler, BasePointCost: resolveCost(m, dto.Input), ReferenceVideoBilling: referenceVideoPricing(m) && dto.Handler == "reference_to_video", Options: templateOutputOptions(*dto), MaxUploadBytes: limits, Resolutions: inputStrings(cfg, "resolutions")}, nil
 }
 
 // CheckStudioTemplate runs the runtime's model/spec/price checks on an unsaved
@@ -664,7 +688,6 @@ func CheckStudioTemplate(ctx context.Context, db *gorm.DB, row model.StudioTempl
 	}
 	for _, spec := range []struct{ label, requested, resolved string }{
 		{"画面比例", row.Options.AspectRatio, setup.Options.AspectRatio},
-		{"分辨率", row.Options.Resolution, setup.Options.Resolution},
 		{"质量", row.Options.Quality, setup.Options.Quality},
 	} {
 		if strings.TrimSpace(spec.requested) != "" && !strings.EqualFold(strings.TrimSpace(spec.requested), spec.resolved) {

@@ -24,7 +24,7 @@ func TestPropertyPackUsesSeedance720pOwnedReferencesAndQuotedPrice(t *testing.T)
 	}
 	if err := s.repo.db.Model(&model.MarketModel{}).Where("model_key = ?", "fixture-video").Updates(map[string]any{
 		"name":   "Seedance 2.5",
-		"config": `{"modes":["omni_ref"],"durations":["15s","30s"],"ratios":["9:16"],"resolutions":["480p","720p","1080p"],"refLimits":{"omniRef.imageCount":5},"maxPromptChars":6000,"videoBillingMode":"per_request","pricePerRequestByResolution":{"480p":3,"720p":7,"1080p":19}}`,
+		"config": `{"modes":["omni_ref"],"durations":["15s","30s"],"ratios":["9:16"],"resolutions":["720p","480p","1080p"],"refLimits":{"omniRef.imageCount":5},"maxPromptChars":6000,"videoBillingMode":"per_request","pricePerRequestByResolution":{"480p":3,"720p":7,"1080p":19}}`,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}

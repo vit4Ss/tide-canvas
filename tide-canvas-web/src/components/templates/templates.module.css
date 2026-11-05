@@ -81,17 +81,18 @@
 .workshopHeading p { margin: 8px 0 0; color: var(--template-muted); font-size: 14px; line-height: 1.7; max-width: 64ch; }
 .workshopHeading > span { color: var(--template-muted); font-size: 12px; white-space: nowrap; }
 .recipeSummary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--template-accent); font-size: 12px; line-height: 1.6; margin: 12px 0; }
-.modelField { margin: 20px 0 12px; padding: 16px; border: 1px solid var(--template-line); border-radius: 10px; background: linear-gradient(180deg, #1a1a1e 0%, var(--template-raised) 100%); box-shadow: inset 0 1px #ffffff0a; }
+.modelField { margin: 20px 0 12px; padding: 16px; border: 1px solid var(--template-line); border-radius: 10px; background: linear-gradient(180deg, color-mix(in srgb, var(--template-raised) 98%, var(--text) 2%) 0%, var(--template-raised) 100%); box-shadow: inset 0 1px color-mix(in srgb, var(--text) 4%, transparent); }
 .modelLabel { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .modelLabel label { display: inline-flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; font-weight: 600; }
 .modelLabel label svg { color: var(--template-accent); }
 .modelLabel > span { color: var(--template-muted); font-size: 11px; text-align: right; }
 .modelSelect { position: relative; }
-.modelSelect select { width: 100%; min-height: 44px; padding: 0 40px 0 12px; appearance: none; border: 1px solid #44444b; border-radius: 8px; background: #101013; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
-.modelSelect select:hover:not(:disabled) { border-color: #686872; }
+.modelSelect select { width: 100%; min-height: 44px; padding: 0 40px 0 12px; appearance: none; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.modelSelect select:hover:not(:disabled) { border-color: var(--text-faint); }
 .modelSelect select:disabled { color: var(--template-muted); cursor: not-allowed; }
 .modelSelect > svg { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); color: var(--template-muted); pointer-events: none; }
 .modelNote { min-height: 18px; margin: 8px 0 0; color: var(--template-muted); font-size: 11px; line-height: 1.6; }
+.modelDivider { height: 1px; margin: 14px 0; background: var(--template-line); }
 .modelField > .textButton { min-height: 36px; padding-bottom: 0; }
 .preflightInfo { min-height: 40px; color: var(--template-muted); font-size: 12px; line-height: 1.75; margin: 0 0 12px; }
 .quoteDetail { min-height: 64px; padding-top: 8px; }

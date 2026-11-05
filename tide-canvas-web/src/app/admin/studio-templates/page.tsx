@@ -67,6 +67,11 @@ const modeLabels = {
   ref: "多模态参考视频",
 };
 const PAGE_SIZE = 18;
+const withoutTemplateResolution = (options: StudioTemplate["options"]): StudioTemplate["options"] => {
+  const next = { ...options };
+  delete next.resolution;
+  return next;
+};
 function empty(
   kind: "style" | "inspiration",
   mediaType: "image" | "video",
@@ -767,15 +772,16 @@ function TemplateEditor({
     (kind) => templateCountRange(form.mode, kind).max > 0,
   );
   const parameterFields = selectedModel
-    ? templateParameterFields(form.mediaType, selectedModel.config)
+    ? templateParameterFields(form.mediaType, selectedModel.config).filter((field) => field.key !== "resolution")
     : [];
   const requestForm = (resolveDefaults = true) => {
-    if (!selectedModel) return form;
-    const options = resolveDefaults ? templateOptionsForRequest(
+    if (!selectedModel) return { ...form, options: withoutTemplateResolution(form.options) };
+    const resolvedOptions = resolveDefaults ? templateOptionsForRequest(
       form.options,
       form.mediaType,
       selectedModel.config,
     ) : form.options;
+    const options = withoutTemplateResolution(resolvedOptions);
     const modelKey = form.modelKey === selectedModel.id
       ? selectedModel.id : templateModelChoiceKey(selectedModel, models);
     return { ...form, modelKey, options };
@@ -860,13 +866,13 @@ function TemplateEditor({
       try {
         // Reuse the server's free validator, including reference/price checks,
         // rather than choosing a similarly named but incompatible model here.
-        const result = await api.check({ ...form, title: form.title.trim() || "视频模板", status: 0 }, true);
+        const result = await api.check({ ...form, title: form.title.trim() || "视频模板", status: 0, options: withoutTemplateResolution(form.options) }, true);
         if (cancelled || !alive.current || busy.current) return;
         if (result.success && result.data) {
           const setup = result.data;
           autoModelKey.current = setup.modelId;
           setForm((old) => JSON.stringify(old) === signature
-            ? { ...old, modelKey: setup.modelId, selectableModelKeys: (old.selectableModelKeys || []).filter((key) => key !== setup.modelId), options: setup.options }
+            ? { ...old, modelKey: setup.modelId, selectableModelKeys: (old.selectableModelKeys || []).filter((key) => key !== setup.modelId), options: withoutTemplateResolution(setup.options) }
             : old);
         } else setPromptDefaultError(result.message || "未能匹配 Seedance 2.5，请检查模型配置或手动选择。");
       } catch {
@@ -929,7 +935,7 @@ function TemplateEditor({
             ...form,
             modelKey: res.data.modelId,
             selectableModelKeys: (form.selectableModelKeys || []).filter((key) => key !== res.data.modelId),
-            options: res.data.options,
+            options: withoutTemplateResolution(res.data.options),
           };
           setForm(resolved);
           setChecked({ signature: JSON.stringify(resolved), data: res.data });
@@ -1238,7 +1244,7 @@ function TemplateEditor({
                     {savingPromptDefaults ? "正在填充并上架…" : "自动填充并上架"}
                   </button>
                 </div>
-                <p className={css.note}>补齐模型与参数后上架；清晰度未设置或为480p时更新为720p，其他已设清晰度保留。失败不修改原内容，不生成、不扣积分。</p>
+                <p className={css.note}>补齐默认模型、比例与时长后上架；分辨率由用户在模板页按模型支持范围选择。失败不修改原内容，不生成、不扣积分。</p>
               </>
             )}
             <Field label="用户需要上传什么">
@@ -1546,12 +1552,12 @@ function TemplateEditor({
                     modelKey: v,
                     selectableModelKeys: (old.selectableModelKeys || []).filter((key) => key !== v),
                     options: chosen
-                      ? templateOptionsForModel(
+                      ? withoutTemplateResolution(templateOptionsForModel(
                           old.options,
                           old.mediaType,
                           chosen.config,
-                        )
-                      : old.options,
+                        ))
+                      : withoutTemplateResolution(old.options),
                   }));
                 }}
               />
@@ -1611,6 +1617,7 @@ function TemplateEditor({
                 {!eligibleSelectableModels.length && !invalidSelectableModels.length && <p className={css.note}>当前没有其他模型同时满足这套模板规格。</p>}
               </div>}
             </div>
+            <p className={css.note}>分辨率无需在模板后台配置；用户选择模型后，前台会读取模型管理中的可用分辨率，并默认选中第一项。</p>
             {!selectedModel && !modelsLoading && !modelError && (
               <p className={css.note}>
                 先选择默认生成模型，再配置对应参数；自动模式可点击「检查生成配置」确定模型。

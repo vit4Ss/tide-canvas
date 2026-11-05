@@ -84,7 +84,7 @@ func TestStudioTemplatesPublicationImportAndPermissions(t *testing.T) {
 	if err := db.First(&pinned, "id = ?", id).Error; err != nil {
 		t.Fatal(err)
 	}
-	if pinned.ModelKey != "image-test" || pinned.Options.Resolution != "2k" || len(pinned.SelectableModelKeys) != 1 || pinned.SelectableModelKeys[0] != "image-alt" {
+	if pinned.ModelKey != "image-test" || pinned.Options.Resolution != "" || len(pinned.SelectableModelKeys) != 1 || pinned.SelectableModelKeys[0] != "image-alt" {
 		t.Fatalf("publication did not pin recipe: %+v", pinned)
 	}
 	badSelectable := strings.Replace(published, `"selectableModelKeys":["image-alt"]`, `"selectableModelKeys":["video-test"]`, 1)

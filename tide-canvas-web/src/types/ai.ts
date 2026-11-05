@@ -4,6 +4,7 @@ export interface AiGenerateDTO {
 	/** Private recipe executed server-side; input contains owned upload IDs only. */
 	templateId?: string;
 	templateQuote?: string;
+	templateResolution?: string;
   handler: string;
   modelId: string;
   projectId?: string | number;

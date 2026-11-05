@@ -40,14 +40,16 @@ func TestTemplateSelectedParametersReachProviderWithUserReferences(t *testing.T)
 			s, row, p := templateFixture(t)
 			row.MediaType = media
 			row.ModelKey = "fixture-" + media
+			selectedResolution := "4k"
 			if media == "image" {
 				row.Mode = "i2i"
-				row.Options = model.StudioTemplateOptions{AspectRatio: "9:16", Resolution: "4k", Quality: "high", BatchCount: 3}
+				row.Options = model.StudioTemplateOptions{AspectRatio: "9:16", Quality: "high", BatchCount: 3}
 				s.repo.db.Model(&model.MarketModel{}).Where("model_key = ?", row.ModelKey).Update("config", `{"modes":["i2i"],"ratios":["1:1","9:16"],"resolutions":["2k","4k"],"qualities":["low","high"],"batchOptions":[1,4],"priceMatrix":{"low":{"2k":2,"4k":3},"high":{"2k":4,"4k":9}}}`)
 				p.urls = []string{"https://fixture.test/result.png", "https://fixture.test/second.png", "https://fixture.test/third.png"}
 			} else {
 				row.Mode = "i2v"
-				row.Options = model.StudioTemplateOptions{AspectRatio: "9:16", Resolution: "1080p", Duration: 4.5}
+				row.Options = model.StudioTemplateOptions{AspectRatio: "9:16", Duration: 4.5}
+				selectedResolution = "1080p"
 				s.repo.db.Model(&model.MarketModel{}).Where("model_key = ?", row.ModelKey).Update("config", `{"modes":["i2v"],"ratios":["16:9","9:16"],"resolutions":["720p","1080p"],"durations":["5s","4.5s"],"priceMatrix":{"5s":{"720p":10,"1080p":12},"4.5s":{"720p":11,"1080p":17}}}`)
 			}
 			if err := s.repo.db.Save(row).Error; err != nil {
@@ -57,23 +59,23 @@ func TestTemplateSelectedParametersReachProviderWithUserReferences(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			q := quoteTemplate(t, s, row.ID, `{"imageIds":["91"]}`)
+			q := quoteTemplateWithResolution(t, s, row.ID, `{"imageIds":["91"]}`, selectedResolution)
 			wantCost := 27
 			if media == "video" {
 				wantCost = 17
 			}
-			if q.PointCost != wantCost || q.Options != setup.Options {
+			if q.PointCost != wantCost || q.Options.Resolution != selectedResolution || setup.Options.Resolution == selectedResolution {
 				t.Fatalf("wrong authoritative quote: %+v", q)
 			}
 			register := false
-			dto := generateDTO{TemplateID: row.ID, TemplateQuote: q.QuoteToken, ModelID: q.ModelID, Handler: q.Handler, Input: json.RawMessage(`{"imageIds":["91"]}`), RegisterWork: &register}
+			dto := generateDTO{TemplateID: row.ID, TemplateQuote: q.QuoteToken, TemplateResolution: selectedResolution, ModelID: q.ModelID, Handler: q.Handler, Input: json.RawMessage(`{"imageIds":["91"]}`), RegisterWork: &register}
 			vo, err := s.generate(context.Background(), 42, dto)
 			if err != nil {
 				t.Fatal(err)
 			}
 			select {
 			case req := <-p.seen:
-				if req.Input["prompt"] != row.Prompt || inputStr(req.Input, "resolution") != row.Options.Resolution || inputStr(req.Input, "aspectRatio") != "9:16" {
+				if req.Input["prompt"] != row.Prompt || inputStr(req.Input, "resolution") != selectedResolution || inputStr(req.Input, "aspectRatio") != "9:16" {
 					t.Fatalf("lost saved recipe: %+v", req.Input)
 				}
 				if refs := inputImageURLs(req.Input); len(refs) != 1 || refs[0] != "https://fixture.test/input.png" {
@@ -134,12 +136,12 @@ func TestTemplateVideoSettingsReachActualRelayHTTPWithoutTruncation(t *testing.T
 	row.MediaType = "video"
 	row.Mode = "i2v"
 	row.ModelKey = "fixture-video"
-	row.Options = model.StudioTemplateOptions{AspectRatio: "9:16", Resolution: "1080p", Duration: 4.5}
+	row.Options = model.StudioTemplateOptions{AspectRatio: "9:16", Duration: 4.5}
 	s.repo.db.Save(row)
 	s.repo.db.Model(&model.MarketModel{}).Where("model_key = ?", row.ModelKey).Update("config", `{"modes":["i2v"],"ratios":["16:9","9:16"],"resolutions":["720p","1080p"],"durations":["10s","4.5s"],"priceMatrix":{"10s":{"720p":10,"1080p":12},"4.5s":{"720p":11,"1080p":17}}}`)
-	q := quoteTemplate(t, s, row.ID, `{"imageIds":["91"]}`)
+	q := quoteTemplateWithResolution(t, s, row.ID, `{"imageIds":["91"]}`, "1080p")
 	register := false
-	vo, err := s.generate(context.Background(), 42, generateDTO{TemplateID: row.ID, TemplateQuote: q.QuoteToken, ModelID: q.ModelID, Handler: q.Handler, Input: json.RawMessage(`{"imageIds":["91"]}`), RegisterWork: &register})
+	vo, err := s.generate(context.Background(), 42, generateDTO{TemplateID: row.ID, TemplateQuote: q.QuoteToken, TemplateResolution: "1080p", ModelID: q.ModelID, Handler: q.Handler, Input: json.RawMessage(`{"imageIds":["91"]}`), RegisterWork: &register})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +265,6 @@ func TestOperatorPreflightRejectsUnusableRecipesWithoutGenerating(t *testing.T) 
 		{"missing model", func(r *model.StudioTemplate) { r.ModelKey = "unknown" }},
 		{"wrong mode", func(r *model.StudioTemplate) { r.Mode = "t2i"; r.Requirements.Images = 0 }},
 		{"unsupported ratio", func(r *model.StudioTemplate) { r.Options.AspectRatio = "16:9" }},
-		{"unsupported resolution", func(r *model.StudioTemplate) { r.Options.Resolution = "8k" }},
 		{"unsupported quality", func(r *model.StudioTemplate) { r.Options.Quality = "unknown" }},
 		{"unsupported duration", func(r *model.StudioTemplate) {
 			r.MediaType = "video"
@@ -526,21 +527,38 @@ func templateFixture(t *testing.T) (*service, *model.StudioTemplate, *templateTe
 }
 
 func quoteTemplate(t *testing.T, s *service, id idgen.ID, input string) templateQuoteVO {
+	return quoteTemplateWithResolution(t, s, id, input, "")
+}
+
+func quoteTemplateWithResolution(t *testing.T, s *service, id idgen.ID, input, resolution string) templateQuoteVO {
+	t.Helper()
+	out := quoteTemplateResponse(t, s, id, input, resolution)
+	if !out.Success {
+		t.Fatalf("quote failed: %+v", out)
+	}
+	return out.Data
+}
+
+func quoteTemplateResponse(t *testing.T, s *service, id idgen.ID, input, resolution string) response.Result[templateQuoteVO] {
 	t.Helper()
 	engine := gin.New()
 	engine.POST("/quote", func(c *gin.Context) { c.Set(middleware.CtxUserID, idgen.ID(42)); (&handler{svc: s}).templateQuote(c) })
-	r := httptest.NewRequest(http.MethodPost, "/quote", strings.NewReader(fmt.Sprintf(`{"templateId":"%s","input":%s}`, id, input)))
+	resolutionJSON := ""
+	if resolution != "" {
+		resolutionJSON = fmt.Sprintf(`,"templateResolution":%q`, resolution)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/quote", strings.NewReader(fmt.Sprintf(`{"templateId":"%s"%s,"input":%s}`, id, resolutionJSON, input)))
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, r)
 	var out response.Result[templateQuoteVO]
-	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || !out.Success {
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 		t.Fatalf("quote failed: %s", w.Body.String())
 	}
 	if strings.Contains(w.Body.String(), "PRIVATE_TEMPLATE") {
 		t.Fatal("quote exposed recipe")
 	}
-	return out.Data
+	return out
 }
 
 func TestPrivateTemplateGenerateAndReplayDoNotExposeRecipeOrDoubleCharge(t *testing.T) {
@@ -691,8 +709,9 @@ func TestTemplateSameImageLoopPreservesBothFramesAndOtherSlotsRejectDuplicates(t
 
 func TestTemplateSetupDisclosesEffectiveSpecWithoutMintingPaidQuote(t *testing.T) {
 	s, row, _ := templateFixture(t)
-	row.Options = model.StudioTemplateOptions{Resolution: "2k", AspectRatio: "4:5", Quality: "HIGH"}
+	row.Options = model.StudioTemplateOptions{Resolution: "8k", AspectRatio: "4:5", Quality: "HIGH"}
 	s.repo.db.Save(row)
+	s.repo.db.Model(&model.MarketModel{}).Where("model_key = ?", "fixture-image").Update("config", `{"modes":["i2i"],"resolutions":["2k","4k"],"ratios":["4:5"],"qualities":["high"],"priceMatrix":{"high":{"2k":7,"4k":13}}}`)
 	engine := gin.New()
 	engine.GET("/setup/:id", (&handler{svc: s}).templateSetup)
 	w := httptest.NewRecorder()
@@ -704,6 +723,9 @@ func TestTemplateSetupDisclosesEffectiveSpecWithoutMintingPaidQuote(t *testing.T
 	setup := responseBody.Data
 	if setup.Options.Resolution != "2k" || setup.Options.AspectRatio != "4:5" || setup.Options.Quality != "high" || setup.BasePointCost != 7 {
 		t.Fatalf("setup misrepresented resolved output: %+v", setup)
+	}
+	if !reflect.DeepEqual(setup.Resolutions, []string{"2k", "4k"}) {
+		t.Fatalf("setup did not preserve model resolution order: %v", setup.Resolutions)
 	}
 	if strings.Contains(w.Body.String(), row.Prompt) || strings.Contains(w.Body.String(), "quoteToken") {
 		t.Fatal("setup leaked private recipe or minted executable quote")
@@ -719,6 +741,21 @@ func TestTemplateSetupDisclosesEffectiveSpecWithoutMintingPaidQuote(t *testing.T
 	}
 	if setup.MaxUploadBytes["image"] != 50*1024*1024 {
 		t.Fatal("wrong upload bound")
+	}
+	w = httptest.NewRecorder()
+	engine.ServeHTTP(w, httptest.NewRequest("GET", "/setup/"+row.ID.String()+"?resolution=4k", nil))
+	if err := json.Unmarshal(w.Body.Bytes(), &responseBody); err != nil || !responseBody.Success {
+		t.Fatal(w.Body.String())
+	}
+	if responseBody.Data.Options.Resolution != "4k" || responseBody.Data.BasePointCost != 13 {
+		t.Fatalf("selected resolution did not update setup and price: %+v", responseBody.Data)
+	}
+	selectedQuote := quoteTemplateWithResolution(t, s, row.ID, `{"imageIds":["91"]}`, "4k")
+	if selectedQuote.Options.Resolution != "4k" || selectedQuote.PointCost != 13 {
+		t.Fatalf("selected resolution did not reach quote: %+v", selectedQuote)
+	}
+	if bad := quoteTemplateResponse(t, s, row.ID, `{"imageIds":["91"]}`, "12k"); bad.Success {
+		t.Fatal("unsupported user resolution was accepted")
 	}
 	alternative := model.MarketModel{Name: "Alternative Image", ModelKey: "alternative-image", Type: "image", Status: 1, Price: decimal.NewFromInt(11), Config: `{"modes":["i2i"],"resolutions":["2k"],"ratios":["4:5"],"qualities":["high"]}`}
 	if err := s.repo.db.Create(&alternative).Error; err != nil {

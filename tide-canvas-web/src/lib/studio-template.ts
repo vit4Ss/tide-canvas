@@ -33,7 +33,6 @@ export function templateModelChoices(
     if (!config) return true;
     if (config.modes?.length && !config.modes.includes(runtimeMode(row.mode))) return false;
     if (!includesOption(config.ratios, row.options.aspectRatio)
-      || !includesOption(config.resolutions, row.options.resolution)
       || (row.mediaType === "image" && !includesOption(config.qualities, row.options.quality))
       || (row.mediaType === "video" && !includesOption(config.durations, row.options.duration))) return false;
     if (row.mode === "i2i" && config.maxRefImages && row.requirements.images > config.maxRefImages) return false;

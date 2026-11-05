@@ -3,7 +3,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowUpRight, Check, ChevronDown, Cpu, Download, ImagePlus, Loader2, Maximize2, Music2, RefreshCw, Video, X } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Check, ChevronDown, Cpu, Download, ImagePlus, Loader2, Maximize2, Monitor, Music2, RefreshCw, Video, X } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { aiApi, fileApi, uploadFileSmart } from "@/lib/api";
@@ -40,6 +40,7 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
   const [setupError, setSetupError] = useState("");
   const [availableModels, setAvailableModels] = useState<TemplateModelOption[]>([]);
   const [selectedModelId, setSelectedModelId] = useState("");
+  const [selectedResolution, setSelectedResolution] = useState("");
   const [hydratedSignature, setHydratedSignature] = useState("");
   const [draftNotice, setDraftNotice] = useState("");
   const [draftSaved, setDraftSaved] = useState(true);
@@ -78,13 +79,13 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
 
   useEffect(() => {
     let stopped = false;
-    void studioTemplateApi.setup(templateId, selectedModelId || undefined, AbortSignal.timeout(15000)).then(res => {
+    void studioTemplateApi.setup(templateId, selectedModelId || undefined, selectedResolution || undefined, AbortSignal.timeout(15000)).then(res => {
       if (stopped) return;
       if (res.success && res.data?.modelId && res.data.options) { setSetup(res.data); setAvailableModels(res.data.availableModels || []); setSetupError(""); }
       else { setSetup(null); setSetupError(res.message || "所选模型暂时无法用于这个模板"); }
     }).catch(() => { if (!stopped) setSetupError("模板规格暂时无法读取，请重试"); });
     return () => { stopped = true; };
-  }, [templateId, selectedModelId, reload]);
+  }, [templateId, selectedModelId, selectedResolution, reload]);
 
   const recover = useCallback(async () => {
     if (!owner || !current()) { setRecovering(false); return; }
@@ -162,7 +163,9 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
     || modelChoices.find(model => model.modelId === setup?.modelId)
     || null;
   const modelRequestId = selectedModelId || selectedModel?.modelId || setup?.modelId || "";
-  const quoteKey = JSON.stringify({ input, modelId: modelRequestId });
+  const resolutionChoices = selectedModel?.resolutions || setup?.resolutions || [];
+  const resolutionRequest = selectedResolution || setup?.options.resolution || resolutionChoices[0] || "";
+  const quoteKey = JSON.stringify({ input, modelId: modelRequestId, resolution: resolutionRequest });
   const anyUploading = Object.values(uploads).some(value => value.busy);
   const ready = !!row && !anyUploading && templateUploadsReady(row, slots, files);
   const uploadedCount = slots.filter(slot => !!files[slot.key]).length;
@@ -179,7 +182,7 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
       setQuoteLoading(true); setQuoteError(""); setQuote(null);
       deadline = setTimeout(() => { controller.abort(); if (current()) { setQuoteLoading(false); setQuoteError("确认积分超时，请检查网络后重试"); } }, 30000);
       try {
-        const res = await studioTemplateApi.quote(templateId, JSON.parse(inputKey) as TemplateUploads, modelRequestId || undefined, controller.signal);
+        const res = await studioTemplateApi.quote(templateId, JSON.parse(inputKey) as TemplateUploads, modelRequestId || undefined, resolutionRequest || undefined, controller.signal);
         if (controller.signal.aborted || !current()) return;
         if (res.success && res.data) setQuote({ ...res.data, inputKey: quoteKey });
         else setQuoteError(res.message || "暂时无法确认积分，请重试");
@@ -187,7 +190,7 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
       finally { clearTimeout(deadline); if (!controller.signal.aborted && current()) setQuoteLoading(false); }
     }, 120);
     return () => { clearTimeout(timer); clearTimeout(deadline); controller.abort(); };
-  }, [owner, ready, locked, row, templateId, inputKey, modelRequestId, quoteKey, quoteRetry, current]);
+  }, [owner, ready, locked, row, templateId, inputKey, modelRequestId, resolutionRequest, quoteKey, quoteRetry, current]);
 
   useEffect(() => {
     if (!task?.id || task.status !== AiTaskStatus.PROCESSING) return;
@@ -232,7 +235,7 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
     if (!owner || !current() || !quote || quote.inputKey !== quoteKey || !ready || locked || submitLock.current || uploadLocks.current.size) return;
     submitLock.current = true; setSending(true); setError("");
     try {
-      const res = await aiApi.generateIdempotent({ templateId, templateQuote: quote.quoteToken, handler: quote.handler, modelId: quote.modelId, input: { ...input } }, scope, {
+      const res = await aiApi.generateIdempotent({ templateId, templateQuote: quote.quoteToken, templateResolution: resolutionRequest || undefined, handler: quote.handler, modelId: quote.modelId, input: { ...input } }, scope, {
         requireDurableJournal: true, retainAccepted: true, ownerUserId: owner, dedupeActivePayload: true, recovery: { uploads, recipeSignature },
       });
       if (!current()) return;
@@ -312,7 +315,7 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
               <select id="template-model" aria-describedby="template-model-note" value={selectedModel?.modelId || ""} disabled={!modelChoices.length || sending || recovering || unresolved || !!task || anyUploading} onChange={event => {
                 const next = event.target.value;
                 if (!next || next === modelRequestId) return;
-                setSelectedModelId(next); setSetup(null); setSetupError(""); setQuote(null); setQuoteError(""); setError("");
+                setSelectedModelId(next); setSelectedResolution(""); setSetup(null); setSetupError(""); setQuote(null); setQuoteError(""); setError("");
               }}>
                 {!modelChoices.length && <option value="">正在读取模板可选模型…</option>}
                 {!selectedModel && modelChoices.length > 0 && <option value="" disabled>选择生成模型</option>}
@@ -321,6 +324,20 @@ function Workshop({ templateId, returnTo, owner, authReady }: { templateId: stri
               <ChevronDown size={16} aria-hidden="true" />
             </div>
             <p id="template-model-note" className={css.modelNote}>{modelChoices.length > 1 ? `后台已为此模板开放 ${modelChoices.length} 个模型` : "当前模板仅开放默认模型"}</p>
+            <div className={css.modelDivider} />
+            <div className={css.modelLabel}><label htmlFor="template-resolution"><Monitor size={16} />输出分辨率</label><span>来自模型管理配置</span></div>
+            <div className={css.modelSelect}>
+              <select id="template-resolution" aria-describedby="template-resolution-note" value={resolutionRequest} disabled={!resolutionChoices.length || sending || recovering || unresolved || !!task || anyUploading} onChange={event => {
+                const next = event.target.value;
+                if (!next || next === resolutionRequest) return;
+                setSelectedResolution(next); setSetup(null); setSetupError(""); setQuote(null); setQuoteError(""); setError("");
+              }}>
+                {!resolutionChoices.length && <option value="">使用模型默认分辨率</option>}
+                {resolutionChoices.map(resolution => <option key={resolution} value={resolution}>{resolution.toUpperCase()}</option>)}
+              </select>
+              <ChevronDown size={16} aria-hidden="true" />
+            </div>
+            <p id="template-resolution-note" className={css.modelNote}>{resolutionChoices.length > 1 ? `可选择 ${resolutionChoices.length} 种分辨率，默认选中第一项` : resolutionChoices.length === 1 ? `此模型仅支持 ${resolutionChoices[0].toUpperCase()}` : "此模型未配置可选分辨率"}</p>
           </div>
           <p className={css.preflightInfo}>{validQuote ? `成品规格：${templateOutputText(validQuote.options)}` : setup ? `${setup.referenceVideoBilling ? "基础 " : "预计 "}${setup.basePointCost} 积分 · ${templateOutputText(setup.options)}` : setupError || "正在读取成品规格与基础积分…"}</p>
           {setup?.referenceVideoBilling && <p className={css.note}>如使用参考视频，其时长费用会在上传后一起核算。</p>}

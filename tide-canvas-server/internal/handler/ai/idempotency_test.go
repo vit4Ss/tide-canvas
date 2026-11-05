@@ -43,3 +43,20 @@ func TestDirectGenerationFingerprintIgnoresClientUpscaleDuration(t *testing.T) {
 		t.Fatalf("client duration changed upscale idempotency key: %s != %s", ha, hb)
 	}
 }
+
+func TestTemplateResolutionChangesGenerationFingerprint(t *testing.T) {
+	a := generateDTO{TemplateID: 1, TemplateResolution: "720p", Handler: "reference_to_video", ModelID: "video-1", Input: json.RawMessage(`{"imageIds":["1"]}`)}
+	b := a
+	b.TemplateResolution = "4k"
+	ha, err := directGenerationFingerprint(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hb, err := directGenerationFingerprint(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ha == hb {
+		t.Fatal("different template resolutions produced the same idempotency fingerprint")
+	}
+}

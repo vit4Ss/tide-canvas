@@ -56,6 +56,7 @@ export interface TemplateSetup {
   referenceVideoBilling: boolean;
   options: StudioTemplate["options"];
   maxUploadBytes: Record<"image" | "video" | "audio", number>;
+  resolutions: string[];
   availableModels?: TemplateModelOption[];
 }
 export interface TemplateModelOption {
@@ -65,6 +66,7 @@ export interface TemplateModelOption {
   referenceVideoBilling: boolean;
   options: StudioTemplate["options"];
   maxUploadBytes: Record<"image" | "video" | "audio", number>;
+  resolutions: string[];
 }
 export interface TemplateQuote {
   templateId: string;
@@ -167,14 +169,14 @@ export const studioTemplateApi = {
   list: (q: TemplateQuery, signal?: AbortSignal) =>
     http.get<PublicTemplatePage>(base, toParams(q), { signal }),
   get: (id: string) => http.get<PublicStudioTemplate>(`${base}/${id}`),
-  setup: (id: string, modelId?: string, signal?: AbortSignal) =>
-    http.get<TemplateSetup>(`/api/ai/template-setup/${id}`, toParams({ modelId }), {
+  setup: (id: string, modelId?: string, resolution?: string, signal?: AbortSignal) =>
+    http.get<TemplateSetup>(`/api/ai/template-setup/${id}`, toParams({ modelId, resolution }), {
       signal,
     }),
-  quote: (templateId: string, input: TemplateUploads, modelId?: string, signal?: AbortSignal) =>
+  quote: (templateId: string, input: TemplateUploads, modelId?: string, resolution?: string, signal?: AbortSignal) =>
     http.post<TemplateQuote>(
       "/api/ai/template-quote",
-      { templateId, input, ...(modelId ? { modelId } : {}) },
+      { templateId, input, ...(modelId ? { modelId } : {}), ...(resolution ? { templateResolution: resolution } : {}) },
       { signal },
     ),
 };

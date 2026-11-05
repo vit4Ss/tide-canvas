@@ -44,8 +44,8 @@ func TestTemplateDraftSaveFillsHeaderAndDefaultModel(t *testing.T) {
 	}
 	if row := save(); row.ModelKey != chosen.ModelKey {
 		t.Fatal("default model not saved", row.ModelKey)
-	} else if row.Options.Resolution != "720p" {
-		t.Fatal("default video resolution was not 720p", row.Options.Resolution)
+	} else if row.Options.Resolution != "" {
+		t.Fatal("template draft persisted a user-selectable resolution", row.Options.Resolution)
 	}
 	if err := s.db.Model(&chosen).Update("status", 0).Error; err != nil {
 		t.Fatal(err)

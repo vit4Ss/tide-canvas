@@ -506,6 +506,7 @@ func directGenerationFingerprint(dto generateDTO) (string, error) {
 	payload := struct {
 		TemplateID              idgen.ID `json:"templateId,omitempty"`
 		TemplateQuote           string   `json:"templateQuote,omitempty"`
+		TemplateResolution      string   `json:"templateResolution,omitempty"`
 		BillingMarket           string   `json:"billingMarket,omitempty"`
 		TemplateCoverModelHash  string   `json:"templateCoverModelHash,omitempty"`
 		TemplateCoverBatchID    idgen.ID `json:"templateCoverBatchId,omitempty"`
@@ -518,7 +519,7 @@ func directGenerationFingerprint(dto generateDTO) (string, error) {
 		EntryPoint              string   `json:"entryPoint"`
 		TargetType              string   `json:"targetType"`
 	}{
-		TemplateID: dto.TemplateID, TemplateQuote: dto.TemplateQuote,
+		TemplateID: dto.TemplateID, TemplateQuote: dto.TemplateQuote, TemplateResolution: strings.TrimSpace(dto.TemplateResolution),
 		BillingMarket:          dto.BillingMarket,
 		TemplateCoverModelHash: dto.TemplateCoverModelHash,
 		TemplateCoverBatchID:   dto.TemplateCoverBatchID, TemplateCoverTemplateID: dto.TemplateCoverTemplateID,

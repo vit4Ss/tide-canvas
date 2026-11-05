@@ -17,14 +17,15 @@ import (
 // selects from AiModelVO.modelId — NOT the AiModel primary key. The service
 // resolves the AiModel by its ModelID column (falling back to the numeric PK).
 type generateDTO struct {
-	TemplateID       idgen.ID `json:"templateId,omitempty"`
-	TemplateQuote    string   `json:"templateQuote,omitempty"`
-	templateSnapshot *model.StudioTemplate
-	BillingMarket    string          `json:"-"` // Assigned by the route, never by the browser.
-	Handler          string          `json:"handler"`
-	ModelID          string          `json:"modelId"`
-	ProjectID        idgen.ID        `json:"projectId"`
-	Input            json.RawMessage `json:"input"`
+	TemplateID         idgen.ID `json:"templateId,omitempty"`
+	TemplateQuote      string   `json:"templateQuote,omitempty"`
+	TemplateResolution string   `json:"templateResolution,omitempty"`
+	templateSnapshot   *model.StudioTemplate
+	BillingMarket      string          `json:"-"` // Assigned by the route, never by the browser.
+	Handler            string          `json:"handler"`
+	ModelID            string          `json:"modelId"`
+	ProjectID          idgen.ID        `json:"projectId"`
+	Input              json.RawMessage `json:"input"`
 	// Placement is required when input.skillId is present. Legacy HTTP callers
 	// default to the Studio surface and wildcard target.
 	EntryPoint string `json:"entryPoint"`
