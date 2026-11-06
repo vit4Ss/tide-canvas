@@ -22,6 +22,7 @@ import { AdminModal, Field, FormCard, FormGrid } from "@/components/admin";
 import { TemplateCoverAI } from "@/components/admin/template-cover-ai";
 import { TemplateCoverBatchDialog } from "@/components/admin/template-cover-batch";
 import { TemplatePromptFillButton } from "@/components/admin/template-prompt-fill";
+import { TemplateSelectAllModelsButton } from "@/components/admin/template-select-all-models";
 import { commitAcceptedAiGeneration } from "@/lib/ai-generation-idempotency";
 import { PopoverSelect } from "@/components/shared/popover-select";
 import { confirmDialog } from "@/components/shared/confirm";
@@ -211,6 +212,7 @@ export default function StudioTemplatesAdmin() {
           <p>管理创作配方与展示效果，准备好封面和生成配置后上架。</p>
         </div>
         <div className={css.actions}>
+          <TemplateSelectAllModelsButton key={String(user?.id || "")} onUpdated={() => setVersion((v) => v + 1)} />
           {media === "video" && (
             <TemplatePromptFillButton
               key={String(user?.id || "")}

@@ -113,6 +113,17 @@ export interface TemplatePromptFillResult {
   counts: { saved: number; published: number; skipped: number; failed: number };
   items: { id: string; title: string; status: "saved" | "published" | "skipped" | "failed"; message: string }[];
 }
+export interface TemplateSelectAllModelsResult {
+  total: number;
+  updated: number;
+  unchanged: number;
+  skipped: number;
+  failed: number;
+  throughId: string;
+  nextAfterId: string;
+  done: boolean;
+  items?: { id: string; title: string; status: "updated" | "unchanged" | "skipped" | "failed"; models: number; message: string }[];
+}
 export interface TemplateCoverBatchPreview {
   count: number;
   modelId: string;
@@ -183,6 +194,8 @@ export const studioTemplateApi = {
 export const adminStudioTemplateApi = {
   fillFromPrompts: (filter: TemplateCoverFilter, publish = false) =>
     http.post<TemplatePromptFillResult>(admin + "/fill-from-prompts", { ...filter, publish }),
+  selectAllModels: (cursor: { afterId?: string; throughId?: string } = {}, signal?: AbortSignal) =>
+    http.post<TemplateSelectAllModelsResult>(admin + "/select-all-models", cursor, { signal }),
   check: (row: StudioTemplateSave, fillFromPrompt = false) =>
     http.post<TemplateSetup>(`${admin}/check`, { ...row, ...(fillFromPrompt ? { fillFromPrompt: true } : {}) }),
   list: (q: TemplateQuery, signal?: AbortSignal) =>

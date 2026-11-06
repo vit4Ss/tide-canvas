@@ -57,7 +57,8 @@ func TestTemplateFillClearsTemplateResolutionForUserSelection(t *testing.T) {
 		if err := json.Unmarshal(raw, &result); err != nil || !result.Success {
 			t.Fatal(string(raw), err)
 		}
-		wantUpdated := 6
+		// The template which already has no fixed resolution is unchanged.
+		wantUpdated := 5
 		if attempt == 1 {
 			wantUpdated = 0
 		}

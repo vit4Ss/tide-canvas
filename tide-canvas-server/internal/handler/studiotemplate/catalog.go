@@ -216,9 +216,6 @@ func (d *SaveDTO) Validate() error {
 		seenModels[key] = true
 		selectableModels = append(selectableModels, key)
 	}
-	if len(selectableModels) > 20 {
-		return errors.New("前台可选模型最多20个")
-	}
 	d.SelectableModelKeys = selectableModels
 	d.Options.AspectRatio = strings.TrimSpace(d.Options.AspectRatio)
 	// Template resolution is selected by the user from the chosen model's

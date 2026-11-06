@@ -50,11 +50,175 @@ func RegisterStudioTemplates(g *gin.RouterGroup, d *app.Deps) {
 	s.POST("", h.save)
 	s.POST("/check", h.check)
 	s.POST("/fill-from-prompts", h.fillFromPrompts)
+	s.POST("/select-all-models", h.selectAllModels)
 	s.PUT("/:id", h.save)
 	s.DELETE("/:id", h.remove)
 	// Access to unpublished user generations also needs the generation module.
 	s.GET("/sources", middleware.AdminPerm("admin.generations"), h.sources)
 	s.POST("/from-task", middleware.AdminPerm("admin.generations"), h.fromTask)
+}
+
+type selectAllTemplateModelsItem struct {
+	ID      idgen.ID `json:"id"`
+	Title   string   `json:"title"`
+	Status  string   `json:"status"`
+	Models  int      `json:"models"`
+	Message string   `json:"message"`
+}
+
+type selectAllTemplateModelsResult struct {
+	Total       int                           `json:"total"`
+	Updated     int                           `json:"updated"`
+	Unchanged   int                           `json:"unchanged"`
+	Skipped     int                           `json:"skipped"`
+	Failed      int                           `json:"failed"`
+	ThroughID   idgen.ID                      `json:"throughId"`
+	NextAfterID idgen.ID                      `json:"nextAfterId"`
+	Done        bool                          `json:"done"`
+	Items       []selectAllTemplateModelsItem `json:"items,omitempty"`
+}
+
+// selectAllModels opens every runtime-compatible listed model on every
+// template without changing the template's default model or output recipe.
+// Runtime validation remains authoritative: catalog metadata alone is not
+// enough to prove duration, reference-input and pricing compatibility.
+func (h *studioTemplatesHandler) selectAllModels(c *gin.Context) {
+	c.Header("Cache-Control", "private, no-store")
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
+	var request struct {
+		AfterID   idgen.ID `json:"afterId"`
+		ThroughID idgen.ID `json:"throughId"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil || request.AfterID < 0 || request.ThroughID < 0 || (request.ThroughID != 0 && request.AfterID > request.ThroughID) {
+		response.Fail(c, 400, "批量勾选请求无效")
+		return
+	}
+	ctx := c.Request.Context()
+	if request.ThroughID == 0 {
+		var last model.StudioTemplate
+		if err := h.db.WithContext(ctx).Select("id").Order("id DESC").First(&last).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				response.OK(c, selectAllTemplateModelsResult{Done: true})
+			} else {
+				response.Fail(c, 500, "读取创作模板失败")
+			}
+			return
+		}
+		request.ThroughID = last.ID
+	}
+	var templates []model.StudioTemplate
+	// Bounded chunks keep the request under proxy deadlines and let the client
+	// report real progress across every page, kind and publication status.
+	if err := h.db.WithContext(ctx).Where("id > ? AND id <= ?", request.AfterID, request.ThroughID).Order("id ASC").Limit(11).Find(&templates).Error; err != nil {
+		response.Fail(c, 500, "读取创作模板失败")
+		return
+	}
+	var models []model.MarketModel
+	if err := h.db.WithContext(ctx).
+		Where("status = ? AND type IN ?", 1, []string{"image", "video"}).
+		Order("sort_order ASC, use_count DESC, id ASC").
+		Find(&models).Error; err != nil {
+		response.Fail(c, 500, "读取可用模型失败")
+		return
+	}
+
+	var total int64
+	if err := h.db.WithContext(ctx).Model(&model.StudioTemplate{}).Where("id <= ?", request.ThroughID).Count(&total).Error; err != nil {
+		response.Fail(c, 500, "读取模板数量失败")
+		return
+	}
+	result := selectAllTemplateModelsResult{Total: int(total), ThroughID: request.ThroughID, Done: len(templates) <= 10}
+	if len(templates) > 10 {
+		templates = templates[:10]
+		result.NextAfterID = templates[len(templates)-1].ID
+	}
+	modelKeyCounts := map[string]int{}
+	for _, candidate := range models {
+		modelKeyCounts[strings.TrimSpace(candidate.ModelKey)]++
+	}
+	for _, row := range templates {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		if strings.TrimSpace(row.Prompt) == "" {
+			result.Skipped++
+			result.Items = append(result.Items, selectAllTemplateModelsItem{ID: row.ID, Title: row.Title, Status: "skipped", Message: "生成配方尚未配置"})
+			continue
+		}
+
+		base := row
+		base.SelectableModelKeys = nil
+		base.Options.Resolution = ""
+		defaultSetup, err := ai.CheckStudioTemplate(ctx, h.db, base)
+		if err != nil {
+			result.Skipped++
+			result.Items = append(result.Items, selectAllTemplateModelsItem{ID: row.ID, Title: row.Title, Status: "skipped", Message: "生成配置不可用：" + err.Error()})
+			continue
+		}
+
+		// Preserve existing operator choices; select-all only adds compatible
+		// choices and never silently removes an existing selection.
+		keys := append([]string{}, row.SelectableModelKeys...)
+		seen := map[string]bool{defaultSetup.ModelID: true}
+		for _, key := range keys {
+			seen[key] = true
+		}
+		for _, candidateModel := range models {
+			if candidateModel.Type != row.MediaType {
+				continue
+			}
+			key := strings.TrimSpace(candidateModel.ModelKey)
+			if modelKeyCounts[key] > 1 || defaultSetup.ModelID == candidateModel.ID.String() {
+				key = candidateModel.ID.String()
+			}
+			if key == "" || seen[key] {
+				continue
+			}
+			candidate := base
+			candidate.ModelKey = key
+			setup, checkErr := ai.CheckStudioTemplate(ctx, h.db, candidate)
+			if checkErr != nil || setup.ModelID == "" || seen[setup.ModelID] {
+				continue
+			}
+			seen[key], seen[setup.ModelID] = true, true
+			keys = append(keys, setup.ModelID)
+		}
+
+		if equalTemplateModelKeys(row.SelectableModelKeys, keys) {
+			result.Unchanged++
+			result.Items = append(result.Items, selectAllTemplateModelsItem{ID: row.ID, Title: row.Title, Status: "unchanged", Models: len(keys) + 1, Message: "全部兼容模型已勾选"})
+			continue
+		}
+		update := h.db.WithContext(ctx).Model(&model.StudioTemplate{}).
+			Where("id = ? AND update_time = ?", row.ID, row.UpdateTime).
+			Select("SelectableModelKeys").
+			Updates(&model.StudioTemplate{SelectableModelKeys: keys})
+		if update.Error != nil {
+			result.Failed++
+			result.Items = append(result.Items, selectAllTemplateModelsItem{ID: row.ID, Title: row.Title, Status: "failed", Message: "保存结果未能确认，请重试核对"})
+			continue
+		}
+		if update.RowsAffected == 0 {
+			result.Skipped++
+			result.Items = append(result.Items, selectAllTemplateModelsItem{ID: row.ID, Title: row.Title, Status: "skipped", Message: "模板刚刚被其他管理员修改，请重试"})
+			continue
+		}
+		result.Updated++
+		result.Items = append(result.Items, selectAllTemplateModelsItem{ID: row.ID, Title: row.Title, Status: "updated", Models: len(keys) + 1, Message: "已勾选全部兼容模型"})
+	}
+	response.OK(c, result)
+}
+
+func equalTemplateModelKeys(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if strings.TrimSpace(left[i]) != strings.TrimSpace(right[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 type studioTemplatesHandler struct {
